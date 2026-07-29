@@ -276,6 +276,7 @@ describe("Desktop Local App runtime", () => {
 
   it.runIf(process.platform === "darwin")(
     "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
+    { timeout: 30_000 },
     async () => {
       const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
       const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });

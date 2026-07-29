@@ -66,6 +66,12 @@ describe("isRememberableOrganizationPath", () => {
   it("does not restore legacy skills routes as organization pages", () => {
     expect(isRememberableOrganizationPath("/skills/skill-123/files/SKILL.md")).toBe(false);
   });
+
+  it("does not restore the removed Organization workspace redirect", () => {
+    expect(isRememberableOrganizationPath("/org")).toBe(false);
+    expect(isRememberableOrganizationPath("/org/")).toBe(false);
+    expect(isRememberableOrganizationPath("/org?legacy=1#old")).toBe(false);
+  });
 });
 
 describe("sanitizeRememberedPathForOrganization", () => {
@@ -100,6 +106,15 @@ describe("sanitizeRememberedPathForOrganization", () => {
     expect(
       sanitizeRememberedPathForOrganization({
         path: "/skills/skill-123/files/SKILL.md",
+        organizationPrefix: "PAP",
+      }),
+    ).toBe("/messenger");
+  });
+
+  it("falls back for remembered removed Organization workspace paths", () => {
+    expect(
+      sanitizeRememberedPathForOrganization({
+        path: "/org?legacy=1#old",
         organizationPrefix: "PAP",
       }),
     ).toBe("/messenger");

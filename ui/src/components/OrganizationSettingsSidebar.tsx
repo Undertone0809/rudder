@@ -10,7 +10,6 @@ import {
   Clock3,
   DollarSign,
   History,
-  Network,
   Settings,
 } from "lucide-react";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
@@ -47,7 +46,6 @@ export function OrganizationSettingsSidebar({ showOrganizationSwitcher = true }:
             {t("common.organizationSettings")}
           </div>
           <SidebarNavItem to="/organization/settings" label={t("common.general")} icon={Settings} end />
-          <SidebarNavItem to="/org" label={t("common.structure")} icon={Network} />
           <SidebarNavItem to="/heartbeats" label={t("common.heartbeats")} icon={Clock3} />
           <SidebarNavItem to={SKILLS_LIBRARY_DIRECTORY_HREF} label={t("common.skills")} icon={Boxes} />
           <SidebarNavItem to="/costs" label={t("common.costs")} icon={DollarSign} />

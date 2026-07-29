@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_BROWSER_FAVICON_LENGTH } from "../website-icons.js";
 
 const uuid = z.string().uuid();
 export const messengerSavedViewIdSchema = uuid;
@@ -50,7 +51,7 @@ export const messengerSavedViewTargetSchema = z.discriminatedUnion("kind", [
 const savedViewMetadataShape = {
   title: z.string().trim().min(1).max(240),
   subtitle: z.string().trim().max(1000).optional().nullable(),
-  favicon: z.string().trim().max(8192).optional().nullable(),
+  favicon: z.string().trim().max(MAX_BROWSER_FAVICON_LENGTH).optional().nullable(),
 };
 
 export const createMessengerSavedViewSchema = z.object({
@@ -70,6 +71,7 @@ export const keepMessengerSavedViewSchema = z.object({
   placement: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("anchor"), anchor: messengerSavedViewAnchorSchema }).strict(),
     z.object({ kind: z.literal("group"), groupId: uuid }).strict(),
+    z.object({ kind: z.literal("loose") }).strict(),
   ]),
 }).strict();
 
@@ -78,6 +80,7 @@ export const updateMessengerSavedViewSchema = z.object({
   title: savedViewMetadataShape.title.optional(),
   subtitle: savedViewMetadataShape.subtitle,
   favicon: savedViewMetadataShape.favicon,
+  primaryRailPinned: z.boolean().optional(),
   // Compatibility-only escape hatch for legacy hidden rows. The current
   // group-only Saved View model has no operation that creates hidden rows.
   hidden: z.literal(false).optional(),
@@ -99,6 +102,7 @@ export const listMessengerSavedViewsQuerySchema = z.object({
   visibility: z.enum(["visible", "hidden", "all"]).default("visible"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
+  primaryRailPinned: z.union([z.literal("true"), z.literal(true)]).transform(() => true).optional(),
 }).strict();
 
 export type MessengerSavedViewTargetInput = z.infer<typeof messengerSavedViewTargetSchema>;

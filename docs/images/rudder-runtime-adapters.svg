@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 700" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder coordinates agent teams across runtimes</title>
+  <desc id="desc">Codex, Claude, Cursor, OpenClaw, Bash, and HTTP connect to Rudder while keeping their own installation, login, and credentials.</desc>
+  <metadata>
+    OpenAI logo source: ui/public/brands/openai-logo.svg.
+    Claude logo source: ui/public/brands/claude-logo.svg.
+    Cursor logo source: ui/public/brands/cursor-logo.svg.
+    OpenClaw mascot source: https://github.com/openclaw/openclaw/blob/f027d7bcf66759cc5408405c7ce1ea023646b879/apps/linux/src-tauri/icons/icon.svg
+    Copyright (c) 2026 OpenClaw Foundation, used under the MIT License.
+  </metadata>
+  <defs>
+    <style>
+      .serif { font-family: Georgia, "Times New Roman", serif; fill: #171714; }
+      .sans { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #171714; }
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #73766f; letter-spacing: 1.5px; }
+      .card { fill: #fbf9f3; stroke: #c9cbc4; stroke-width: 2; }
+      .rule { stroke: #d2d3cd; stroke-width: 2; }
+    </style>
+    <linearGradient id="openclaw-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff4d4d"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="2400" height="920" fill="#f7f3ea"/>
+  <rect x="80" y="48" width="86" height="5" rx="2.5" fill="#0b956b"/>
+
+  <text class="serif" x="80" y="145" font-size="72">Rudder coordinates agent teams across runtimes.</text>
+
+  <!-- Codex -->
+  <g transform="translate(80 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">CODEX</text>
+    <g transform="translate(145 165) scale(3.4)">
+      <path d="M11.248 18.25q-.825 0-1.568-.314a4.3 4.3 0 0 1-1.32-.874 4 4 0 0 1-1.304.214 4 4 0 0 1-2.046-.544 4.27 4.27 0 0 1-1.518-1.485 4 4 0 0 1-.56-2.095q0-.48.131-1.04A4.4 4.4 0 0 1 2.04 10.71a4.07 4.07 0 0 1 .017-3.4 4.2 4.2 0 0 1 1.056-1.418 3.8 3.8 0 0 1 1.6-.842 3.9 3.9 0 0 1 .76-1.683q.593-.759 1.451-1.188a4.04 4.04 0 0 1 1.832-.429q.825 0 1.567.313.742.314 1.32.875a4 4 0 0 1 1.304-.215q1.106 0 2.046.545a4.14 4.14 0 0 1 1.501 1.485q.578.941.578 2.095 0 .48-.132 1.04.66.61 1.023 1.419.363.792.363 1.666 0 .892-.38 1.717a4.3 4.3 0 0 1-1.072 1.435 3.8 3.8 0 0 1-1.584.825 3.8 3.8 0 0 1-.775 1.683 4.06 4.06 0 0 1-1.436 1.188 4.04 4.04 0 0 1-1.832.429m-4.076-2.062q.825 0 1.435-.347l3.103-1.782a.36.36 0 0 0 .164-.313v-1.42L7.881 14.62a.67.67 0 0 1-.726 0l-3.118-1.798a.5.5 0 0 1-.017.115v.198q0 .841.396 1.551.413.693 1.139 1.089a3.2 3.2 0 0 0 1.617.412m.165-2.69a.4.4 0 0 0 .181.05q.083 0 .165-.05l1.238-.71-3.977-2.31a.7.7 0 0 1-.363-.643v-3.58q-.825.362-1.32 1.122a2.9 2.9 0 0 0-.495 1.65q0 .809.413 1.55.412.743 1.072 1.123zm3.91 3.663q.875 0 1.585-.396a2.96 2.96 0 0 0 1.534-2.64v-3.564a.32.32 0 0 0-.165-.297l-1.254-.726v4.604a.7.7 0 0 1-.363.643l-3.119 1.799a3 3 0 0 0 1.783.577m.627-6.039V8.878L10.01 7.822 8.129 8.878v2.244l1.881 1.056zM7.057 5.859a.7.7 0 0 1 .363-.644l3.119-1.798a3 3 0 0 0-1.782-.578q-.874 0-1.584.396A2.96 2.96 0 0 0 6.05 4.324a3.07 3.07 0 0 0-.396 1.551v3.547q0 .199.165.314l1.237.726zm8.383 7.887q.825-.364 1.303-1.123.495-.758.495-1.65a3.15 3.15 0 0 0-.412-1.55q-.413-.743-1.073-1.123l-3.086-1.782q-.099-.065-.181-.049a.3.3 0 0 0-.165.05l-1.238.692 3.993 2.327a.6.6 0 0 1 .264.264.64.64 0 0 1 .1.363zm-3.317-8.382a.63.63 0 0 1 .726 0l3.135 1.831v-.297q0-.792-.396-1.501a2.86 2.86 0 0 0-1.105-1.155q-.71-.43-1.65-.43-.825 0-1.436.347L8.294 5.941a.36.36 0 0 0-.165.314v1.418z"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL CLI</text>
+  </g>
+
+  <!-- Claude -->
+  <g transform="translate(457 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="36">CLAUDE CODE</text>
+    <g transform="translate(144 164) scale(2.83)" fill="#d97757">
+      <path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL CLI</text>
+  </g>
+
+  <!-- Cursor -->
+  <g transform="translate(834 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">CURSOR</text>
+    <g transform="translate(145 165) scale(2.8333333)" fill="#000">
+      <path d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL CLI</text>
+  </g>
+
+  <!-- OpenClaw -->
+  <g transform="translate(1210 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">OPENCLAW</text>
+    <g transform="translate(144 160) scale(.5666667)">
+      <path d="M60 10 C30 10 15 35 15 55 C15 75 30 95 45 100 L45 110 L55 110 L55 100 C55 100 60 102 65 100 L65 110 L75 110 L75 100 C90 95 105 75 105 55 C105 35 90 10 60 10Z" fill="url(#openclaw-gradient)"/>
+      <path d="M20 45 C5 40 0 50 5 60 C10 70 20 65 25 55 C28 48 25 45 20 45Z" fill="url(#openclaw-gradient)"/>
+      <path d="M100 45 C115 40 120 50 115 60 C110 70 100 65 95 55 C92 48 95 45 100 45Z" fill="url(#openclaw-gradient)"/>
+      <path d="M45 15 Q35 5 30 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round"/>
+      <path d="M75 15 Q85 5 90 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="45" cy="35" r="6" fill="#050810"/>
+      <circle cx="75" cy="35" r="6" fill="#050810"/>
+      <circle cx="46" cy="34" r="2.5" fill="#00e5cc"/>
+      <circle cx="76" cy="34" r="2.5" fill="#00e5cc"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">GATEWAY</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL / CLOUD</text>
+  </g>
+
+  <!-- Bash -->
+  <g transform="translate(1587 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">BASH</text>
+    <g transform="translate(145 165)">
+      <rect width="68" height="68" rx="14" fill="#2d2d2d"/>
+      <path d="m19 23 12 11-12 11M37 45h15" fill="none" stroke="#4af626" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">SHELL</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">ANY</text>
+  </g>
+
+  <!-- HTTP -->
+  <g transform="translate(1964 200)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">HTTP</text>
+    <g transform="translate(145 165)" fill="none" stroke="#3b82f6">
+      <circle cx="34" cy="34" r="31" stroke-width="4"/>
+      <ellipse cx="34" cy="34" rx="14" ry="31" stroke-width="3"/>
+      <path d="M4 34h60M9 19h50M9 49h50" stroke-width="3"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">HTTP</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">ANY</text>
+  </g>
+
+  <text class="mono" x="80" y="660" font-size="15">YOUR RUNTIMES KEEP THEIR OWN INSTALLATION, LOGIN, AND CREDENTIALS.</text>
+</svg>

@@ -1,11 +1,11 @@
 ---
-title: "内置 Browser"
-description: "在 Rudder Desktop 中共享网站登录状态，同时把 Agent 的标签页控制限制在单次运行内。"
+title: "内置浏览器"
+description: "在工作旁边打开网页，并在允许时让本地 Agent 使用自己的受控标签页。"
 icon: "globe"
 keywords:
-  - "Rudder Browser"
-  - "Agent 浏览器控制"
-  - "Desktop 网站会话"
+  - "Rudder 浏览器"
+  - "Agent 浏览器"
+  - "Desktop 网页会话"
 canonical: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 hreflang_en: "https://docs.rudderhq.dev/concepts/built-in-browser"
@@ -14,34 +14,44 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 
 <a id="definition" />
 
-## 定义
+## 浏览器有两种用法
 
-Rudder Desktop 带有内置 Browser，可以让网页工作留在当前 Rudder 页面旁边。普通网页链接可以在 `Side Panel` 的 Browser 标签页打开，负责人也可以改用系统浏览器。
+**你可以在 Rudder 旁边浏览网页。**链接可以在侧边面板打开，也可以把同一个实时
+标签页移到 Messenger 主工作区，或交给系统浏览器。移动时会保留历史、表单内容、
+滚动位置和缩放。
 
-网站配置属于当前操作系统用户和这个 Rudder 实例。同一本地实例中的所有组织会共用它。因此，在一个组织中登录某个网站后，切换到另一个组织时，这个网站可能仍保持登录。
-
-Agent 控制采用另一条边界。受支持的本地 Agent 运行只能使用有限的 Browser 操作，每个受控标签页都属于确切的组织、Agent、运行和标签页租约。
+**Agent 可以使用受控标签页。**开启 Agent 浏览器权限后，受支持的本地运行可以
+导航、阅读、点击、输入和截图。
 
 <a id="case" />
 
-## 一个示意案例
+## 例子：检查已经发布的页面
 
-发布 Agent 在起草公告前，需要核对公开安装页面。负责人已经通过 Desktop 的共享 Browser 登录文档服务。运行期间，Agent 打开自己的标签页，读取已经发布的页面，并保存截图。它不能读取负责人的标签页，也不能读取其他运行租用的标签页。
+Agent 写发布说明前，在自己的标签页中打开公开安装页面，确认当前命令并截图。
+它不能读取你正在使用的标签页，也不能读取其他运行拥有的标签页。
 
 <a id="when-useful" />
 
-## 什么时候有用
+## 同一个本地实例共享网站登录
 
-人在 `Side Panel` 中查看网页时，可以使用内置 Browser。符合条件的本地 Agent 需要以可审计方式完成导航、读取、点击、输入或截图时，也可以使用。Agent Browser 只在 Desktop 的 `local_trusted` 模式下可用，而且要求实例已启用此功能，运行环境必须是受支持的 Claude、Codex、OpenCode 或 Pi 本地适配器。
+操作人员浏览器会为当前系统用户和本地 Rudder 实例保留一个网站配置。在一个
+组织里登录网站后，切换到另一个组织时，这个网站仍可能保持登录。
 
-在 macOS 上，负责人确认影响范围后，可以从选定的 Chrome、Edge 或 Brave 配置导入受支持的 Cookie。导入范围不包括密码、历史记录、书签、扩展或下载内容。
+这样日常浏览更方便，也意味着应把浏览器看成一个共享的本地身份。清除浏览数据会
+影响这个本地实例里的所有组织。
 
 <a id="operating-boundaries" />
 
-## 操作边界
+## Agent 标签页彼此隔离
 
-负责人的链接打开方式和 Agent Browser 权限是两个独立设置。让链接改用系统浏览器，不会关闭 Agent 工具。关闭 Agent 权限后，Agent 标签页会被关闭，之后的运行也不再获得工具；负责人的标签页、共享网站数据和链接偏好会保留。
+Agent 只能使用 Rudder 为当前工作打开的浏览器标签页。它拿不到原始 Cookie、
+保存的密码、任意页面脚本，也看不到其他运行的标签页。
 
-风险最高的是共享网站身份。同一本地实例中的组织共用网站配置，但任何一次运行都不会因此获得整个配置。Agent 无法读取 Cookie、密码，不能执行任意网页脚本，也不能取得原始 CDP 或自行提供身份。清除 Browser 数据会影响整个本地实例，因此必须明确确认。
+把自己的链接改用系统浏览器，不会关闭 Agent 浏览器。关闭 Agent 访问会关掉
+受控标签页，但会保留你的标签页和网站数据。
 
-支持的信任和平台边界见[权限和平台参考](/zh/reference/permissions-and-platforms)。
+Agent 浏览器适用于 Desktop 本地可信模式下受支持的 Codex、Claude、OpenCode
+和 Pi 本地运行工具。在 macOS 上，经确认后可以从指定 Chrome、Edge 或 Brave
+配置导入受支持的 Cookie。
+
+参见[权限与平台](/zh/reference/permissions-and-platforms)。

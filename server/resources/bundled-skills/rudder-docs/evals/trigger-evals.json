@@ -28,7 +28,7 @@
     "should_trigger": true
   },
   {
-    "query": "Before hiring a Founding Engineer in Rudder, compare the installed Codex runtime configuration with existing agents and explain the correct role, title, reportsTo, SOUL.md, desiredSkills, and sourceIssueId fields.",
+    "query": "Before hiring a Founding Engineer in Rudder, compare the installed Codex runtime configuration with existing agents and explain the correct role, title, SOUL.md, desiredSkills, and sourceIssueId fields.",
     "should_trigger": true
   },
   {

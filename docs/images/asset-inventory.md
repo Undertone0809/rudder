@@ -9,7 +9,7 @@ copy the matching files into this directory.
 
 | File | Purpose | Suggested reference page | Desktop/mobile crop notes |
 | --- | --- | --- | --- |
-| `board-overview.png` | Dashboard overview with active agents and English issue summaries. | `docs/index.mdx`, `docs/concepts/overview.mdx` | Desktop 1440 x 960. Keep the left rail and full agent grid visible. |
+| `board-overview.png` | Dashboard overview with active agents and English issue summaries. | `docs/concepts/overview.mdx` | Desktop 1440 x 960. Keep the left rail and full agent grid visible. |
 | `issue-flow.png` | Issue tracker list with projects, statuses, assignees, and dates. | `docs/concepts/issues.mdx`, `docs/concepts/goals-projects-issues.mdx` | Desktop 1440 x 960. Do not crop the left project slices or status column. |
 | `mobile-dashboard.png` | Mobile dashboard with English agent cards and bottom navigation. | Responsive/mobile docs callouts when needed. | Mobile 780 x 1688. Preserve the header, first two cards, and bottom navigation. |
 | `organization-work.png` | Organization workspaces surface with managed paths and resources. | `docs/get-started/first-organization.mdx` | Desktop 1440 x 960. Keep both workspace and resource columns visible. |
@@ -20,6 +20,8 @@ copy the matching files into this directory.
 | `agent-detail.png` | Agent skills tab showing personal skill management for one agent. | `docs/concepts/skills.mdx` | Desktop 1440 x 960. Keep agent navigation and the skills management view visible. |
 | `agent-run-detail.png` | Agent run detail with persisted transcript and run evidence. | `docs/get-started/first-organization.mdx` | Desktop 1440 x 960. Keep the run list and selected transcript pane visible. |
 | `messenger-approvals.png` | Messenger attention surface with pending decision, linked work context, and thread list. | `docs/concepts/chat-messenger.mdx` | Desktop 1440 x 960. Keep thread list, decision body, and right context panel visible. |
+| `release-v0.6.0-messenger-workbench.png` | v0.6.0 release screenshot showing the persistent Messenger workbench alongside a local dashboard. | `docs/releases.mdx`, `docs/zh/releases.mdx` | User-approved production-like Desktop screenshot. Keep the Messenger groups, promoted local app tab, and dashboard visible. |
+| `release-v0.4.5-messenger-issue-workspace.png` | v0.4.5 release screenshot showing Messenger alongside issue details in the side panel. | `docs/releases.mdx`, `docs/zh/releases.mdx` | User-approved production-like Desktop screenshot. Keep the main Chat, composer, and Issue detail visible. |
 | `chat-create-issue-proposal.png` | Chat task thread showing an operator-requested issue proposal as optional structure. | `docs/concepts/chat-messenger.mdx`, `docs/get-started/first-organization.mdx` | Desktop crop from the Messenger chat surface. Keep the proposal block and composer context visible. |
 | `calendar-work-history.png` | Calendar view over agent run history and human checkpoints. | `docs/concepts/calendar.mdx`, `docs/get-started/first-organization.mdx` | Desktop 1440 x 960. Keep the week grid, dense run blocks, and source filters visible. |
 | `workspaces-resources.png` | Workspaces and resources view focused on injected project inputs and durable output paths. | `docs/concepts/workspaces.mdx` | Desktop 1440 x 960. Keep both workspaces and resources panels visible. |

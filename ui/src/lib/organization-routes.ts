@@ -119,3 +119,9 @@ export function toOrganizationRelativePath(path: string): string {
 
   return `${pathname}${search}${hash}`;
 }
+
+export function isLegacyOrganizationSettingsRedirectPath(path: string): boolean {
+  const { pathname } = splitPath(toOrganizationRelativePath(path));
+  const normalizedPathname = pathname.toLowerCase();
+  return normalizedPathname === "/org" || normalizedPathname === "/org/";
+}

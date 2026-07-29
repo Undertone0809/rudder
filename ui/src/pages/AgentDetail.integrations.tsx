@@ -4,11 +4,13 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   AgentBrowserToolSummary,
@@ -21,29 +23,44 @@ import type {
   CustomIntegrationKind,
   CustomIntegrationScope,
   CustomIntegrationSummary,
+  McpAgentAccessMode,
+  McpConnectionProvider,
+  McpConnectionScope,
+  McpProviderAvailability,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Braces,
   CalendarDays,
+  ChevronDown,
   ExternalLink,
-  FileText,
   FolderOpen,
   Github,
   Inbox,
   KeyRound,
   Loader2,
-  MessageSquareText,
   PlugZap,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { agentsApi } from "../api/agents";
+import { ApiError } from "../api/client";
+import { managedMcpApi } from "../api/managedMcp";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
+import { McpProviderIcon } from "../components/McpProviderIcon";
 import { useToast } from "../context/ToastContext";
+import {
+  applyOrganizationPrefix,
+  extractOrganizationPrefixFromPath,
+} from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
+import { buildSettingsOverlayState } from "../lib/settings-overlay-state";
 import { cn, formatDateTime } from "../lib/utils";
+import { AgentManagedMcpConnections } from "./AgentManagedMcpConnections";
+import { AgentProviderAccessDialog } from "./AgentProviderAccessDialog";
+import { reserveAuthorizationLauncher } from "./OrganizationMcpSettings";
 
 type IntegrationState = "not_configured" | "active" | "revoked" | "error";
 
@@ -51,9 +68,7 @@ type UpcomingIntegrationId =
   | "gmail"
   | "google_calendar"
   | "google_drive"
-  | "notion"
-  | "github"
-  | "linear";
+  | "github";
 
 type IntegrationCategory = "message" | "productivity" | "developer";
 type IntegrationsView = "discover" | "manage";
@@ -102,16 +117,6 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     Icon: FolderOpen,
   },
   {
-    id: "notion",
-    name: "Notion",
-    description: "Search pages, databases, and operating notes.",
-    connectionScope: "Workspace",
-    actionLabel: "Coming soon",
-    category: "productivity",
-    logoSrc: "/brands/notion-logo.svg",
-    Icon: FileText,
-  },
-  {
     id: "github",
     name: "GitHub",
     description: "Clone and inspect repositories during agent runs.",
@@ -121,15 +126,33 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     logoSrc: "/brands/github-logo.svg",
     Icon: Github,
   },
+];
+
+type ManagedMcpProviderDefinition = {
+  id: "supabase" | "notion" | "linear";
+  name: string;
+  description: string;
+  category: Extract<IntegrationCategory, "productivity" | "developer">;
+};
+
+const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
+  {
+    id: "notion",
+    name: "Notion",
+    description: "Search pages, databases, and operating notes through organization-managed MCP tools.",
+    category: "productivity",
+  },
+  {
+    id: "supabase",
+    name: "Supabase",
+    description: "Use the organization’s Supabase account and choose the project needed for each task.",
+    category: "developer",
+  },
   {
     id: "linear",
     name: "Linear",
-    description: "Link delivery issues and sync engineering work state.",
-    connectionScope: "Developer",
-    actionLabel: "Coming soon",
+    description: "Work with the organization’s Linear workspace through managed MCP tools.",
     category: "developer",
-    logoSrc: "/brands/linear-logo.svg",
-    Icon: MessageSquareText,
   },
 ];
 
@@ -232,11 +255,22 @@ interface AgentIntegrationsTabProps {
 export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [providerRegion, setProviderRegion] = useState<AgentIntegrationProviderRegion>("feishu_cn");
   const [setupSession, setSetupSession] = useState<AgentIntegrationSetupSession | null>(null);
   const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
   const [integrationsView, setIntegrationsView] = useState<IntegrationsView>("discover");
   const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
+  const [managedProvider, setManagedProvider] = useState<McpProviderAvailability | null>(null);
+  const [managedProviderAccess, setManagedProviderAccess] = useState<McpAgentAccessMode>("none");
+  const [managedProviderConflict, setManagedProviderConflict] = useState("");
+  const [connectionTargetProvider, setConnectionTargetProvider] = useState<McpProviderAvailability | null>(null);
+  const [connectionTarget, setConnectionTarget] = useState<{
+    scope: McpConnectionScope;
+    ownerAgentId: string | null;
+  }>({ scope: "agent", ownerAgentId: agent.id });
+  const managedProviderTriggerRef = useRef<HTMLElement | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
@@ -247,13 +281,119 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     queryFn: () => agentsApi.listCustomIntegrations(agent.id, orgId),
     initialData: [] as CustomIntegrationSummary[],
   });
+  const managedMcpConnectionsQuery = useQuery({
+    queryKey: queryKeys.agents.mcpConnections(agent.id),
+    queryFn: () => agentsApi.listMcpConnections(agent.id, orgId),
+  });
+  const managedMcpProviderStatusQuery = useQuery({
+    queryKey: queryKeys.agents.mcpProviderStatus(agent.id),
+    queryFn: () => agentsApi.listMcpProviderStatus(agent.id, orgId),
+  });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
+  const managedMcpConnections = managedMcpConnectionsQuery.data ?? [];
+  const managedMcpProviderStatuses = managedMcpProviderStatusQuery.data ?? [];
   const rudderTools = agent.rudderTools ?? [];
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const isActive = state === "active";
   const shouldShowSetupPrompt = !feishuIntegration || state !== "active";
+  const openManagedProvider = (status: McpProviderAvailability) => {
+    managedProviderTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setManagedProvider(status);
+    setManagedProviderAccess(status.agent?.access ?? "none");
+    setManagedProviderConflict("");
+  };
+  const updateManagedProviderAccess = useMutation({
+    mutationFn: async () => {
+      const effectiveConnectionId = managedProvider?.agent?.effectiveConnectionId;
+      if (!effectiveConnectionId) {
+        throw new Error("No effective connection is available");
+      }
+      const row = managedMcpConnections.find(
+        (candidate) => candidate.connection.id === effectiveConnectionId,
+      );
+      return agentsApi.updateMcpConnectionBinding(
+        agent.id,
+        effectiveConnectionId,
+        {
+          accessMode: managedProviderAccess,
+          status: managedProviderAccess === "none" ? "disabled" : "active",
+          ...(row?.binding ? { expectedRevision: row.binding.policyRevision } : {}),
+        },
+        orgId,
+      );
+    },
+    onSuccess: async () => {
+      setManagedProvider(null);
+      pushToast({ title: "Agent access updated", tone: "success" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.mcpConnections(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.mcpProviderStatus(agent.id) }),
+      ]);
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        setManagedProviderConflict("Settings changed elsewhere. Review the latest access and try again.");
+        const [statusResult] = await Promise.all([
+          managedMcpProviderStatusQuery.refetch(),
+          managedMcpConnectionsQuery.refetch(),
+        ]);
+        const latest = statusResult?.data?.find(
+          (candidate) => candidate.provider === managedProvider?.provider,
+        );
+        if (latest) {
+          setManagedProvider(latest);
+          setManagedProviderAccess(latest.agent?.access ?? "none");
+        }
+        return;
+      }
+      pushToast({
+        title: "Could not update agent access",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+  const connectManagedProvider = useMutation({
+    mutationFn: async () => {
+      if (!orgId || !connectionTargetProvider) throw new Error("Connection target is unavailable");
+      const launcher = reserveAuthorizationLauncher();
+      try {
+        const connection = await managedMcpApi.ensureOfficialConnection(
+          orgId,
+          connectionTargetProvider.provider as Exclude<McpConnectionProvider, "custom">,
+          connectionTarget,
+        );
+        const result = await managedMcpApi.startOAuth(orgId, connection.id);
+        await launcher.navigate(result.authorizationUrl);
+        return connection;
+      } catch (error) {
+        launcher.close();
+        throw error;
+      }
+    },
+    onSuccess: async () => {
+      setConnectionTargetProvider(null);
+      setManagedProvider(null);
+      pushToast({
+        title: "Authorization opened",
+        body: "Finish provider authorization in the browser.",
+        tone: "info",
+      });
+      await Promise.all([
+        managedMcpConnectionsQuery.refetch(),
+        managedMcpProviderStatusQuery.refetch(),
+      ]);
+    },
+    onError: (error) => pushToast({
+      title: "Could not start authorization",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
+  });
   const openSetup = useMutation({
     mutationFn: () => agentsApi.startFeishuSetupSession(agent.id, {
       providerRegion,
@@ -427,39 +567,40 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     integration.status === "active" && integration.binding?.status === "active"
   ));
   const hasManagedIntegrations = rudderTools.length > 0 || Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
+  const closeManagedProvider = () => {
+    setManagedProvider(null);
+    requestAnimationFrame(() => managedProviderTriggerRef.current?.focus());
+  };
 
   return (
-    <div className="max-w-5xl space-y-5">
-      <div className="inline-flex rounded-[var(--menu-radius)] border border-border bg-muted/30 p-0.5">
-        {(["discover", "manage"] as const).map((view) => (
-          <button
-            key={view}
-            type="button"
-            className={cn(
-              "h-8 rounded-[calc(var(--menu-radius)-2px)] px-3 text-sm font-medium transition-colors",
-              integrationsView === view
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => setIntegrationsView(view)}
-          >
-            {view === "discover" ? "Discover" : "Manage"}
-          </button>
-        ))}
-      </div>
+    <Tabs
+      value={integrationsView}
+      onValueChange={(next) => setIntegrationsView(next as IntegrationsView)}
+      className="max-w-5xl gap-5"
+    >
+      <TabsList aria-label="Agent integrations">
+        <TabsTrigger value="discover" onClick={() => setIntegrationsView("discover")}>
+          Discover
+        </TabsTrigger>
+        <TabsTrigger value="manage" onClick={() => setIntegrationsView("manage")}>
+          Manage
+        </TabsTrigger>
+      </TabsList>
 
-      {integrationsView === "discover" ? (
+      <TabsContent value="discover">
           <div className="space-y-6">
-            <IntegrationCategorySection title="Custom tools">
+            <IntegrationCategorySection title="Agent-scoped custom API">
               <CustomIntegrationSetupCard
                 kind="custom_api"
                 active={customForm?.kind === "custom_api"}
                 onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
               />
-              <CustomIntegrationSetupCard
-                kind="mcp_server"
-                active={customForm?.kind === "mcp_server"}
-                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("mcp_server"))}
+            </IntegrationCategorySection>
+            <IntegrationCategorySection title="Organization MCPs">
+              <AgentManagedMcpConnections
+                agentId={agent.id}
+                orgId={orgId}
+                providers={["custom"]}
               />
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Message">
@@ -478,6 +619,19 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Productivity">
+              {MANAGED_MCP_PROVIDER_INTEGRATIONS
+                .filter((integration) => integration.category === "productivity")
+                .map((integration) => (
+                  <ManagedMcpProviderCard
+                    key={integration.id}
+                    integration={integration}
+                    status={managedMcpProviderStatuses.find((status) => status.provider === integration.id)}
+                    loading={managedMcpProviderStatusQuery.isLoading}
+                    loadFailed={managedMcpProviderStatusQuery.isError}
+                    onManage={openManagedProvider}
+                    onRetry={() => void managedMcpProviderStatusQuery.refetch()}
+                  />
+                ))}
               {UPCOMING_INTEGRATIONS
                 .filter((integration) => integration.category === "productivity")
                 .map((integration) => (
@@ -488,6 +642,19 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Developer">
+              {MANAGED_MCP_PROVIDER_INTEGRATIONS
+                .filter((integration) => integration.category === "developer")
+                .map((integration) => (
+                  <ManagedMcpProviderCard
+                    key={integration.id}
+                    integration={integration}
+                    status={managedMcpProviderStatuses.find((status) => status.provider === integration.id)}
+                    loading={managedMcpProviderStatusQuery.isLoading}
+                    loadFailed={managedMcpProviderStatusQuery.isError}
+                    onManage={openManagedProvider}
+                    onRetry={() => void managedMcpProviderStatusQuery.refetch()}
+                  />
+                ))}
               {UPCOMING_INTEGRATIONS
                 .filter((integration) => integration.category === "developer")
                 .map((integration) => (
@@ -498,8 +665,17 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
           </div>
-        ) : (
+      </TabsContent>
+      <TabsContent value="manage">
           <div className="space-y-4">
+            <IntegrationManageGroup title="External MCPs">
+              <AgentManagedMcpConnections
+                agentId={agent.id}
+                orgId={orgId}
+                providerStatuses={managedMcpProviderStatuses}
+                showOnlyEnabled
+              />
+            </IntegrationManageGroup>
             {integrationsQuery.isLoading || customIntegrationsQuery.isLoading ? (
               <IntegrationRowSkeleton />
             ) : hasManagedIntegrations ? (
@@ -542,12 +718,12 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               </div>
             ) : (
               <div className="rounded-md border border-dashed border-border bg-background/30 px-4 py-8 text-center">
-                <p className="text-sm font-medium text-foreground">No connected integrations</p>
-                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect tools for this agent.</p>
+                <p className="text-sm font-medium text-foreground">No other connected integrations</p>
+                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect messaging or legacy custom tools.</p>
               </div>
             )}
           </div>
-        )}
+      </TabsContent>
       <Dialog
         open={Boolean(customForm)}
         onOpenChange={(open) => {
@@ -654,7 +830,44 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+      <AgentProviderAccessDialog
+        provider={managedProvider}
+        access={managedProviderAccess}
+        conflictMessage={managedProviderConflict}
+        pending={updateManagedProviderAccess.isPending}
+        onAccessChange={setManagedProviderAccess}
+        onClose={closeManagedProvider}
+        onSave={() => updateManagedProviderAccess.mutate()}
+        onAddConnection={() => {
+          if (!managedProvider) return;
+          setConnectionTarget({ scope: "agent", ownerAgentId: agent.id });
+          setConnectionTargetProvider(managedProvider);
+          setManagedProvider(null);
+        }}
+        onOpenOrganizationSettings={() => {
+          const prefix = extractOrganizationPrefixFromPath(location.pathname);
+          setManagedProvider(null);
+          void navigate(
+            applyOrganizationPrefix("/organization/settings?view=integrations", prefix),
+            { state: buildSettingsOverlayState(location) },
+          );
+        }}
+      />
+      <AgentConnectionTargetDialog
+        provider={connectionTargetProvider}
+        agent={agent}
+        target={connectionTarget}
+        pending={connectManagedProvider.isPending}
+        connections={managedMcpConnections.map((row) => row.connection)}
+        onTargetChange={setConnectionTarget}
+        onClose={() => setConnectionTargetProvider(null)}
+        onManageExisting={() => {
+          setConnectionTargetProvider(null);
+          setManagedProvider(connectionTargetProvider);
+        }}
+        onConfirm={() => connectManagedProvider.mutate()}
+      />
+    </Tabs>
   );
 }
 
@@ -677,16 +890,18 @@ function IntegrationManageGroup({
   children,
 }: {
   title: string;
-  count: number;
+  count?: number;
   children: ReactNode;
 }) {
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-          {count}
-        </span>
+        {count !== undefined ? (
+          <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+            {count}
+          </span>
+        ) : null}
       </div>
       <div className="space-y-2">{children}</div>
     </section>
@@ -785,11 +1000,192 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
   );
 }
 
+function ManagedMcpProviderCard({
+  integration,
+  status,
+  loading,
+  loadFailed,
+  onManage,
+  onRetry,
+}: {
+  integration: ManagedMcpProviderDefinition;
+  status?: McpProviderAvailability;
+  loading: boolean;
+  loadFailed: boolean;
+  onManage: (status: McpProviderAvailability) => void;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <Skeleton className="h-24 w-full" aria-label={`Loading ${integration.name} status`} />;
+  }
+  const organizationState = status?.organization.state ?? "not_connected";
+  const agentConnectionState = status?.agent?.connection?.state ?? "not_connected";
+  const agentAccess = status?.agent?.access ?? "none";
+  const connected = Boolean(status?.agent && status.agent.effectiveSource !== "none");
+  const explicitlyDisabled = status?.agent?.explicitlyDisabled ?? false;
+  const enabled = connected && agentAccess !== "none" && !explicitlyDisabled;
+  const displayStatus = loadFailed
+    ? "Unavailable"
+    : explicitlyDisabled
+      ? "Disabled for this agent"
+    : enabled
+      ? agentAccess === "read_only"
+        ? "Read only"
+        : agentAccess === "read_write"
+          ? "Read & write"
+          : "Provider-granted access"
+    : connected
+      ? "Available"
+      : agentConnectionState === "connecting" || organizationState === "connecting"
+        ? "Connecting"
+        : agentConnectionState === "needs_attention" || organizationState === "needs_attention"
+          ? "Needs attention"
+      : "Not connected";
+  const statusTone = loadFailed
+    ? "border-destructive/25 bg-destructive/10 text-destructive"
+    : enabled
+    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    : connected
+      ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      : "border-border bg-muted text-muted-foreground";
+  const details = loadFailed
+    ? "Managed MCP status could not be loaded."
+    : explicitlyDisabled
+      ? "This agent explicitly blocks the organization connection."
+    : enabled
+      ? "Available during this agent’s next run."
+      : connected
+        ? "A connection is ready for this agent."
+        : null;
+
+  return (
+    <div
+      data-testid={`managed-mcp-provider-${integration.id}`}
+      className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <McpProviderIcon provider={integration.id} />
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{integration.name}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Organization MCP
+            </span>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
+              {displayStatus}
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">{integration.description}</p>
+          {details ? <p className="text-xs text-muted-foreground">{details}</p> : null}
+        </div>
+      </div>
+      {loadFailed ? (
+        <IntegrationActionButton variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </IntegrationActionButton>
+      ) : status ? (
+        <IntegrationActionButton
+          variant="outline"
+          size="sm"
+          onClick={() => onManage(status)}
+          aria-label={`Manage ${integration.name}`}
+        >
+          Manage
+        </IntegrationActionButton>
+      ) : (
+        <IntegrationActionButton variant="outline" size="sm" disabled>
+          Manage
+        </IntegrationActionButton>
+      )}
+    </div>
+  );
+}
+
+function AgentConnectionTargetDialog({
+  provider,
+  agent,
+  target,
+  pending,
+  connections,
+  onTargetChange,
+  onClose,
+  onManageExisting,
+  onConfirm,
+}: {
+  provider: McpProviderAvailability | null;
+  agent: AgentDetail;
+  target: { scope: McpConnectionScope; ownerAgentId: string | null };
+  pending: boolean;
+  connections: Array<{
+    provider: McpConnectionProvider;
+    scope: McpConnectionScope;
+    ownerAgentId: string | null;
+    status: string;
+  }>;
+  onTargetChange: (target: { scope: McpConnectionScope; ownerAgentId: string | null }) => void;
+  onClose: () => void;
+  onManageExisting: () => void;
+  onConfirm: () => void;
+}) {
+  if (!provider) return null;
+  const name = provider.provider[0]!.toUpperCase() + provider.provider.slice(1);
+  const existing = connections.some((connection) => (
+    connection.provider === provider.provider
+    && connection.scope === target.scope
+    && connection.ownerAgentId === target.ownerAgentId
+    && connection.status !== "revoked"
+  ));
+  return (
+    <Dialog open onOpenChange={(open) => {
+      if (!open && !pending) onClose();
+    }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <McpProviderIcon provider={provider.provider} />
+            <DialogTitle>{name}</DialogTitle>
+          </div>
+          <DialogDescription>
+            Connect a separate credential for this agent or share one with the organization.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-dashed border-border p-4">
+          <label className="space-y-2 text-sm font-medium text-foreground">
+            <span>Enable for</span>
+            <span className="relative block">
+              <select
+                aria-label="Enable for"
+                className="h-10 w-full appearance-none rounded-md border border-input bg-background py-0 pr-10 pl-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={target.scope}
+                onChange={(event) => onTargetChange(event.target.value === "organization"
+                  ? { scope: "organization", ownerAgentId: null }
+                  : { scope: "agent", ownerAgentId: agent.id })}
+              >
+                <option value="agent">{agent.name}</option>
+                <option value="organization">Organization</option>
+              </select>
+              <ChevronDown
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground"
+                data-testid="connection-target-chevron"
+              />
+            </span>
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+          <Button disabled={pending} onClick={existing ? onManageExisting : onConfirm}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {existing ? "Manage" : "Connect"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeIntegrationSummary }) {
   const available = integration.status === "available";
-  const toolListLabel = integration.kind === "rudder_mcp"
-    ? "Rudder MCP tools list"
-    : "Rudder Browser tools list";
   return (
     <div
       className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
@@ -797,12 +1193,9 @@ function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeInt
     >
       <div className="flex min-w-0 items-start gap-3">
         <IntegrationBrandIcon src="/rudder-logo.png" name="Rudder" />
-        <div className="min-w-0 space-y-2">
+        <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
-            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-              {integration.contract}
-            </span>
             <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               Built-in
             </span>
@@ -815,27 +1208,9 @@ function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeInt
               {available ? "Available" : "Disabled"}
             </span>
           </div>
-          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <IntegrationMeta label="Server" value={integration.serverName} />
-            <IntegrationMeta label="Tools" value={`${integration.toolCount} exposed`} />
-            <IntegrationMeta
-              label="Auth"
-              value={integration.authMode === "runtime_managed" ? "Runtime managed" : integration.authMode}
-            />
-          </dl>
-          <div
-            className="flex max-h-32 max-w-3xl flex-wrap gap-1 overflow-y-auto pr-1"
-            aria-label={toolListLabel}
-          >
-            {integration.tools.map((tool) => (
-              <span
-                key={tool}
-                className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] leading-5 text-muted-foreground"
-              >
-                {tool}
-              </span>
-            ))}
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Managed automatically by the Rudder runtime.
+          </p>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
@@ -1076,7 +1451,6 @@ interface CustomIntegrationRowProps {
 }
 
 function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomIntegrationRowProps) {
-  const enabledTools = integration.tools.filter((tool) => tool.enabled);
   const Icon = integration.kind === "mcp_server" ? PlugZap : Braces;
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
@@ -1102,8 +1476,7 @@ function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomInt
               {integration.binding?.status === "active" && integration.status === "active" ? "Connected" : "Disconnected"}
             </span>
           </div>
-          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <IntegrationMeta label="Tools" value={enabledTools.length > 0 ? enabledTools.map((tool) => tool.rudderToolName).join(", ") : "No tools enabled"} />
+          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
             <IntegrationMeta label="Credentials" value={integration.hasCredentialSecret ? "Credential stored" : "No credential"} />
             <IntegrationMeta label="Updated" value={formatDateTime(integration.updatedAt)} />
           </dl>
@@ -1150,11 +1523,16 @@ function FeishuSetupPrompt({
         bot name prefilled; after you confirm, Rudder stores the app credential and starts the chat connection.
       </p>
       <FeishuQuickCommandSetupNote providerName={providerName} />
-      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+      <div
+        className="inline-flex rounded-[calc(var(--control-radius)+2px)] border border-border bg-muted/30 p-0.5"
+        role="group"
+        aria-label="Feishu or Lark region"
+      >
         <button
           type="button"
+          aria-pressed={providerRegion === "feishu_cn"}
           className={cn(
-            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            "h-7 rounded-[var(--control-radius)] px-2.5 text-xs font-medium transition-colors",
             providerRegion === "feishu_cn"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -1166,8 +1544,9 @@ function FeishuSetupPrompt({
         </button>
         <button
           type="button"
+          aria-pressed={providerRegion === "lark_global"}
           className={cn(
-            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            "h-7 rounded-[var(--control-radius)] px-2.5 text-xs font-medium transition-colors",
             providerRegion === "lark_global"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",

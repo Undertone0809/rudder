@@ -1,6 +1,6 @@
 ---
-title: "Configure Feishu or Lark"
-description: "Connect one Rudder Agent to a Feishu or Lark bot and verify the provider-bound conversation and Run evidence."
+title: "Connect an Agent to Feishu or Lark"
+description: "Authorize a Feishu or Lark bot, send a test message, and find the same conversation in Rudder."
 icon: "messages-square"
 keywords:
   - "Feishu Agent integration"
@@ -12,70 +12,65 @@ hreflang_en: "https://docs.rudderhq.dev/how-to/configure-feishu-integration"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration"
 ---
 
+This connection lets people message a Rudder Agent from Feishu or Lark. The
+conversation and its Agent Runs remain visible in Rudder.
+
 <a id="completed-state" />
 
-## Completed state
+## What you will connect
 
-At the end of this guide, one Rudder Agent has an active Feishu or Lark
-integration. A plain text message reaches a provider-bound Messenger
-conversation, the Agent replies, and the source conversation and Agent Run show
-Feishu source evidence.
+One Agent to one Feishu CN or Lark Global bot. A text message will reach the
+Agent, and its reply will return to the same provider conversation.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-Prepare a working Agent and permission to authorize or create an app in the
-target Feishu CN or Lark Global workspace. You also need to be a member of the
-Rudder organization if you expect setup to bind your provider identity
-automatically.
+You need:
 
-The example connects the release writer to a team release chat. One integration
-belongs to one organization and one Agent.
+- a working Rudder Agent
+- permission to authorize or create an app in the Feishu or Lark workspace
+- an active Rudder organization membership for the person doing setup
 
 <a id="case-backed-steps" />
 
-## Connect the release writer
+## Connect and test
 
-1. Open the release writer's Agent detail, then open **Integrations**.
-2. Start the Feishu setup and choose **Feishu CN** or **Lark Global** for the
-   workspace you actually use.
-3. Rudder opens the provider's app authorization page with a safe suggested bot
-   name. Review the requested bot, message, reaction, command, and receive-event
-   permissions, then authorize the app.
-4. Return to Rudder. The setup page checks until credentials are stored as an
-   organization secret and the Agent integration is active.
-5. Send the bot a plain text request in the release chat. In a group, address
-   the bot explicitly.
-6. Open Messenger and find the conversation with the **Feishu** source badge.
-   Open its Agent Run and confirm **Source: Feishu**.
-7. Use `/new` if you want the next message to begin a fresh bound Rudder
-   conversation. Use `/stop` while a reply is active when you need to stop it.
+1. Open the Agent, then open **Integrations**.
+2. Choose **Connect Feishu / Lark**.
+3. Select **Feishu CN** or **Lark Global** to match the workspace you use.
+4. Rudder opens the provider authorization page with a suggested bot name.
+   Review the requested message, reaction, command, and event permissions.
+5. Authorize the app and return to Rudder. Wait until the integration shows as
+   active.
+6. Send the bot a plain-text test request. In a group chat, address the bot
+   explicitly.
+7. Open Messenger and find the conversation with the Feishu source badge.
+8. Open its Agent Run and confirm that the source is Feishu.
 
-Daily rollover is enabled by default with a 24-hour window. It happens only
-when the next inbound message arrives after the window. Quiet chats do not
-create empty sessions in the background.
+Use `/new` when the next message should start a fresh Rudder conversation. Use
+`/stop` to stop an active reply.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the result
 
-The sender's message and the Agent reply remain visible in Feishu or Lark. The
-same exchange is auditable in a provider-bound Rudder conversation, and the
-originating Run carries Feishu source metadata. A rich Markdown card may fall
-back to plain text only when the provider explicitly rejects the card payload.
+The sender's message and Agent reply should be visible in Feishu or Lark. Rudder
+Messenger should show the same exchange and a linked Agent Run.
 
 <a id="recovery" />
 
-## Recovery
+## Common problems
 
-If authorization remains pending after Rudder restarts, start a new setup
-session because unfinished setup is not preserved across a restart. If the
-wrong provider page opens, restart and select the correct region. If a sender
-receives binding instructions, bind that Feishu identity to an active Rudder
-member and resend.
+- **Setup stayed pending after Rudder restarted:** start a new setup; unfinished
+  authorization does not survive a restart.
+- **The wrong provider page opened:** restart setup and choose the correct
+  region.
+- **The bot asks the sender to bind an identity:** connect that Feishu identity
+  to an active Rudder member, then resend.
+- **A group message is ignored:** address the bot directly.
+- **A reply fails:** open the provider conversation and Agent Run to find the
+  error.
 
-If a group message is ignored, address the bot. If the reply fails, inspect the
-provider-bound conversation, outbound status, and Agent Run. Continue the same
-context locally only by forking the Feishu conversation; the source conversation
-is read-only in Rudder, and the fork no longer sends messages back to Feishu.
+Provider-backed conversations are read-only in Rudder. Fork one when you want
+to continue locally without sending later replies back to Feishu.

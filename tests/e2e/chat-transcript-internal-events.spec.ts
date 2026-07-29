@@ -110,7 +110,7 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await page.screenshot({ path: "/tmp/rudder-user-message-lifecycle-hidden.png", fullPage: true });
 });
 
-test("shows concrete Codex spawn-agent details in Messenger process activity", async ({ page }) => {
+test("shows concrete Codex sub-agent activity in Messenger process details", async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Chat-Transcript-Spawn-Agent-${Date.now()}` },
   });
@@ -146,60 +146,56 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
         {
           kind: "tool_call",
           ts: "2026-07-23T00:00:01.000Z",
-          name: "spawn_agent",
-          toolUseId: "collab-agent-1",
+          name: "subagent_activity",
+          toolUseId: "subagent-activity-1",
           input: {
-            id: "collab-agent-1",
-            message: "Review the transcript renderer for collaboration events.",
-            receiver_thread_ids: [],
-          },
-        },
-        {
-          kind: "tool_result",
-          ts: "2026-07-23T00:00:02.000Z",
-          toolUseId: "collab-agent-1",
-          toolName: "spawn_agent",
-          content: JSON.stringify({
-            status: "completed",
+            id: "subagent-activity-1",
+            activity_kind: "started",
+            agent_path: "/root/transcript_renderer_review",
             receiver_thread_ids: ["thread-child-1"],
-            model: "gpt-5.6-sol",
-            reasoning_effort: "high",
-            agents_states: {
-              "thread-child-1": { status: "inProgress" },
-            },
             agent_transcripts: {
               "thread-child-1": {
-                status: "inProgress",
+                status: "completed",
                 entries: [
                   {
                     kind: "thinking",
                     ts: "2026-07-23T00:00:01.250Z",
                     text: "I’ll inspect how collaboration rows are normalized and rendered.",
                   },
+                  {
+                    kind: "tool_call",
+                    ts: "2026-07-23T00:00:01.500Z",
+                    name: "command_execution",
+                    toolUseId: "child-command-1",
+                    input: { command: "rg -n \"spawn_agent\" ui/src/components/transcript" },
+                  },
+                  {
+                    kind: "tool_result",
+                    ts: "2026-07-23T00:00:01.750Z",
+                    toolUseId: "child-command-1",
+                    content: "ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+                    isError: false,
+                  },
+                  {
+                    kind: "assistant",
+                    ts: "2026-07-23T00:00:02.000Z",
+                    text: "Review passed.",
+                  },
                 ],
               },
             },
-          }),
-          isError: false,
-        },
-        {
-          kind: "tool_call",
-          ts: "2026-07-23T00:00:01.500Z",
-          name: "wait_agent",
-          toolUseId: "wait-agent-1",
-          input: { receiver_thread_ids: ["thread-child-1"] },
+          },
         },
         {
           kind: "tool_result",
           ts: "2026-07-23T00:00:02.000Z",
-          toolUseId: "wait-agent-1",
-          toolName: "wait_agent",
+          toolUseId: "subagent-activity-1",
+          toolName: "subagent_activity",
           content: JSON.stringify({
             status: "completed",
+            activity_kind: "started",
+            agent_path: "/root/transcript_renderer_review",
             receiver_thread_ids: ["thread-child-1"],
-            agents_states: {
-              "thread-child-1": { status: "completed", message: "Review passed." },
-            },
             agent_transcripts: {
               "thread-child-1": {
                 status: "completed",
@@ -250,23 +246,19 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
   await expect(page.getByText("The independent review passed.", { exact: true })).toBeVisible();
   const transcript = page.getByTestId("chat-transcript-item");
   await transcript.getByRole("button").first().click();
-  await transcript.getByRole("button", { name: "Expand tool activity" }).click();
-  await expect(transcript).toContainText(
-    "Spawned agent thread-child-1: Review the transcript renderer for collaboration events.",
-  );
-  await expect(transcript).toContainText("gpt-5.6-sol");
-  await expect(transcript).toContainText("high reasoning");
-  await expect(transcript.locator('[data-transcript-agent-avatar="collab-agent-1"]').first()).toBeVisible();
-  await expect(transcript).not.toContainText("Collab Tool Call");
+  await expect(transcript).toContainText("Spawned transcript renderer review agent");
+  await expect(transcript.locator('[data-transcript-agent-avatar="subagent-activity-1"]').first()).toBeVisible();
+  await expect(transcript).not.toContainText("SubAgentActivity");
   await transcript.locator('[data-transcript-agent-inspect="thread-child-1"]').click();
 
   const sidePanel = page.getByTestId("chat-side-panel");
   await expect(sidePanel).toBeVisible();
-  await expect(sidePanel.getByText(/Sub-agent child-1 · Review the transcript renderer/, { exact: false }).first()).toBeVisible();
+  await expect(sidePanel.getByText(/Sub-agent child-1 · Delegated task to/, { exact: false }).first()).toBeVisible();
   await expect(sidePanel.getByText("Transcript Delegation Agent", { exact: true })).toBeVisible();
-  await expect(sidePanel.getByText("Review the transcript renderer for collaboration events.", { exact: true })).toBeVisible();
-  await expect(sidePanel.getByText("I’ll inspect how collaboration rows are normalized and rendered.", { exact: true })).toBeVisible();
-  await expect(sidePanel.getByText("Searched \"spawn_agent\" in ui/src/components/transcript", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByText("Delegated task to /root/transcript_renderer_review", { exact: true })).toBeVisible();
+  const subagentView = sidePanel.getByTestId("chat-side-panel-subagent-view");
+  await expect(subagentView.getByText("I’ll inspect how collaboration rows are normalized and rendered.", { exact: true })).toBeVisible();
+  await expect(subagentView.getByText("Searched \"spawn_agent\" in ui/src/components/transcript", { exact: true })).toBeVisible();
   await expect(sidePanel.getByText("Review passed.", { exact: true })).toBeVisible();
   await expect(sidePanel.getByRole("textbox")).toHaveCount(0);
   await expect(sidePanel.getByRole("button", { name: /send|resume|message agent/i })).toHaveCount(0);
@@ -340,6 +332,24 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+    data: {
+      name: "Systematic Debugging",
+      slug: "systematic-debugging",
+      description: "A deterministic debugging workflow.",
+      markdown: [
+        "---",
+        "name: systematic-debugging",
+        "description: A deterministic debugging workflow.",
+        "---",
+        "",
+        "# Systematic Debugging",
+        "",
+        "Reproduce, isolate, verify.",
+      ].join("\n"),
+    },
+  });
+  expect(skillRes.ok()).toBe(true);
   const agent = await createE2EChatAgent(page.request, organization.id, {
     name: "Transcript File Agent",
     command: E2E_CODEX_STUB,
@@ -357,6 +367,9 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   const chat = await chatRes.json() as { id: string };
   const fileLabel = "rudder-transcript-evidence.md";
   const filePath = `/tmp/${fileLabel}`;
+  const longFileLabel =
+    "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
+  const longFileDisplayName = "models_cache.json";
 
   await e2eDb.insert(chatMessages).values({
     id: randomUUID(),
@@ -399,6 +412,20 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
         },
         {
           kind: "tool_call",
+          ts: "2026-07-21T01:00:02.030Z",
+          name: "read_file",
+          toolUseId: "read-long-1",
+          input: { path: longFileLabel },
+        },
+        {
+          kind: "tool_result",
+          ts: "2026-07-21T01:00:02.040Z",
+          toolUseId: "read-long-1",
+          content: "Model cache",
+          isError: false,
+        },
+        {
+          kind: "tool_call",
           ts: "2026-07-21T01:00:03.000Z",
           name: "command_execution",
           toolUseId: "command-1",
@@ -429,7 +456,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await workedButton.click();
 
   const activityButton = transcript.getByRole("button", { name: "Expand tool activity" });
-  await expect(activityButton).toContainText("Used 1 skill, read 1 file, ran 1 command");
+  await expect(activityButton).toContainText("Used 1 skill, read 2 files, ran 1 command");
   const disclosure = activityButton.locator("[data-transcript-disclosure-chevron]");
   await expect(disclosure).toHaveCSS("opacity", "0");
   await workedButton.focus();
@@ -443,12 +470,52 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-hover.png", fullPage: true });
   await activityButton.click();
 
-  const fileButton = transcript.getByRole("button", { name: `Open file ${fileLabel}` });
+  const fileButton = transcript.getByRole("button", { name: `Open file ${fileLabel}`, exact: true });
   await expect(fileButton).toBeVisible();
   await expect(fileButton).toHaveAttribute("data-transcript-file-target", filePath);
+  const longFileButton = transcript.getByRole("button", {
+    name: `Open file ${longFileDisplayName}`,
+    exact: true,
+  });
+  await expect(longFileButton).toBeVisible();
+  await expect(longFileButton).toHaveAttribute("data-transcript-file-target", longFileLabel);
+  await expect(longFileButton).toHaveText(longFileDisplayName);
+  await expect(transcript).not.toContainText(longFileLabel);
+  await expect(longFileButton).toHaveCSS("text-align", "left");
+  const longPathLayout = await longFileButton.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+    };
+  });
+  expect(longPathLayout.scrollWidth).toBeLessThanOrEqual(longPathLayout.clientWidth + 1);
+  expect(longPathLayout.height).toBeLessThanOrEqual(longPathLayout.lineHeight * 1.5);
   await page.waitForTimeout(250);
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-expanded.png", fullPage: true });
   const chatUrl = page.url();
+  const skillButton = transcript.getByRole("button", {
+    name: "Open skill systematic-debugging",
+    exact: true,
+  });
+  await expect(skillButton).toBeVisible();
+  await skillButton.click();
+  const skillPanel = page.getByTestId("chat-side-panel-skill-file-view");
+  await expect(skillPanel).toBeVisible();
+  await expect(skillPanel).toContainText("Systematic Debugging");
+  await expect(skillPanel).toContainText("Read only");
+  await expect(skillPanel.getByText("Reproduce, isolate, verify.", { exact: true })).toBeVisible();
+  await expect(skillPanel.getByRole("button", { name: /save/i })).toHaveCount(0);
+  await expect(page).toHaveURL(chatUrl);
+  await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel.png", fullPage: true });
+  await skillPanel.getByRole("button", { name: "View skill Markdown source" }).click();
+  await expect(skillPanel.getByTestId("chat-side-panel-skill-source")).toContainText(
+    "name: systematic-debugging",
+  );
+  await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel-source.png", fullPage: true });
+
   await fileButton.click();
   await expect(page.getByTestId("chat-side-panel-local-file-view").or(page.getByRole("alert"))).toContainText("Rudder Desktop");
   await expect(page).toHaveURL(chatUrl);

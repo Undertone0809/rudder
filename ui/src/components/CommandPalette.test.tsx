@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
+import { ActivityCoordinatorScope } from "@/context/ActivityCoordinatorContext";
 import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
+import { ActivityCoordinator } from "@/runtime/activity-coordinator";
 import type { CSSProperties, KeyboardEventHandler, ReactNode } from "react";
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette } from "./CommandPalette";
@@ -244,7 +246,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderCommandPalette() {
+function renderCommandPalette({
+  coordinator,
+  onRender,
+}: {
+  coordinator?: ActivityCoordinator;
+  onRender?: () => void;
+} = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -254,7 +262,16 @@ function renderCommandPalette() {
   };
 
   act(() => {
-    root.render(<CommandPalette />);
+    const palette = (
+      <Profiler id="command-palette" onRender={() => onRender?.()}>
+        <CommandPalette />
+      </Profiler>
+    );
+    root.render(
+      coordinator
+        ? <ActivityCoordinatorScope coordinator={coordinator}>{palette}</ActivityCoordinatorScope>
+        : palette,
+    );
   });
   return container;
 }
@@ -323,6 +340,34 @@ describe("CommandPalette", () => {
 
     expect(observedQueryKeys).toContainEqual(["issues", "org-1", "command-palette", "list", 20]);
     expect(observedQueryKeys).not.toContainEqual(["issues", "org-1"]);
+  });
+
+  it("does not rerender or repeat requests for unrelated ActivityCoordinator updates", () => {
+    const coordinator = new ActivityCoordinator("org-1");
+    let renderCount = 0;
+    const container = renderCommandPalette({
+      coordinator,
+      onRender: () => {
+        renderCount += 1;
+      },
+    });
+    openCommandPalette(container);
+    const settledRenderCount = renderCount;
+    const settledQueryCount = observedQueryKeys.length;
+
+    act(() => {
+      coordinator.updateSummary("chat:background-chat", {
+        status: "running",
+        latestActivityAt: "2026-06-09T12:00:01.000Z",
+      });
+      coordinator.updateSummary("issue:background-issue", {
+        status: "in_progress",
+        latestActivityAt: "2026-06-09T12:00:02.000Z",
+      });
+    });
+
+    expect(renderCount).toBe(settledRenderCount);
+    expect(observedQueryKeys).toHaveLength(settledQueryCount);
   });
 
   it("shows chat search results and navigates to the selected conversation", () => {

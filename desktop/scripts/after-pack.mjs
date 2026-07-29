@@ -10,7 +10,17 @@ async function exists(targetPath) {
   }
 }
 
-async function rewriteInternalPackageManifest(packageDir) {
+function stripTypeExportConditions(value) {
+  if (Array.isArray(value)) return value.map(stripTypeExportConditions);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "types" && !key.startsWith("types@"))
+      .map(([key, child]) => [key, stripTypeExportConditions(child)]),
+  );
+}
+
+async function rewriteInternalPackageManifest(packageDir, { includeTypes = true } = {}) {
   const manifestPath = path.join(packageDir, "package.json");
   if (!(await exists(manifestPath))) return;
 
@@ -25,13 +35,20 @@ async function rewriteInternalPackageManifest(packageDir) {
 
   if (manifest.publishConfig.exports) {
     nextManifest.exports = JSON.parse(JSON.stringify(manifest.publishConfig.exports));
+    if (!includeTypes) {
+      nextManifest.exports = stripTypeExportConditions(nextManifest.exports);
+    }
     addDefaultExportCondition(nextManifest.exports);
   }
   if (manifest.publishConfig.main) {
     nextManifest.main = manifest.publishConfig.main;
   }
-  if (manifest.publishConfig.types) {
+  if (includeTypes && manifest.publishConfig.types) {
     nextManifest.types = manifest.publishConfig.types;
+  } else if (!includeTypes) {
+    delete nextManifest.types;
+    delete nextManifest.typings;
+    delete nextManifest.typesVersions;
   }
 
   await writeFileBreakingLinks(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
@@ -213,7 +230,10 @@ export default async function afterPack(context) {
     await Promise.all(
       entries
         .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-        .map((entry) => rewriteInternalPackageManifest(path.join(packagedServerRudderPackagesDir, entry.name))),
+        .map((entry) => rewriteInternalPackageManifest(
+          path.join(packagedServerRudderPackagesDir, entry.name),
+          { includeTypes: false },
+        )),
     );
   }
 

@@ -75,14 +75,20 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import {
   ChartCard,
   IssueStatusChart,
+  IssueStatusPieChart,
   PriorityChart,
+  PriorityPieChart,
   RunActivityChart,
+  RunActivityPieChart,
   SkillsUsageChart,
+  SkillsUsagePieChart,
   TokenUsageChart,
+  TokenUsagePieChart,
 } from "../components/ActivityCharts";
 import { PauseResumeButton, RunButton } from "../components/AgentActionButtons";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { AgentIcon, AgentIconPicker, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
+import { AgentSkillsOnboarding } from "../components/AgentSkillsOnboarding";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { EntityRow } from "../components/EntityRow";
@@ -227,6 +233,7 @@ export function AgentDetail() {
   }, [customFrom, customTo, datePreset]);
 
   const chartDays = useMemo(() => {
+    if (datePreset === "1d") return getRecentDayKeys(1);
     if (datePreset === "7d") return getRecentDayKeys(7);
     if (datePreset === "15d") return getRecentDayKeys(15);
     if (datePreset === "30d") return getRecentDayKeys(30);
@@ -247,7 +254,15 @@ export function AgentDetail() {
     ],
     queryFn: () => agentsApi.skillsAnalytics(resolvedAgentId!, {
       orgId: resolvedCompanyId ?? undefined,
-      ...(datePreset === "custom" && customReady
+      ...(datePreset === "1d"
+        ? {
+            startDate: chartDays[0],
+            endDate: chartDays[0],
+            from,
+            to,
+            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+          }
+        : datePreset === "custom" && customReady
         ? { startDate: customFrom, endDate: customTo }
         : { windowDays: datePreset === "7d" ? 7 : datePreset === "15d" ? 15 : 30 }),
     }),
@@ -260,10 +275,10 @@ export function AgentDetail() {
       resolvedCompanyId ?? "__none__",
       from,
       to,
-      "agent",
+      "day", "agent",
       resolvedAgentId ?? routeAgentRef,
     ),
-    queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, { agentId: resolvedAgentId! }),
+    queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, "day", { agentId: resolvedAgentId! }),
     enabled: Boolean(resolvedCompanyId) && Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
     placeholderData: keepPreviousData,
   });
@@ -320,8 +335,6 @@ export function AgentDetail() {
     setCustomRangeOpen(false);
     setDatePreset(nextPreset);
   }, [customFrom, customTo]);
-  const reportsToAgent = (allAgents ?? []).find((a) => a.id === agent?.reportsTo);
-  const directReports = (allAgents ?? []).filter((a) => a.reportsTo === agent?.id && a.status !== "terminated");
   const agentBudgetSummary = useMemo(() => {
     const matched = budgetOverview?.policies.find(
       (policy) => policy.scopeType === "agent" && policy.scopeId === (agent?.id ?? routeAgentRef),
@@ -770,6 +783,7 @@ export function AgentDetail() {
                 onPresetSelect={handleDashboardPresetSelect}
                 onCustomFromChange={setCustomFrom}
                 onCustomToChange={setCustomTo}
+                showOneDay
               />
             </div>
           ) : null}
@@ -854,6 +868,7 @@ export function AgentDetail() {
           rangeLabel={rangeLabel}
           chartDays={chartDays}
           showDashboardFilters={datePreset !== "custom" || customReady}
+          isOneDay={datePreset === "1d"}
           dateFilterControl={(
             <div className="lg:hidden">
               <DashboardDateRangeControl
@@ -865,6 +880,7 @@ export function AgentDetail() {
                 onPresetSelect={handleDashboardPresetSelect}
                 onCustomFromChange={setCustomFrom}
                 onCustomToChange={setCustomTo}
+                showOneDay
               />
             </div>
           )}
@@ -1097,6 +1113,7 @@ function AgentOverview({
   rangeLabel,
   chartDays,
   showDashboardFilters,
+  isOneDay,
   dateFilterControl,
 }: {
   agent: AgentDetailRecord;
@@ -1113,12 +1130,13 @@ function AgentOverview({
   rangeLabel: string;
   chartDays: string[];
   showDashboardFilters: boolean;
+  isOneDay: boolean;
   dateFilterControl?: React.ReactNode;
 }) {
   const visibleSkillAnalytics = skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
     ? skillAnalytics
     : null;
-  const shouldShowSkills = visibleSkillAnalytics !== null;
+  const shouldShowSkills = isOneDay || visibleSkillAnalytics !== null;
 
   return (
     <div className="space-y-8">
@@ -1128,18 +1146,46 @@ function AgentOverview({
       <LatestRunCard runs={runs} agentId={agentRouteId} />
 
       {/* Charts */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <ChartCard title="Run Activity" subtitle={`${rangeLabel} · relative daily run volume · hover for details`}>
-          <RunActivityChart runs={chartRuns} days={chartDays} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <ChartCard
+          title="Run Activity"
+          subtitle={isOneDay
+            ? `${rangeLabel} · run outcome distribution`
+            : `${rangeLabel} · relative daily run volume · hover for details`}
+        >
+          {isOneDay
+            ? <RunActivityPieChart runs={chartRuns} />
+            : <RunActivityChart runs={chartRuns} days={chartDays} />}
         </ChartCard>
-        <ChartCard title="Issues by Priority" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
-          <PriorityChart issues={chartIssues} days={chartDays} />
+        <ChartCard
+          title="Issues by Priority"
+          subtitle={isOneDay
+            ? `${rangeLabel} · priority distribution`
+            : `${rangeLabel} · relative daily issue volume · hover for details`}
+        >
+          {isOneDay
+            ? <PriorityPieChart issues={chartIssues} />
+            : <PriorityChart issues={chartIssues} days={chartDays} />}
         </ChartCard>
-        <ChartCard title="Issues by Status" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
-          <IssueStatusChart issues={chartIssues} days={chartDays} />
+        <ChartCard
+          title="Issues by Status"
+          subtitle={isOneDay
+            ? `${rangeLabel} · status distribution`
+            : `${rangeLabel} · relative daily issue volume · hover for details`}
+        >
+          {isOneDay
+            ? <IssueStatusPieChart issues={chartIssues} />
+            : <IssueStatusChart issues={chartIssues} days={chartDays} />}
         </ChartCard>
-        <ChartCard title="Token Usage" subtitle={`${rangeLabel} · daily token volume · hover for details`}>
-          <TokenUsageChart rows={costTrendRows} days={chartDays} />
+        <ChartCard
+          title="Token Usage"
+          subtitle={isOneDay
+            ? `${rangeLabel} · token type distribution`
+            : `${rangeLabel} · daily token volume · hover for details`}
+        >
+          {isOneDay
+            ? <TokenUsagePieChart rows={costTrendRows} />
+            : <TokenUsageChart rows={costTrendRows} days={chartDays} />}
         </ChartCard>
       </div>
 
@@ -1149,7 +1195,9 @@ function AgentOverview({
             <div>
               <h3 className="text-sm font-medium">Skills</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Skill usage per run for {rangeLabel}. Hover a day to inspect the breakdown.
+                {isOneDay
+                  ? `Skill usage distribution for ${rangeLabel.toLowerCase()}.`
+                  : `Skill usage per run for ${rangeLabel}. Hover a day to inspect the breakdown.`}
               </p>
             </div>
             {visibleSkillAnalytics ? (
@@ -1157,16 +1205,23 @@ function AgentOverview({
                 <div>{visibleSkillAnalytics.totalCount} skill uses</div>
                 <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill usage</div>
               </div>
-            ) : (
+            ) : isSkillAnalyticsLoading ? (
               <div className="space-y-1.5">
                 <Skeleton className="ml-auto h-3 w-20" />
                 <Skeleton className="ml-auto h-3 w-28" />
               </div>
+            ) : (
+              <div className="text-right text-[11px] text-muted-foreground tabular-nums">
+                <div>0 skill uses</div>
+                <div>0 runs with skill usage</div>
+              </div>
             )}
           </div>
           {visibleSkillAnalytics ? (
-            <SkillsUsageChart analytics={visibleSkillAnalytics} />
-          ) : (
+            isOneDay
+              ? <SkillsUsagePieChart analytics={visibleSkillAnalytics} />
+              : <SkillsUsageChart analytics={visibleSkillAnalytics} />
+          ) : isSkillAnalyticsLoading ? (
             <div
               aria-busy="true"
               aria-label="Loading skill usage"
@@ -1184,6 +1239,8 @@ function AgentOverview({
                 <Skeleton className="h-3 w-28" />
               </div>
             </div>
+          ) : (
+            <SkillsUsagePieChart analytics={null} />
           )}
         </div>
       ) : null}
@@ -2241,6 +2298,10 @@ function AgentSkillsTab({
 
   return (
     <div className="max-w-6xl space-y-3">
+      {skillSnapshot && skillSnapshot.mode !== "unsupported" ? (
+        <AgentSkillsOnboarding />
+      ) : null}
+
       <section className="space-y-3">
         <div className="space-y-1">
           <div className="min-w-0">

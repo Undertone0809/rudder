@@ -85,6 +85,15 @@ describe("StatusIcon", () => {
     expect(glyph?.classList.contains("text-current")).toBe(true);
   });
 
+  it("allows embedded surfaces to use a non-interactive status slot marker", () => {
+    const container = renderStatusIcon(
+      <StatusIcon status="in_review" dataSlot="side-panel-tab-issue-status-icon" />,
+    );
+
+    expect(container.querySelector('[data-slot="side-panel-tab-issue-status-icon"]')).toBeTruthy();
+    expect(container.querySelector('[data-slot="issue-status-icon"]')).toBeNull();
+  });
+
   it("selects a status from the quiet status menu", () => {
     const onChange = vi.fn();
     const container = renderStatusIcon(<StatusIcon status="todo" onChange={onChange} showLabel />);

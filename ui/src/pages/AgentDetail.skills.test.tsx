@@ -156,7 +156,6 @@ function agent(): AgentDetailRecord {
     title: null,
     icon: null,
     status: "idle",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},
@@ -170,7 +169,6 @@ function agent(): AgentDetailRecord {
     metadata: null,
     createdAt: new Date("2026-06-18T00:00:00.000Z"),
     updatedAt: new Date("2026-06-18T00:00:00.000Z"),
-    chainOfCommand: [],
     access: { membership: null, grants: [], canAssignTasks: false, taskAssignSource: "none" },
     instructionsLibraryPath: null,
     integrations: [],
@@ -237,6 +235,62 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
+  it("introduces skill management and local Codex or Claude Code discovery on the first visit", async () => {
+    renderAgentDetail();
+    await flushQueries();
+
+    const onboarding = document.querySelector("[data-testid='agent-skills-onboarding']");
+    expect(onboarding).not.toBeNull();
+    expect(onboarding?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("[role='dialog']")).toBeNull();
+    expect(document.body.textContent).toContain("Build your agent's skill set");
+    expect(document.body.textContent).toContain(
+      "Rudder also finds compatible skills already installed for local runtimes such as Codex and Claude Code.",
+    );
+  });
+
+  it("dismisses the skills introduction permanently for this browser", async () => {
+    renderAgentDetail();
+    await flushQueries();
+
+    const dismissButton = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Got it"));
+    expect(dismissButton).toBeTruthy();
+
+    act(() => {
+      dismissButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).not.toContain("Build your agent's skill set");
+    expect(window.localStorage.getItem("rudder:agent-skills:onboarding:v1")).toBe("dismissed");
+  });
+
+  it("does not repeat the skills introduction after it has been dismissed", async () => {
+    window.localStorage.setItem("rudder:agent-skills:onboarding:v1", "dismissed");
+
+    renderAgentDetail();
+    await flushQueries();
+
+    expect(document.body.textContent).not.toContain("Build your agent's skill set");
+  });
+
+  it("does not promise skill management for an unsupported runtime", async () => {
+    vi.mocked(agentsApi.skills).mockResolvedValue({
+      ...skillSnapshot(),
+      supported: false,
+      mode: "unsupported",
+      entries: [],
+    });
+
+    renderAgentDetail();
+    await flushQueries();
+
+    expect(document.body.textContent).not.toContain("Build your agent's skill set");
+    expect(document.body.textContent).toContain(
+      "Rudder cannot manage skills for this runtime yet.",
+    );
+  });
+
   it("keeps long external skill lists inside their own scroll region", async () => {
     renderAgentDetail();
     await flushQueries();

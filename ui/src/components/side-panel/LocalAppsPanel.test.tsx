@@ -147,8 +147,35 @@ describe("LocalAppsPanel", () => {
     });
 
     expect(create).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLElement>('[data-testid="local-app-start-command"]')?.textContent).toBe("npm run dev");
+    expect(document.querySelector('[data-testid="local-app-advanced-settings"]')).toBeNull();
+    expect(document.body.textContent).toContain("This runs project code on your device.");
+    const review = document.querySelector<HTMLElement>('[data-testid="local-app-definition-review"]');
+    const copyButton = review?.querySelector<HTMLButtonElement>('[aria-label="Copy start command"]');
+    expect(copyButton?.type).toBe("button");
+    expect(review?.querySelector('[role="status"]')?.textContent).toBe("");
+    const scrollRegion = review?.querySelector<HTMLElement>('[data-testid="local-app-definition-review-scroll"]');
+    expect(review?.className).toContain("overflow-hidden");
+    expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
+    expect(scrollRegion?.className).toContain("overscroll-contain");
+    expect(scrollRegion?.getAttribute("role")).toBe("region");
+    expect(scrollRegion?.getAttribute("aria-label")).toBe("Local App launch details");
+    expect(scrollRegion?.getAttribute("tabindex")).toBe("0");
+    act(() => scrollRegion?.dispatchEvent(new Event("scroll")));
+    expect(scrollRegion?.classList.contains("is-scrolling")).toBe(true);
+    const originalClipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    await act(async () => {
+      copyButton?.click();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith("npm run dev");
+    expect(review?.querySelector('[role="status"]')?.textContent).toBe("Copied");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
     expect(document.querySelector<HTMLInputElement>("#local-app-cwd")?.value).toBe(discovered.cwd);
-    expect(document.body.textContent).toContain("can modify local files and data");
     await act(async () => {
       buttonByText("Review & add")?.click();
       await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));

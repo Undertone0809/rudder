@@ -23,6 +23,7 @@ import {
   chatGenerationProtocolService,
   hashChatGenerationBody,
 } from "./chat-generation-protocol.js";
+import { chatService } from "./chats.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -161,6 +162,206 @@ describe("chatGenerationProtocolService", () => {
     if (!generation) throw new Error("Failed to seed generation");
     return generation;
   }
+
+  it("keeps a new generation ownerless across slow preparation until a runtime attempt begins", async () => {
+    const scope = await seedGeneration();
+    await db.delete(chatGenerations).where(eq(chatGenerations.id, scope.id));
+    const chats = chatService(db);
+
+    const generation = await chats.createGeneration(scope.orgId, scope.conversationId);
+    expect(generation).toMatchObject({
+      status: "active",
+      attemptEpoch: 1,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
+    });
+
+    const beforeAttemptRecovery = await protocol.recoverStaleControlOwners({
+      now: new Date(generation.createdAt.getTime() + 31_000),
+      assumeAllOwnersStale: true,
+    });
+    expect(beforeAttemptRecovery).toEqual([]);
+
+    const started = await chats.beginGenerationControlAttempt({
+      orgId: scope.orgId,
+      conversationId: scope.conversationId,
+      generationId: generation.id,
+      attemptEpoch: 1,
+      ownerToken: "runtime-owner-1",
+      runtimeType: "codex_local",
+    });
+    expect(started).toMatchObject({
+      status: "starting",
+      attemptEpoch: 1,
+      controlOwnerToken: "runtime-owner-1",
+      controlRuntimeType: "codex_local",
+    });
+    expect(started.controlLeaseExpiresAt).toBeInstanceOf(Date);
+
+    const afterAttemptRecovery = await protocol.recoverStaleControlOwners({
+      now: new Date(started.controlLeaseExpiresAt!.getTime() + 1),
+    });
+    expect(afterAttemptRecovery.map(({ generation: recovered }) => recovered.id))
+      .toEqual([generation.id]);
+    expect(afterAttemptRecovery[0]?.generation).toMatchObject({
+      status: "control_lost",
+      terminalReason: "control_owner_stale",
+    });
+  });
+
+  it("keeps streaming transcript evidence in the ledger and a reloadable visible projection", async () => {
+    const generation = await seedGeneration();
+    const entry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T08:00:00.000Z",
+      text: `one transcript ledger entry ${"x".repeat(512)}`,
+    };
+
+    const projection = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+    await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "assistant_delta",
+      payload: { delta: "Answer" },
+      messageId: projection.message.id,
+      bodyHash: hashChatGenerationBody("Answer"),
+      body: "Answer",
+      chatTurnId: projection.message.chatTurnId!,
+      turnVariant: projection.message.turnVariant,
+    });
+
+    const [persistedMessage] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, projection.message.id));
+    const [persistedEvent] = await db
+      .select()
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.id, projection.event.id));
+
+    expect(persistedMessage?.structuredPayload).toEqual({
+      __chatTranscript: [{
+        ...entry,
+        generationId: generation.id,
+        generationSeqStart: projection.event.generationSeq,
+        generationSeqEnd: projection.event.generationSeq,
+      }],
+    });
+    expect(persistedEvent?.payload).toEqual(expect.objectContaining({ entry }));
+    expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
+  });
+
+  it("persists transcript tool output containing PostgreSQL-incompatible NUL characters", async () => {
+    const generation = await seedGeneration();
+    const content = "archive: PK\u0000binary\u0000tail";
+
+    const projection = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "tool_result",
+          ts: "2026-07-26T13:08:32.171Z",
+          content,
+          metadata: {
+            "\u0000unsafe-key": ["nested\u0000value"],
+          },
+        },
+      },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    const [persistedEvent] = await db
+      .select()
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.id, projection.event.id));
+
+    expect(persistedEvent?.payload).toMatchObject({
+      entry: {
+        kind: "tool_result",
+        content: "archive: PK\uFFFDbinary\uFFFDtail",
+        metadata: {
+          "\uFFFDunsafe-key": ["nested\uFFFDvalue"],
+        },
+      },
+    });
+    expect(content).toBe("archive: PK\u0000binary\u0000tail");
+  });
+
+  it("sanitizes PostgreSQL-incompatible NUL characters in legacy generation event writes", async () => {
+    const generation = await seedGeneration();
+    const chats = chatService(db);
+
+    const event = await chats.appendGenerationEvent({
+      orgId: generation.orgId,
+      generationId: generation.id,
+      attemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "tool_result",
+          content: "legacy\u0000output",
+        },
+      },
+    });
+
+    expect(event.payload).toMatchObject({
+      entry: {
+        kind: "tool_result",
+        content: "legacy\uFFFDoutput",
+      },
+    });
+  });
+
+  it("persists non-stream message transcripts containing NUL characters", async () => {
+    const generation = await seedGeneration();
+    const chats = chatService(db);
+
+    const message = await chats.addMessage(generation.conversationId, {
+      orgId: generation.orgId,
+      role: "assistant",
+      kind: "message",
+      body: "Completed despite binary tool output.",
+      transcript: [{
+        kind: "tool_result",
+        ts: "2026-07-26T13:08:32.171Z",
+        toolUseId: "tool-nul",
+        content: "non-stream\u0000output",
+        isError: false,
+      }],
+    });
+
+    const persistedMessage = await db
+      .select({ structuredPayload: chatMessages.structuredPayload })
+      .from(chatMessages)
+      .where(eq(chatMessages.id, message!.id))
+      .then((rows) => rows[0]);
+    expect(persistedMessage?.structuredPayload).toMatchObject({
+      __chatTranscript: [{
+        kind: "tool_result",
+        content: "non-stream\uFFFDoutput",
+      }],
+    });
+  });
 
   it("serializes visible events and applies an idempotent Stop cutoff", async () => {
     const generation = await seedGeneration();
@@ -335,7 +536,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: finalBody.length,
       bodyHash: hashChatGenerationBody(finalBody),
       body: finalBody,
-      transcript: [],
       chatTurnId: randomUUID(),
       turnVariant: 0,
     });
@@ -398,7 +598,6 @@ describe("chatGenerationProtocolService", () => {
       messageId: completion.message.id,
       bodyHash: hashChatGenerationBody(`${finalBody} late`),
       body: `${finalBody} late`,
-      transcript: [],
       chatTurnId: completion.message.chatTurnId!,
       turnVariant: completion.message.turnVariant,
     })).rejects.toMatchObject({
@@ -432,7 +631,6 @@ describe("chatGenerationProtocolService", () => {
       payload: { resultKind: "message", body: finalBody },
       bodyHash: hashChatGenerationBody(finalBody),
       body: finalBody,
-      transcript: [],
       chatTurnId: randomUUID(),
       turnVariant: 0,
     });
@@ -544,7 +742,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: 14,
       bodyHash: hashChatGenerationBody("Visible prefix"),
       body: "Visible prefix",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     });
@@ -560,7 +757,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: 12,
       bodyHash: hashChatGenerationBody("Visible prefix hidden tail"),
       body: "Visible prefix hidden tail",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     });
@@ -593,13 +789,91 @@ describe("chatGenerationProtocolService", () => {
       messageId: first.message.id,
       bodyHash: hashChatGenerationBody("Completed too late"),
       body: "Completed too late",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     })).rejects.toMatchObject({
       status: 409,
       message: "Chat-visible output admission is closed for this generation",
     });
+  });
+
+  it("persists stable transcript generation provenance through reload and a Stop projection", async () => {
+    const generation = await seedGeneration();
+    const chatTurnId = randomUUID();
+    const firstEntry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T10:00:00.000Z",
+      text: "Inspect ",
+      delta: true,
+    };
+    const first = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry: firstEntry },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId,
+      turnVariant: 0,
+    });
+    const secondEntry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T10:00:01.000Z",
+      text: "the source.",
+      delta: true,
+    };
+    const second = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry: secondEntry },
+      messageId: first.message.id,
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId,
+      turnVariant: 0,
+    });
+
+    const [persistedBeforeStop] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, first.message.id));
+    expect(persistedBeforeStop?.structuredPayload?.__chatTranscript).toEqual([
+      expect.objectContaining({
+        text: "Inspect the source.",
+        generationId: generation.id,
+        generationSeqStart: first.event.generationSeq,
+        generationSeqEnd: second.event.generationSeq,
+      }),
+    ]);
+
+    await protocol.beginStopAction({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      controlActionId: randomUUID(),
+      expectedGenerationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedControlVersion: generation.controlVersion,
+      requestedRenderSeq: second.event.generationSeq,
+      requestedBodyHash: hashChatGenerationBody(""),
+    });
+    const frozen = await protocol.getFrozenVisibleProjection({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+    });
+
+    expect(frozen.projection.transcript).toEqual([
+      expect.objectContaining({
+        generationId: generation.id,
+        generationSeqStart: first.event.generationSeq,
+        generationSeqEnd: second.event.generationSeq,
+      }),
+    ]);
   });
 
   it("freezes visible output before scheduling an unsupported-runtime Steer continuation", async () => {

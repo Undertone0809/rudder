@@ -1,74 +1,67 @@
 ---
-title: "Manage Plugins"
-description: "Install, activate, inspect, update, and uninstall a trusted Plugin while preserving core Rudder records."
+title: "Install and Manage a Plugin"
+description: "Review a trusted Plugin, install it, test one action, and recover from a failed update."
 icon: "plug"
 keywords:
-  - "manage Rudder Plugins"
-  - "install Plugin"
-  - "Plugin worker logs"
+  - "install Rudder Plugin"
+  - "Plugin Manager"
+  - "Rudder Plugin logs"
 canonical: "https://docs.rudderhq.dev/how-to/manage-plugins"
 "og:url": "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_en: "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 ---
 
+Plugins run installed code. Use packages you trust and read what they request
+before activation.
+
 <a id="completed-state" />
 
-## Completed state
+## What you will do
 
-At the end of this guide, a trusted CRM Plugin is installed from a supported
-source, its declared capabilities and configuration have been reviewed, its
-worker is healthy, and one test sync has left Plugin-owned logs and state.
+Install one Plugin, review its capabilities and settings, confirm its worker is
+healthy, and test one real action.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-You need access to Plugin Manager, the package or source, its configuration and
-external-service requirements, and a rollback or uninstall point. Plugins run
-installed worker and frontend code. Capability checks constrain host bridge
-operations, but they are not a sandbox for untrusted packages.
+Prepare the Plugin source, its setup instructions, any external service account,
+and a known previous version or uninstall path. Do not put credentials inside
+the package or logs.
 
 <a id="case-backed-steps" />
 
-## Install the CRM Plugin
+## Install and test
 
-1. Open **Plugin Manager** and select the supported package or source for the
-   CRM Plugin.
-2. Review its identity, version, worker and UI bundles, configuration fields,
-   external services, tools, events, jobs, webhooks, and requested host
-   capabilities.
-3. Confirm that every tool name is Plugin-namespaced and that the Plugin does
-   not claim ownership of core Issue, Approval, budget, authentication, or
-   checkout rules.
-4. Enter required configuration through Plugin settings. Keep credentials out
-   of the package and logs.
-5. Install and activate the Plugin. Inspect worker health and startup logs
-   before using its project panel.
-6. Trigger one account sync. Check the Plugin's job record, logs, state, and any
-   linked Rudder work.
-7. Before an update, compare version, capabilities, configuration changes, and
-   migration notes. Stop depending work before uninstalling.
+1. Open **Plugin Manager** and choose the supported package or source.
+2. Review the publisher, version, worker and interface code, external services,
+   requested capabilities, tools, jobs, and webhooks.
+3. Enter required settings. Store credentials only in the provided secret
+   fields.
+4. Install and activate the Plugin.
+5. Check worker health and startup logs before using its interface.
+6. Trigger one small test action.
+7. Open the Plugin's job record, logs, and state to confirm what happened.
+8. Before updating, review version changes, new capabilities, configuration
+   changes, and migration notes.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the result
 
-Plugin Manager shows the expected version and healthy worker. The test sync is
-attributed to the Plugin, and its status, logs, and state are inspectable. Core
-Issues, Runs, approvals, and budgets still follow their original Rudder
-surfaces and rules.
+Plugin Manager should show the expected version and a healthy worker. The test
+action should appear under that Plugin with readable status and logs.
 
 <a id="recovery" />
 
-## Recovery
+## If activation or an update fails
 
-If activation fails, leave the Plugin disabled and inspect manifest validation,
-configuration, worker health, and logs. Fix the named package or capability
-problem before retrying. A forbidden bridge call should fail and remain logged,
-not be worked around through an internal route.
+- Leave a failed Plugin inactive while you fix its settings or package.
+- Read the named manifest, capability, worker, or connection error.
+- Stop dependent jobs and webhooks before uninstalling.
+- Return to the last reviewed package when your install source supports it, or
+  uninstall through Plugin Manager.
 
-If an update breaks the Plugin, stop its jobs and webhooks, return to the last
-reviewed package when your install source supports that recovery, or uninstall
-through Plugin Manager. Uninstall must stop Plugin workers and reconcile
-Plugin-owned state without deleting core Rudder records.
+Uninstalling a Plugin should remove its workers and own state, not core Rudder
+Issues, Runs, reviews, approvals, or budgets.

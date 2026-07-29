@@ -1,0 +1,35 @@
+{
+  "skill_name": "rudder-desktop-dev-recovery-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "pnpm dev 好像桌面端跑不起来了。API health 是 OK，但我没有看到 Electron 窗口。",
+      "expected_output": "Classifies the Desktop/Electron layer separately from API health, uses current package scripts, observes the shell before RECOVERED, and preserves unrelated dirty files.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Desktop update downloaded, the old app exited, and the new app showed write EPIPE. Debug it before blaming the release.",
+      "expected_output": "Reconstructs update download, replacement, restart, progress-pipe, and relaunch layers; treats EPIPE as benign only with lifecycle evidence; finishes with installed or packaged proof rather than a dry run.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Desktop 打开的组织数据不对，可能指到了错误 instance。",
+      "expected_output": "Pins down base URL, health payload, instance/profile, and org list before touching data; never resets ~/.rudder; routes product-data diagnosis only after runtime identity is proven.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Codex worktree 里的 pnpm dev 没窗口，但 127.0.0.1:3100 health 正常。",
+      "expected_output": "Does not accept the shared 3100 server as evidence for the worktree. Resolves .rudder config/env and the worktree runtime descriptor, checks descriptor apiUrl plus matching instanceId/localEnv/runtimeOwnerKind, then diagnoses the Electron path.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "安装版 Rudder 打不开，但当前 worktree 的隔离 dev instance 是健康的。帮我恢复 Desktop。",
+      "expected_output": "Classifies the target as packaged/prod-local before runtime resolution, ignores the checkout dev descriptor as acceptance evidence, inspects installed-app boot evidence and the prod_local/default descriptor unless explicitly overridden, then verifies the installed application and matching runtime identity.",
+      "files": []
+    }
+  ]
+}

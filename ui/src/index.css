@@ -1233,25 +1233,37 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  html.desktop-shell-macos .workspace-shell {
+
+  .messenger-main-workbench-surface {
     background:
       linear-gradient(
         180deg,
-        rgb(249 247 244 / 0.08) 0%,
-        rgb(243 239 234 / 0.03) 100%
+        color-mix(in oklab, var(--surface-shell) 94%, transparent),
+        color-mix(in oklab, var(--surface-shell) 88%, transparent)
       );
+    -webkit-backdrop-filter: blur(18px) saturate(116%);
+    backdrop-filter: blur(18px) saturate(116%);
+  }
+
+  html.dark.desktop-shell-macos .messenger-main-workbench-surface {
+    background:
+      linear-gradient(
+        180deg,
+        rgb(31 34 37 / 0.9) 0%,
+        rgb(24 27 30 / 0.86) 100%
+      );
+    -webkit-backdrop-filter: blur(20px) saturate(124%);
+    backdrop-filter: blur(20px) saturate(124%);
+  }
+  html.desktop-shell-macos .workspace-shell {
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
   html.dark.desktop-shell-macos .workspace-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(16 17 20 / 0.12) 0%,
-        rgb(12 13 16 / 0.08) 100%
-      );
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;
@@ -1380,47 +1392,73 @@
     background: var(--desktop-content-surface-light);
   }
 
+  .chat-desktop-toolbar-clearance {
+    height: 2.75rem;
+  }
+
+  .chat-load-error-offset {
+    margin-top: 1.5rem;
+  }
+
+  .chat-conversation-loading-offset {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
   .dark .workspace-context-header,
   .dark .workspace-main-header {
     background: var(--desktop-content-surface-dark);
   }
 
-  html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) {
-    background:
-      linear-gradient(
-        180deg,
-        transparent 0,
-        transparent 2.75rem,
-        var(--desktop-content-surface-light) 2.75rem,
-        var(--desktop-content-surface-light) 100%
-      );
+  .chat-messages-scroll-content {
+    padding-top: 1rem;
   }
 
-  html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) {
-    background:
-      linear-gradient(
-        180deg,
-        transparent 0,
-        transparent 2.75rem,
-        var(--desktop-content-surface-dark) 2.75rem,
-        var(--desktop-content-surface-dark) 100%
-      );
-  }
+  @media (min-width: 768px) {
+    html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) {
+      isolation: isolate;
+    }
 
-  html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
-    background: color-mix(in oklab, var(--desktop-content-surface-light) 58%, transparent);
-    border-bottom-color: color-mix(in oklab, var(--desktop-content-border-light) 64%, transparent);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.48);
-    -webkit-backdrop-filter: blur(24px) saturate(124%);
-    backdrop-filter: blur(24px) saturate(124%);
-  }
+    html.desktop-shell-macos [data-testid="chat-main-workspace-card"] .chat-messages-scroll-content {
+      padding-top: calc(2.75rem + 1rem);
+    }
 
-  html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
-    background: color-mix(in oklab, var(--desktop-content-surface-dark) 54%, transparent);
-    border-bottom-color: color-mix(in oklab, var(--desktop-content-border-dark) 58%, transparent);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-    -webkit-backdrop-filter: blur(24px) saturate(136%);
-    backdrop-filter: blur(24px) saturate(136%);
+    html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) > [data-testid="chat-load-error"] {
+      margin-top: calc(2.75rem + 1.5rem);
+    }
+
+    html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) > [data-testid="chat-conversation-loading-state"] {
+      padding-top: calc(2.75rem + 1rem);
+    }
+
+    html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
+      position: absolute;
+      inset: 0 0 auto;
+      z-index: 20;
+      height: 2.75rem;
+      overflow: hidden;
+      border-bottom: 1px solid color-mix(in oklab, var(--desktop-content-border-light) 42%, transparent);
+      border-top-left-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px));
+      border-top-right-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px));
+      background: color-mix(in oklab, var(--desktop-content-surface-light) 26%, transparent);
+      box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.58),
+        inset 1px 0 0 rgb(255 255 255 / 0.16),
+        inset -1px 0 0 rgb(255 255 255 / 0.1);
+      -webkit-backdrop-filter: blur(18px) saturate(128%);
+      backdrop-filter: blur(18px) saturate(128%);
+    }
+
+    html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
+      border-bottom-color: color-mix(in oklab, var(--desktop-content-border-dark) 36%, transparent);
+      background: color-mix(in oklab, var(--desktop-content-surface-dark) 24%, transparent);
+      box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.12),
+        inset 1px 0 0 rgb(255 255 255 / 0.05),
+        inset -1px 0 0 rgb(255 255 255 / 0.04);
+      -webkit-backdrop-filter: blur(18px) saturate(132%);
+      backdrop-filter: blur(18px) saturate(132%);
+    }
   }
 
   .workspace-column-resizer {
@@ -1448,21 +1486,21 @@
   }
 
   .settings-modal-backdrop {
-    background: rgb(31 27 23 / 0.18);
-    -webkit-backdrop-filter: blur(30px) saturate(128%);
-    backdrop-filter: blur(30px) saturate(128%);
+    background: rgb(13 14 16 / 0.52);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   html.desktop-shell-macos .settings-modal-backdrop {
-    background: rgb(244 241 236 / 0.18);
-    -webkit-backdrop-filter: blur(36px) saturate(118%);
-    backdrop-filter: blur(36px) saturate(118%);
+    background: rgb(13 14 16 / 0.46);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   html.dark.desktop-shell-macos .settings-modal-backdrop {
-    background: rgb(13 14 16 / 0.22);
-    -webkit-backdrop-filter: blur(34px) saturate(112%);
-    backdrop-filter: blur(34px) saturate(112%);
+    background: rgb(13 14 16 / 0.54);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .settings-modal-shell {
@@ -2201,6 +2239,39 @@
     animation: chat-review-action-pending-pulse 1.6s ease-in-out infinite;
   }
 
+  .chat-review-block--side-panel,
+  .chat-review-block--side-panel[data-kind="issue"] {
+    background: var(--surface-elevated);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .chat-review-block--side-panel .chat-review-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-review-block--side-panel .chat-review-summary-title {
+    border-bottom: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+    padding-bottom: 1rem;
+  }
+
+  .chat-review-block--side-panel .chat-review-fact-ledger {
+    border-top: 0;
+    border-left: 0;
+    padding-top: 0;
+  }
+
+  .chat-proposal-panel-actions {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-proposal) 54%, var(--surface-elevated)),
+        color-mix(in oklab, var(--surface-proposal) 72%, var(--surface-elevated))
+      );
+    box-shadow: 0 -14px 28px -26px color-mix(in oklab, var(--accent-base) 54%, black);
+  }
+
   @keyframes chat-review-action-pending-pulse {
     0%,
     100% {
@@ -2616,6 +2687,16 @@
 }
 .scrollbar-auto-hide.is-scrolling::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--ink-faint) 72%, transparent) !important;
+}
+
+/* Dense option menus keep their transient scrollbar clear of the rounded edge. */
+.scrollbar-menu-inset::-webkit-scrollbar {
+  width: 10px !important;
+}
+.scrollbar-menu-inset::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-right-width: 3px;
+  background-clip: content-box;
 }
 
 /* Expandable dialog transition for max-width changes */
@@ -3202,22 +3283,12 @@ button[draggable="false"] {
 }
 
 .rudder-doc-editor-surface {
-  --rudder-doc-editor-tab-strip-height: 53px;
+  --rudder-doc-editor-tab-strip-height: 42px;
   --rudder-doc-editor-breadcrumb-height: 32px;
 }
 
-.rudder-doc-editor-tab-strip {
-  position: relative;
-  isolation: isolate;
-  --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px);
-  --rudder-doc-editor-tab-inactive-height: 38px;
-  --rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%);
-  --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
-  --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2);
-}
-
 .rudder-doc-editor-sidebar-header {
-  --rudder-doc-editor-tab-strip-height: 53px;
+  --rudder-doc-editor-tab-strip-height: 42px;
   --rudder-doc-editor-breadcrumb-height: 32px;
   --rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height);
   --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
@@ -3246,17 +3317,6 @@ button[draggable="false"] {
   padding-top: calc((var(--rudder-doc-editor-sidebar-header-content-height) - 28px) / 2);
 }
 
-.rudder-doc-editor-tab-strip::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--border-base);
-  pointer-events: none;
-  z-index: 0;
-}
-
 .rudder-doc-editor-tab-scroller {
   position: relative;
   z-index: 1;
@@ -3264,45 +3324,6 @@ button[draggable="false"] {
 
 .rudder-doc-editor-tab-scroller::-webkit-scrollbar {
   height: 4px !important;
-}
-
-.rudder-doc-editor-tab {
-  isolation: isolate;
-}
-
-.rudder-doc-editor-tab--active {
-  z-index: 2;
-}
-
-.rudder-doc-editor-tab--active::before,
-.rudder-doc-editor-tab--active::after {
-  content: "";
-  position: absolute;
-  bottom: -1px;
-  width: var(--rudder-doc-editor-tab-corner-size);
-  height: var(--rudder-doc-editor-tab-corner-size);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.rudder-doc-editor-tab--active::before {
-  left: calc(var(--rudder-doc-editor-tab-corner-size) * -1);
-  border-right: 1px solid var(--border-base);
-  border-bottom: 1px solid var(--border-base);
-  border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size);
-  box-shadow: var(--rudder-doc-editor-tab-radius) var(--rudder-doc-editor-tab-radius) 0 calc(var(--rudder-doc-editor-tab-radius) - 2px) var(--surface-elevated);
-}
-
-.rudder-doc-editor-tab--active::after {
-  right: calc(var(--rudder-doc-editor-tab-corner-size) * -1);
-  border-bottom: 1px solid var(--border-base);
-  border-left: 1px solid var(--border-base);
-  border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size);
-  box-shadow: calc(var(--rudder-doc-editor-tab-radius) * -1) var(--rudder-doc-editor-tab-radius) 0 calc(var(--rudder-doc-editor-tab-radius) - 2px) var(--surface-elevated);
-}
-
-.rudder-doc-editor-tab--first-active::before {
-  display: none;
 }
 
 .rudder-doc-editor-tab--drop-before {

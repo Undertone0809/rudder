@@ -180,9 +180,8 @@ function main() {
       writeActionOutput("version", decision.nextVersion);
       if (decision.action !== "update") {
         writeActionOutput("action", decision.action);
-        if (decision.action === "ready") {
-          writeActionOutput("head_sha", run("git", ["rev-parse", "HEAD"], { capture: true }));
-        }
+        const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+        writeActionOutput("head_sha", headSha);
         console.log(`Next release base not needed: ${decision.reason}.`);
         return;
       }
@@ -196,20 +195,18 @@ function main() {
       if (push.status === 0) {
         writeActionOutput("action", "updated");
         writeActionOutput("head_sha", headSha);
-        console.log(`Advanced ${options.remote}/${options.base} to ${decision.nextVersion} at ${headSha}.`);
+        console.log(
+          `Advanced ${options.remote}/${options.base} to ${decision.nextVersion} at ${headSha}.`,
+        );
         return;
       }
-
-      const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
       if (attempt === maxPushAttempts) {
+        const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
         throw new Error(
           `could not advance ${options.remote}/${options.base} after ${maxPushAttempts} attempts: ${pushError}`,
         );
       }
-      console.warn(
-        `Push attempt ${attempt} did not advance ${options.remote}/${options.base}; `
-        + "refetching before retry.",
-      );
+      console.log(`Concurrent main update detected; retrying (${attempt}/${maxPushAttempts}).`);
     }
   } finally {
     if (shouldRestoreCheckout) restoreOriginalCheckout();

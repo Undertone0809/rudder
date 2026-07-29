@@ -11,7 +11,7 @@ import type {
 } from "./local-apps-registry.js";
 import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
-import type { DesktopSystemPermissions } from "./system-permissions.js";
+import type { DesktopSystemPermissionId, DesktopSystemPermissions } from "./system-permissions.js";
 
 type BootState = {
   stage: string;
@@ -264,11 +264,44 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:set-deferred-update-prompt-ready", Boolean(ready)) as Promise<void>,
   setSidePanelCloseShortcutActive: (active: boolean) =>
     ipcRenderer.invoke("desktop:set-side-panel-close-shortcut-active", Boolean(active)) as Promise<void>,
-  setBrowserSurfaceShortcutActive: (active: boolean) =>
-    ipcRenderer.invoke("desktop:set-browser-surface-shortcut-active", Boolean(active)) as Promise<void>,
-  onBrowserShortcut: (listener: (action: DesktopBrowserShortcutAction) => void) => {
-    const wrapped = (_event: IpcRendererEvent, action: unknown) => {
-      if (isDesktopBrowserShortcutAction(action)) listener(action);
+  setBrowserSurfaceShortcutActive: (
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ) => ipcRenderer.invoke(
+    "desktop:set-browser-surface-shortcut-active",
+    Boolean(active),
+    owner,
+  ) as Promise<void>,
+  onBrowserShortcut: (
+    listener: (request: {
+      action: DesktopBrowserOwnerShortcutAction;
+      sourceWebContentsId?: number;
+    }) => void,
+  ) => {
+    const wrapped = (_event: IpcRendererEvent, request: unknown) => {
+      if (
+        !request
+        || typeof request !== "object"
+        || (
+          !isDesktopBrowserShortcutAction(
+            (request as { action?: unknown }).action,
+          )
+          && (request as { action?: unknown }).action !== "close_tab"
+        )
+      ) return;
+      const sourceWebContentsId =
+        (request as { sourceWebContentsId?: unknown }).sourceWebContentsId;
+      if (
+        sourceWebContentsId !== undefined
+        && (
+          !Number.isSafeInteger(sourceWebContentsId)
+          || Number(sourceWebContentsId) <= 0
+        )
+      ) return;
+      listener(request as {
+        action: DesktopBrowserOwnerShortcutAction;
+        sourceWebContentsId?: number;
+      });
     };
     ipcRenderer.on("desktop:browser-shortcut", wrapped);
     return () => {
@@ -284,6 +317,15 @@ contextBridge.exposeInMainWorld("desktopShell", {
       ipcRenderer.removeListener("desktop:close-side-panel-active-tab", wrapped);
     };
   },
+  onOpenEmptySidePanel: (listener: () => void) => {
+    const wrapped = () => {
+      listener();
+    };
+    ipcRenderer.on("desktop:open-empty-side-panel", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:open-empty-side-panel", wrapped);
+    };
+  },
   onDeferredUpdatePrompt: (listener: (prompt: DesktopDeferredUpdatePrompt) => void) => {
     const wrapped = (_event: IpcRendererEvent, payload: DesktopDeferredUpdatePrompt) => {
       listener(payload);
@@ -297,12 +339,38 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:respond-deferred-update-prompt", { promptId, decision }) as Promise<void>,
   getSystemPermissions: () =>
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
+  openSystemPermissionSettings: (permission: DesktopSystemPermissionId) =>
+    ipcRenderer.invoke("desktop:open-system-permission-settings", permission) as Promise<void>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
   forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
-  onOpenWebLink: (listener: (request: { url: string; source: "link" | "browser_popup" }) => void) => {
-    const wrapped = (_event: IpcRendererEvent, request: { url: string; source: "link" | "browser_popup" }) => {
-      listener(request);
+  onOpenWebLink: (listener: (request: {
+    url: string;
+    source: "link" | "browser_popup";
+    sourceWebContentsId?: number;
+  }) => void) => {
+    const wrapped = (_event: IpcRendererEvent, request: unknown) => {
+      if (
+        !request
+        || typeof request !== "object"
+        || typeof (request as { url?: unknown }).url !== "string"
+        || !["link", "browser_popup"].includes(
+          String((request as { source?: unknown }).source),
+        )
+      ) return;
+      const typedRequest = request as {
+        url: string;
+        source: "link" | "browser_popup";
+        sourceWebContentsId?: number;
+      };
+      if (
+        typedRequest.source === "browser_popup"
+        && (
+          !Number.isSafeInteger(typedRequest.sourceWebContentsId)
+          || Number(typedRequest.sourceWebContentsId) <= 0
+        )
+      ) return;
+      listener(typedRequest);
     };
     ipcRenderer.on("desktop:open-web-link", wrapped);
     return () => {
@@ -383,16 +451,28 @@ declare global {
       onUpdateProgress(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
       setDeferredUpdatePromptReady(ready: boolean): Promise<void>;
       setSidePanelCloseShortcutActive(active: boolean): Promise<void>;
-      setBrowserSurfaceShortcutActive(active: boolean): Promise<void>;
-      onBrowserShortcut(listener: (action: DesktopBrowserShortcutAction) => void): () => void;
+      setBrowserSurfaceShortcutActive(
+        active: boolean,
+        owner?: "main_workbench" | "side_panel",
+      ): Promise<void>;
+      onBrowserShortcut(listener: (request: {
+        action: DesktopBrowserOwnerShortcutAction;
+        sourceWebContentsId?: number;
+      }) => void): () => void;
       onCloseSidePanelActiveTab(listener: () => void): () => void;
+      onOpenEmptySidePanel(listener: () => void): () => void;
       onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
+      openSystemPermissionSettings(permission: DesktopSystemPermissionId): Promise<void>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
       forceOpenExternal(target: string): Promise<void>;
-      onOpenWebLink(listener: (request: { url: string; source: "link" | "browser_popup" }) => void): () => void;
+      onOpenWebLink(listener: (request: {
+        url: string;
+        source: "link" | "browser_popup";
+        sourceWebContentsId?: number;
+      }) => void): () => void;
       openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;
@@ -419,3 +499,6 @@ declare global {
     };
   }
 }
+type DesktopBrowserOwnerShortcutAction =
+  | DesktopBrowserShortcutAction
+  | "close_tab";

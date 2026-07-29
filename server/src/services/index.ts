@@ -28,6 +28,54 @@ export { createFeishuInboundDispatcherDbDeps } from "./integrations/feishu/inbou
 export { issueApprovalService } from "./issue-approvals.js";
 export { issueService, type IssueFilters } from "./issues.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
+export {
+  RequiredManagedMcpConnectionUnavailableError,
+  managedMcpBindingService,
+  type ManagedMcpBindingActor
+} from "./mcp/managed-bindings.js";
+export {
+  ManagedMcpClientError, createManagedMcpClient, resolveMcpHttpCredentials,
+  type ManagedMcpClient,
+  type ManagedMcpClientOptions
+} from "./mcp/managed-client.js";
+export {
+  ManagedMcpConnectionPolicyError,
+  ManagedMcpDiscoveryStaleError,
+  managedMcpConnectionService,
+  type ManagedMcpConnectionServiceOptions,
+  type ManagedMcpMutationActor
+} from "./mcp/managed-connections.js";
+export {
+  boundedRedactedMcpAuditRecord,
+  managedMcpRuntimeService,
+  type ManagedMcpRuntimeIdentity,
+  type ManagedMcpRuntimeServiceOptions,
+  type ManagedMcpRuntimeTool
+} from "./mcp/managed-runtime.js";
+export {
+  managedMcpOAuthService,
+  type ManagedMcpOAuthActor,
+  type ManagedMcpOAuthServiceOptions
+} from "./mcp/oauth.js";
+export {
+  MCP_PROVIDER_REGISTRY,
+  resolveCuratedMcpEndpoint
+} from "./mcp/provider-registry.js";
+export {
+  assertSafeMcpCredentialHeaders,
+  assertSafeMcpHeaders,
+  isBlockedMcpNetworkAddress,
+  parseMcpDeploymentPolicyEnv,
+  resolveMcpHttpTarget,
+  validateMcpStdioPolicy,
+  type McpDeploymentAllowlists
+} from "./mcp/security-policy.js";
+export {
+  MCP_TOOL_DISCOVERY_LIMITS,
+  normalizeMcpDiscoveredTools,
+  reconcileMcpBindingToolNames,
+  reconcileMcpToolCatalog
+} from "./mcp/tool-discovery.js";
 export { messengerService } from "./messenger.js";
 export { operatorProfileService } from "./operator-profile.js";
 export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";

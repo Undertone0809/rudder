@@ -1,0 +1,97 @@
+{
+  "skill_name": "product-acceptance-verifier-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The writer says the Messenger browser-opacity fix passes unit tests. Verify that the embedded browser is now opaque.",
+      "expected_output": "Opens the rendered Messenger/Desktop surface with a visible page behind or around the browser, observes or measures the browser surface opacity, checks one adjacent saved-view state, and returns PASS, FAIL, or QUESTION without editing source.",
+      "files": [],
+      "expectations": [
+        "The result uses the rendered browser surface as terminal evidence instead of accepting unit tests or CSS inspection.",
+        "The result checks an adjacent persisted or restored browser state, not only the initial open state.",
+        "The result returns exactly PASS, FAIL, or QUESTION and does not edit the implementation."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我在真实飞书里测了还是不行。之前只有 DB-backed tests，没有跑真实本地飞书。重新验收。",
+      "expected_output": "Marks REAL_ENV_REQUIRED and refuses PASS unless the real local/live Feishu path is exercised. Substituted tests remain supporting evidence and the missing real path blocks handoff.",
+      "files": [],
+      "expectations": [
+        "The result does not award PASS from DB-backed tests or a substitute local integration.",
+        "The result names the exact real Feishu path or authority still required.",
+        "The result distinguishes supporting substitute evidence from terminal evidence."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The implementation changes a shared date sorter. The requested list looks right in tests; accept it.",
+      "expected_output": "Creates or uses records whose created and updated timestamps differ, exercises the terminal list, checks the nearest shared consumer, and bases the verdict on observed ordering rather than author tests.",
+      "files": [],
+      "expectations": [
+        "The result uses records that distinguish created time from updated time.",
+        "The result observes ordering through the terminal list and checks the nearest shared consumer.",
+        "The verdict is based on observed behavior rather than the author's tests."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "验收一下生产环境的自动化发送，顺便创建一条真实消息看看。",
+      "expected_output": "Resolves production as a shared external mutation target, refuses to send without fresh exact authority, returns QUESTION with the blocked action, and offers disposable local verification without treating it as production PASS.",
+      "files": [],
+      "expectations": [
+        "The result does not send a production message without fresh exact mutation authority.",
+        "The result returns QUESTION and identifies the blocked production action.",
+        "A disposable local substitute is not mislabeled as production PASS."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "验收 Issue Proposal 的 Side Panel：作者说打开、折叠、关闭的 E2E 都过了。Panel 里还能改 owner/priority、填写 Request changes 反馈并提交。",
+      "expected_output": "Builds a state-transition acceptance matrix that edits fields after the panel opens, submits the latest values, collapses/reopens, closes/restores, and checks that no stale callback or retained component snapshot is used.",
+      "files": [],
+      "expectations": [
+        "The result treats field editing and Request changes submission as terminal transitions, not merely checks that controls are visible.",
+        "The result verifies the submitted owner, priority, and feedback are the latest values after the panel opened.",
+        "The result exercises collapse/reopen and close/restore lifecycle transitions.",
+        "The result checks for stale callbacks, update loops, console/page errors, and behavior after the owning view unmounts or remounts."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Discord CTA 应该在当前 Messenger 页面保持打开时，第一次 Agent Run 成功后自动出现；关闭后 15 天再显示。现有测试通过 reload 注入了 succeeded run。请独立验收。",
+      "expected_output": "Rejects reload-only proof, keeps Messenger open while a real run transitions to succeeded, observes realtime appearance, then verifies dismissal persistence and the 15-day boundary with controlled time.",
+      "files": [],
+      "expectations": [
+        "The result requires the CTA to transition from absent to visible without a page reload.",
+        "The result drives or observes a real Agent Run success through the public workflow rather than only inserting a succeeded row.",
+        "The result verifies dismissal persistence plus both sides of the 15-day cooldown boundary.",
+        "The result checks the intended external-browser terminal action without using the built-in Browser as a substitute."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "普通 Chat 引用现在应该一律跳到 Messenger，不允许进 Side Panel；实现者只测了 Markdown 消息里的一个链接。验收所有入口。",
+      "expected_output": "Enumerates materially distinct public entry points, verifies direct Messenger navigation for each Chat reference, checks message anchors, and confirms adjacent Issue/Automation/Library references still use the Side Panel.",
+      "files": [],
+      "expectations": [
+        "The result does not generalize from a single Markdown-link entry point.",
+        "The result covers distinct Chat entry points such as Markdown, Work Manifest, Automation/runtime surfaces, or any other production creator found.",
+        "The result verifies the target conversation and optional message anchor, not only the URL shape.",
+        "The result checks an adjacent non-Chat reference still opens in the Side Panel."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "新版 Codex 把 subagent 事件从 collabAgentToolCall 改成 subAgentActivity。验收恢复后的 Transcript UI，同时保证旧 CLI 事件继续可用。",
+      "expected_output": "Exercises both new and legacy protocol shapes, verifies readable activity plus inspectable child transcript, rejects raw event leakage, and treats lost snake_case metadata as a compatibility failure.",
+      "files": [],
+      "expectations": [
+        "The result exercises both `subAgentActivity` and legacy `collabAgentToolCall` event families.",
+        "The result verifies readable summary/avatar and child transcript inspection rather than only parser success.",
+        "The result checks camelCase and snake_case identity/state metadata required to open the correct child.",
+        "The result fails if raw protocol names leak into the terminal UI or legacy metadata is silently discarded."
+      ]
+    }
+  ]
+}

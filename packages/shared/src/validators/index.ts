@@ -152,6 +152,41 @@ export {
 } from "./custom-integration.js";
 
 export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema, mcpAgentAccessModeSchema, mcpAgentBindingSchema, mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
+  mcpConnectionCanonicalStateSchema,
+  mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionSecretsMutationSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema, mcpProviderAvailabilitySchema, mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema, mcpProviderMaxAccessSchema,
+  mcpProviderOrganizationStateSchema,
+  mcpProviderScopeModeSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  mcpToolCapabilityClassSchema,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
+} from "./mcp.js";
+
+export {
   executionWorkspaceStatusSchema, runWorkspaceStatusSchema, updateExecutionWorkspaceSchema, updateRunWorkspaceSchema, type UpdateExecutionWorkspace, type UpdateRunWorkspace
 } from "./execution-workspace.js";
 

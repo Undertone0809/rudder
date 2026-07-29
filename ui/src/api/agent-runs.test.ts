@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_RUN_EVENTS_PAGE_LIMIT,
   AGENT_RUN_LIST_AGENT_LIMIT,
   AGENT_RUN_LIST_DEFAULT_LIMIT,
   AGENT_RUN_LIST_HISTORY_LIMIT,
@@ -81,6 +82,28 @@ describe("agentRunsApi", () => {
     expect(clientMocks.get).toHaveBeenNthCalledWith(4, "/agent-runs/run-1/workspace-operations");
     expect(clientMocks.post).toHaveBeenNthCalledWith(1, "/agent-runs/run-1/retry", {});
     expect(clientMocks.post).toHaveBeenNthCalledWith(2, "/agent-runs/run-1/cancel", {});
+  });
+
+  it("loads every event page for a run detail transcript", async () => {
+    const firstPage = Array.from({ length: AGENT_RUN_EVENTS_PAGE_LIMIT }, (_, index) => ({
+      seq: index + 1,
+    }));
+    const finalPage = [{ seq: AGENT_RUN_EVENTS_PAGE_LIMIT + 1 }];
+    clientMocks.get
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(finalPage);
+
+    await expect(agentRunsApi.allEvents("run-1")).resolves.toHaveLength(
+      AGENT_RUN_EVENTS_PAGE_LIMIT + 1,
+    );
+    expect(clientMocks.get).toHaveBeenNthCalledWith(
+      1,
+      `/agent-runs/run-1/events?afterSeq=0&limit=${AGENT_RUN_EVENTS_PAGE_LIMIT}`,
+    );
+    expect(clientMocks.get).toHaveBeenNthCalledWith(
+      2,
+      `/agent-runs/run-1/events?afterSeq=${AGENT_RUN_EVENTS_PAGE_LIMIT}&limit=${AGENT_RUN_EVENTS_PAGE_LIMIT}`,
+    );
   });
 });
 

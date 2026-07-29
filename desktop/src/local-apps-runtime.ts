@@ -273,19 +273,28 @@ async function allocateLoopbackPort(): Promise<number> {
 
 async function defaultVerifyListenerOwnership(input: { port: number; pid: number; pgid: number }): Promise<boolean> {
   try {
-    const childResult = await execFileAsync("/bin/ps", ["-o", "pgid=", "-p", String(input.pid)], {
+    const processTableResult = await execFileAsync("/bin/ps", ["-axo", "pid=,pgid="], {
       timeout: 2_000,
-      maxBuffer: 16 * 1024,
+      maxBuffer: 256 * 1024,
     });
-    if (Number.parseInt(String(childResult.stdout).trim(), 10) !== input.pgid) return false;
+    const processGroupPids = String(processTableResult.stdout)
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+        if (!match || Number.parseInt(match[2]!, 10) !== input.pgid) return [];
+        const pid = Number.parseInt(match[1]!, 10);
+        return isSafeLocalAppProcessId(pid) ? [pid] : [];
+      });
+    if (!processGroupPids.includes(input.pid) || processGroupPids.length === 0) return false;
     const { stdout } = await execFileAsync("/usr/sbin/lsof", [
       "-nP",
+      "-a",
       `-iTCP:${input.port}`,
       "-sTCP:LISTEN",
       "-Fpn",
-    ], { timeout: 2_000, maxBuffer: 64 * 1024 });
+    ], { timeout: 15_000, maxBuffer: 64 * 1024 });
     const listeners = parseLsofListenerProcessRecords(String(stdout), input.port);
-    if (!listeners) return false;
+    if (!listeners || listeners.some((listener) => !processGroupPids.includes(listener.pid))) return false;
     for (const listener of listeners) {
       const result = await execFileAsync("/bin/ps", ["-o", "pgid=", "-p", String(listener.pid)], {
         timeout: 2_000,

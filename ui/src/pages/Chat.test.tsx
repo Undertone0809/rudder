@@ -22,6 +22,7 @@ import {
   type ChatMessage,
   type Issue,
   type MessengerThreadSummary,
+  type OrganizationSkillListItem,
   type Project,
 } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -65,6 +66,7 @@ import {
   parseAskUserAnswerMessage,
   rememberChatProjectId,
   rememberChatProjectIdForAgent,
+  resolveChatMessageAgentRunTarget,
   resolveDefaultDraftChatProjectId,
   resolveDraftIssueContext,
   resolveLatestChatAgentRunTarget,
@@ -148,6 +150,48 @@ describe("chat stream stop cutoff", () => {
     expect(current.transcript).toEqual([expect.objectContaining({ text: "我" })]);
     expect(first?.transcript).toEqual([expect.objectContaining({ text: "我会" })]);
     expect(replay?.transcript).toEqual([expect.objectContaining({ text: "我会" })]);
+  });
+
+  it("coalesces only matching streamed commentary segments", () => {
+    const current = draft();
+    const first = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:00.000Z",
+        text: "读取 `rudder",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+    });
+    const second = applyChatStreamProgressEvent(first, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:01.000Z",
+        text: "-docs`。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+    });
+    const third = applyChatStreamProgressEvent(second, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:02.000Z",
+        text: "另一条。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-2",
+      },
+    });
+
+    expect(third?.transcript).toMatchObject([
+      { text: "读取 `rudder-docs`。", segmentId: "commentary-1" },
+      { text: "另一条。", segmentId: "commentary-2" },
+    ]);
   });
 
   it("keeps body, state, and transcript immutable after Stop freezes the generation", () => {
@@ -279,6 +323,51 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
 }
 
 describe("latest Chat Agent Run target", () => {
+  it("resolves one message using the replying, runtime, then preferred agent", () => {
+    const runMessage = message({
+      role: "assistant",
+      kind: "message",
+      runId: "run-exact",
+      replyingAgentId: "agent-replying",
+    });
+    const runtimeConversation = conversation({
+      preferredAgentId: "agent-preferred",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Runtime agent",
+        runtimeAgentId: "agent-runtime",
+        agentRuntimeType: "codex",
+        model: null,
+        available: true,
+        error: null,
+      },
+    });
+
+    expect(resolveChatMessageAgentRunTarget(runMessage, runtimeConversation)).toEqual({
+      runId: "run-exact",
+      agentId: "agent-replying",
+    });
+    expect(resolveChatMessageAgentRunTarget(
+      { ...runMessage, replyingAgentId: null },
+      runtimeConversation,
+    )).toEqual({ runId: "run-exact", agentId: "agent-runtime" });
+    expect(resolveChatMessageAgentRunTarget(
+      { ...runMessage, replyingAgentId: null },
+      conversation({ preferredAgentId: "agent-preferred" }),
+    )).toEqual({ runId: "run-exact", agentId: "agent-preferred" });
+  });
+
+  it("requires both a run and an agent for a message target", () => {
+    expect(resolveChatMessageAgentRunTarget(
+      message({ role: "assistant", runId: null, replyingAgentId: "agent-1" }),
+      conversation({}),
+    )).toBeNull();
+    expect(resolveChatMessageAgentRunTarget(
+      message({ role: "assistant", runId: "run-1", replyingAgentId: null }),
+      conversation({ preferredAgentId: null }),
+    )).toBeNull();
+  });
+
   it("selects the newest runtime-backed assistant message by createdAt across variants", () => {
     const target = resolveLatestChatAgentRunTarget([
       message({
@@ -537,7 +626,7 @@ describe("ChatSystemMessageBody", () => {
     }));
 
     expect(html).toContain("rudder-markdown");
-    expect(html).toContain("<strong>approved</strong>");
+    expect(html).toMatch(/<strong[^>]*>approved<\/strong>/);
     expect(html).not.toContain("chat-system-issue-link");
   });
 
@@ -762,7 +851,7 @@ describe("ChatMessageItem", () => {
 });
 
 describe("Chat Side Panel targets", () => {
-  it("resolves issue, chat, automation, and library targets from chat links", () => {
+  it("resolves issue, automation, and library targets from chat links", () => {
     expect(chatSidePanelTargetFromHref(buildIssueMentionHref("issue-1", "ZST-1", "comment-1"))).toEqual({
       kind: "issue",
       issueId: "issue-1",
@@ -770,18 +859,8 @@ describe("Chat Side Panel targets", () => {
       commentId: "comment-1",
       label: "ZST-1",
     });
-    expect(chatSidePanelTargetFromHref(buildChatMentionHref("chat-2"))).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: null,
-      label: "Chat",
-    });
-    expect(chatSidePanelTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`, "Source message")).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: "message-3",
-      label: "Source message",
-    });
+    expect(chatSidePanelTargetFromHref(buildChatMentionHref("chat-2"))).toBeNull();
+    expect(chatSidePanelTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`, "Source message")).toBeNull();
     expect(chatSidePanelTargetFromHref(buildAutomationMentionHref("automation-1", "Daily report"))).toEqual({
       kind: "automation",
       automationId: "automation-1",
@@ -797,12 +876,7 @@ describe("Chat Side Panel targets", () => {
       directoryPath: "docs",
       label: "Docs",
     });
-    expect(chatSidePanelTargetFromHref("/messenger/chat/chat-2?messageId=message-3", "Source message")).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: "message-3",
-      label: "Source message",
-    });
+    expect(chatSidePanelTargetFromHref("/messenger/chat/chat-2?messageId=message-3", "Source message")).toBeNull();
     expect(chatSidePanelTargetFromHref("/automations/automation-1?t=Daily%20report")).toEqual({
       kind: "automation",
       automationId: "automation-1",
@@ -817,6 +891,30 @@ describe("Chat Side Panel targets", () => {
       kind: "library_directory",
       directoryPath: "docs",
       label: "Docs",
+    });
+    expect(chatSidePanelTargetFromHref(
+      "skill://org/skill-1?ref=visualize",
+      "visualize",
+    )).toEqual({
+      kind: "organization_skill_file",
+      skillId: "skill-1",
+      filePath: "SKILL.md",
+      label: "visualize",
+    });
+    expect(chatSidePanelTargetFromHref(
+      "/workspace/.agents/skills/visualize/SKILL.md",
+      "visualize",
+      [{
+        id: "org-visualize",
+        slug: "visualize",
+        key: "rudder/visualize",
+        name: "Visualize",
+        sourcePath: "/workspace/organization-skills/visualize",
+      } as OrganizationSkillListItem],
+    )).toEqual({
+      kind: "local_file",
+      filePath: "/workspace/.agents/skills/visualize/SKILL.md",
+      label: "visualize",
     });
   });
 
@@ -984,6 +1082,11 @@ describe("ProposalCard", () => {
     expect(html).toContain("Reviewer · CTO");
     expect(html).toContain("Owner");
     expect(html).toContain('data-slot="assignee-label"');
+    expect(html).toContain('data-agent-avatar-style="bare"');
+    expect(html).not.toContain('data-slot="assignee-agent-avatar-frame"');
+    expect(html).not.toContain('data-slot="agent-title-badge"');
+    expect(html).not.toContain("Founding Engineer");
+    expect(html).not.toContain("Chief Technology Officer");
   });
 
   it("highlights the proposal review surface while an approval action is pending", () => {
@@ -2073,8 +2176,6 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: true,
-      hasMessages: true,
       hasActiveStream: false,
       hasActiveSendInFlight: false,
     })).toBe(false);
@@ -2084,8 +2185,15 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: "agent-1",
-      hasLastMessageAt: true,
-      hasMessages: true,
+      hasActiveStream: false,
+      hasActiveSendInFlight: false,
+    })).toBe(true);
+  });
+
+  it("locks persisted assigned conversations before the first message", () => {
+    expect(isChatAgentSelectionLocked({
+      hasConversation: true,
+      preferredAgentId: "agent-1",
       hasActiveStream: false,
       hasActiveSendInFlight: false,
     })).toBe(true);
@@ -2095,16 +2203,12 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: false,
-      hasMessages: false,
       hasActiveStream: true,
       hasActiveSendInFlight: false,
     })).toBe(true);
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: false,
-      hasMessages: false,
       hasActiveStream: false,
       hasActiveSendInFlight: true,
     })).toBe(true);

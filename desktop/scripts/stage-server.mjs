@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { optimizeServerPackage } from "./optimize-server-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -215,6 +216,18 @@ async function resolvePostgresTemplateDir(sourceBinDir) {
   return null;
 }
 
+function resolvePostgresShareDir(sourceBinDir, templateDir) {
+  const adjacentShareDir = path.resolve(sourceBinDir, "..", "share");
+  const relative = path.relative(adjacentShareDir, path.resolve(templateDir));
+  return relative === "" || (
+    relative !== ".."
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative)
+  )
+    ? adjacentShareDir
+    : templateDir;
+}
+
 async function assertPostgresBinDirComplete(sourceBinDir) {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"];
   const missing = [];
@@ -229,7 +242,36 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
   }
   const templateDir = await resolvePostgresTemplateDir(sourceBinDir);
   const expectedTemplatePath = path.join(sourceBinDir, "..", "share", "postgresql", "postgres.bki");
-  if (!templateDir) missing.push(expectedTemplatePath);
+  if (!templateDir) {
+    missing.push(expectedTemplatePath);
+  } else {
+    const configTemplatePath = path.join(templateDir, "postgresql.conf.sample");
+    try {
+      await fs.access(configTemplatePath);
+    } catch {
+      missing.push(configTemplatePath);
+    }
+    const shareDir = resolvePostgresShareDir(sourceBinDir, templateDir);
+    const timezoneCandidates = [
+      path.join(templateDir, "timezone"),
+      path.join(shareDir, "timezone"),
+    ];
+    let hasTimezoneData = false;
+    for (const timezonePath of timezoneCandidates) {
+      try {
+        const timezoneStats = await fs.stat(timezonePath);
+        if (timezoneStats.isDirectory()) {
+          hasTimezoneData = true;
+          break;
+        }
+      } catch {
+        // Try the next supported PostgreSQL archive layout.
+      }
+    }
+    if (!hasTimezoneData) {
+      missing.push(timezoneCandidates[0]);
+    }
+  }
   if (missing.length > 0) {
     const hasMissingTemplate = missing.includes(expectedTemplatePath);
     const requirement = hasMissingTemplate
@@ -237,7 +279,9 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
       : "initdb, pg_ctl, and postgres binaries";
     throw new Error(`RUDDER_POSTGRES_BIN_DIR must include PostgreSQL 18.4 ${requirement}; missing ${missing.join(", ")}`);
   }
-  return { templateDir };
+  return {
+    shareDir: resolvePostgresShareDir(sourceBinDir, templateDir),
+  };
 }
 
 async function stagePostgresRuntimePayload() {
@@ -257,22 +301,27 @@ async function stagePostgresRuntimePayload() {
     sourceBinDir = await preparePostgresRuntimeBinDir();
   }
 
-  const { templateDir } = await assertPostgresBinDirComplete(sourceBinDir);
-  const postgresBinary = path.join(sourceBinDir, process.platform === "win32" ? "postgres.exe" : "postgres");
-  const versionResult = await execFileAsync(postgresBinary, ["--version"]);
-  const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
-  if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(versionOutput)) {
-    throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 binaries; got ${versionOutput.trim() || "unknown version"}`);
+  const { shareDir } = await assertPostgresBinDirComplete(sourceBinDir);
+  for (const binary of ["initdb", "pg_ctl", "postgres"]) {
+    const binaryPath = path.join(
+      sourceBinDir,
+      process.platform === "win32" ? `${binary}.exe` : binary,
+    );
+    const versionResult = await execFileAsync(binaryPath, ["--version"]);
+    const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
+    if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(versionOutput)) {
+      throw new Error(
+        `RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 ${binary}; got ${versionOutput.trim() || "unknown version"}`,
+      );
+    }
   }
 
   const targetRuntimeDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment());
   await fs.mkdir(path.dirname(targetRuntimeDir), { recursive: true });
   await fs.cp(path.resolve(sourceBinDir, ".."), targetRuntimeDir, { recursive: true, dereference: true });
   const targetShareDir = path.join(targetRuntimeDir, "share");
-  const targetTemplateDir = path.join(targetShareDir, "postgresql");
   await fs.rm(targetShareDir, { recursive: true, force: true });
-  await fs.mkdir(path.dirname(targetTemplateDir), { recursive: true });
-  await fs.cp(templateDir, targetTemplateDir, { recursive: true, dereference: true });
+  await fs.cp(shareDir, targetShareDir, { recursive: true, dereference: true });
 }
 
 async function rewriteInternalPackages(targetDir) {
@@ -305,6 +354,12 @@ async function main() {
   await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
   await stagePostgresRuntimePayload();
+  await optimizeServerPackage({
+    arch: process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch,
+    bundledPostgres: process.env.RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME === "1",
+    platform: process.platform,
+    serverPackageDir: targetDir,
+  });
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
   await fs.access(deployedEntry);

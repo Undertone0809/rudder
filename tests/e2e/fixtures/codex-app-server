@@ -86,10 +86,6 @@ function finish(body, status = "completed") {
 
 function emitReasoning(itemId, text) {
   send({
-    method: "item/reasoning/summaryTextDelta",
-    params: { threadId, turnId, itemId, summaryIndex: 0, delta: text },
-  });
-  send({
     method: "item/completed",
     params: {
       threadId,
@@ -112,9 +108,68 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
-    prompt = message.params?.input?.find((item) => item?.type === "text")?.text ?? "";
+    prompt = (message.params?.input ?? [])
+      .filter((item) => item?.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\n");
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (
+      prompt.includes("Keep commentary in Process")
+      || prompt.includes("Complete fragmented commentary")
+    ) {
+      const commentary = "我会先读取 `rudder-docs`，再核对源码；确认字符不会丢失。";
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: "commentary-e2e",
+            text: "",
+            phase: "commentary",
+            memoryCitation: null,
+          },
+        },
+      });
+      [
+        "我会先读取 `rudder",
+        "-docs`，再核对源",
+        "码；确认字符不会丢失。",
+      ].forEach((delta, index) => {
+        setTimeout(() => {
+          send({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId,
+              turnId,
+              itemId: "commentary-e2e",
+              delta,
+            },
+          });
+        }, 250 + index * 100);
+      });
+      if (prompt.includes("Complete fragmented commentary")) {
+        setTimeout(() => {
+          send({
+            method: "item/completed",
+            params: {
+              threadId,
+              turnId,
+              item: {
+                type: "agentMessage",
+                id: "commentary-e2e",
+                text: commentary,
+                phase: "commentary",
+                memoryCitation: null,
+              },
+            },
+          });
+        }, 600);
+        setTimeout(() => finish("Fragmented commentary completed."), 900);
+      }
+    }
     if (prompt.includes("Keep Steer message position stable")) {
       setTimeout(() => emitReasoning("reason-before-steer", "Reasoning before Steer"), 600);
     }
@@ -142,8 +197,16 @@ rl.on("line", (line) => {
       }, 500);
     }
     fallbackTimer = setTimeout(
-      () => finish("Initial App Server reply"),
-      prompt.includes("Render dual reasoning streams") ? 1_000 : 10_000,
+      () => finish(`Initial App Server reply (${prompt.includes("Keep Steer message position stable") ? "marker-true" : "marker-false"})`),
+      prompt.includes("Render dual reasoning streams")
+        ? 1_000
+        : prompt.includes("Keep commentary in Process")
+          ? 60_000
+        : prompt.includes("Complete fragmented commentary")
+          ? 5_000
+        : prompt.includes("Keep Steer message position stable")
+          ? 60_000
+          : 30_000,
     );
     return;
   }
@@ -156,8 +219,13 @@ rl.on("line", (line) => {
       return;
     }
     const feedback = message.params?.input?.find((item) => item?.type === "text")?.text ?? "feedback";
+    const receivedLocalImage = message.params?.input?.some((item) => item?.type === "localImage")
+      ?? false;
     send({ id: message.id, result: { turnId } });
-    const finishSteeredTurn = () => finish(`Native steer applied: ${feedback}`);
+    const finishSteeredTurn = () => finish([
+      `Native steer applied: ${feedback}`,
+      `Native steer image received: ${receivedLocalImage}`,
+    ].join("\n\n"));
     if (prompt.includes("Keep Steer message position stable")) {
       setTimeout(() => emitReasoning("reason-after-steer", "Reasoning after Steer"), 250);
       setTimeout(finishSteeredTurn, 1_000);

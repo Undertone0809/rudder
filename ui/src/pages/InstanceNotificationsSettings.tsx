@@ -19,9 +19,11 @@ import {
 import {
   readDesktopShell,
   type DesktopBootState,
+  type DesktopSystemPermissionId,
   type DesktopSystemPermissionStatus,
   type DesktopSystemPermissions,
 } from "@/lib/desktop-shell";
+import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
@@ -49,11 +51,10 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 type PermissionStatusTone = "ok" | "warn" | "muted";
 
 type SystemPermissionDefinition = {
-  id: "fullDiskAccess" | "accessibility" | "automation";
+  id: DesktopSystemPermissionId;
   icon: LucideIcon;
   titleKey: TranslationKey;
   descriptionKey: TranslationKey;
-  macSettingsUrl?: string;
 };
 
 type NotificationPreferenceDefinition = {
@@ -71,21 +72,18 @@ const SYSTEM_PERMISSIONS: SystemPermissionDefinition[] = [
     icon: HardDrive,
     titleKey: "systemPermissions.permission.fullDiskAccess.title",
     descriptionKey: "systemPermissions.permission.fullDiskAccess.description",
-    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
   },
   {
     id: "accessibility",
     icon: Accessibility,
     titleKey: "systemPermissions.permission.accessibility.title",
     descriptionKey: "systemPermissions.permission.accessibility.description",
-    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
   },
   {
     id: "automation",
     icon: Workflow,
     titleKey: "systemPermissions.permission.automation.title",
     descriptionKey: "systemPermissions.permission.automation.description",
-    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
   },
 ];
 
@@ -358,13 +356,13 @@ export function InstanceNotificationsSettings() {
     }
   }
 
-  async function handleOpenSystemPermissionSettings(targetUrl: string) {
+  async function handleOpenSystemPermissionSettings(permission: DesktopSystemPermissionId) {
     const desktopShell = readDesktopShell();
-    if (!desktopShell) return;
+    if (!desktopShell?.openSystemPermissionSettings) return;
 
     setActionError(null);
     try {
-      await desktopShell.openExternal(targetUrl);
+      await desktopShell.openSystemPermissionSettings(permission);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : t("systemPermissions.openSettingsFailed"));
     }
@@ -390,6 +388,7 @@ export function InstanceNotificationsSettings() {
   const chatNotificationsEnabled = settings.desktopChatNotifications ?? true;
   const desktopShell = readDesktopShell();
   const isDesktopShell = desktopShell !== null;
+  const isMacDesktop = isDesktopShell && getKeyboardShortcutPlatform() === "mac";
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
@@ -425,7 +424,8 @@ export function InstanceNotificationsSettings() {
         <SettingsGroup>
           {SYSTEM_PERMISSIONS.map((permission) => {
             const status = getSystemPermissionStatus(permission, isDesktopShell, resolvedSystemPermissionStatuses);
-            const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
+            const showSystemSettingsAction = isMacDesktop
+              && typeof desktopShell?.openSystemPermissionSettings === "function";
 
             return (
               <div
@@ -453,7 +453,7 @@ export function InstanceNotificationsSettings() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleOpenSystemPermissionSettings(permission.macSettingsUrl!)}
+                      onClick={() => void handleOpenSystemPermissionSettings(permission.id)}
                     >
                       {t("systemPermissions.action.openSettings")}
                     </Button>

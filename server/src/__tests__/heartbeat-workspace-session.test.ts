@@ -40,7 +40,6 @@ function buildAgent(agentRuntimeType: string, runtimeConfig: Record<string, unkn
     title: null,
     icon: null,
     status: "running",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType,
     agentRuntimeConfig: {},

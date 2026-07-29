@@ -13,6 +13,7 @@ export { healthApi } from "./health";
 export { heartbeatsApi } from "./heartbeats";
 export { instanceSettingsApi } from "./instanceSettings";
 export { issuesApi } from "./issues";
+export { managedMcpApi } from "./managedMcp";
 export { organizationSkillsApi } from "./organizationSkills";
 export { organizationsApi } from "./orgs";
 export { projectsApi } from "./projects";

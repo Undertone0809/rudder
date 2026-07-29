@@ -5,10 +5,14 @@ import {
   chatConversations,
   chatMessages,
 } from "@rudderhq/db";
-import type { ChatConversation } from "@rudderhq/shared";
+import {
+  chatInlineAnnotationsFromStructuredPayload,
+  type ChatConversation,
+} from "@rudderhq/shared";
 import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -145,6 +149,9 @@ export function sideChatService(db: Db) {
     clientMutationId: string;
     orgId: string;
     userId: string;
+    preferredAgentId?: string;
+    modelOverride?: string | null;
+    effortOverride?: string | null;
   }) {
     const createdId = await db.transaction(async (tx) => {
       const existing = await tx
@@ -161,6 +168,18 @@ export function sideChatService(db: Db) {
           existing.conversationKind !== "side_chat"
           || existing.forkedFromConversationId !== input.sourceConversationId
           || existing.forkedFromMessageId !== input.sourceMessageId
+          || (
+            input.preferredAgentId !== undefined
+            && existing.preferredAgentId !== input.preferredAgentId
+          )
+          || (
+            input.modelOverride !== undefined
+            && existing.modelOverride !== input.modelOverride
+          )
+          || (
+            input.effortOverride !== undefined
+            && existing.effortOverride !== input.effortOverride
+          )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }
@@ -206,8 +225,10 @@ export function sideChatService(db: Db) {
           sideChatClientMutationId: input.clientMutationId,
           title: sideChatTitleFromSource(source.title),
           summary: source.summary,
-          preferredAgentId: source.preferredAgentId,
-          routedAgentId: source.routedAgentId,
+          preferredAgentId: input.preferredAgentId ?? source.preferredAgentId,
+          modelOverride: input.modelOverride ?? null,
+          effortOverride: input.effortOverride ?? null,
+          routedAgentId: input.preferredAgentId ?? source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,
           forkedFromMessageId: anchor.id,
@@ -235,6 +256,18 @@ export function sideChatService(db: Db) {
           raced.conversationKind !== "side_chat"
           || raced.forkedFromConversationId !== input.sourceConversationId
           || raced.forkedFromMessageId !== input.sourceMessageId
+          || (
+            input.preferredAgentId !== undefined
+            && raced.preferredAgentId !== input.preferredAgentId
+          )
+          || (
+            input.modelOverride !== undefined
+            && raced.modelOverride !== input.modelOverride
+          )
+          || (
+            input.effortOverride !== undefined
+            && raced.effortOverride !== input.effortOverride
+          )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }
@@ -259,19 +292,77 @@ export function sideChatService(db: Db) {
           .onConflictDoNothing();
       }
 
-      const copiedMessageIds = new Map<string, string>();
-      for (const message of sourceMessages.slice(0, anchorIndex + 1)) {
-        const copiedMessageId = randomUUID();
-        copiedMessageIds.set(message.id, copiedMessageId);
+      const copiedSourceMessages = sourceMessages.slice(0, anchorIndex + 1);
+      const copiedMessageIds = new Map(
+        copiedSourceMessages.map((message) => [message.id, randomUUID()]),
+      );
+      const resolveAnnotationSource = await createChatAnnotationCopySourceResolver({
+        tx,
+        orgId: input.orgId,
+        sourceConversation: source,
+        messages: copiedSourceMessages,
+        operationLabel: "Side Chat",
+      });
+
+      const sourceAttachments = copiedMessageIds.size > 0
+        ? await tx
+          .select()
+          .from(chatAttachments)
+          .where(inArray(chatAttachments.messageId, [...copiedMessageIds.keys()]))
+          .orderBy(asc(chatAttachments.createdAt))
+        : [];
+      const sourceAttachmentById = new Map(
+        sourceAttachments.map((attachment) => [attachment.id, attachment]),
+      );
+      const copiedAttachmentIds = new Map(
+        sourceAttachments.map((attachment) => [attachment.id, randomUUID()]),
+      );
+
+      for (const message of copiedSourceMessages) {
+        const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
+          message.structuredPayload,
+        ).map((annotation) => {
+          const sourceMessage = resolveAnnotationSource(annotation);
+          const copiedSourceMessageId = sourceMessage
+            ? copiedMessageIds.get(sourceMessage.id)
+            : null;
+          if (
+            !sourceMessage
+            || !copiedSourceMessageId
+            || sourceMessage.role !== "assistant"
+            || sourceMessage.kind !== "message"
+          ) {
+            throw unprocessable("Side Chat annotation source message falls outside the copied range");
+          }
+          return {
+            ...annotation,
+            sourceConversationId: child.id,
+            sourceMessageId: copiedSourceMessageId,
+            attachmentIds: annotation.attachmentIds.map((attachmentId) => {
+              const sourceAttachment = sourceAttachmentById.get(attachmentId);
+              const copiedAttachmentId = copiedAttachmentIds.get(attachmentId);
+              if (
+                !sourceAttachment
+                || sourceAttachment.messageId !== message.id
+                || !copiedAttachmentId
+              ) {
+                throw unprocessable("Side Chat annotation attachment is not owned by its copied user message");
+              }
+              return copiedAttachmentId;
+            }),
+          };
+        });
         await tx.insert(chatMessages).values({
-          id: copiedMessageId,
+          id: copiedMessageIds.get(message.id)!,
           orgId: input.orgId,
           conversationId: child.id,
           role: message.role,
           kind: message.kind,
           status: message.status === "streaming" ? "interrupted" : message.status,
           body: message.body,
-          structuredPayload: null,
+          structuredPayload: copiedAnnotations.length > 0
+            ? { inlineAnnotations: copiedAnnotations }
+            : null,
           approvalId: null,
           runId: null,
           replyingAgentId: message.replyingAgentId,
@@ -282,17 +373,12 @@ export function sideChatService(db: Db) {
         });
       }
 
-      const sourceAttachments = copiedMessageIds.size > 0
-        ? await tx
-          .select()
-          .from(chatAttachments)
-          .where(inArray(chatAttachments.messageId, [...copiedMessageIds.keys()]))
-          .orderBy(asc(chatAttachments.createdAt))
-        : [];
       if (sourceAttachments.length > 0) {
         await tx.insert(chatAttachments).values(sourceAttachments.flatMap((attachment) => {
           const copiedMessageId = copiedMessageIds.get(attachment.messageId);
-          return copiedMessageId ? [{
+          const copiedAttachmentId = copiedAttachmentIds.get(attachment.id);
+          return copiedMessageId && copiedAttachmentId ? [{
+            id: copiedAttachmentId,
             orgId: input.orgId,
             conversationId: child.id,
             messageId: copiedMessageId,
@@ -315,6 +401,7 @@ export function sideChatService(db: Db) {
             sourceConversationId: source.id,
             sourceConversationTitle: source.title,
             sourceMessageId: anchor.id,
+            copiedSourceMessageId: copiedMessageIds.get(anchor.id),
           },
           createdAt: now,
           updatedAt: now,

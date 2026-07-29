@@ -147,7 +147,6 @@ describe("bundled rudder docs skill", () => {
       "rudder agent config doc",
       "rudder agent config list",
       "desiredSkills",
-      "reportsTo",
       "promptTemplate",
       "SOUL.md",
       "sourceIssueId",
@@ -319,7 +318,8 @@ describe("bundled rudder docs skill", () => {
     const contents = await readReferences();
 
     const requiredPatterns = [
-      /checkout[\s\S]*before[\s\S]*issue-scoped (?:execution|work)/i,
+      /checkout-eligible[\s\S]*checkout/i,
+      /explicit comment wake[\s\S]*without[\s\S]*checkout/i,
       /(?:do not|never) retry[\s\S]*409/i,
       /(?:do not|never) look for unassigned work/i,
       /intent=wake/,
@@ -332,7 +332,7 @@ describe("bundled rudder docs skill", () => {
       /blocked[\s\S]*blocker comment/i,
       /approval[\s\S]*linked issues/i,
       /80%[\s\S]*critical work/i,
-      /chainOfCommand[\s\S]*escalation/i,
+      /explicit owner[\s\S]*operator/i,
       /Co-Authored-By: Rudder <285064165\+Rudderhq@users\.noreply\.github\.com>/,
       /user\.useConfigOnly=true/,
       /\*@\*\.local/,

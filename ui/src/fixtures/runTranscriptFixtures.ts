@@ -150,7 +150,59 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     ts: "2026-03-11T15:22:26.214Z",
     toolUseId: "mcp_fixture_pr",
     toolName: "mcp__github__fetch_pr",
-    content: "Fetched PR transcript renderer discussion",
+    content: JSON.stringify({
+      content: [{
+        type: "text",
+        text: "{\"number\":473,\"title\":\"Transcript renderer discussion\"}",
+      }],
+      structuredContent: {
+        number: 473,
+        title: "Transcript renderer discussion",
+        state: "open",
+      },
+      _meta: null,
+    }),
+    isError: false,
+  },
+  {
+    kind: "tool_call",
+    ts: "2026-03-11T15:22:26.300Z",
+    name: "mcp__rudder-tools__rudder_chat_transcript",
+    toolUseId: "mcp_fixture_rudder_chat",
+    input: {
+      id: "mcp-fixture-rudder-chat",
+      server: "rudder-tools",
+      tool: "rudder_chat_transcript",
+      invocation: {
+        server: "rudder-tools",
+        tool: "rudder_chat_transcript",
+        arguments: {
+          full: true,
+          chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+        },
+      },
+      args: {
+        full: true,
+        chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+      },
+    },
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:22:26.400Z",
+    toolUseId: "mcp_fixture_rudder_chat",
+    toolName: "mcp__rudder-tools__rudder_chat_transcript",
+    content: JSON.stringify({
+      content: [{
+        type: "text",
+        text: "{\"entryCount\":3,\"summary\":\"Transcript loaded\"}",
+      }],
+      structuredContent: {
+        entryCount: 3,
+        summary: "Transcript loaded",
+      },
+      _meta: null,
+    }),
     isError: false,
   },
   {

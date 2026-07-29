@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/server",
-  "version": "0.5.2",
+  "version": "0.6.6",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
   "bugs": {
@@ -37,6 +37,7 @@
     "dev:watch": "cross-env RUDDER_MIGRATION_PROMPT=never RUDDER_MIGRATION_AUTO_APPLY=true tsx watch --ignore ../ui/node_modules --ignore ../ui/.vite --ignore ../ui/dist src/index.ts",
     "prepare:ui-dist": "node ../scripts/prepare-server-ui-dist.mjs",
     "build": "pnpm --filter @rudderhq/plugin-sdk build && pnpm --filter @rudderhq/plugin-linear build && node ../scripts/build-tsc-copy-assets.mjs --copy src/onboarding-assets dist/onboarding-assets && node ../scripts/stage-bundled-plugins.mjs",
+    "postinstall": "node resources/postinstall-postgres-compat.mjs",
     "prepack": "pnpm run prepare:ui-dist",
     "postpack": "rm -rf ui-dist",
     "clean": "rm -rf dist",
@@ -46,6 +47,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1015.0",
     "@larksuiteoapi/node-sdk": "1.67.0",
+    "@modelcontextprotocol/client": "2.0.0-beta.5",
     "@rudderhq/agent-runtime-claude-local": "workspace:*",
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
     "@rudderhq/agent-runtime-cursor-local": "workspace:*",
@@ -72,6 +74,9 @@
     "hermes-paperclip-adapter": "0.3.0",
     "ipaddr.js": "^1.9.1",
     "jsdom": "^28.1.0",
+    "mdast-util-from-markdown": "^2.0.3",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "multer": "^2.2.0",
     "open": "^11.0.0",
     "pino": "^9.14.0",

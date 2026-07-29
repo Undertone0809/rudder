@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
   installCanonicalDesktopMcp,
+  installCoreVersionMismatchedDesktopMcp,
   installVersionMismatchedDesktopMcp,
   readMcpToolNames,
   readRepositoryCliVersion,
@@ -458,7 +459,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         serverName: "rudder-tools",
-        toolCount: 69,
+        toolCount: 70,
         provenance: "repo",
         version: await readRepositoryCliVersion(),
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
@@ -467,7 +468,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         available: true,
         transport: "pi_extension",
         serverName: "rudder-tools",
-        toolCount: 69,
+        toolCount: 70,
         toolNames: expect.arrayContaining(["rudder_agent_me", "rudder_issue_checkout", "rudder_library_file_list"]),
         authMode: "runtime_managed",
         modelVisibleCliFallback: false,
@@ -944,11 +945,87 @@ describe("pi execute", { timeout: 20_000 }, () => {
           [...RUDDER_CORE_MCP_TOOL_NAMES],
           [...RUDDER_BROWSER_MCP_TOOL_NAMES],
         ]);
-        expect(meta.rudderNativeTools).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
+        expect(meta.rudderNativeTools).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 70 });
         expect(meta.browserNativeTools).toMatchObject({
           available: true,
           serverName: "rudder-browser",
           toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
+        });
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+        else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "continues the model turn without a missing extension after core MCP preflight fails",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-core-mismatch-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "pi");
+      const capturePath = path.join(root, "capture.json");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakePiCommand(commandPath);
+      const installedDesktopMcp = await installCoreVersionMismatchedDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.HOME = root;
+      process.env.RUDDER_OPERATOR_HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      delete process.env.RUDDER_INSTANCE_ID;
+      let meta: Record<string, unknown> = {};
+
+      try {
+        const result = await execute({
+          runId: "run-pi-core-mismatch",
+          agent: {
+            id: "agent-1",
+            orgId: "organization-1",
+            name: "Pi Agent",
+            agentRuntimeType: "pi",
+            agentRuntimeConfig: {},
+          },
+          runtime: {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+            taskKey: null,
+          },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            model: "openai/gpt-test",
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+          onMeta: async (value) => { meta = value as Record<string, unknown>; },
+        });
+
+        expect(result.exitCode).toBe(0);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+        expect(capture.argv).not.toContain("--extension");
+        const toolsIndex = capture.argv.indexOf("--tools");
+        expect(capture.argv[toolsIndex + 1].split(",")).not.toEqual(
+          expect.arrayContaining([...RUDDER_CORE_MCP_TOOL_NAMES]),
+        );
+        expect(meta.rudderNativeTools).toMatchObject({
+          available: false,
+          toolCount: 0,
+          toolNames: [],
         });
       } finally {
         installedDesktopMcp.restore();
@@ -1064,12 +1141,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
-          toolCount: 69,
+          toolCount: 70,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");
         expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
-        expect(meta.rudderNativeTools).toMatchObject({ toolCount: 69 });
+        expect(meta.rudderNativeTools).toMatchObject({ toolCount: 70 });
         expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames).toEqual([
           ...RUDDER_CORE_MCP_TOOL_NAMES,
         ]);

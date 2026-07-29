@@ -81,7 +81,7 @@ describe("next release version handoff", () => {
     );
   });
 
-  it("plans a direct next-base update without mutating a real temporary repository", () => {
+  it("plans a direct main handoff without mutating a real temporary repository", () => {
     const repo = createReleaseRepo();
     const before = exec("git", ["rev-parse", "HEAD"], repo).trim();
     const beforeBranch = exec("git", ["branch", "--show-current"], repo).trim();
@@ -126,6 +126,35 @@ describe("next release version handoff", () => {
     expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
   });
 
+  it("recognizes when main already has the next release base", () => {
+    const repo = createReleaseRepo();
+    const outputFile = join(repo, "..", "github-output-skip.txt");
+    const packageJson = JSON.parse(readFileSync(join(repo, "cli", "package.json"), "utf8"));
+    packageJson.version = "0.5.2";
+    writeFileSync(join(repo, "cli", "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+    exec("git", ["add", "cli/package.json"], repo);
+    exec("git", ["commit", "-m", "chore: advance release base"], repo);
+    exec("git", ["push", "origin", "main"], repo);
+    writeFileSync(outputFile, "");
+
+    const result = spawnSync("node", [
+      "scripts/prepare-next-release.mjs",
+      "--stable-version", "0.5.1",
+    ], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("main already advanced to 0.5.2");
+    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
+    expect(readFileSync(outputFile, "utf8")).not.toContain("branch=");
+    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).not.toContain(
+      "automation/release-",
+    );
+  });
+
   it("pushes one idempotent release-maintenance commit directly to main", () => {
     const repo = createReleaseRepo();
     const outputFile = join(repo, "..", "github-output-update.txt");
@@ -143,13 +172,17 @@ describe("next release version handoff", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Advanced origin/main to 0.5.2");
     expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe("main");
+    exec("git", ["fetch", "origin"], repo);
     const remoteHead = exec("git", ["rev-parse", "origin/main"], repo).trim();
-    expect(JSON.parse(exec("git", ["show", "origin/main:cli/package.json"], repo)).version).toBe("0.5.2");
+    expect(
+      JSON.parse(exec("git", ["show", "origin/main:cli/package.json"], repo))
+        .version,
+    ).toBe("0.5.2");
     expect(exec("git", ["show", "-s", "--format=%s", remoteHead], repo).trim()).toBe(
       "chore(release): start v0.5.2 [skip release]",
     );
-    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).not.toContain("automation/release-");
     expect(readFileSync(outputFile, "utf8")).toContain("action=updated");
+    expect(readFileSync(outputFile, "utf8")).not.toContain("branch=");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
 
     writeFileSync(outputFile, "");
@@ -169,42 +202,49 @@ describe("next release version handoff", () => {
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
   }, 15_000);
 
-  it("rebases the version commit after a concurrent main update rejects the first push", () => {
+  it("accepts an identical main handoff created by a concurrent run", () => {
     const repo = createReleaseRepo();
     const root = dirname(repo);
-    const contender = join(root, "contender");
-    exec("git", ["clone", join(root, "remote.git"), contender], root);
-    exec("git", ["checkout", "main"], contender);
-    exec("git", ["config", "user.name", "Concurrent Test"], contender);
-    exec("git", ["config", "user.email", "concurrent-test@example.com"], contender);
-    writeFileSync(join(contender, "concurrent.txt"), "landed during release handoff\n");
-    exec("git", ["add", "concurrent.txt"], contender);
-    exec("git", ["commit", "-m", "fix: concurrent main update"], contender);
-
     const hook = join(repo, ".git", "hooks", "pre-push");
     const marker = join(root, "concurrent-push-complete");
     writeFileSync(hook, [
       "#!/bin/sh",
       `if [ ! -f '${marker}' ]; then`,
       `  touch '${marker}'`,
-      `  git -C '${contender}' push origin main`,
+      "  tree=\"$(git rev-parse 'HEAD^{tree}')\"",
+      "  parent=\"$(git rev-parse 'HEAD^')\"",
+      `  concurrent_commit="$(printf '%s\\n' 'concurrent release handoff' | `
+        + `GIT_AUTHOR_NAME='Concurrent Release Test' `
+        + `GIT_AUTHOR_EMAIL='concurrent-release@example.com' `
+        + `GIT_COMMITTER_NAME='Concurrent Release Test' `
+        + `GIT_COMMITTER_EMAIL='concurrent-release@example.com' `
+        + `git commit-tree "$tree" -p "$parent")"`,
+      "  git push --no-verify origin "
+        + "\"$concurrent_commit:refs/heads/main\" >/dev/null 2>&1",
       "fi",
       "",
     ].join("\n"));
     chmodSync(hook, 0o755);
 
+    const outputFile = join(root, "github-output-race.txt");
+    writeFileSync(outputFile, "");
     const result = spawnSync("node", [
       "scripts/prepare-next-release.mjs",
       "--stable-version", "0.5.1",
-    ], { cwd: repo, encoding: "utf8" });
+    ], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+    });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("refetching before retry");
-    expect(JSON.parse(exec("git", ["show", "origin/main:cli/package.json"], repo)).version).toBe("0.5.2");
-    expect(exec("git", ["show", "origin/main:concurrent.txt"], repo)).toBe("landed during release handoff\n");
-    expect(exec("git", ["log", "-2", "--format=%s", "origin/main"], repo).trim().split("\n")).toEqual([
-      "chore(release): start v0.5.2 [skip release]",
-      "fix: concurrent main update",
-    ]);
+    expect(result.stdout).toContain("Concurrent main update detected");
+    expect(result.stdout).toContain("main already advanced to 0.5.2");
+    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
+    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).toContain("refs/heads/main");
+    expect(JSON.parse(
+      exec("git", ["show", "origin/main:cli/package.json"], repo),
+    ).version).toBe("0.5.2");
   }, 15_000);
+
 });

@@ -1,8 +1,4 @@
 import { expect, test } from "@playwright/test";
-import {
-  RUDDER_BROWSER_MCP_TOOL_NAMES,
-  RUDDER_CORE_MCP_TOOL_NAMES,
-} from "../../packages/shared/src/index";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Agent detail integrations tab", () => {
@@ -28,6 +24,7 @@ test.describe("Agent detail integrations tab", () => {
 
     await page.addInitScript(({ orgId }) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.designStyle", "luma");
     }, { orgId: organization.id });
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
@@ -38,10 +35,10 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Integrations", exact: true })).toHaveCount(0);
     await expect(page.getByText("Connect the external tools this agent can use during work loops.")).toHaveCount(0);
     await expect(page.getByText("0 of 10 connected")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Discover" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Manage" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Discover", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Manage", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Built-in" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Custom tools" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Agent-scoped custom API" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Message" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
@@ -50,9 +47,8 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByText("rudder-tools · 77 tools · runtime-managed auth")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rudder MCP tools are built in" })).toHaveCount(0);
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
-    await expect(page.getByText("MCP Server", { exact: true })).toBeVisible();
+    await expect(page.getByText("MCP Server", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Custom API", { exact: true }).locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]")).toBeVisible();
-    await expect(page.getByText("MCP Server", { exact: true }).locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]")).toBeVisible();
     await expect(page.getByText("Feishu / Lark")).toBeVisible();
     await expect(page.getByText("Not configured")).toBeVisible();
     await expect(page.getByText("Create a Feishu bot named Integration Scout - Rudder")).toHaveCount(0);
@@ -64,6 +60,31 @@ test.describe("Agent detail integrations tab", () => {
     const feishuDialog = page.getByRole("dialog", { name: "Connect Feishu / Lark" });
     await expect(feishuDialog).toBeVisible();
     await expect(feishuDialog.getByText("Create a Feishu bot named Integration Scout - Rudder")).toBeVisible();
+    const regionGroup = feishuDialog.getByRole("group", { name: "Feishu or Lark region" });
+    const feishuRegionButton = regionGroup.getByRole("button", { name: "Feishu CN" });
+    const larkRegionButton = regionGroup.getByRole("button", { name: "Lark Global" });
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "true");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "false");
+
+    const regionRadii = await regionGroup.evaluate((group) => {
+      const [feishuButton, larkButton] = Array.from(group.querySelectorAll("button"));
+      return {
+        control: getComputedStyle(document.documentElement).getPropertyValue("--control-radius").trim(),
+        group: getComputedStyle(group).borderRadius,
+        feishu: feishuButton ? getComputedStyle(feishuButton).borderRadius : "",
+        lark: larkButton ? getComputedStyle(larkButton).borderRadius : "",
+      };
+    });
+    expect(regionRadii.feishu).toBe(regionRadii.control);
+    expect(regionRadii.lark).toBe(regionRadii.control);
+    expect(Number.parseFloat(regionRadii.group) - Number.parseFloat(regionRadii.control)).toBeCloseTo(2);
+
+    await larkRegionButton.click();
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "false");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "true");
+    await feishuRegionButton.click();
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "true");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "false");
     await feishuDialog.getByRole("button", { name: "Cancel" }).click();
     await expect(feishuDialog).toBeHidden();
 
@@ -79,13 +100,13 @@ test.describe("Agent detail integrations tab", () => {
     }
 
     await expect(page.getByText("Feishu Workspace", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Coming soon")).toHaveCount(6);
+    await expect(page.getByText("Coming soon")).toHaveCount(4);
     await expect(page.getByRole("button", { name: "GitHub coming soon" })).toHaveText("Coming soon");
     await expect(page.getByRole("button", { name: "GitHub coming soon" })).toBeDisabled();
     await page.getByRole("button", { name: "Gmail coming soon" }).click({ force: true });
     await expect(page.getByRole("dialog", { name: "Gmail" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Manage" }).click();
+    await page.getByRole("tab", { name: "Manage", exact: true }).click();
     await expect(page.getByText("No connected integrations")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Built-in" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Built-in" }).locator("..")).toContainText("2");
@@ -95,25 +116,12 @@ test.describe("Agent detail integrations tab", () => {
     const coreRow = page.getByLabel("Rudder MCP tools integration");
     const browserRow = page.getByLabel("Rudder Browser integration");
     await expect(coreRow).toContainText("Available");
-    await expect(coreRow).toContainText("rudder-tools");
-    await expect(coreRow).toContainText("agent-v1");
-    await expect(coreRow).toContainText(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
     await expect(browserRow).toContainText("Available");
-    await expect(browserRow).toContainText("rudder-browser");
-    await expect(browserRow).toContainText("browser-v1");
-    await expect(browserRow).toContainText(`${RUDDER_BROWSER_MCP_TOOL_NAMES.length} exposed`);
-    await expect(page.getByText("Runtime managed")).toHaveCount(2);
+    await expect(page.getByText("Managed automatically by the Rudder runtime.")).toHaveCount(2);
     await expect(page.getByText("No user credential")).toHaveCount(2);
-    await expect(page.getByText("rudder_agent_me", { exact: true })).toBeVisible();
-    await expect(page.getByText("rudder_issue_checkout", { exact: true })).toBeVisible();
-    await expect(page.getByText("rudder_library_file_list", { exact: true })).toBeVisible();
-    await expect(page.getByText("rudder_runs_errors", { exact: true })).toBeVisible();
-
-    const coreTools = coreRow.getByLabel("Rudder MCP tools list").locator("span");
-    const browserTools = browserRow.getByLabel("Rudder Browser tools list").locator("span");
-    await expect(coreTools).toHaveText([...RUDDER_CORE_MCP_TOOL_NAMES]);
-    await expect(browserTools).toHaveText([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
-    await expect(coreRow.getByText("rudder_browser_tabs", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/exposed/)).toHaveCount(0);
+    await expect(page.getByText("rudder_agent_me", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("rudder_browser_tabs", { exact: true })).toHaveCount(0);
 
     const unsupportedAgentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
       data: {
@@ -129,14 +137,119 @@ test.describe("Agent detail integrations tab", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${unsupportedAgent.id}/integrations`, {
       waitUntil: "domcontentloaded",
     });
-    await page.getByRole("button", { name: "Manage" }).click();
+    await page.getByRole("tab", { name: "Manage", exact: true }).click();
     const unsupportedCoreRow = page.getByLabel("Rudder MCP tools integration");
     const unsupportedBrowserRow = page.getByLabel("Rudder Browser integration");
     await expect(unsupportedCoreRow).toContainText("Available");
-    await expect(unsupportedCoreRow).toContainText(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
     await expect(unsupportedBrowserRow).toContainText("Disabled");
-    await expect(unsupportedBrowserRow).toContainText("0 exposed");
-    await expect(unsupportedBrowserRow.getByLabel("Rudder Browser tools list").locator("span")).toHaveCount(0);
+    await expect(unsupportedBrowserRow).not.toContainText("exposed");
+  });
+
+  test("keeps managed provider loading and failure states distinct from not connected", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Agent-MCP-Status-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Status Observer",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, { orgId: organization.id });
+
+    let releaseStatus!: () => void;
+    const statusGate = new Promise<void>((resolve) => {
+      releaseStatus = resolve;
+    });
+    const statusPattern = `**/api/agents/${agent.id}/mcp-provider-status**`;
+    await page.route(statusPattern, async (route) => {
+      await statusGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            provider: "supabase",
+            organization: {
+              state: "connected",
+              connectionId: "11111111-1111-4111-8111-111111111111",
+              maxAccess: "read_only",
+              scopeMode: "account",
+              revision: 1,
+            },
+            agent: {
+              access: "none",
+              activeRunUsesOlderPolicy: false,
+            },
+          },
+          {
+            provider: "linear",
+            organization: {
+              state: "not_connected",
+              connectionId: null,
+              maxAccess: null,
+              scopeMode: null,
+              revision: null,
+            },
+            agent: {
+              access: "none",
+              activeRunUsesOlderPolicy: false,
+            },
+          },
+          {
+            provider: "notion",
+            organization: {
+              state: "not_connected",
+              connectionId: null,
+              maxAccess: null,
+              scopeMode: null,
+              revision: null,
+            },
+            agent: {
+              access: "none",
+              activeRunUsesOlderPolicy: false,
+            },
+          },
+        ]),
+      });
+    });
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByLabel("Loading Supabase status")).toBeVisible();
+    await expect(page.getByTestId("managed-mcp-provider-supabase")).toHaveCount(0);
+
+    releaseStatus();
+    const supabaseCard = page.getByTestId("managed-mcp-provider-supabase");
+    await expect(supabaseCard).toContainText("Available");
+    await expect(supabaseCard).not.toContainText("Not connected");
+
+    await page.unroute(statusPattern);
+    await page.route(statusPattern, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "provider status unavailable" }),
+      });
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    const failedSupabaseCard = page.getByTestId("managed-mcp-provider-supabase");
+    await expect(failedSupabaseCard).toContainText("Unavailable", { timeout: 20_000 });
+    await expect(failedSupabaseCard).toContainText("Managed MCP status could not be loaded.");
+    await expect(failedSupabaseCard).not.toContainText("Not connected");
+    await expect(failedSupabaseCard.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 
   test("creates custom integrations with agent and organization scope boundaries", async ({ page }) => {
@@ -193,10 +306,11 @@ test.describe("Agent detail integrations tab", () => {
     await customApiDialog.getByRole("button", { name: "Connect Custom API" }).click();
     await expect(customApiDialog).toBeHidden();
 
-    await page.getByRole("button", { name: "Manage" }).click();
+    await page.getByRole("tab", { name: "Manage", exact: true }).click();
     await expect(page.getByText("Internal CRM")).toBeVisible();
     await expect(page.getByText("This agent only")).toBeVisible();
-    await expect(page.getByText("custom.internal-crm.lookup_contact")).toBeVisible();
+    await expect(page.getByText("custom.internal-crm.lookup_contact")).toHaveCount(0);
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
 
     const customListRes = await page.request.get(
       `${E2E_BASE_URL}/api/agents/${agent.id}/custom-integrations?orgId=${organization.id}`,

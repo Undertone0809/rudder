@@ -15,7 +15,12 @@ related_code:
   - server/src/services/issue-approvals.ts
   - server/src/services/budgets.ts
   - server/src/services/costs.ts
+  - server/src/routes/costs.ts
   - server/src/services/activity.ts
+  - packages/shared/src/types/cost.ts
+  - ui/src/hooks/useDateRange.ts
+  - ui/src/lib/date-range-cache.ts
+  - ui/src/pages/Costs.tsx
 related_tests:
   - server/src/__tests__/approvals-service.test.ts
   - server/src/__tests__/approval-routes-chat-application.test.ts
@@ -23,6 +28,8 @@ related_tests:
   - server/src/__tests__/costs-service.test.ts
   - server/src/__tests__/costs-rollups-service.test.ts
   - server/src/__tests__/activity-service.test.ts
+  - ui/src/lib/date-range-cache.test.ts
+  - ui/src/pages/Costs.test.tsx
   - tests/e2e/cost-trend.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -72,20 +79,42 @@ Flow:
    window where supported.
 3. Budget service checks monthly UTC period limits and thresholds.
 4. Soft alerts surface spend pressure; hard limits pause or block further work.
-5. UI/API readbacks show spend trend and budget state.
+5. Costs UI/API readbacks expose estimated spend, unified total tokens, cached
+   input tokens, cumulative overlapping Agent Run duration, explicit UTC
+   hourly or daily trends, and Agent/Project distributions for the selected
+   range. Costs offers Last 24 Hours, Last 7 Days, Last 30 Days, Year to Date,
+   All Time, and Custom ranges; it defaults to Last 24 Hours and does not expose
+   a Month to Date preset.
+6. Project distribution retains an Unattributed bucket so visible usage totals
+   reconcile with the organization summary; only valid Project IDs are
+   accepted as trend filters.
+7. Budget state and Finance ledger readbacks remain available on their owning
+   tabs without changing hard-stop enforcement semantics.
 
 Invariants:
 
 - Hard-stop budget behavior must block new hidden work when limit is reached.
 - Cost rollups must retain source run/event identity for audit.
+- Active duration counts each started run once, clips it to the selected
+  interval, counts parallel runtime cumulatively, and excludes queued runs
+  without `startedAt`.
+- A rolling 24-hour Costs range uses explicit hourly aggregation; longer and
+  calendar ranges use explicit daily aggregation.
+- Month-based budget enforcement and Dashboard health metrics remain
+  independent of the Costs date-range preset model.
 
 Evidence:
 
 - `server/src/__tests__/budgets-service.test.ts`,
   `server/src/__tests__/costs-service.test.ts`, and
-  `server/src/__tests__/costs-rollups-service.test.ts` cover budget/cost
-  service behavior.
-- `tests/e2e/cost-trend.spec.ts` covers visible cost trend behavior.
+  `server/src/__tests__/costs-rollups-service.test.ts` cover budget/cost route,
+  hourly/daily trend, run-duration, and attribution behavior.
+- `ui/src/lib/date-range-cache.test.ts` and `ui/src/pages/Costs.test.tsx` cover
+  date-window, trend-label, distribution, and empty-state presentation
+  behavior.
+- `tests/e2e/cost-trend.spec.ts` covers the default rolling 24-hour query, the
+  absence of Month to Date, Custom memory, metric, trend, and responsive
+  distribution workflow.
 
 ## ACTIVITY.AUDIT.001
 

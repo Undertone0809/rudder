@@ -7,7 +7,6 @@ import {
   Clock3,
   LayoutDashboard,
   MessageSquare,
-  Network,
   Repeat,
   Search,
   SquarePen,
@@ -80,7 +79,6 @@ export function MobileWorkspaceDrawer() {
             <span className="truncate">New Issue</span>
           </Button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
-          <SidebarNavItem to="/org" label="Org" icon={Network} />
           <SidebarNavItem to="/heartbeats" label="Heartbeats" icon={Clock3} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />
           <SidebarNavItem

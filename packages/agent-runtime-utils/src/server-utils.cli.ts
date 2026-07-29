@@ -168,7 +168,7 @@ export function resolveDesktopCliSpawnTarget(
   platform: NodeJS.Platform = process.platform,
   nodeRunner: string | null = null,
 ): Pick<RudderCliSpawnTarget, "command" | "args" | "env"> {
-  if (platform === "win32" && nodeRunner) {
+  if ((platform === "win32" || platform === "darwin") && nodeRunner) {
     return {
       command: executable,
       args: [nodeRunner],
@@ -246,11 +246,11 @@ export async function materializeRudderCliShim(
     .slice(0, 12);
   const shimDir = path.join(os.tmpdir(), "rudder-cli-shims", hash);
   await fs.mkdir(shimDir, { recursive: true });
+  const electronNodeMode = target.env?.ELECTRON_RUN_AS_NODE === "1";
 
   if (process.platform === "win32") {
     const shimPath = path.join(shimDir, "rudder.cmd");
     const commandLine = [quoteForCmd(target.command), ...target.args.map(quoteForCmd), "%*"].join(" ");
-    const electronNodeMode = target.env?.ELECTRON_RUN_AS_NODE === "1";
     await fs.writeFile(
       shimPath,
       `@echo off\r\n${electronNodeMode ? "set \"ELECTRON_RUN_AS_NODE=1\"\r\n" : ""}${commandLine}\r\n`,
@@ -261,7 +261,11 @@ export async function materializeRudderCliShim(
 
   const shimPath = path.join(shimDir, "rudder");
   const commandLine = [target.command, ...target.args].map(shellQuote).join(" ");
-  await fs.writeFile(shimPath, `#!/bin/sh\nexec ${commandLine} "$@"\n`, "utf8");
+  await fs.writeFile(
+    shimPath,
+    `#!/bin/sh\n${electronNodeMode ? "export ELECTRON_RUN_AS_NODE=1\n" : ""}exec ${commandLine} "$@"\n`,
+    "utf8",
+  );
   await fs.chmod(shimPath, 0o755);
   return shimPath;
 }

@@ -154,7 +154,7 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByRole("button", { name: "Ultra", exact: true }).first()).toBeVisible();
     const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });
     await expect(runConcurrencyInput).toBeVisible();
-    await expect(runConcurrencyInput).toHaveValue("3");
+    await expect(runConcurrencyInput).toHaveValue("8");
     await expect(page.getByRole("switch", { name: "Preflight before timer run", exact: true })).toBeChecked();
 
     const advancedButton = page.getByRole("button", { name: "Advanced options", exact: true }).first();

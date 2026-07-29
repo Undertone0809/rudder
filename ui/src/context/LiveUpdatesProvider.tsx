@@ -12,6 +12,7 @@ import { authApi } from "../api/auth";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { useLocation } from "../lib/router";
+import { useActivityCoordinator } from "./ActivityCoordinatorContext";
 import { useOrganization } from "./OrganizationContext";
 import type { ToastInput } from "./ToastContext";
 import { useToast } from "./ToastContext";
@@ -621,6 +622,12 @@ function invalidateHeartbeatQueries(
   queryClient.invalidateQueries({ queryKey: queryKeys.costs(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
 
+  const runId = readString(payload.runId);
+  if (runId) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(runId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.runEvents(runId) });
+  }
+
   const agentId = readString(payload.agentId);
   if (agentId) {
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
@@ -648,6 +655,7 @@ function invalidateActivityQueries(
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifests(orgId) });
     if (entityId) {
       const details = readRecord(payload.details);
       const issueRefs = resolveIssueQueryRefs(queryClient, orgId, entityId, details);
@@ -857,6 +865,7 @@ export const __liveUpdatesTestUtils = {
 
 export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const { selectedOrganizationId } = useOrganization();
+  const activityCoordinator = useActivityCoordinator();
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const location = useLocation();
@@ -880,6 +889,18 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       ?? notificationSettings?.desktopInboxNotifications
       ?? true,
     chatNotifications: notificationSettings?.desktopChatNotifications ?? true,
+  };
+  const handlerStateRef = useRef({
+    pushToast,
+    currentUserId,
+    notificationPreferences,
+    operatorDisplayName,
+  });
+  handlerStateRef.current = {
+    pushToast,
+    currentUserId,
+    notificationPreferences,
+    operatorDisplayName,
   };
 
   useEffect(() => {
@@ -930,10 +951,12 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
         try {
           const parsed = JSON.parse(raw) as LiveEvent;
-          handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, pushToast, gateRef.current, {
-            userId: currentUserId,
+          activityCoordinator.publishLiveEvent(parsed);
+          const handlerState = handlerStateRef.current;
+          handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, handlerState.pushToast, gateRef.current, {
+            userId: handlerState.currentUserId,
             agentId: null,
-          }, notificationPreferences, operatorDisplayName);
+          }, handlerState.notificationPreferences, handlerState.operatorDisplayName);
         } catch {
           // Ignore non-JSON payloads.
         }
@@ -965,11 +988,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   }, [
     queryClient,
     selectedOrganizationId,
-    pushToast,
-    currentUserId,
-    operatorDisplayName,
-    notificationPreferences.issueNotifications,
-    notificationPreferences.chatNotifications,
+    activityCoordinator,
   ]);
 
   return <>{children}</>;

@@ -1,6 +1,6 @@
 ---
-title: "Chat and Messenger"
-description: "Choose Chat or an Issue for the task, then use Messenger to recover work needing human attention."
+title: "Chat, Issues, and Messenger"
+description: "Choose the right place to do a task, then use Messenger to find work waiting for your attention."
 icon: "messages-square"
 keywords:
   - "Rudder Chat"
@@ -12,84 +12,84 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/chat-messenger"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
 ---
 
-Chat moves one task forward through conversation. Messenger finds work across
-Rudder that needs a human response. They belong to the same communication
-system, but they solve different problems.
-
-Consider an illustrative launch announcement. An operator can ask an Agent for
-a draft in Chat, inspect the file, request a shorter opening, and accept the
-result without creating another record. Messenger becomes useful later when a
-review request, failed run, or blocker needs that operator's attention.
+Chat and Issues are two ways to do work. Messenger is where you notice
+questions, failures, reviews, and other items that need you.
 
 <a id="chat-or-issue" />
 
-## Choose the task surface
+## Start with Chat unless you need more structure
 
-| Situation | Start with |
+| Situation | Use |
 | --- | --- |
-| You want to explore, clarify, execute, and refine through one conversation | Chat |
-| Work needs a named owner, dependencies, explicit status, or a review path | Issue |
-| A team policy requires fields or a shared queue | Issue |
-| One operator can judge the result in the same conversation | Chat |
+| You want to ask, clarify, execute, and revise in one conversation | Chat |
+| One person can judge the result in that conversation | Chat |
+| The task needs an owner, status, dependencies, or reviewer | Issue |
+| A team process requires a shared queue or specific fields | Issue |
 
-Chat and Issues are parallel work surfaces. Chat is not a waiting room before
-real work, and a long or important task does not automatically require an
-Issue. Create or link an Issue only when its coordination structure helps.
+Chat is not a temporary inbox before “real” work. It can carry a task from the
+first request to the accepted result. Create or link an Issue only when the
+extra coordination helps.
 
-![Chat issue proposal](../images/chat-create-issue-proposal.png)
+![Create an Issue from Chat when needed](../images/chat-create-issue-proposal.png)
 
-## Keep result and evidence with the work
+## Keep the result in the place where the work happened
 
-A Chat can preserve the request, Agent Runs, refinements, and final response.
-Its files-and-links shelf separates:
+In Chat, the conversation keeps the request, Agent Runs, follow-ups, and final
+answer together. The files and links area separates:
 
-- **Outputs**, which the Agent created and supported with attachment or run evidence
-- **Sources**, which the operator supplied or the eligible project context provided
-- **References**, which were cited or recommended but not produced by the Agent
+- **Outputs:** files or links the Agent created
+- **Sources:** material you or the project provided
+- **References:** material the Agent cited or recommended
 
-An ordinary link in a response is a Reference, not automatically an Output.
-The shelf covers the current conversation only. It does not collect files from
-other Chats in the same Project.
+A link mentioned in a reply is not automatically an output. When an Issue owns
+the work, attach the result and review decision to that Issue.
 
-When an Issue owns the work, keep the artifacts and review decision on that
-Issue. Messenger should link back to the source record instead of becoming a
-second place to store the decision.
+## Use Messenger to find what needs you
 
-## Messenger restores human attention
+Messenger gathers attention from across Rudder:
 
-![Messenger attention surface](../images/messenger-approvals.png)
-
-Messenger answers two questions: what needs my attention, and where should I
-act?
-
-| Signal | Return to |
+| What you see | Where to act |
 | --- | --- |
-| An Agent asks a question | The originating Chat or linked Issue |
-| An Agent Run fails | The run and its source Chat or Issue |
-| Work is blocked | The record that needs an input or owner |
-| A review is waiting | The reviewable Issue and its artifacts |
-| An approval is waiting | The approval owned by that action |
+| An Agent asks a question | Its Chat or Issue |
+| A Run fails | The Run and its source task |
+| Work is blocked | The record waiting for an answer or owner |
+| A review is ready | The Issue and its output |
+| An approval is waiting | The approval for that action |
 
-Human attention belongs here, but durable state stays on the native object.
-Messenger is not a backlog, a generic chat app, or the sole record of a review
-decision.
+Messenger points back to the source. It is not a second task board, and moving
+a conversation into a custom group does not change its owner, status, or
+reviewer.
 
-## Follow-ups during a reply
+![Messenger attention view](../images/messenger-approvals.png)
 
-If you send another message while the current reply is running, Rudder keeps it
-in a visible queue rather than starting a second reply in the same Chat. You
-can edit or delete the queued message.
+## Control one conversation without changing the Agent
 
-The queued follow-up sends automatically only after the current reply finishes
-successfully. If you stop the reply or the run fails, the message remains
-parked for review. This prevents an interrupted run from silently acting on
-later instructions.
+For each Chat, you can choose an Agent and, when supported, a model and thinking
+level. That choice applies to the conversation; it does not rewrite the
+Agent's default configuration everywhere else.
+
+Use **Fork** when you want to explore a different direction without changing
+the original conversation. Use **Side Chat** for a focused question beside the
+main work.
+
+## Ask about an exact part of a reply
+
+Select text in an Agent response and choose **Add to chat** to quote that
+passage in your next message. Use this to say exactly what should change instead
+of copying an entire reply. After you send the message, the selected passage
+remains attached as context.
+
+## If you send another message while the Agent is working
+
+Rudder either queues the message as a follow-up or lets you steer the active
+run when the runtime supports it. The editor shows which action will happen.
+Use **Stop** when the current direction is no longer useful.
 
 <CardGroup cols={2}>
-  <Card title="Issues" icon="circle-check" href="/concepts/issues">
-    Understand durable status, ownership, dependencies, and review.
+  <Card title="Run your first Chat task" icon="play" href="/get-started/first-organization">
+    Use the simplest path from request to result.
   </Card>
-  <Card title="First Organization" icon="building-2" href="/get-started/first-organization">
-    Complete a small task through one chosen surface.
+  <Card title="Understand Issues" icon="circle-check" href="/concepts/issues">
+    Add ownership, status, dependencies, and review.
   </Card>
 </CardGroup>

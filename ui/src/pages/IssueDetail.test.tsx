@@ -93,7 +93,6 @@ const queryData = new Map<string, unknown>([
     title: null,
     icon: null,
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},

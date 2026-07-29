@@ -100,6 +100,7 @@ export interface ChatRuntimeDescriptor {
   runtimeAgentId: string | null;
   agentRuntimeType: string | null;
   model: string | null;
+  effort?: string | null;
   available: boolean;
   error: string | null;
 }
@@ -233,6 +234,7 @@ export interface ChatQueuedMessagePayload {
   projectId?: string | null;
   skillRefs?: string[];
   accessMode?: string | null;
+  agentId?: string | null;
   model?: string | null;
   effort?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -247,6 +249,8 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  runtimeSnapshotVersion?: number | null;
+  annotationCount?: number;
   requestActor?: ChatQueueRequestActor | null;
   deliveryIntent: ChatQueueDeliveryIntent;
   deliveryDisposition: ChatControlDisposition | null;
@@ -416,6 +420,8 @@ export interface ChatConversation {
   userMessageCount: number;
   searchPreview?: string | null;
   preferredAgentId: string | null;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
   routedAgentId: string | null;
   primaryIssueId: string | null;
   forkedFromConversationId: string | null;
@@ -462,6 +468,8 @@ export interface ChatMessage {
   runId?: string | null;
   /** Chat generation that owns this assistant message and its Work Transcript. */
   generationId?: string | null;
+  /** Terminal reason of the owning generation, when the message belongs to one. */
+  generationTerminalReason?: string | null;
   /** Agent whose runtime produced this assistant message. */
   replyingAgentId: string | null;
   /** Groups user+assistant rows for one logical turn; new variant on edit/regenerate. */
@@ -504,12 +512,48 @@ export interface ChatWorkManifestItem {
   updatedAt: Date;
 }
 
+export type ChatWorkManifestSubagentState = "active" | "done";
+
+export type ChatWorkManifestSubagentStatus =
+  | "running"
+  | "pending"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+  | "stopped"
+  | "unknown";
+
+export interface ChatWorkManifestSubagentSummary {
+  callId: string;
+  threadId: string;
+  sourceMessageId: string;
+  runId: string | null;
+  senderLabel?: string | null;
+  label: string;
+  prompt: string;
+  avatarSeed: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  state: ChatWorkManifestSubagentState;
+  status: ChatWorkManifestSubagentStatus;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface ChatWorkManifestSubagents {
+  active: ChatWorkManifestSubagentSummary[];
+  done: ChatWorkManifestSubagentSummary[];
+  totalCount: number;
+}
+
 export interface ChatWorkManifestResponse {
   conversationId: string;
   totalCount: number;
   outputs: ChatWorkManifestItem[];
   sources: ChatWorkManifestItem[];
   references: ChatWorkManifestItem[];
+  subagents: ChatWorkManifestSubagents;
   project: {
     id: string;
     totalCount: number;
@@ -574,9 +618,23 @@ export interface ChatOperationProposalDecision {
   decidedAt: string | null;
 }
 
+export interface ChatTranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+}
+
+export type ChatStreamTranscriptTextEntry = {
+  kind: "assistant" | "thinking";
+  ts: string;
+  text: string;
+  delta?: boolean;
+  phase?: "commentary" | "final_answer";
+  segmentId?: string;
+} & Partial<ChatTranscriptGenerationProvenance>;
+
 export type ChatStreamTranscriptEntry =
-  | { kind: "assistant"; ts: string; text: string; delta?: boolean }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean }
+  | ChatStreamTranscriptTextEntry
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
@@ -636,6 +694,11 @@ export interface ChatStreamFinalEvent {
 export interface ChatStreamErrorEvent {
   type: "error";
   error: string;
+  /**
+   * Durable message associated with the failure. Before the stream's ack event,
+   * this is the committed user message receipt; after ack it identifies the
+   * persisted failed assistant message.
+   */
   messageId?: string | null;
 }
 

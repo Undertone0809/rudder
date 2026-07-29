@@ -11,6 +11,7 @@ import {
 } from "../../agent-runtimes/transcript";
 import { agentRunsApi, type LiveRunForIssue } from "../../api/agent-runs";
 import { instanceSettingsApi } from "../../api/instanceSettings";
+import { useActivityCoordinator } from "../../context/ActivityCoordinatorContext";
 import { queryKeys } from "../../lib/queryKeys";
 import { heartbeatRunEventTranscriptEntry } from "../../lib/run-detail-events";
 
@@ -22,6 +23,21 @@ type LiveLogChunk = { type: "log"; chunk: RunLogChunk };
 type LiveEntryChunk = { type: "entry"; entry: TranscriptEntry };
 type LiveTranscriptChunk = LiveLogChunk | LiveEntryChunk;
 type IncomingLiveTranscriptChunk = (LiveLogChunk | LiveEntryChunk) & { dedupeKey: string };
+type RunLogReadResult = Awaited<ReturnType<typeof agentRunsApi.log>>;
+const sharedRunLogReads = new Map<string, Promise<RunLogReadResult>>();
+
+function sharedRunLogRead(runId: string, offset: number): Promise<RunLogReadResult> {
+  const key = `${runId}:${offset}`;
+  const current = sharedRunLogReads.get(key);
+  if (current) return current;
+  const promise = agentRunsApi.log(runId, offset, LOG_READ_LIMIT_BYTES);
+  sharedRunLogReads.set(key, promise);
+  const cleanup = () => {
+    if (sharedRunLogReads.get(key) === promise) sharedRunLogReads.delete(key);
+  };
+  void promise.then(cleanup, cleanup);
+  return promise;
+}
 
 function runIdFromDedupeKey(key: string): string | null {
   for (const prefix of ["log:", "socket:event:", "socket:status:"]) {
@@ -127,19 +143,109 @@ function parsePersistedLogContent(
   return parsed;
 }
 
+type SharedRunLogSource = {
+  run: LiveRunForIssue;
+  chunks: IncomingLiveTranscriptChunk[];
+  offset: number;
+  pendingRows: Map<string, string>;
+  cooldownUntil: number;
+  stableReads: number;
+  settled: boolean;
+  reading: boolean;
+  timer: ReturnType<typeof setInterval> | null;
+  subscribers: Set<(chunks: IncomingLiveTranscriptChunk[]) => void>;
+};
+
+const sharedRunLogSources = new Map<string, SharedRunLogSource>();
+
+function readSharedRunLogSource(source: SharedRunLogSource) {
+  if (source.reading || source.settled || source.cooldownUntil > Date.now()) return;
+  source.reading = true;
+  const offset = source.offset;
+  void sharedRunLogRead(source.run.id, offset).then((result) => {
+    source.cooldownUntil = 0;
+    const chunks = parsePersistedLogContent(source.run.id, result.content, source.pendingRows);
+    if (chunks.length > 0) {
+      source.chunks = [...source.chunks, ...chunks].slice(-2_000);
+      for (const subscriber of source.subscribers) subscriber(chunks);
+    }
+
+    let nextOffset = offset;
+    if (result.nextOffset !== undefined) {
+      nextOffset = result.nextOffset;
+    } else if (result.endOffset !== undefined) {
+      nextOffset = result.endOffset;
+    } else if (result.content.length > 0) {
+      nextOffset = offset + utf8ByteLength(result.content);
+    }
+    source.offset = nextOffset;
+
+    if (!isTerminalStatus(source.run.status)) {
+      source.stableReads = 0;
+      source.settled = false;
+      return;
+    }
+    const stableRead = result.content.length === 0 && nextOffset === offset;
+    source.stableReads = stableRead ? source.stableReads + 1 : 0;
+    source.settled = source.stableReads >= TERMINAL_LOG_STABLE_READS_REQUIRED;
+  }, () => {
+    source.cooldownUntil = Date.now() + LOG_ERROR_COOLDOWN_MS;
+  }).finally(() => {
+    source.reading = false;
+  });
+}
+
+function subscribeSharedRunLog(
+  run: LiveRunForIssue,
+  subscriber: (chunks: IncomingLiveTranscriptChunk[]) => void,
+) {
+  let source = sharedRunLogSources.get(run.id);
+  if (!source) {
+    source = {
+      run,
+      chunks: [],
+      offset: 0,
+      pendingRows: new Map(),
+      cooldownUntil: 0,
+      stableReads: 0,
+      settled: false,
+      reading: false,
+      timer: null,
+      subscribers: new Set(),
+    };
+    sharedRunLogSources.set(run.id, source);
+  } else {
+    const wasTerminal = isTerminalStatus(source.run.status);
+    source.run = run;
+    if (wasTerminal && !isTerminalStatus(run.status)) {
+      source.stableReads = 0;
+      source.settled = false;
+    }
+  }
+  source.subscribers.add(subscriber);
+  if (source.chunks.length > 0) subscriber(source.chunks);
+  readSharedRunLogSource(source);
+  if (source.timer === null) {
+    source.timer = setInterval(() => readSharedRunLogSource(source!), LOG_POLL_INTERVAL_MS);
+  }
+
+  return () => {
+    source!.subscribers.delete(subscriber);
+    if (source!.subscribers.size > 0) return;
+    if (source!.timer !== null) clearInterval(source!.timer);
+    sharedRunLogSources.delete(run.id);
+  };
+}
+
 export function useLiveRunTranscripts({
   runs,
   orgId,
   maxChunksPerRun = 200,
   includeRunEvents = true,
 }: UseLiveRunTranscriptsOptions) {
+  const activityCoordinator = useActivityCoordinator();
   const [chunksByRun, setChunksByRun] = useState<Map<string, LiveTranscriptChunk[]>>(new Map());
   const seenChunkKeysRef = useRef(new Set<string>());
-  const pendingLogRowsByRunRef = useRef(new Map<string, string>());
-  const logOffsetByRunRef = useRef(new Map<string, number>());
-  const logErrorCooldownUntilRef = useRef(new Map<string, number>());
-  const terminalLogSettledRunIdsRef = useRef(new Set<string>());
-  const terminalLogStableReadsByRunRef = useRef(new Map<string, number>());
   const { data: generalSettings } = useQuery({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
@@ -154,6 +260,20 @@ export function useLiveRunTranscripts({
     () => runs.map((run) => run.id).sort((a, b) => a.localeCompare(b)).join(","),
     [runs],
   );
+  const runSourcesKey = useMemo(
+    () => runs
+      .map((run) => `${run.id}:${run.status}`)
+      .sort((a, b) => a.localeCompare(b))
+      .join(","),
+    [runs],
+  );
+
+  useEffect(() => {
+    const leases = runs.map((run) => activityCoordinator.acquireDetail(`run:${run.id}`));
+    return () => {
+      for (const lease of leases) lease.release();
+    };
+  }, [activityCoordinator, runIdsKey]);
 
   const appendChunks = (runId: string, chunks: IncomingLiveTranscriptChunk[]) => {
     if (chunks.length === 0) return;
@@ -190,238 +310,108 @@ export function useLiveRunTranscripts({
       return next.size === prev.size ? prev : next;
     });
 
-    for (const key of pendingLogRowsByRunRef.current.keys()) {
-      const runId = key.replace(/:records$/, "");
-      if (!knownRunIds.has(runId)) {
-        pendingLogRowsByRunRef.current.delete(key);
-      }
-    }
     for (const key of seenChunkKeysRef.current) {
       const runId = runIdFromDedupeKey(key);
       if (runId && !knownRunIds.has(runId)) {
         seenChunkKeysRef.current.delete(key);
       }
     }
-    for (const runId of logOffsetByRunRef.current.keys()) {
-      if (!knownRunIds.has(runId)) {
-        logOffsetByRunRef.current.delete(runId);
-      }
-    }
-    for (const runId of logErrorCooldownUntilRef.current.keys()) {
-      if (!knownRunIds.has(runId)) {
-        logErrorCooldownUntilRef.current.delete(runId);
-      }
-    }
-    for (const runId of terminalLogSettledRunIdsRef.current) {
-      if (!knownRunIds.has(runId)) {
-        terminalLogSettledRunIdsRef.current.delete(runId);
-      }
-    }
-    for (const runId of terminalLogStableReadsByRunRef.current.keys()) {
-      if (!knownRunIds.has(runId)) {
-        terminalLogStableReadsByRunRef.current.delete(runId);
-      }
-    }
   }, [runs]);
 
   useEffect(() => {
     if (runs.length === 0) return;
-
-    let cancelled = false;
-
-    const readRunLog = async (run: LiveRunForIssue) => {
-      const isTerminal = isTerminalStatus(run.status);
-      if (isTerminal && terminalLogSettledRunIdsRef.current.has(run.id)) return;
-      const cooldownUntil = logErrorCooldownUntilRef.current.get(run.id) ?? 0;
-      if (cooldownUntil > Date.now()) return;
-
-      const offset = logOffsetByRunRef.current.get(run.id) ?? 0;
-      try {
-        const result = await agentRunsApi.log(run.id, offset, LOG_READ_LIMIT_BYTES);
-        if (cancelled) return;
-        logErrorCooldownUntilRef.current.delete(run.id);
-
-        appendChunks(run.id, parsePersistedLogContent(run.id, result.content, pendingLogRowsByRunRef.current));
-
-        let nextOffset = offset;
-        if (result.nextOffset !== undefined) {
-          nextOffset = result.nextOffset;
-        } else if (result.endOffset !== undefined) {
-          nextOffset = result.endOffset;
-        } else if (result.content.length > 0) {
-          nextOffset = offset + utf8ByteLength(result.content);
-        }
-        logOffsetByRunRef.current.set(run.id, nextOffset);
-
-        if (!isTerminal) return;
-
-        const stableRead = result.content.length === 0 && nextOffset === offset;
-        const stableReads = stableRead
-          ? (terminalLogStableReadsByRunRef.current.get(run.id) ?? 0) + 1
-          : 0;
-        terminalLogStableReadsByRunRef.current.set(run.id, stableReads);
-        if (stableReads >= TERMINAL_LOG_STABLE_READS_REQUIRED) {
-          terminalLogSettledRunIdsRef.current.add(run.id);
-        }
-      } catch {
-        logErrorCooldownUntilRef.current.set(run.id, Date.now() + LOG_ERROR_COOLDOWN_MS);
-      }
-    };
-
-    const readAll = async () => {
-      await Promise.all(runs.map((run) => readRunLog(run)));
-    };
-
-    void readAll();
-    const interval = window.setInterval(() => {
-      const hasUnsettledRuns = runs.some((run) =>
-        !isTerminalStatus(run.status) || !terminalLogSettledRunIdsRef.current.has(run.id),
-      );
-      if (hasUnsettledRuns) void readAll();
-    }, LOG_POLL_INTERVAL_MS);
-
+    const releases = runs.map((run) => subscribeSharedRunLog(run, (chunks) => {
+      appendChunks(run.id, chunks);
+    }));
     return () => {
-      cancelled = true;
-      window.clearInterval(interval);
+      for (const release of releases) release();
     };
-  }, [runIdsKey, runs]);
+  }, [runSourcesKey]);
 
   useEffect(() => {
-    if (!orgId || activeRunIds.size === 0) return;
+    if (!orgId || activeRunIds.size === 0) return undefined;
 
-    let closed = false;
-    let reconnectTimer: number | null = null;
-    let socket: WebSocket | null = null;
+    return activityCoordinator.subscribeLiveEvents((event: LiveEvent) => {
+      if (event.orgId !== orgId) return;
+      const payload = event.payload ?? {};
+      const runId = readString(payload["runId"]);
+      if (!runId || !activeRunIds.has(runId) || !runById.has(runId)) return;
 
-    const scheduleReconnect = () => {
-      if (closed) return;
-      reconnectTimer = window.setTimeout(connect, 1500);
-    };
+      if (event.type === "heartbeat.run.log") {
+        if (payload["truncated"] === true) return;
+        const chunk = readString(payload["chunk"]);
+        if (!chunk) return;
+        const ts = readString(payload["ts"]) ?? event.createdAt;
+        const stream =
+          readString(payload["stream"]) === "stderr"
+            ? "stderr"
+            : readString(payload["stream"]) === "system"
+              ? "system"
+              : "stdout";
+        appendChunks(runId, [{
+          type: "log",
+          chunk: { ts, stream, chunk },
+          dedupeKey: `log:${runId}:${ts}:${stream}:${chunk}`,
+        }]);
+        return;
+      }
 
-    const connect = () => {
-      if (closed) return;
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/orgs/${encodeURIComponent(orgId)}/events/ws`;
-      socket = new WebSocket(url);
-
-      socket.onmessage = (message) => {
-        const raw = typeof message.data === "string" ? message.data : "";
-        if (!raw) return;
-
-        let event: LiveEvent;
-        try {
-          event = JSON.parse(raw) as LiveEvent;
-        } catch {
-          return;
-        }
-
-        if (event.orgId !== orgId) return;
-        const payload = event.payload ?? {};
-        const runId = readString(payload["runId"]);
-        if (!runId || !activeRunIds.has(runId)) return;
-        if (!runById.has(runId)) return;
-
-        if (event.type === "heartbeat.run.log") {
-          if (payload["truncated"] === true) return;
-          const chunk = readString(payload["chunk"]);
-          if (!chunk) return;
-          const ts = readString(payload["ts"]) ?? event.createdAt;
-          const stream =
-            readString(payload["stream"]) === "stderr"
-              ? "stderr"
-              : readString(payload["stream"]) === "system"
-                ? "system"
-                : "stdout";
+      if (includeRunEvents && event.type === "heartbeat.run.event") {
+        const seq = typeof payload["seq"] === "number" ? payload["seq"] : null;
+        const eventType = readString(payload["eventType"]) ?? "event";
+        const messageText = readString(payload["message"]) ?? eventType;
+        const transcriptEntry = heartbeatRunEventTranscriptEntry({
+          id: typeof event.id === "number" ? event.id : 0,
+          orgId: event.orgId,
+          runId,
+          agentId: readString(payload["agentId"]) ?? runById.get(runId)?.agentId ?? "",
+          seq: seq ?? 0,
+          eventType,
+          stream: payload["stream"] === "stdout" || payload["stream"] === "stderr" || payload["stream"] === "system"
+            ? payload["stream"]
+            : null,
+          level: payload["level"] === "info" || payload["level"] === "warn" || payload["level"] === "error"
+            ? payload["level"]
+            : null,
+          color: readString(payload["color"]),
+          message: readString(payload["message"]),
+          payload: readRecord(payload["payload"]),
+          createdAt: new Date(event.createdAt),
+        });
+        if (transcriptEntry) {
           appendChunks(runId, [{
-            type: "log",
-            chunk: {
-            ts,
-            stream,
-            chunk,
-            },
-            dedupeKey: `log:${runId}:${ts}:${stream}:${chunk}`,
-          }]);
-          return;
-        }
-
-        if (includeRunEvents && event.type === "heartbeat.run.event") {
-          const seq = typeof payload["seq"] === "number" ? payload["seq"] : null;
-          const eventType = readString(payload["eventType"]) ?? "event";
-          const messageText = readString(payload["message"]) ?? eventType;
-          const transcriptEntry = heartbeatRunEventTranscriptEntry({
-            id: typeof event.id === "number" ? event.id : 0,
-            orgId: event.orgId,
-            runId,
-            agentId: readString(payload["agentId"]) ?? runById.get(runId)?.agentId ?? "",
-            seq: seq ?? 0,
-            eventType,
-            stream: payload["stream"] === "stdout" || payload["stream"] === "stderr" || payload["stream"] === "system"
-              ? payload["stream"]
-              : null,
-            level: payload["level"] === "info" || payload["level"] === "warn" || payload["level"] === "error"
-              ? payload["level"]
-              : null,
-            color: readString(payload["color"]),
-            message: readString(payload["message"]),
-            payload: readRecord(payload["payload"]),
-            createdAt: new Date(event.createdAt),
-          });
-          if (transcriptEntry) {
-            appendChunks(runId, [{
-              type: "entry",
-              entry: transcriptEntry,
-              dedupeKey: `socket:event:${runId}:${seq ?? `${eventType}:${messageText}:${event.createdAt}`}`,
-            }]);
-            return;
-          }
-          appendChunks(runId, [{
-            type: "log",
-            chunk: {
-              ts: event.createdAt,
-              stream: eventType === "error" ? "stderr" : "system",
-              chunk: messageText,
-            },
+            type: "entry",
+            entry: transcriptEntry,
             dedupeKey: `socket:event:${runId}:${seq ?? `${eventType}:${messageText}:${event.createdAt}`}`,
           }]);
           return;
         }
-
-        if (includeRunEvents && event.type === "heartbeat.run.status") {
-          const status = readString(payload["status"]) ?? "updated";
-          appendChunks(runId, [{
-            type: "log",
-            chunk: {
-              ts: event.createdAt,
-              stream: isTerminalStatus(status) && status !== "succeeded" ? "stderr" : "system",
-              chunk: `run ${status}`,
-            },
-            dedupeKey: `socket:status:${runId}:${status}:${readString(payload["finishedAt"]) ?? ""}`,
-          }]);
-        }
-      };
-
-      socket.onerror = () => {
-        socket?.close();
-      };
-
-      socket.onclose = () => {
-        scheduleReconnect();
-      };
-    };
-
-    connect();
-
-    return () => {
-      closed = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      if (socket) {
-        socket.onmessage = null;
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close(1000, "live_run_transcripts_unmount");
+        appendChunks(runId, [{
+          type: "log",
+          chunk: {
+            ts: event.createdAt,
+            stream: eventType === "error" ? "stderr" : "system",
+            chunk: messageText,
+          },
+          dedupeKey: `socket:event:${runId}:${seq ?? `${eventType}:${messageText}:${event.createdAt}`}`,
+        }]);
+        return;
       }
-    };
-  }, [activeRunIds, includeRunEvents, orgId, runById]);
+
+      if (includeRunEvents && event.type === "heartbeat.run.status") {
+        const status = readString(payload["status"]) ?? "updated";
+        appendChunks(runId, [{
+          type: "log",
+          chunk: {
+            ts: event.createdAt,
+            stream: isTerminalStatus(status) && status !== "succeeded" ? "stderr" : "system",
+            chunk: `run ${status}`,
+          },
+          dedupeKey: `socket:status:${runId}:${status}:${readString(payload["finishedAt"]) ?? ""}`,
+        }]);
+      }
+    });
+  }, [activeRunIds, activityCoordinator, includeRunEvents, orgId, runById]);
 
   const transcriptByRun = useMemo(() => {
     const next = new Map<string, TranscriptEntry[]>();

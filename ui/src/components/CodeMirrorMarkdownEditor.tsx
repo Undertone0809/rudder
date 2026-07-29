@@ -884,6 +884,14 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       view.focus();
       setPreviewFocusRef.current?.(view, true);
     },
+    insertTextAtSelection: (text: string) => {
+      const view = viewRef.current;
+      if (!view) return false;
+      view.dispatch(view.state.replaceSelection(text));
+      view.focus();
+      setPreviewFocusRef.current?.(view, true);
+      return true;
+    },
     getMarkdown: () => {
       const view = viewRef.current;
       return view ? sourceMarkdown(view.state) : currentValueRef.current;

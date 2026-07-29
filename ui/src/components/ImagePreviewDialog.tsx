@@ -14,7 +14,12 @@ import {
   type ImageNaturalSize,
 } from "@/lib/image-preview";
 import { Copy, Download, Folder, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  getImageContextMenuTarget,
+  ImageContextMenu,
+  type ImageContextMenuTarget,
+} from "./ImageContextMenu";
 
 export interface ImagePreviewState {
   alt: string;
@@ -42,11 +47,14 @@ export function ImagePreviewDialog({
   titleFallback: string;
 }) {
   const toast = useOptionalToast();
+  const dialogContentRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState<ImageNaturalSize | null>(preview?.naturalSize ?? null);
   const [viewportSize, setViewportSize] = useState(() => getViewportSize());
+  const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenuTarget | null>(null);
   const canShowInFolder = canShowImageInFolder();
 
   useEffect(() => {
+    setImageContextMenu(null);
     if (!preview) {
       setNaturalSize(null);
       return;
@@ -124,6 +132,7 @@ export function ImagePreviewDialog({
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
+        ref={dialogContentRef}
         aria-describedby={undefined}
         showCloseButton={false}
         className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
@@ -179,7 +188,36 @@ export function ImagePreviewDialog({
               alt={preview.alt}
               className="chat-attachment-preview-image"
               style={containedSize ? { width: "100%", height: "100%" } : undefined}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const target = getImageContextMenuTarget(
+                  event.currentTarget,
+                  event.clientX,
+                  event.clientY,
+                );
+                const dialogRect = dialogContentRef.current?.getBoundingClientRect();
+                setImageContextMenu(dialogRect
+                  ? {
+                    ...target,
+                    position: {
+                      left: target.position.left - dialogRect.left,
+                      top: target.position.top - dialogRect.top,
+                    },
+                  }
+                  : target);
+              }}
             />
+            {imageContextMenu ? (
+              <ImageContextMenu
+                name={imageContextMenu.name}
+                onClose={() => setImageContextMenu(null)}
+                position={imageContextMenu.position}
+                portalContainer={dialogContentRef.current}
+                src={imageContextMenu.src}
+                testId="image-preview-context-menu"
+              />
+            ) : null}
           </div>
         ) : null}
       </DialogContent>

@@ -12,12 +12,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useActivitySummary } from "@/context/ActivityCoordinatorContext";
+import { useChatGenerationActive } from "@/context/ChatGenerationContext";
 import { displayChatTitle, isDefaultChatTitle } from "@/lib/chat-title";
 import type { MessengerThreadDensity } from "@/lib/messenger-preferences";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import { Link } from "@/lib/router";
 import type { SourceBadge } from "@/lib/source-badge";
 import { cn, relativeTime } from "@/lib/utils";
+import type { ActivityKey } from "@/runtime/activity-coordinator";
 import type { useSortable } from "@dnd-kit/sortable";
 import { formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type MessengerThreadSummary } from "@rudderhq/shared";
 import {
@@ -27,7 +30,6 @@ import {
   Copy,
   DollarSign,
   EyeOff,
-  Folder,
   FolderInput,
   FolderPlus,
   GitFork,
@@ -420,7 +422,7 @@ export function ChatThreadRow({
   sourceBadge,
   href,
   active,
-  generating,
+  generating: generatingOverride,
   density,
   renaming,
   renameDraft,
@@ -453,7 +455,7 @@ export function ChatThreadRow({
   sourceBadge?: SourceBadge | null;
   href: string;
   active: boolean;
-  generating: boolean;
+  generating?: boolean;
   density: MessengerThreadDensity;
   renaming: boolean;
   renameDraft: string;
@@ -480,6 +482,8 @@ export function ChatThreadRow({
   dragging?: boolean;
   onSelect: (href: string) => void;
 }) {
+  const coordinatedGenerating = useChatGenerationActive(conversation.id);
+  const generating = generatingOverride ?? coordinatedGenerating;
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt, { compactDate: true });
   const [actionsOpen, setActionsOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -755,7 +759,6 @@ export function ChatThreadRow({
                     <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                       {customGroupId ? (
                         <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                          <Folder className="h-4 w-4" />
                           Move out of group
                         </DropdownMenuItem>
                       ) : null}
@@ -835,6 +838,10 @@ export function ThreadRow({
   dragging?: boolean;
   onSelect: (thread: MessengerThreadSummary) => void;
 }) {
+  const activityKey = /^(issue|run):/.test(thread.threadKey)
+    ? thread.threadKey as ActivityKey
+    : null;
+  const liveSummary = useActivitySummary(activityKey);
   const Icon = threadIcon(thread.kind);
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
@@ -849,9 +856,12 @@ export function ThreadRow({
   const showActions = canTogglePin || canHideIssue || Boolean(customGroups);
   const issueStatus =
     thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
-      ? thread.metadata.status
+      ? liveSummary?.status ?? thread.metadata.status
       : null;
-  const emphasizeUnread = active || preserveUnreadEmphasis || thread.unreadCount > 0;
+  const unreadCount = liveSummary?.unreadCount ?? thread.unreadCount;
+  const needsAttention = liveSummary?.needsAttention ?? thread.needsAttention;
+  const latestActivityAt = liveSummary?.latestActivityAt ?? thread.latestActivityAt;
+  const emphasizeUnread = active || preserveUnreadEmphasis || unreadCount > 0;
   const activeExecutionRunId =
     thread.metadata?.splitIssue === true && typeof thread.metadata.activeExecutionRunId === "string"
       ? thread.metadata.activeExecutionRunId
@@ -874,8 +884,8 @@ export function ThreadRow({
       metadata={thread.metadata?.splitIssue === true ? [
         issueStatus ? `Status: ${issueStatus.replace(/_/g, " ")}` : null,
         typeof thread.metadata.priority === "string" ? `Priority: ${thread.metadata.priority}` : null,
-        thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null,
-      ] : [thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null]}
+        latestActivityAt ? relativeTime(new Date(latestActivityAt), { compactDate: true }) : null,
+      ] : [latestActivityAt ? relativeTime(new Date(latestActivityAt), { compactDate: true }) : null]}
       suppressed={actionsOpen}
     >
     <div
@@ -908,16 +918,16 @@ export function ThreadRow({
         {issueStatus ? (
           <IssueStatusThreadAvatar
             status={issueStatus}
-            unreadCount={thread.unreadCount}
-            needsAttention={thread.needsAttention}
+            unreadCount={unreadCount}
+            needsAttention={needsAttention}
             density={density}
             testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
           />
         ) : (
           <ThreadAvatar
             icon={Icon}
-            unreadCount={thread.unreadCount}
-            needsAttention={thread.needsAttention}
+            unreadCount={unreadCount}
+            needsAttention={needsAttention}
             density={density}
             testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
           />
@@ -943,7 +953,7 @@ export function ThreadRow({
                 (actionsOpen || activeExecutionRunId) && "opacity-0",
               )}
             >
-              {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : "No activity"}
+              {latestActivityAt ? relativeTime(new Date(latestActivityAt), { compactDate: true }) : "No activity"}
             </span>
           </span>
           {!compact ? (
@@ -1056,7 +1066,6 @@ export function ThreadRow({
                   <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                     {customGroupId ? (
                       <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                        <Folder className="h-4 w-4" />
                         Move out of group
                       </DropdownMenuItem>
                     ) : null}

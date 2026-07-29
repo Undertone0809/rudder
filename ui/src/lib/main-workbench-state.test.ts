@@ -1366,6 +1366,75 @@ describe("Main Workbench state", () => {
     });
   });
 
+  it("cancels an in-flight Saved View claim back to Side before Remove unbinds it", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 6,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const detaching = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: source.runtimeId,
+          viewInstanceId: source.viewInstanceId,
+          targetKind: source.target.kind,
+          target: source.target,
+          host: { kind: "side", contextKey: source.originContextKey },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        clientMutationId: "mutation-remove",
+        source,
+      },
+      {
+        type: "promotion/server-commit",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        savedViewId: "saved-remove",
+        expectedSourceRevision: 6,
+      },
+      {
+        type: "promotion/claim",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        savedViewId: "saved-remove",
+        expectedSourceRevision: 6,
+      },
+    );
+
+    const staleCancellation = mainWorkbenchReducer(detaching, {
+      type: "promotion/cancel-saved-view",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-remove",
+      savedViewId: "saved-other",
+      expectedSourceRevision: 6,
+    });
+    expect(staleCancellation).toBe(detaching);
+
+    const canceled = mainWorkbenchReducer(detaching, {
+      type: "promotion/cancel-saved-view",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-remove",
+      savedViewId: "saved-remove",
+      expectedSourceRevision: 6,
+    });
+    expect(canceled.organizations[ORGANIZATION_A]?.promotionsById)
+      .not.toHaveProperty("promotion-remove");
+    expect(canceled.organizations[ORGANIZATION_A]?.tabsByViewInstanceId)
+      .not.toHaveProperty("view-source");
+    expect(canceled.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host)
+      .toEqual({ kind: "side", contextKey: "chat:source" });
+  });
+
   it("updates runtime and tab targets only for the exact runtime and view instance", () => {
     const originalTarget = browserTarget("view-a", "https://example.com/original");
     const nextTarget = browserTarget("view-a", "https://example.com/next");
@@ -1417,5 +1486,65 @@ describe("Main Workbench state", () => {
     expect(tabUpdated.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-a"]?.target).toEqual(
       nextTarget,
     );
+  });
+
+  it("discards only the exact terminal promotion attempt", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 3,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const failed = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          target: source.target,
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        source,
+        clientMutationId: "mutation-a",
+      },
+      {
+        type: "promotion/server-fail",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        expectedSourceRevision: 3,
+        error: "failed",
+      },
+    );
+
+    const staleDiscard = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 2,
+    });
+    expect(staleDiscard).toBe(failed);
+
+    const discarded = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 3,
+    });
+    expect(discarded.organizations[ORGANIZATION_A]?.promotionsById)
+      .not.toHaveProperty("promotion-a");
+    expect(
+      discarded.organizations[ORGANIZATION_A]
+        ?.runtimesById["runtime-source"]?.host,
+    ).toEqual({ kind: "side", contextKey: "chat:source" });
   });
 });

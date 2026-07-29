@@ -5,6 +5,7 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
+import path from "node:path";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
@@ -12,6 +13,7 @@ import {
   type CodexAppServerNotification,
   type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
@@ -36,6 +38,7 @@ export interface CodexAppServerChatOptions {
   modelReasoningEffort: string;
   search: boolean;
   bypassApprovalsAndSandbox: boolean;
+  sandboxMode?: "read-only" | null;
   imagePaths: string[];
   sessionId: string | null;
   timeoutSec: number;
@@ -70,11 +73,54 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function messagePhase(value: unknown): "commentary" | "final_answer" | null {
+  return value === "commentary" || value === "final_answer" ? value : null;
+}
+
 function appendBounded(current: string, chunk: string): string {
   const combined = current + chunk;
   return combined.length <= APP_SERVER_CAPTURE_LIMIT
     ? combined
     : combined.slice(combined.length - APP_SERVER_CAPTURE_LIMIT);
+}
+
+function trustedAbsoluteWorkingDirectory(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const candidate = value.trim();
+  if (
+    !candidate
+    || !path.isAbsolute(candidate)
+    || /[\0\r\n`$*?{}]/u.test(candidate)
+    || /%[^%]+%/u.test(candidate)
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function commandWorkingDirectory(
+  item: JsonRecord,
+  fallbackCwd: string,
+): string | null {
+  const explicitCandidates = [item.workdir, item.cwd]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (explicitCandidates.length > 0) {
+    return explicitCandidates
+      .map(trustedAbsoluteWorkingDirectory)
+      .find((value): value is string => Boolean(value))
+      ?? null;
+  }
+  return trustedAbsoluteWorkingDirectory(fallbackCwd);
+}
+
+function withCommandWorkingDirectory(
+  item: JsonRecord,
+  cwd: string | null,
+): JsonRecord {
+  const normalized = { ...item };
+  delete normalized.workdir;
+  delete normalized.cwd;
+  return cwd ? { ...normalized, cwd } : normalized;
 }
 
 function normalizeThreadItem(value: unknown): JsonRecord {
@@ -118,6 +164,14 @@ function normalizeThreadItem(value: unknown): JsonRecord {
   if (type === "collabAgentToolCall") {
     return { ...item, type: "collab_agent_tool_call" };
   }
+  if (type === "subAgentActivity") {
+    return {
+      ...item,
+      type: "sub_agent_activity",
+      agent_thread_id: asString(item.agentThreadId),
+      agent_path: asString(item.agentPath),
+    };
+  }
   if (type === "webSearch") {
     return { ...item, type: "web_search" };
   }
@@ -140,9 +194,12 @@ function readThreadSnapshot(response: unknown): { status: string; items: JsonRec
 }
 
 function collabAgentReceiverThreadIds(item: JsonRecord): string[] {
-  return Array.isArray(item.receiverThreadIds)
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
     ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
+  if (receiverThreadIds.length > 0) return receiverThreadIds;
+  const activityThreadId = asString(item.agentThreadId) || asString(item.agent_thread_id);
+  return activityThreadId ? [activityThreadId] : [];
 }
 
 function usageFromNotification(params: JsonRecord): UsageSummary | null {
@@ -249,11 +306,29 @@ export async function executeCodexAppServerChat(
   if (child.pid) await options.onSpawn?.({ pid: child.pid, startedAt });
 
   let stderr = "";
+  let stderrBuffer = "";
+  const shouldSuppressStderr = createCodexStderrLineFilter();
+  const flushStderr = (force: boolean) => {
+    const { lines, remainder } = splitCompleteLines(stderrBuffer);
+    stderrBuffer = force ? "" : remainder;
+    const completeLines = force ? [...lines, ...(remainder ? [remainder] : [])] : lines;
+    for (const line of completeLines) {
+      if (!shouldSuppressStderr(line)) void options.onLog("stderr", line);
+    }
+  };
   child.stderr?.on("data", (chunk: Buffer | string) => {
     const text = String(chunk);
     stderr = appendBounded(stderr, text);
-    void options.onLog("stderr", text);
+    stderrBuffer += text;
+    if (stderrBuffer.length > CODEX_STDERR_LINE_BUFFER_LIMIT) {
+      const overflow = stderrBuffer.slice(0, stderrBuffer.length - CODEX_STDERR_LINE_BUFFER_LIMIT);
+      stderrBuffer = stderrBuffer.slice(-CODEX_STDERR_LINE_BUFFER_LIMIT);
+      if (!shouldSuppressStderr(overflow)) void options.onLog("stderr", overflow);
+    }
+    flushStderr(false);
   });
+  child.stderr?.once("end", () => flushStderr(true));
+  child.once("close", () => flushStderr(true));
 
   let stdout = "";
   let latestUsage: UsageSummary = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
@@ -262,6 +337,8 @@ export async function executeCodexAppServerChat(
   const reasoningDeltaItemIds = new Set<string>();
   const reasoningStreamByItemId = new Map<string, "summary" | "raw">();
   const reasoningSummaryIndexByItemId = new Map<string, number>();
+  const agentMessagePhaseByItemId = new Map<string, "commentary" | "final_answer" | null>();
+  const commandWorkingDirectoryByItemId = new Map<string, string | null>();
   let threadId: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
@@ -320,10 +397,17 @@ export async function executeCodexAppServerChat(
         const delta = asString(params.delta);
         const itemId = asString(params.itemId);
         if (itemId) agentDeltaItemIds.add(itemId);
+        const phase = itemId ? agentMessagePhaseByItemId.get(itemId) ?? null : null;
         if (delta) {
           await emit({
             type: "item.completed",
-            item: { id: itemId || undefined, type: "agent_message", text: delta, delta: true },
+            item: {
+              id: itemId || undefined,
+              type: "agent_message",
+              text: delta,
+              delta: true,
+              ...(phase ? { phase } : {}),
+            },
           });
         }
         return;
@@ -369,7 +453,30 @@ export async function executeCodexAppServerChat(
       if (notification.method === "item/started" || notification.method === "item/completed") {
         let item = normalizeThreadItem(params.item);
         if (item.type === "userMessage") return;
-        if (notification.method === "item/completed" && item.type === "collab_agent_tool_call") {
+        if (item.type === "agent_message") {
+          const itemId = asString(item.id);
+          const phase = messagePhase(item.phase);
+          if (itemId) {
+            agentMessagePhaseByItemId.set(itemId, phase);
+          }
+        }
+        if (item.type === "command_execution") {
+          const itemId = asString(item.id);
+          // App Server guarantees that item/started carries the full command item,
+          // including cwd. Keep that first directory so live and completed
+          // projections cannot disagree if a later payload is malformed.
+          const cwd = itemId && commandWorkingDirectoryByItemId.has(itemId)
+            ? commandWorkingDirectoryByItemId.get(itemId) ?? null
+            : commandWorkingDirectory(item, options.cwd);
+          if (itemId && !commandWorkingDirectoryByItemId.has(itemId)) {
+            commandWorkingDirectoryByItemId.set(itemId, cwd);
+          }
+          item = withCommandWorkingDirectory(item, cwd);
+        }
+        if (
+          notification.method === "item/completed"
+          && (item.type === "collab_agent_tool_call" || item.type === "sub_agent_activity")
+        ) {
           const snapshots = await Promise.all(collabAgentReceiverThreadIds(item).map(async (receiverThreadId) => {
             try {
               const response = await client.request("thread/read", {
@@ -388,7 +495,11 @@ export async function executeCodexAppServerChat(
             item = { ...item, agentTranscripts };
           }
         }
-        if (notification.method === "item/completed" && item.type === "agent_message") {
+        if (
+          notification.method === "item/completed"
+          && item.type === "agent_message"
+          && messagePhase(item.phase) !== "commentary"
+        ) {
           finalAgentText = asString(item.text) || finalAgentText;
         }
         const itemId = asString(item.id);
@@ -404,9 +515,7 @@ export async function executeCodexAppServerChat(
         }
         await emit({
           type: notification.method === "item/started" ? "item.started" : "item.completed",
-          item: item.type === "command_execution"
-            ? { ...item, cwd: options.cwd }
-            : item,
+          item,
         });
         return;
       }
@@ -518,7 +627,9 @@ export async function executeCodexAppServerChat(
       model: options.model || null,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandbox: options.bypassApprovalsAndSandbox ? "danger-full-access" : null,
+      sandbox: options.bypassApprovalsAndSandbox
+        ? "danger-full-access"
+        : options.sandboxMode ?? null,
       config: {
         web_search: options.search ? "live" : "disabled",
         skills: { bundled: { enabled: false } },
@@ -559,7 +670,11 @@ export async function executeCodexAppServerChat(
       input,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandboxPolicy: options.bypassApprovalsAndSandbox ? { type: "dangerFullAccess" } : null,
+      sandboxPolicy: options.bypassApprovalsAndSandbox
+        ? { type: "dangerFullAccess" }
+        : options.sandboxMode === "read-only"
+          ? { type: "readOnly" }
+          : null,
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
     })) ?? {};
@@ -580,7 +695,12 @@ export async function executeCodexAppServerChat(
               threadId: activeThreadId,
               expectedTurnId: activeTurnId,
               clientUserMessageId: feedback.clientMessageId,
-              input: [{ type: "text", text: feedback.text, text_elements: [] }],
+              input: [
+                { type: "text", text: feedback.text, text_elements: [] },
+                ...(feedback.media ?? [])
+                  .filter((attachment) => attachment.contentType.toLowerCase().startsWith("image/"))
+                  .map((attachment) => ({ type: "localImage", path: attachment.localPath })),
+              ],
             }, 5_000));
             const acknowledgedTurnId = asString(response?.turnId);
             if (acknowledgedTurnId !== activeTurnId) {

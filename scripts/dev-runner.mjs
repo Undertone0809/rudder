@@ -14,6 +14,7 @@ import {
 import { serverVersion } from "../server/src/version.ts";
 import { resolveDevScriptEnvironment } from "./dev-local-env.mjs";
 import { shouldTrackDevServerPath } from "./dev-runner-paths.mjs";
+import { assertDevRuntimeTakeoverAllowed } from "./dev-runner-safety.mjs";
 
 const mode = process.argv[2] === "watch" ? "watch" : "dev";
 const cliArgs = process.argv.slice(3);
@@ -526,6 +527,10 @@ async function startServerChild() {
         instanceId: env.RUDDER_INSTANCE_ID,
         localEnv: env.RUDDER_LOCAL_ENV,
         expectedVersion: serverVersion,
+      });
+      assertDevRuntimeTakeoverAllowed(probe, {
+        instanceId: env.RUDDER_INSTANCE_ID,
+        localEnv: env.RUDDER_LOCAL_ENV,
       });
       if (probe.kind === "healthy") {
         console.log(

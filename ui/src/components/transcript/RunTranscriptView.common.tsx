@@ -1,3 +1,9 @@
+import {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
+  type ChatMessage,
+} from "@rudderhq/shared";
 import type { LucideIcon } from "lucide-react";
 import {
   Boxes,
@@ -6,6 +12,7 @@ import {
   FileText,
   FolderOpen,
   Globe,
+  Images,
   ListTree,
   Logs,
   Plug,
@@ -36,7 +43,8 @@ export type TranscriptToolCategory =
   | "skill"
   | "mcp"
   | "list"
-  | "inspect";
+  | "inspect"
+  | "image";
 
 export type TranscriptDigestBucket =
   | "explore"
@@ -63,11 +71,23 @@ export interface TranscriptToolSemanticInfo {
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
+  skillTargets?: TranscriptSkillTarget[];
+  image?: TranscriptImageEvidence;
 }
 
 export interface TranscriptFileTarget {
   label: string;
   path: string | null;
+}
+
+export interface TranscriptSkillTarget {
+  name: string;
+  path: string | null;
+}
+
+export interface TranscriptImageEvidence {
+  displayLabel: string;
+  path: string;
 }
 
 export interface TranscriptToolCardEntry {
@@ -111,8 +131,41 @@ export interface RunTranscriptViewProps {
   hiddenAssistantMessageText?: string | null;
   /** Open a structured local-file target without inferring paths from rendered prose. */
   onOpenFile?: (targetPath: string, label: string) => void;
+  /** Open a structured skill target without reparsing its rendered activity label. */
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  /** Report whether a structured skill target resolves to an inspectable source. */
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  /** Stable owning assistant message for selectable persisted Process prose. */
+  annotationSource?: TranscriptAnnotationSourceContext;
+  /** Read-only annotations attached to user Steer messages embedded in Process. */
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
+}
+
+export interface TranscriptAnnotationSourceContext {
+  sourceConversationId: string;
+  sourceMessageId: string;
+  annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onActivateAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
+}
+
+export interface TranscriptSentAnnotationContext {
+  onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onExpandedChange?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableAnnotationId?: string | null;
+}
+
+export interface TranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
 }
 
 export interface TranscriptAgentInspection {
@@ -134,16 +187,19 @@ export type TranscriptBlock =
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
+      steerMessage?: ChatMessage;
       ts: string;
       text: string;
       streaming: boolean;
-    }
+      segmentId?: string;
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
-    }
+      segmentId?: string;
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "tool";
       ts: string;
@@ -317,6 +373,18 @@ function resolveStructuredAbsoluteFileTarget(value: string | null | undefined): 
   return normalized.startsWith("/") ? normalizePosixAbsolutePath(normalized) : null;
 }
 
+function resolveStructuredAbsoluteWorkingDirectory(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (
+    !normalized
+    || /[\0\r\n`$*?{}]/u.test(normalized)
+    || /%[^%]+%/u.test(normalized)
+  ) {
+    return null;
+  }
+  return resolveStructuredAbsoluteFileTarget(normalized);
+}
+
 export function resolveTranscriptFileTarget(
   target: string | null | undefined,
   workingDirectory?: string | null,
@@ -328,7 +396,7 @@ export function resolveTranscriptFileTarget(
   if (absoluteTarget) return absoluteTarget;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) return null;
 
-  const root = resolveStructuredAbsoluteFileTarget(workingDirectory);
+  const root = resolveStructuredAbsoluteWorkingDirectory(workingDirectory);
   if (!root) return null;
   if (/^[A-Za-z]:[\\/]/.test(root) || /^\\\\/.test(root)) {
     return normalizeWindowsAbsolutePath(`${root}\\${value}`);
@@ -346,11 +414,7 @@ export function compactWhitespace(value: string): string {
 
 export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): boolean {
   if (entry.kind !== "system") return false;
-  const text = compactWhitespace(entry.text).toLowerCase();
-  return text === "reasoning started"
-    || text === "reasoning completed"
-    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
-    || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
+  return isInternalChatTranscriptLifecycleEntry(entry);
 }
 
 export function isTurnStartedText(value: string): boolean {
@@ -539,6 +603,8 @@ export function getTranscriptActionIconTreatment(category: TranscriptActionIconC
       return { key: "edit", label: "Edit", Icon: FileDiff };
     case "inspect":
       return { key: "inspect", label: "Inspect", Icon: ListTree };
+    case "image":
+      return { key: "image", label: "Image", Icon: Images };
     case "list":
       return { key: "list", label: "Explore files", Icon: FolderOpen };
     case "mcp":

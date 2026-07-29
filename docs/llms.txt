@@ -7,93 +7,93 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 ## English
 
 ### Start here
-- [Rudder](https://docs.rudderhq.dev): Rudder is open-source software for assigning, running, reviewing, and improving AI agent work across goals, Chat, issues, runs, budgets, workspaces, and feedback loops.
+- [Rudder](https://docs.rudderhq.dev): Build your self-improving Agent Team.
 
 ### Get started
-- [Quick Start](https://docs.rudderhq.dev/get-started/installation): Install Rudder Desktop, confirm a healthy local startup, and recover safely when startup fails.
-- [Create Your First Organization](https://docs.rudderhq.dev/get-started/first-organization): Complete one inspectable task with a request, Agent Run, output, and review decision.
+- [Install Rudder](https://docs.rudderhq.dev/get-started/installation): Install the Rudder desktop app and open your local workspace.
+- [Run Your First Task](https://docs.rudderhq.dev/get-started/first-organization): Create a Rudder organization, connect an agent runtime, and get your first useful result in Chat.
 
 ### Concepts
-- [Core Concepts](https://docs.rudderhq.dev/concepts/overview): Follow one task through Rudder's organizations, work surfaces, agents, runs, outputs, and review.
-- [Goals, projects, and issues](https://docs.rudderhq.dev/concepts/goals-projects-issues): Connect an organization's durable direction to grouped work and executable Issue records.
-- [Agents and Agent Runs](https://docs.rudderhq.dev/concepts/agents): Distinguish a durable Rudder Agent from its runtime, bounded runs, outputs, cost, and raw evidence.
-- [Built-in Browser](https://docs.rudderhq.dev/concepts/built-in-browser): Use Rudder Desktop's shared website session while keeping Agent tab control isolated to one active run.
-- [Issues](https://docs.rudderhq.dev/concepts/issues): Use an Issue when agent work needs durable status, ownership, dependencies, or a review path.
-- [Chat and Messenger](https://docs.rudderhq.dev/concepts/chat-messenger): Choose Chat or an Issue for the task, then use Messenger to recover work needing human attention.
-- [Calendar](https://docs.rudderhq.dev/concepts/calendar): Inspect scheduled and dated work without turning Calendar into a second task state machine.
-- [Workspaces and Library](https://docs.rudderhq.dev/concepts/workspaces): Place project context, durable files, execution changes, and backups in their intended filesystem boundaries.
-- [Skills](https://docs.rudderhq.dev/concepts/skills): Package reusable operating procedures while keeping discovery, enablement, loading, and proven use distinct.
-- [Automations](https://docs.rudderhq.dev/concepts/automations): Run repeatable agent work from a defined trigger, owner, context, concurrency policy, and output route.
-- [Reviews, feedback, and learning](https://docs.rudderhq.dev/concepts/reviews-feedback-learning): Judge an output, record durable feedback, and promote lessons without confusing Review with Approval.
-- [Plugins](https://docs.rudderhq.dev/concepts/plugins): Extend Rudder with host-managed capabilities, jobs, webhooks, and UI slots without redefining core workflows.
+- [How Rudder Works](https://docs.rudderhq.dev/concepts/overview): Learn the five ideas you need to give Agents work and keep the result useful.
+- [Organize Work with Goals and Projects](https://docs.rudderhq.dev/concepts/goals-projects-issues): Use goals for direction, projects for shared context, and Issues for work that needs explicit coordination.
+- [Agents, Runs, and Runtimes](https://docs.rudderhq.dev/concepts/agents): Understand the worker you configure, the tool that executes, and the record created each time it works.
+- [Built-in Browser](https://docs.rudderhq.dev/concepts/built-in-browser): Open websites beside your work and, when allowed, let a local Agent use its own controlled tabs.
+- [Issues](https://docs.rudderhq.dev/concepts/issues): Use an Issue when a task needs a clear owner, status, dependencies, or review.
+- [Chat, Issues, and Messenger](https://docs.rudderhq.dev/concepts/chat-messenger): Choose the right place to do a task, then use Messenger to find work waiting for your attention.
+- [Calendar](https://docs.rudderhq.dev/concepts/calendar): See when Agent work ran, what is scheduled next, and where a human checkpoint happened.
+- [Files, Library, and Workspaces](https://docs.rudderhq.dev/concepts/workspaces): Know where to put source material, project folders, Agent changes, and finished output.
+- [Skills](https://docs.rudderhq.dev/concepts/skills): Turn a proven, repeatable way of working into instructions an Agent can reuse.
+- [Automations](https://docs.rudderhq.dev/concepts/automations): Run a stable Agent task on a schedule, from a webhook, or when you trigger it yourself.
+- [Review, Feedback, and Improvement](https://docs.rudderhq.dev/concepts/reviews-feedback-learning): Judge a result, explain what should change, and reuse proven lessons in future Agent work.
+- [Plugins](https://docs.rudderhq.dev/concepts/plugins): Add optional integrations, tools, background jobs, and interface panels to Rudder.
 
 ### How-to guides
-- [Run an Issue from intake to done](https://docs.rudderhq.dev/how-to/issue-lifecycle): Move one Issue through assignment, Agent execution, evidence, structured review, and accepted close-out.
-- [Create an Agent](https://docs.rudderhq.dev/how-to/create-agent): Create a durable Agent with a clear role, capability boundary, runtime, reporting line, and low-risk verification run.
-- [Create an Automation](https://docs.rudderhq.dev/how-to/create-automation): Create a repeatable Automation with a stable owner, trigger, context, concurrency policy, and verified output route.
-- [Review Agent work](https://docs.rudderhq.dev/how-to/review-agent-work): Inspect one Agent output and its Run evidence, record a structured decision, and route the next action.
-- [Manage Workspaces and Library](https://docs.rudderhq.dev/how-to/manage-workspaces-and-library): Curate project context, keep durable output in Library, inspect files safely, and recover organization workspace state.
-- [Export and import an organization](https://docs.rudderhq.dev/how-to/export-import-organization): Build a portable organization bundle, preview dependencies and collisions, then import it with fresh identity and no secret leakage.
-- [Manage Plugins](https://docs.rudderhq.dev/how-to/manage-plugins): Install, activate, inspect, update, and uninstall a trusted Plugin while preserving core Rudder records.
-- [Configure Feishu or Lark](https://docs.rudderhq.dev/how-to/configure-feishu-integration): Connect one Rudder Agent to a Feishu or Lark bot and verify the provider-bound conversation and Run evidence.
-- [Configure an Agent runtime](https://docs.rudderhq.dev/how-to/configure-agent-runtime): Configure and test the execution environment Rudder invokes for one Agent, then verify a real low-risk run.
+- [Use an Issue from Start to Finish](https://docs.rudderhq.dev/how-to/issue-lifecycle): Create a clear task, assign one owner, review the result, and close it with the important context intact.
+- [Create an Agent](https://docs.rudderhq.dev/how-to/create-agent): Add a reusable Agent with a clear job, runtime, instructions, and safe first task.
+- [Create an Automation](https://docs.rudderhq.dev/how-to/create-automation): Schedule a repeatable Agent task, choose where its result goes, and test it once.
+- [Review Agent Work](https://docs.rudderhq.dev/how-to/review-agent-work): Open the real result, compare it with the request, and record a decision the next person can understand.
+- [Give an Agent Project Files and Context](https://docs.rudderhq.dev/how-to/manage-workspaces-and-library): Connect a project folder, choose the source material an Agent should receive, and keep the final result.
+- [Move an Organization to Another Rudder Instance](https://docs.rudderhq.dev/how-to/export-import-organization): Export supported organization data, preview the import, and safely create a new copy.
+- [Install and Manage a Plugin](https://docs.rudderhq.dev/how-to/manage-plugins): Review a trusted Plugin, install it, test one action, and recover from a failed update.
+- [Connect an Agent to Feishu or Lark](https://docs.rudderhq.dev/how-to/configure-feishu-integration): Authorize a Feishu or Lark bot, send a test message, and find the same conversation in Rudder.
+- [Configure an Agent Runtime](https://docs.rudderhq.dev/how-to/configure-agent-runtime): Connect the program that performs an Agent's work, test it, and verify one real task.
 
 ### Reference
-- [Issue statuses](https://docs.rudderhq.dev/reference/issue-statuses): Look up each Rudder Issue status, its review rules, and the boundary between state and ownership.
-- [Runtime types](https://docs.rudderhq.dev/reference/runtime-types): Compare Rudder runtime choices, readiness states, managed tools, and adapter boundaries.
-- [Workspace boundaries](https://docs.rudderhq.dev/reference/workspace-boundaries): Look up where project work, durable files, Agent state, run workspaces, backups, and scratch files belong.
-- [Automation output routing](https://docs.rudderhq.dev/reference/automation-output-routing): Compare tracked Issue and Chat output for Rudder Automations, including run records and failure evidence.
-- [Permissions and platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Look up deployment trust, local runtime homes, credentials, Browser access, and platform-specific file behavior.
-- [Approvals, budgets, and activity](https://docs.rudderhq.dev/reference/approvals-budgets-activity): Look up governed decisions, spend limits, audit activity, run evidence, and operator attention in Rudder.
+- [Issue Statuses](https://docs.rudderhq.dev/reference/issue-statuses): Quickly choose the right Issue status and understand what happens during review.
+- [Runtime Types](https://docs.rudderhq.dev/reference/runtime-types): Compare the local programs Rudder can use to execute Agent work.
+- [Where Rudder Stores and Uses Files](https://docs.rudderhq.dev/reference/workspace-boundaries): Look up the right location for project files, reusable resources, Agent state, Run changes, and backups.
+- [Choose Where Automation Results Go](https://docs.rudderhq.dev/reference/automation-output-routing): Compare Chat and Issue output for an Automation, including what you see when a run fails.
+- [Permissions, Credentials, and Platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Understand local trust, where credentials stay, how external connections are limited, and what differs by platform.
+- [Approvals, Budgets, Activity, and Attention](https://docs.rudderhq.dev/reference/approvals-budgets-activity): Know where to approve sensitive actions, check spending, review changes, inspect Runs, and find work waiting for you.
 
 ### Project
 - [GDPval Harness Benchmark](https://docs.rudderhq.dev/benchmarks/gdpval-harness): Methodology, results, and evidence limits for Rudder's 10-task GDPval-based harness pilot.
-- [Contact](https://docs.rudderhq.dev/contact): Choose the public Rudder channel for a question, bug report, feature request, or release update.
+- [Get Help and Share Feedback](https://docs.rudderhq.dev/contact): Ask a setup question, report a bug, request a feature, or find release information.
 - [Changelog](https://docs.rudderhq.dev/releases): Stable Rudder release notes, upgrade notes, and GitHub Release links.
 
 ## 简体中文
 
 ### Start here
-- [Rudder](https://docs.rudderhq.dev/zh): Rudder 为人和 Agent 提供一个共同工作空间，让任务从目标走向可检查、可评审的结果。
+- [Rudder](https://docs.rudderhq.dev/zh): Build your self-improving Agent Team.
 
 ### Get started
-- [快速开始](https://docs.rudderhq.dev/zh/get-started/installation): 安装 Rudder Desktop，确认本地启动成功，并在启动失败时安全恢复。
-- [创建第一个组织](https://docs.rudderhq.dev/zh/get-started/first-organization): 完成一件可检查的任务，让请求、Agent 运行、产物和评审结论留在一起。
+- [安装 Rudder](https://docs.rudderhq.dev/zh/get-started/installation): 安装 Rudder 桌面应用，并打开你的本地工作空间。
+- [完成第一个任务](https://docs.rudderhq.dev/zh/get-started/first-organization): 创建 Rudder 组织，连接 Agent 运行工具，并在 Chat 中拿到第一个有用结果。
 
 ### Concepts
-- [核心概念](https://docs.rudderhq.dev/zh/concepts/overview): 通过一件任务理解 Rudder 中的组织、任务入口、Agent、运行记录、产物和评审。
-- [目标、项目和 Issue](https://docs.rudderhq.dev/zh/concepts/goals-projects-issues): 把组织的长期方向连接到成组工作和可以直接执行的 Issue。
-- [Agent 和运行记录](https://docs.rudderhq.dev/zh/concepts/agents): 分清长期存在的 Agent、运行环境、单次运行、产物、成本和原始证据。
-- [内置 Browser](https://docs.rudderhq.dev/zh/concepts/built-in-browser): 在 Rudder Desktop 中共享网站登录状态，同时把 Agent 的标签页控制限制在单次运行内。
-- [Issue（任务单）](https://docs.rudderhq.dev/zh/concepts/issues): 任务需要持久状态、明确负责人、依赖关系或评审流程时，使用 Issue。
-- [Chat 和 Messenger](https://docs.rudderhq.dev/zh/concepts/chat-messenger): 先为任务选择 Chat 或 Issue，再用 Messenger 找回需要人处理的工作。
-- [Calendar](https://docs.rudderhq.dev/zh/concepts/calendar): 按时间检查定时和已发生的工作，同时避免建立第二套任务状态。
-- [工作区和 Library](https://docs.rudderhq.dev/zh/concepts/workspaces): 把项目上下文、持久文件、运行改动和备份放在各自的文件边界内。
-- [技能](https://docs.rudderhq.dev/zh/concepts/skills): 把可复用的操作步骤整理成技能，同时分清发现、启用、加载和确实使用。
-- [自动化](https://docs.rudderhq.dev/zh/concepts/automations): 用明确的触发方式、负责人、上下文、并发策略和结果去向重复运行 Agent 工作。
-- [评审、反馈和学习](https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning): 判断产物、保存反馈并谨慎沉淀经验，同时分清评审与审批。
-- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 通过宿主管理的能力、任务、webhook 和界面插槽扩展 Rudder，同时保留核心工作流规则。
+- [Rudder 如何工作](https://docs.rudderhq.dev/zh/concepts/overview): 了解把任务交给 Agent 并让结果继续发挥作用所需的五个概念。
+- [用目标和项目组织工作](https://docs.rudderhq.dev/zh/concepts/goals-projects-issues): 用目标说明方向，用项目汇总上下文，用 Issue 管理需要明确协作的任务。
+- [Agent、运行记录和运行工具](https://docs.rudderhq.dev/zh/concepts/agents): 分清你配置的长期 Agent、真正执行工作的工具，以及每次工作留下的记录。
+- [内置浏览器](https://docs.rudderhq.dev/zh/concepts/built-in-browser): 在工作旁边打开网页，并在允许时让本地 Agent 使用自己的受控标签页。
+- [Issue（任务单）](https://docs.rudderhq.dev/zh/concepts/issues): 任务需要明确负责人、状态、依赖或评审时，使用 Issue。
+- [Chat、Issue 和 Messenger](https://docs.rudderhq.dev/zh/concepts/chat-messenger): 为任务选择合适的工作方式，再用 Messenger 找到正在等你处理的事情。
+- [Calendar（日历）](https://docs.rudderhq.dev/zh/concepts/calendar): 查看 Agent 何时工作、下一次任务何时开始，以及人的检查发生在什么时候。
+- [文件、Library 和工作区](https://docs.rudderhq.dev/zh/concepts/workspaces): 分清参考资料、项目目录、Agent 改动和最终产物应该放在哪里。
+- [技能](https://docs.rudderhq.dev/zh/concepts/skills): 把已经验证过、会反复出现的做法整理成 Agent 可以复用的指令。
+- [自动化](https://docs.rudderhq.dev/zh/concepts/automations): 按日程、Webhook 或手动触发，重复运行一项已经稳定的 Agent 任务。
+- [评审、反馈和改进](https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning): 判断结果，说明哪里应该改变，并把已经验证的经验用于未来的 Agent 工作。
+- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 为 Rudder 添加可选集成、工具、后台任务和界面面板。
 
 ### How-to guides
-- [让 Issue 从接收走到完成](https://docs.rudderhq.dev/zh/how-to/issue-lifecycle): 把一条 Issue 依次推进到分配、Agent 执行、证据、结构化评审和接受完成。
-- [创建 Agent](https://docs.rudderhq.dev/zh/how-to/create-agent): 创建一名职责、能力边界、运行环境和汇报关系都清楚的长期 Agent，并完成低风险验证。
-- [创建自动化](https://docs.rudderhq.dev/zh/how-to/create-automation): 创建一项负责人、触发方式、上下文、并发策略和结果去向都稳定的自动化，并验证真实结果。
-- [评审 Agent 工作](https://docs.rudderhq.dev/zh/how-to/review-agent-work): 检查一项 Agent 产物和运行证据，记录结构化结论，并把下一步交给正确负责人。
-- [管理工作区和 Library](https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library): 筛选项目上下文，把持久产物留在 Library，安全检查文件，并恢复组织工作区。
-- [导出和导入组织](https://docs.rudderhq.dev/zh/how-to/export-import-organization): 构建可移植组织包，先预览依赖和冲突，再以新身份导入，同时避免泄露机密。
-- [管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 安装、启用、检查、更新和卸载可信插件，同时保留 Rudder 核心记录。
-- [配置飞书或 Lark](https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration): 把一个 Rudder Agent 连接到飞书或 Lark 机器人，并验证外部对话和运行证据。
-- [配置 Agent 运行环境](https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime): 配置并测试 Rudder 为一个 Agent 调用的执行环境，再用真实的低风险运行确认结果。
+- [让 Issue 从开始走到完成](https://docs.rudderhq.dev/zh/how-to/issue-lifecycle): 写清任务，指定一个负责人，评审结果，并让重要信息留在完成记录里。
+- [创建 Agent](https://docs.rudderhq.dev/zh/how-to/create-agent): 添加一个职责、运行工具和指令都清楚的长期 Agent，并完成安全的第一次任务。
+- [创建自动化](https://docs.rudderhq.dev/zh/how-to/create-automation): 为一项重复 Agent 任务设置日程和结果去向，并手动测试一次。
+- [评审 Agent 工作](https://docs.rudderhq.dev/zh/how-to/review-agent-work): 打开真实结果，对照任务要求，并记录下一位负责人也能理解的结论。
+- [给 Agent 提供项目文件和上下文](https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library): 连接项目文件夹，选择 Agent 应该收到的来源资料，并保存最终结果。
+- [把组织迁移到另一个 Rudder 实例](https://docs.rudderhq.dev/zh/how-to/export-import-organization): 导出受支持的组织数据，预览导入内容，再安全地创建一份新副本。
+- [安装和管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 检查可信插件，完成安装，测试一次真实操作，并从失败更新中恢复。
+- [把 Agent 连接到飞书或 Lark](https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration): 授权飞书或 Lark 机器人，发送测试消息，再从 Rudder 找到同一段对话。
+- [配置 Agent 运行工具](https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime): 连接真正执行 Agent 工作的程序，完成测试，再用一件真实小任务验证。
 
 ### Reference
-- [Issue 状态](https://docs.rudderhq.dev/zh/reference/issue-statuses): 查询 Rudder 中每种 Issue 状态、评审规则，以及状态和负责人之间的边界。
-- [运行环境类型](https://docs.rudderhq.dev/zh/reference/runtime-types): 比较 Rudder 的运行环境选项、就绪状态、托管工具和适配器边界。
-- [工作区边界](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查询项目工作、持久文件、Agent 状态、运行工作区、备份和临时文件应该放在哪里。
-- [自动化输出路由](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 比较 Rudder 自动化的 Issue 和 Chat 输出，包括运行记录与失败证据。
-- [权限与平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 查询部署信任、本地运行环境目录、凭据、内置浏览器访问和各平台文件行为。
-- [审批、预算和活动记录](https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity): 查询 Rudder 中受治理的决策、费用限制、审计活动、运行证据和需要人处理的事项。
+- [Issue 状态](https://docs.rudderhq.dev/zh/reference/issue-statuses): 快速选择正确的 Issue 状态，并理解评审时会发生什么。
+- [运行工具类型](https://docs.rudderhq.dev/zh/reference/runtime-types): 比较 Rudder 可以用来执行 Agent 工作的本地程序。
+- [Rudder 在哪里保存和使用文件](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查询项目文件、可复用资料、Agent 状态、运行改动和备份应该放在哪里。
+- [选择自动化结果去向](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 比较自动化的 Chat 与 Issue 结果，并了解运行失败时会看到什么。
+- [权限、凭据和平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 了解本地信任、凭据保存位置、外部连接限制，以及不同平台的差异。
+- [审批、预算、活动和待处理事项](https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity): 找到敏感操作审批、费用、变更记录、Agent 运行和等待处理工作的正确入口。
 
 ### Project
 - [GDPval 执行框架基准测试](https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness): Rudder 基于 GDPval 的 10 项任务试验：方法、结果与证据边界。
-- [联系 Rudder](https://docs.rudderhq.dev/zh/contact): 根据问题、缺陷、功能建议或版本更新，选择合适的 Rudder 公开渠道。
+- [获取帮助与提交反馈](https://docs.rudderhq.dev/zh/contact): 咨询设置、报告缺陷、提出功能建议或查找版本信息。
 - [更新日志](https://docs.rudderhq.dev/zh/releases): Rudder 稳定版本的发布记录、升级说明和 GitHub Release 链接。

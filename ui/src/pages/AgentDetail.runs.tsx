@@ -9,6 +9,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Bug,
   ChevronRight,
   Clock,
   RotateCcw
@@ -26,7 +27,9 @@ import {
   agentsApi,
   type ClaudeLoginResult
 } from "../api/agents";
+import { healthApi } from "../api/health";
 import { CopyText } from "../components/CopyText";
+import { RunIssueReportDialog } from "../components/RunIssueReportDialog";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusBadge } from "../components/StatusBadge";
 import { useDialog } from "../context/DialogContext";
@@ -511,7 +514,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -529,7 +532,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -553,7 +556,7 @@ export function RunsTab({
         </div>
 
         <div
-          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg"
+          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg overflow-clip"
           data-testid="agent-runs-list-pane"
         >
           <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
@@ -612,7 +615,12 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
   const run = hydratedRun ?? initialRun;
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);
+  const [issueReportOpen, setIssueReportOpen] = useState(false);
   const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
+  const { data: health } = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+  });
 
   useEffect(() => {
     setClaudeLoginResult(null);
@@ -799,6 +807,21 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
                     <Link to={failureDisplay.actionPath} className="text-xs font-medium text-red-700 underline dark:text-red-300">
                       {failureDisplay.actionLabel}
                     </Link>
+                  </div>
+                )}
+                {failureDisplay.tone === "destructive" && (
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setIssueReportOpen(true)}
+                      data-testid="run-report-issue"
+                    >
+                      <Bug className="mr-1.5 h-3.5 w-3.5" />
+                      Report issue
+                    </Button>
                   </div>
                 )}
               </div>
@@ -1024,6 +1047,16 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
           </div>
         )}
       </div>
+      <RunIssueReportDialog
+        run={run}
+        version={health?.version ?? "unknown"}
+        environment={[
+          health?.localEnv ?? "unknown",
+          health?.runtimeOwnerKind ?? "unknown",
+        ].join(" / ")}
+        open={issueReportOpen}
+        onOpenChange={setIssueReportOpen}
+      />
 
       <RunChatContextCard run={run} agentRouteId={agentRouteId} />
 

@@ -12,7 +12,6 @@ import {
   normalizeAgentUrlKey
 } from "@rudderhq/shared";
 import { notFound } from "../../errors.js";
-import { renderOrgChartPng } from "../../routes/org-chart-svg.js";
 import type { StorageService } from "../../storage/types.js";
 import { agentInstructionsService } from "../agent-instructions.js";
 import { agentService } from "../agents.js";
@@ -27,13 +26,13 @@ import { projectService } from "../projects.js";
 import {
   ADAPTER_DEFAULT_RULES_BY_TYPE,
   asString,
-  buildOrgTreeFromManifest,
   buildPortableProjectWorkspaces,
   buildSkillExportDirMap,
   classifyPortableFileKind,
   COMPANY_LOGO_FILE_NAME,
   exportPortableProjectExecutionWorkspacePolicy,
   isPlainRecord,
+  materializePortableRuntimeConfig,
   normalizeSkillKey,
   normalizeSkillSlug,
   RUNTIME_DEFAULT_RULES,
@@ -460,7 +459,7 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
           },
         ) as Record<string, unknown>;
         const portableRuntimeConfig = pruneDefaultLikeValue(
-          normalizePortableConfig(agent.runtimeConfig),
+          normalizePortableConfig(materializePortableRuntimeConfig(agent.runtimeConfig)),
           {
             dropFalseBooleans: true,
             defaultRules: RUNTIME_DEFAULT_RULES,
@@ -472,7 +471,6 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
             .slice(envInputsStart)
             .filter((inputValue) => inputValue.agentSlug === slug),
         );
-        const reportsToSlug = agent.reportsTo ? (idToSlug.get(agent.reportsTo) ?? null) : null;
         const desiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(agent.orgId, agent);
         assertNotAborted();
 
@@ -488,7 +486,6 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
               stripEmptyValues({
                 name: agent.name,
                 title: agent.title ?? null,
-                reportsTo: reportsToSlug,
                 skills: desiredSkills.length > 0 ? desiredSkills : undefined,
               }) as Record<string, unknown>,
               content,
@@ -695,21 +692,6 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
     };
     resolved.manifest.envInputs = dedupeEnvInputs(envInputs);
     resolved.warnings.unshift(...warnings);
-
-    // Generate org chart PNG from manifest agents
-    if (resolved.manifest.agents.length > 0) {
-      try {
-        assertNotAborted();
-        reportProgress("generating_assets", "Generating organization chart image.", 7, Object.keys(finalFiles).length);
-        const orgNodes = buildOrgTreeFromManifest(resolved.manifest.agents);
-        const pngBuffer = await renderOrgChartPng(orgNodes);
-        assertNotAborted();
-        finalFiles["images/org-chart.png"] = bufferToPortableBinaryFile(pngBuffer, "image/png");
-      } catch (err) {
-        if (options.signal?.aborted) throw err;
-        // Non-fatal: export still works without the org chart image
-      }
-    }
 
     reportProgress("finalizing", "Finalizing export manifest and README.", 7, Object.keys(finalFiles).length);
     if (!input.selectedFiles || input.selectedFiles.some((entry) => normalizePortablePath(entry) === "README.md")) {

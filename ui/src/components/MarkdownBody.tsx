@@ -1,16 +1,24 @@
 import { buildAgentMentionHref, resolveKnownWebsiteIcon } from "@rudderhq/shared";
 import { Check, Copy, File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText, Globe2 } from "lucide-react";
-import { isValidElement, memo, useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
+import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
-import { resolveLocalFileTarget } from "../lib/local-file-targets";
-import { normalizeRenderedMarkdownSource } from "../lib/markdown-normalize";
+import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
+import {
+  createMarkdownSourceBoundaryMap,
+  normalizeRenderedMarkdownSource,
+  type MarkdownSourceBoundaryMap,
+} from "../lib/markdown-normalize";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "../lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
-import { formatSkillReferenceDisplayLabel, parseSkillReference } from "../lib/skill-reference";
+import {
+  formatSkillReferenceDisplayLabel,
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import {
   __clearWebsiteMetadataCacheForTests,
@@ -33,6 +41,8 @@ interface MarkdownBodyProps {
   enableImagePreview?: boolean;
   copyMarkdownOnCopy?: boolean;
   enableCodeBlockCopy?: boolean;
+  /** Raw-source offset when this body is a slice of a larger persisted message. */
+  sourceOffsetBase?: number;
 }
 
 export interface MarkdownAgentMentionPreview {
@@ -45,6 +55,7 @@ export type MarkdownLinkClickHandler = (input: {
   event: MouseEvent<HTMLAnchorElement>;
   href: string;
   label: string;
+  sourceHref?: string;
 }) => boolean | void;
 
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
@@ -490,6 +501,21 @@ function writeWebsiteMetadataIconCache(
   }
 }
 
+export function resolvedWebsiteIconUrl(value: string | URL) {
+  let url: URL;
+  try {
+    url = typeof value === "string" ? new URL(value) : value;
+  } catch {
+    return null;
+  }
+
+  const knownIcon = resolveKnownWebsiteIcon(url);
+  if (knownIcon) return knownIcon.iconDataUrl;
+
+  const cached = websiteMetadataIconCache.get(url.href);
+  return cached?.state.status === "ready" ? cached.state.iconUrl : null;
+}
+
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
   const knownIcon = resolveKnownWebsiteIcon(url);
@@ -674,7 +700,11 @@ async function writeClipboardText(text: string) {
   if (!copied) throw new Error("Clipboard write failed.");
 }
 
-function markdownSourceAttributes(node: unknown) {
+function markdownSourceAttributes(
+  node: unknown,
+  sourceMap?: MarkdownSourceBoundaryMap,
+  sourceOffsetBase = 0,
+) {
   const position = (node as {
     position?: {
       start?: { offset?: number };
@@ -684,38 +714,42 @@ function markdownSourceAttributes(node: unknown) {
   const start = position?.start?.offset;
   const end = position?.end?.offset;
   if (typeof start !== "number" || typeof end !== "number") return {};
+  const rawStart = sourceOffsetBase + (sourceMap?.renderedBoundaryToRaw[start] ?? start);
+  const rawEnd = sourceOffsetBase + (sourceMap?.renderedBoundaryToRaw[end] ?? end);
   return {
-    "data-markdown-source-start": String(start),
-    "data-markdown-source-end": String(end),
+    "data-markdown-source-start": String(rawStart),
+    "data-markdown-source-end": String(rawEnd),
+    "data-markdown-rendered-source-start": String(start),
+    "data-markdown-rendered-source-end": String(end),
   };
 }
 
-function MarkdownListItem({ node, children, ...itemProps }: ComponentProps<"li"> & ExtraProps) {
-  return <li {...itemProps} {...markdownSourceAttributes(node)}>{children}</li>;
-}
-
-function closestMarkdownSourceElement(node: Node | null): HTMLElement | null {
+function closestRenderedMarkdownSourceElement(node: Node | null): HTMLElement | null {
   const element = node instanceof HTMLElement ? node : node?.parentElement ?? null;
-  return element?.closest<HTMLElement>("[data-markdown-source-start][data-markdown-source-end]") ?? null;
+  return element?.closest<HTMLElement>(
+    "[data-markdown-rendered-source-start][data-markdown-rendered-source-end]",
+  ) ?? null;
 }
 
-function markdownSourceSliceFromElement(source: string, element: HTMLElement) {
-  const start = Number(element.dataset.markdownSourceStart);
-  const end = Number(element.dataset.markdownSourceEnd);
+function renderedMarkdownSourceSliceFromElement(source: string, element: HTMLElement) {
+  const start = Number(element.dataset.markdownRenderedSourceStart);
+  const end = Number(element.dataset.markdownRenderedSourceEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
   return source.slice(start, end);
 }
 
 function markdownSourceForSelection(root: HTMLElement, selection: Selection, source: string) {
-  const startElement = closestMarkdownSourceElement(selection.anchorNode);
-  const endElement = closestMarkdownSourceElement(selection.focusNode);
+  const startElement = closestRenderedMarkdownSourceElement(selection.anchorNode);
+  const endElement = closestRenderedMarkdownSourceElement(selection.focusNode);
   if (startElement && startElement === endElement) {
-    return markdownSourceSliceFromElement(source, startElement);
+    return renderedMarkdownSourceSliceFromElement(source, startElement);
   }
 
   const range = selection.getRangeAt(0);
   const intersectingElements = Array.from(
-    root.querySelectorAll<HTMLElement>("[data-markdown-source-start][data-markdown-source-end]"),
+    root.querySelectorAll<HTMLElement>(
+      "[data-markdown-rendered-source-start][data-markdown-rendered-source-end]",
+    ),
   ).filter((element) => {
     try {
       return range.intersectsNode(element);
@@ -728,8 +762,8 @@ function markdownSourceForSelection(root: HTMLElement, selection: Selection, sou
   );
   const sourceRanges = topLevelElements
     .map((element) => ({
-      start: Number(element.dataset.markdownSourceStart),
-      end: Number(element.dataset.markdownSourceEnd),
+      start: Number(element.dataset.markdownRenderedSourceStart),
+      end: Number(element.dataset.markdownRenderedSourceEnd),
     }))
     .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
   if (sourceRanges.length === 0) return null;
@@ -863,6 +897,7 @@ export function MarkdownBody({
   enableImagePreview = true,
   copyMarkdownOnCopy = false,
   enableCodeBlockCopy = false,
+  sourceOffsetBase = 0,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
@@ -923,9 +958,25 @@ export function MarkdownBody({
       .filter(([key]) => key.length > 0),
   );
   const organizationPrefix = currentOrganizationPrefixFromLocation();
-  const normalizedChildren = linkBareAgentMentions(
-    normalizeRenderedMarkdownSource(children),
-    agentMentions,
+  const { normalizedChildren, sourceMap } = useMemo(() => {
+    const renderedSource = linkBareAgentMentions(
+      normalizeRenderedMarkdownSource(children),
+      agentMentions,
+    );
+    return {
+      normalizedChildren: renderedSource,
+      sourceMap: createMarkdownSourceBoundaryMap(children, renderedSource),
+    };
+  }, [agentMentions, children]);
+  const sourceAttributesForNode = useCallback(
+    (node: unknown) => markdownSourceAttributes(node, sourceMap, sourceOffsetBase),
+    [sourceMap, sourceOffsetBase],
+  );
+  const renderListItem = useCallback(
+    ({ node, children: itemChildren, ...itemProps }: ComponentProps<"li"> & ExtraProps) => (
+      <li {...itemProps} {...sourceAttributesForNode(node)}>{itemChildren}</li>
+    ),
+    [sourceAttributesForNode],
   );
   const handleCopy = (event: ClipboardEvent<HTMLDivElement>) => {
     if (!copyMarkdownOnCopy) return;
@@ -937,8 +988,13 @@ export function MarkdownBody({
     event.clipboardData.setData("text/plain", markdownSource);
     event.preventDefault();
   };
-  const handleMarkdownLinkClick = (event: MouseEvent<HTMLAnchorElement>, href: string, label: string) => {
-    const handled = onLinkClick?.({ event, href, label });
+  const handleMarkdownLinkClick = (
+    event: MouseEvent<HTMLAnchorElement>,
+    href: string,
+    label: string,
+    sourceHref?: string,
+  ) => {
+    const handled = onLinkClick?.({ event, href, label, sourceHref });
     if (handled) {
       event.preventDefault();
       return;
@@ -955,7 +1011,7 @@ export function MarkdownBody({
     if (mermaidSource) {
       return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
     }
-    const sourceAttributes = markdownSourceAttributes(node);
+    const sourceAttributes = sourceAttributesForNode(node);
     const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
     const patchSource = isPatchCodeBlockLanguage(codeBlockLanguage) ? extractCodeBlockSource(preChildren) : null;
     if (patchSource !== null) {
@@ -990,33 +1046,45 @@ export function MarkdownBody({
       );
     }
     return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
-  }, [enableCodeBlockCopy, resolvedTheme]);
+  }, [enableCodeBlockCopy, resolvedTheme, sourceAttributesForNode]);
   const components: Components = {
     p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
-      <p {...paragraphProps} {...markdownSourceAttributes(node)}>{paragraphChildren}</p>
+      <p {...paragraphProps} {...sourceAttributesForNode(node)}>{paragraphChildren}</p>
     ),
     h1: ({ node, children: headingChildren, ...headingProps }) => (
-      <h1 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h1>
+      <h1 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h1>
     ),
     h2: ({ node, children: headingChildren, ...headingProps }) => (
-      <h2 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h2>
+      <h2 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h2>
     ),
     h3: ({ node, children: headingChildren, ...headingProps }) => (
-      <h3 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h3>
+      <h3 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h3>
     ),
     h4: ({ node, children: headingChildren, ...headingProps }) => (
-      <h4 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h4>
+      <h4 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h4>
     ),
     h5: ({ node, children: headingChildren, ...headingProps }) => (
-      <h5 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h5>
+      <h5 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h5>
     ),
     h6: ({ node, children: headingChildren, ...headingProps }) => (
-      <h6 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h6>
+      <h6 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h6>
     ),
-    li: MarkdownListItem,
+    strong: ({ node, children: strongChildren, ...strongProps }) => (
+      <strong {...strongProps} {...sourceAttributesForNode(node)}>{strongChildren}</strong>
+    ),
+    em: ({ node, children: emphasisChildren, ...emphasisProps }) => (
+      <em {...emphasisProps} {...sourceAttributesForNode(node)}>{emphasisChildren}</em>
+    ),
+    del: ({ node, children: deletedChildren, ...deletedProps }) => (
+      <del {...deletedProps} {...sourceAttributesForNode(node)}>{deletedChildren}</del>
+    ),
+    code: ({ node, children: codeChildren, ...codeProps }) => (
+      <code {...codeProps} {...sourceAttributesForNode(node)}>{codeChildren}</code>
+    ),
+    li: renderListItem,
     table: ({ node, children: tableChildren, ...tableProps }) => (
       <div className="rudder-markdown-table-scroll">
-        <table {...tableProps} {...markdownSourceAttributes(node)}>{tableChildren}</table>
+        <table {...tableProps} {...sourceAttributesForNode(node)}>{tableChildren}</table>
       </div>
     ),
     pre: renderPre,
@@ -1078,7 +1146,7 @@ export function MarkdownBody({
               mention={mention}
               label={displayMentionLabel}
               targetHref={targetHref}
-              sourceAttributes={markdownSourceAttributes(node)}
+              sourceAttributes={sourceAttributesForNode(node)}
               onClick={(event) => {
                 handleMarkdownLinkClick(event, targetHref, displayMentionLabel);
               }}
@@ -1095,7 +1163,7 @@ export function MarkdownBody({
             )}
             data-mention-kind={mention.kind}
             style={mentionChipInlineStyle(mention)}
-            {...markdownSourceAttributes(node)}
+            {...sourceAttributesForNode(node)}
             onClick={(event) => {
               handleMarkdownLinkClick(event, targetHref, displayMentionLabel);
             }}
@@ -1118,15 +1186,27 @@ export function MarkdownBody({
           ?? null;
         const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || skillReference.label;
         return (
-          <span {...markdownSourceAttributes(node)}>
-            <SkillReferenceToken label={skillLabel} preview={preview} />
-          </span>
+          <SkillReferenceToken
+            label={skillLabel}
+            preview={preview}
+            fallbackOpenHref={
+              resolveSkillReferenceOpenHref(skillReference.href)
+              ?? preview?.openHref
+              ?? "#"
+            }
+            sourceAttributes={sourceAttributesForNode(node)}
+            onOpen={onLinkClick
+              ? (event, targetHref, targetLabel) => {
+                  handleMarkdownLinkClick(event, targetHref, targetLabel, skillReference.href);
+                }
+              : undefined}
+          />
         );
       }
       const linkLabel = flattenText(linkChildren);
       const isExternal = isExternalMarkdownHref(href);
       const websiteUrl = websiteUrlFromMarkdownHref(href);
-      const localFilePath = resolveLocalFileTarget(href, linkLabel);
+      const localFilePath = resolveLocalFileDisplayTarget(href, linkLabel);
       const isBareUrlLink = isExternal && isBareMarkdownUrlLabel(linkLabel);
       const internalHref = href ? internalAppRouteFromHref(href, organizationPrefix) : null;
       const internalIssueMention = matchingIssueMentionFromRouteRef(issueRouteRefFromHref(href), issueMentions);
@@ -1144,7 +1224,7 @@ export function MarkdownBody({
             mention={mention}
             label={mentionLabel}
             targetHref={internalHref}
-            sourceAttributes={markdownSourceAttributes(node)}
+            sourceAttributes={sourceAttributesForNode(node)}
             onClick={(event) => {
               handleMarkdownLinkClick(event, internalHref, mentionLabel);
             }}
@@ -1160,7 +1240,7 @@ export function MarkdownBody({
             rel="noreferrer noopener"
             title={isBareUrlLink ? href : undefined}
             className="rudder-website-link"
-            {...markdownSourceAttributes(node)}
+            {...sourceAttributesForNode(node)}
             onClick={(event) => {
               if (!href) return;
               handleMarkdownLinkClick(event, href, linkLabel);
@@ -1176,7 +1256,7 @@ export function MarkdownBody({
           <a
             href={href}
             className="rudder-local-file-link"
-            {...markdownSourceAttributes(node)}
+            {...sourceAttributesForNode(node)}
             onClick={(event) => {
               if (!href) return;
               handleMarkdownLinkClick(event, href, linkLabel);
@@ -1193,7 +1273,7 @@ export function MarkdownBody({
           target={isExternal ? "_blank" : undefined}
           rel={isExternal ? "noreferrer noopener" : "noreferrer"}
           title={isBareUrlLink ? href : undefined}
-          {...markdownSourceAttributes(node)}
+          {...sourceAttributesForNode(node)}
           onClick={(event) => {
             if (!href) return;
             handleMarkdownLinkClick(event, internalHref ?? href, linkLabel);

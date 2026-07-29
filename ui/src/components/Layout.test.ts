@@ -4,9 +4,9 @@ import {
   getWorkspaceColumnMaxWidth,
   preserveRememberedSidePanelWidth,
   resolveDefaultSidePanelWidth,
+  resolveDisplayedSidePanelContext,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
-  resolveDisplayedSidePanelContext,
   resolveSidePanelCollapseWidth,
   resolveSidePanelContextKey,
   resolveSidePanelDragWidth,
@@ -189,6 +189,8 @@ describe("workspace main card framing", () => {
     expect(shouldUseFramelessWorkspaceMain("/messenger")).toBe(true);
     expect(shouldUseFramelessWorkspaceMain("/messenger/chat")).toBe(true);
     expect(shouldUseFramelessWorkspaceMain("/messenger/chat/chat-1")).toBe(true);
+    expect(shouldUseFramelessWorkspaceMain("/messenger/workbench")).toBe(true);
+    expect(shouldUseFramelessWorkspaceMain("/messenger/saved/saved-1")).toBe(true);
   });
 
   it("keeps Messenger thread routes on the normal paper workspace card", () => {

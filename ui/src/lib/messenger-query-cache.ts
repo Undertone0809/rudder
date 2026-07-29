@@ -26,6 +26,7 @@ function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
     activityAt: new Date(summary.latestActivityAt ?? 0).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
+    isPinned: Boolean(summary.isPinned),
   };
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   let binary = "";
@@ -34,17 +35,21 @@ function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function compareMessengerThreadSummaries(a: MessengerThreadSummary, b: MessengerThreadSummary) {
+  const aPinned = Boolean(a.isPinned);
+  const bPinned = Boolean(b.isPinned);
+  if (aPinned !== bPinned) return aPinned ? -1 : 1;
+  const aTime = a.latestActivityAt ? new Date(a.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
+  const bTime = b.latestActivityAt ? new Date(b.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
+  if (aTime !== bTime) return bTime - aTime;
+  const titleDiff = a.title.localeCompare(b.title);
+  if (titleDiff !== 0) return titleDiff;
+  return a.threadKey.localeCompare(b.threadKey);
+}
+
 function mergeMessengerThreadSummaries(current: MessengerThreadSummary[], incoming: MessengerThreadSummary) {
   const withoutCurrent = current.filter((thread) => thread.threadKey !== incoming.threadKey);
-  return [incoming, ...withoutCurrent].sort((a, b) => {
-    const aPinned = Boolean(a.isPinned);
-    const bPinned = Boolean(b.isPinned);
-    if (aPinned !== bPinned) return aPinned ? -1 : 1;
-    const aTime = a.latestActivityAt ? new Date(a.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
-    const bTime = b.latestActivityAt ? new Date(b.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
-    if (aTime !== bTime) return bTime - aTime;
-    return a.title.localeCompare(b.title);
-  });
+  return [incoming, ...withoutCurrent].sort(compareMessengerThreadSummaries);
 }
 
 function upsertMessengerThreadPageData(current: MessengerThreadPageData | undefined, incoming: MessengerThreadSummary) {

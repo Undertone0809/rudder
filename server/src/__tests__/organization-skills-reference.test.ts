@@ -205,7 +205,6 @@ describe("organization skill references", () => {
       "rudder/skill-creator",
       "rudder/visualize",
       `organization/${orgId}/deep-research`,
-      `organization/${orgId}/software-product-advisor`,
     ]));
     expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
       "rudder/rudder-create-agent",
@@ -217,7 +216,7 @@ describe("organization skill references", () => {
     expect(skills.find((skill) => skill.slug === "deep-research")).toMatchObject({
       sourceBadge: "community",
       sourceLabel: "Community preset",
-      editable: false,
+      editable: true,
     });
 
     const skillCreator = skills.find((skill) => skill.slug === "skill-creator");

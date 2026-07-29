@@ -29,6 +29,7 @@ import {
   formatMessengerTitle,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
+  type AgentRole,
   type Approval,
   type BudgetIncident,
   type JoinRequest,
@@ -65,6 +66,12 @@ import {
   lockMessengerCustomGroupPlacement,
   lockMessengerSavedViewPlacement,
 } from "./messenger-saved-views.js";
+import {
+  comparePinnedThenLatest,
+  decodeThreadSummaryCursor,
+  encodeThreadSummaryCursor,
+  threadSummaryIsAfterCursor,
+} from "./messenger-thread-summary-order.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
@@ -114,12 +121,6 @@ type ThreadSummaryPageOptions = ThreadSummaryListOptions & {
 type IssueThreadCursor = {
   activityAt: string;
   issueId: string;
-};
-type ThreadSummaryCursor = {
-  activityAt: string;
-  title: string;
-  threadKey: string;
-  isPinned: boolean;
 };
 type IssueThreadEntry = {
   issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
@@ -281,6 +282,7 @@ type ChatSummarySource = Pick<
   | "preferredAgentId"
   | "routedAgentId"
 > & {
+  activeGenerationId?: string | null;
   chatRuntime?: { runtimeAgentId?: string | null } | null;
   sourceMetadata?: Record<string, unknown> | null;
 };
@@ -328,13 +330,6 @@ function compareLatestActivity<T extends { latestActivityAt: Date | null; title:
   return (a.threadKey ?? "").localeCompare(b.threadKey ?? "");
 }
 
-function comparePinnedThenLatest<T extends { latestActivityAt: Date | null; title: string; threadKey?: string; isPinned?: boolean }>(a: T, b: T) {
-  const aPinned = Boolean(a.isPinned);
-  const bPinned = Boolean(b.isPinned);
-  if (aPinned !== bPinned) return aPinned ? -1 : 1;
-  return compareLatestActivity(a, b);
-}
-
 function compareChronologicalActivity<T extends { latestActivityAt: Date | null; title: string }>(a: T, b: T) {
   const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
@@ -350,49 +345,6 @@ function normalizeIssueThreadLimit(limit: number | null | undefined) {
 function normalizeThreadSummaryLimit(limit: number | null | undefined) {
   if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_THREAD_SUMMARY_LIMIT;
   return Math.min(MAX_THREAD_SUMMARY_LIMIT, Math.max(1, Math.floor(limit)));
-}
-
-function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
-  const payload: ThreadSummaryCursor = {
-    activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
-    title: summary.title,
-    threadKey: summary.threadKey,
-    isPinned: summary.isPinned,
-  };
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSummaryCursor | null {
-  if (!cursor) return null;
-  try {
-    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ThreadSummaryCursor>;
-    if (typeof decoded.activityAt !== "string" || Number.isNaN(new Date(decoded.activityAt).getTime())) return null;
-    if (typeof decoded.title !== "string") return null;
-    if (typeof decoded.threadKey !== "string" || decoded.threadKey.length === 0) return null;
-    return {
-      activityAt: decoded.activityAt,
-      title: decoded.title,
-      threadKey: decoded.threadKey,
-      isPinned: decoded.isPinned === true,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: ThreadSummaryCursor | null) {
-  if (!cursor) return true;
-  return comparePinnedThenLatest<{
-    latestActivityAt: Date | null;
-    title: string;
-    threadKey: string;
-    isPinned: boolean;
-  }>(summary, {
-    latestActivityAt: new Date(cursor.activityAt),
-    title: cursor.title,
-    threadKey: cursor.threadKey,
-    isPinned: cursor.isPinned,
-  }) > 0;
 }
 
 function threadSummaryPageInfo(limit: number, items: MessengerThreadSummary[], hasMore: boolean): MessengerThreadPageInfo {
@@ -687,6 +639,7 @@ function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
       routedAgentId: conversation.routedAgentId,
       runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? null,
       latestUserMessagePreview: conversation.latestUserMessagePreview,
+      activeGenerationId: conversation.activeGenerationId ?? null,
       ...(conversation.sourceMetadata ?? {}),
     },
   };
@@ -864,6 +817,7 @@ function issueCard(
 
 function approvalCard(
   approval: ApprovalRow,
+  requesterAgent: MessengerApprovalThreadItem["requesterAgent"],
   latestComment: ApprovalCommentRow | null,
   currentUserId: string | null,
   latestActivityAt: Date,
@@ -895,6 +849,7 @@ function approvalCard(
       requester: approvalRequesterLabel(approval, currentUserId),
     },
     approval: approval as Approval,
+    requesterAgent,
   };
 }
 
@@ -1416,8 +1371,15 @@ export function messengerService(db: Db) {
           eq(messengerCustomGroupEntries.groupId, groupId),
         )))
         .filter((entry) => entry.threadKey.startsWith("saved-view:"));
-      if (savedMemberships.length > 0) {
-        throw conflict(`Cannot ${source === "group_delete" ? "delete" : "separate"} a Messenger group containing Saved Views; move or remove them first`);
+      for (const membership of savedMemberships) {
+        await logSavedViewPlacement(
+          txDb,
+          orgId,
+          userId,
+          membership.threadKey,
+          "messenger.saved_view_group_removed",
+          { groupId, source },
+        );
       }
       const [group] = await txDb
         .delete(messengerCustomGroups)
@@ -1547,9 +1509,27 @@ export function messengerService(db: Db) {
     });
   }
 
-  async function createCustomGroupWithEntries(orgId: string, userId: string, name: string, icon: string | null, threadKeys: string[]) {
+  async function createCustomGroupWithEntries(
+    orgId: string,
+    userId: string,
+    name: string,
+    icon: string | null,
+    threadKeys: string[],
+    anchorItemKey?: string,
+  ) {
     const uniqueThreadKeys = [...new Set(threadKeys)];
     if (uniqueThreadKeys.length === 0) throw badRequest("At least one thread key is required");
+    if (anchorItemKey && !uniqueThreadKeys.includes(anchorItemKey)) {
+      throw badRequest("Messenger group anchor must be included in the item keys");
+    }
+    if (
+      anchorItemKey
+      && anchorItemKey !== "issues"
+      && !anchorItemKey.startsWith("chat:")
+      && !anchorItemKey.startsWith("issue:")
+    ) {
+      throw badRequest("Messenger group anchor must be a Chat or Issue");
+    }
     const savedViewItemKeys = new Set<string>();
     for (const threadKey of uniqueThreadKeys) {
       if (savedViewIdFromItemKey(threadKey)) savedViewItemKeys.add(threadKey);
@@ -1558,7 +1538,25 @@ export function messengerService(db: Db) {
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
       await lockMessengerSavedViewPlacement(txDb, orgId, userId);
-      const group = await createCustomGroupWithClient(tx, orgId, userId, name, icon);
+      const [anchorMembership] = anchorItemKey
+        ? await txDb
+          .select({ groupId: messengerCustomGroupEntries.groupId })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.threadKey, anchorItemKey),
+          ))
+          .limit(1)
+        : [];
+      const group = anchorMembership
+        ? await getCustomGroupOrThrowWithDb(
+          txDb,
+          orgId,
+          userId,
+          anchorMembership.groupId,
+        )
+        : await createCustomGroupWithClient(tx, orgId, userId, name, icon);
       await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
       for (const threadKey of uniqueThreadKeys) {
         if (savedViewItemKeys.has(threadKey) && !await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
@@ -1567,7 +1565,7 @@ export function messengerService(db: Db) {
         await assignThreadToCustomGroupWithClient(txDb, orgId, userId, group.id, threadKey);
         await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", {
           groupId: group.id,
-          source: "group_create",
+          source: anchorMembership ? "group_reuse" : "group_create",
         });
       }
     });
@@ -1583,7 +1581,6 @@ export function messengerService(db: Db) {
         if (!await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
           throw notFound("Messenger Saved View not found");
         }
-        throw conflict("Saved Views cannot be removed from a group without a destination; move the Saved View or remove it instead");
       }
       const [membership] = await txDb
         .select({ id: messengerCustomGroupEntries.id, groupId: messengerCustomGroupEntries.groupId })
@@ -2288,10 +2285,36 @@ export function messengerService(db: Db) {
     }
 
     const typedApprovalRows = approvalRows as ApprovalRow[];
+    const requesterAgentIds = typedApprovalRows
+      .map((approval) => approval.requestedByAgentId)
+      .filter((agentId): agentId is string => Boolean(agentId));
+    const requesterAgents = requesterAgentIds.length > 0
+      ? await db
+          .select({
+            id: agents.id,
+            name: agents.name,
+            icon: agents.icon,
+            role: agents.role,
+          })
+          .from(agents)
+          .where(and(eq(agents.orgId, orgId), inArray(agents.id, requesterAgentIds)))
+      : [];
+    const requesterAgentById = new Map(
+      requesterAgents.map((agent) => [
+        agent.id,
+        {
+          ...agent,
+          role: agent.role as AgentRole,
+        },
+      ]),
+    );
     const unsortedItems = typedApprovalRows.map((approval) => {
       const latestComment = latestCommentByApproval.get(approval.id) ?? null;
       const latestActivityAt = maxDate(approval.updatedAt, latestComment?.createdAt) ?? approval.updatedAt;
-      return approvalCard(approval, latestComment, userId, latestActivityAt);
+      const requesterAgent = approval.requestedByAgentId
+        ? requesterAgentById.get(approval.requestedByAgentId) ?? null
+        : null;
+      return approvalCard(approval, requesterAgent, latestComment, userId, latestActivityAt);
     });
     const latestFirstItems = [...unsortedItems].sort(compareLatestActivity);
     const chronologicalItems = [...unsortedItems].sort(compareChronologicalActivity);
@@ -2399,13 +2422,13 @@ export function messengerService(db: Db) {
     if (latestApproval) {
       const latestComment = (latestApprovalCommentRows[0] ?? null) as ApprovalCommentRow | null;
       const latestActivityAt = maxDate(latestApproval.updatedAt, latestComment?.createdAt) ?? latestApproval.updatedAt;
-      candidateItems.push(approvalCard(latestApproval, latestComment, userId, latestActivityAt));
+      candidateItems.push(approvalCard(latestApproval, null, latestComment, userId, latestActivityAt));
     }
     if (latestCommentRow) {
       const approval = (latestCommentApprovalRows[0] ?? null) as ApprovalRow | null;
       if (approval) {
         const latestActivityAt = maxDate(approval.updatedAt, latestCommentRow.createdAt) ?? approval.updatedAt;
-        candidateItems.push(approvalCard(approval, latestCommentRow, userId, latestActivityAt));
+        candidateItems.push(approvalCard(approval, null, latestCommentRow, userId, latestActivityAt));
       }
     }
 

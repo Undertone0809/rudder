@@ -2,6 +2,10 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
+import {
+  AnchoredResponseAnnotationMarkers,
+  SentResponseAnnotationsCard,
+} from "@/components/chat/ResponseAnnotations";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
 import { MarkdownBody, WebsiteLinkIcon, websiteUrlFromMarkdownHref, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
@@ -11,7 +15,7 @@ import { RudderEntityPreview } from "@/components/RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
-import { RunTranscriptView, type TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,8 +28,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
+import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useResolvedIssueMention } from "@/hooks/useResolvedIssueMention";
-import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
@@ -41,22 +45,42 @@ import {
   formatChatProcessDuration,
   lastTranscriptAtMs
 } from "@/lib/chat-process-duration";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+} from "@/lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
+import {
+  clearIssueProposalPanelContent,
+  publishIssueProposalPanelContent,
+} from "@/lib/issue-proposal-side-panel-registry";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
-import { formatSkillReferenceDisplayLabel, parseSkillReference } from "@/lib/skill-reference";
+import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import {
+  formatSkillReferenceDisplayLabel,
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "@/lib/skill-reference";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
+  ChatComposerFileDropOverlay,
+  useChatComposerFileDrop,
+} from "@/pages/Chat.file-drop";
+import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   rudderInlineVisualMappingsFromStructuredPayload,
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
   type ChatConversation,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction
 } from "@rudderhq/shared";
@@ -69,17 +93,20 @@ import {
   CirclePlus,
   Copy,
   GitFork,
+  Lightbulb,
   Loader2,
+  Maximize2,
+  Minimize2,
   Paperclip,
   Pencil,
   RefreshCcw,
   Repeat,
-  RotateCcw,
   Sparkles
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -93,16 +120,24 @@ export function ChatAssistantAttributionRow({
   conversation: ChatConversation;
   agents: Agent[] | undefined;
 }) {
-  const agent = replyingAgentId ? agents?.find((a) => a.id === replyingAgentId) : null;
-  const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
+  const effectiveReplyingAgentId = replyingAgentId
+    ?? conversation.chatRuntime?.runtimeAgentId
+    ?? conversation.preferredAgentId
+    ?? null;
+  const agent = effectiveReplyingAgentId
+    ? agents?.find((a) => a.id === effectiveReplyingAgentId)
+    : null;
+  const fallbackLabel = effectiveReplyingAgentId
+    ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent"
+    : "Assistant";
   const label = agent?.name ?? fallbackLabel;
   const content = (
     <>
-      {agent || replyingAgentId ? (
+      {agent || effectiveReplyingAgentId ? (
         <AgentIcon
           icon={agent?.icon}
           role={agent?.role}
-          fallbackSeed={agent?.id ?? replyingAgentId}
+          fallbackSeed={agent?.id ?? effectiveReplyingAgentId}
           className="h-8 w-8 shrink-0"
         />
       ) : (
@@ -306,7 +341,7 @@ function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDis
       <AssigneeLabel
         kind="agent"
         label={principal.label}
-        badgeLabel={principal.agent ? agentTitleBadgeLabel(principal.agent) : null}
+        agentAvatarStyle="bare"
         agentIcon={principal.agent?.icon ?? null}
         agentRole={principal.agent?.role ?? null}
       />
@@ -444,6 +479,7 @@ export function ProposalCard({
   skillReferences,
   onMarkdownLinkClick,
   issueCreatedMessage,
+  presentation = "inline",
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -463,7 +499,9 @@ export function ProposalCard({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   issueCreatedMessage?: ChatMessage | null;
+  presentation?: "inline" | "side-panel";
 }) {
+  const sidePanel = useOptionalSidePanel();
   const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
   const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
   const operationProposal = message.kind === "operation_proposal" ? operationProposalFromMessage(message) : null;
@@ -547,15 +585,98 @@ export function ProposalCard({
     return () => observer.disconnect();
   }, [issueProposal, proposalDescription, proposalDetailsExpanded]);
 
-  return (
-    <div className="text-foreground">
-      <ChatAssistantAttributionRow
-        replyingAgentId={message.replyingAgentId ?? null}
-        conversation={conversation}
-        agents={agents}
-      />
+  const proposalPanelTarget = useMemo(() => ({
+    kind: "issue_proposal",
+    conversationId: conversation.id,
+    messageId: message.id,
+    label: "Issue proposal",
+  } satisfies SidePanelTarget), [conversation.id, message.id]);
+  const proposalPanelKey = sidePanelTargetKey(proposalPanelTarget);
+  const proposalPanelContent = useMemo(() => presentation === "inline" ? (
+    <ProposalCard
+      conversation={conversation}
+      message={message}
+      agents={agents}
+      currentUserId={currentUserId}
+      issueProposalOverride={issueProposalOverride}
+      onIssueProposalChange={onIssueProposalChange}
+      decisionNote={decisionNote}
+      onDecisionNoteChange={onDecisionNoteChange}
+      decisionNoteMentions={decisionNoteMentions}
+      onDecisionNoteMentionQueryChange={onDecisionNoteMentionQueryChange}
+      onDecisionNoteInlineTokenClick={onDecisionNoteInlineTokenClick}
+      onApprovalAction={onApprovalAction}
+      onResolveOperationProposal={onResolveOperationProposal}
+      onConvertToIssue={onConvertToIssue}
+      actionPending={actionPending}
+      skillReferences={skillReferences}
+      onMarkdownLinkClick={onMarkdownLinkClick}
+      issueCreatedMessage={issueCreatedMessage}
+      presentation="side-panel"
+    />
+  ) : null, [
+    actionPending,
+    agents,
+    conversation,
+    currentUserId,
+    decisionNote,
+    decisionNoteMentions,
+    issueCreatedMessage,
+    issueProposalOverride,
+    message,
+    onApprovalAction,
+    onConvertToIssue,
+    onDecisionNoteChange,
+    onDecisionNoteInlineTokenClick,
+    onDecisionNoteMentionQueryChange,
+    onIssueProposalChange,
+    onMarkdownLinkClick,
+    onResolveOperationProposal,
+    presentation,
+    skillReferences,
+  ]);
+  useLayoutEffect(() => {
+    if (presentation !== "inline" || !proposalPanelContent) return;
+    publishIssueProposalPanelContent(proposalPanelKey, proposalPanelContent);
+  }, [presentation, proposalPanelContent, proposalPanelKey]);
+  useEffect(() => {
+    if (presentation !== "inline") return;
+    return () => clearIssueProposalPanelContent(proposalPanelKey);
+  }, [presentation, proposalPanelKey]);
+  const registeredProposalPanel = sidePanel?.tabs.find(
+    (target) => sidePanelTargetKey(target) === proposalPanelKey,
+  );
+  const proposalPanelOpen = presentation === "inline" && Boolean(registeredProposalPanel);
+  const proposalPanelActive = Boolean(
+    proposalPanelOpen
+    && sidePanel?.open
+    && sidePanel.activeKey === proposalPanelKey,
+  );
 
-      {message.body.trim().length > 0 ? (
+  const openIssueProposalPanel = useCallback(() => {
+    if (proposalPanelActive) {
+      sidePanel?.closeTarget(proposalPanelKey);
+      return;
+    }
+    sidePanel?.openTarget(proposalPanelTarget);
+  }, [proposalPanelActive, proposalPanelKey, proposalPanelTarget, sidePanel]);
+
+  return (
+    <div
+      className={cn(
+        "text-foreground",
+        presentation === "side-panel" && "h-full min-h-0",
+      )}
+    >
+      {presentation === "inline" ? (
+        <ChatAssistantAttributionRow
+          replyingAgentId={message.replyingAgentId ?? null}
+          conversation={conversation}
+          agents={agents}
+        />
+      ) : null}
+
+      {presentation === "inline" && message.body.trim().length > 0 ? (
         <ChatLongMessageBody
           body={message.body}
           skillReferences={skillReferences}
@@ -564,43 +685,99 @@ export function ProposalCard({
         />
       ) : null}
 
+      {proposalPanelOpen ? (
+        <button
+          type="button"
+          data-testid="proposal-review-compact"
+          className="chat-proposal-compact mt-4 flex h-14 w-full max-w-[860px] items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 text-left text-muted-foreground shadow-[var(--shadow-sm)] transition-[border-color,background-color,color,box-shadow,transform] duration-200 hover:border-[color:var(--border-base)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          onClick={openIssueProposalPanel}
+          aria-expanded={proposalPanelActive}
+          aria-label={
+            proposalPanelActive
+              ? "Close Issue proposal tab and restore card"
+              : "Open Issue proposal in Side Panel"
+          }
+        >
+          <Lightbulb className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">Issue proposal</span>
+          {proposalPanelActive ? (
+            <Minimize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          ) : (
+            <Maximize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          )}
+        </button>
+      ) : (
       <div
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
         data-active-surface={actionPending ? "proposal-action" : undefined}
         className={cn(
-          "chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200",
+          "chat-review-block text-foreground transition-all duration-200",
+          presentation === "side-panel"
+            ? "chat-review-block--side-panel flex h-full min-h-0 max-w-none flex-col overflow-y-auto rounded-none border-0 shadow-none"
+            : "chat-review-block--inline mt-4 max-w-[860px] rounded-[var(--radius-lg)]",
           actionPending && "chat-review-block--action-pending",
         )}
       >
-        <div
-          className={cn(
-            "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
-            reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(9rem,13rem)]" : "grid-cols-1",
-          )}
-        >
-          <div className="flex min-w-0 items-center gap-3 px-5 py-4">
-            <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
-            <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
-          </div>
-          {reviewStatus ? (
-            <div
-              data-testid="proposal-review-status"
-              className="relative z-[6] flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0 sm:pr-10"
-            >
-              <StatusBadge status={reviewStatus} />
+        {presentation === "inline" ? (
+          <div
+            className={cn(
+              "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
+              reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(11rem,15rem)]" : "grid-cols-1",
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-3 px-5 py-4">
+              <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
+              <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
+              {!reviewStatus && issueProposal && sidePanel ? (
+                <button
+                  type="button"
+                  data-testid="proposal-review-open-side-panel"
+                  aria-label="Open Issue proposal in Side Panel"
+                  title="Open in Side Panel"
+                  className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={openIssueProposalPanel}
+                >
+                  <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
-          ) : null}
-        </div>
+            {reviewStatus ? (
+              <div
+                data-testid="proposal-review-status"
+                className="relative z-[6] flex min-w-0 items-center justify-between gap-2 border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0"
+              >
+                <StatusBadge status={reviewStatus} />
+                {issueProposal && sidePanel ? (
+                  <button
+                    type="button"
+                    data-testid="proposal-review-open-side-panel"
+                    aria-label="Open Issue proposal in Side Panel"
+                    title="Open in Side Panel"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    onClick={openIssueProposalPanel}
+                  >
+                    <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="px-5 py-5">
           <div className="min-w-0">
             {issueProposal ? (
               <>
                 <div className="chat-review-summary-grid grid gap-5">
-                  <div className="chat-review-summary-title flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5">
+                  <div className="chat-review-summary-title flex min-w-0 items-start justify-between gap-3 border-b border-[color:var(--border-soft)] pb-5">
                     <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
+                    {presentation === "side-panel" && reviewStatus ? (
+                      <span data-testid="proposal-review-status" className="shrink-0">
+                        <StatusBadge status={reviewStatus} />
+                      </span>
+                    ) : null}
                   </div>
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
@@ -700,19 +877,23 @@ export function ProposalCard({
           <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-foreground">Proposal details</div>
-              {proposalDetailsCanExpand ? (
+              {presentation === "inline" && (sidePanel || proposalDetailsCanExpand) ? (
                 <button
                   type="button"
-                  aria-controls={proposalDetailsId}
-                  aria-expanded={proposalDetailsExpanded}
+                  {...(!sidePanel ? {
+                    "aria-controls": proposalDetailsId,
+                    "aria-expanded": proposalDetailsExpanded,
+                  } : {})}
                   className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-xs font-medium text-[color:var(--accent-strong)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_55%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
-                  onClick={() => setProposalDetailsExpanded((current) => !current)}
+                  onClick={sidePanel
+                    ? openIssueProposalPanel
+                    : () => setProposalDetailsExpanded((current) => !current)}
                 >
-                  {proposalDetailsExpanded ? "Show less" : "Show full proposal"}
+                  {sidePanel || !proposalDetailsExpanded ? "Show full proposal" : "Show less"}
                   <ChevronDown
                     className={cn(
                       "h-3.5 w-3.5 transition-transform duration-200",
-                      proposalDetailsExpanded && "rotate-180",
+                      !sidePanel && proposalDetailsExpanded && "rotate-180",
                     )}
                     aria-hidden="true"
                   />
@@ -724,8 +905,13 @@ export function ProposalCard({
               ref={proposalDetailsRef}
               className={cn(
                 "chat-review-details-body text-sm leading-6 text-muted-foreground",
-                !proposalDetailsExpanded && "chat-review-details-body--collapsed",
-                proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
+                presentation === "inline"
+                  && (sidePanel || !proposalDetailsExpanded)
+                  && "chat-review-details-body--collapsed",
+                presentation === "inline"
+                  && proposalDetailsCanExpand
+                  && (sidePanel || !proposalDetailsExpanded)
+                  && "chat-review-details-body--can-expand",
               )}
             >
               <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
@@ -798,7 +984,12 @@ export function ProposalCard({
         ) : null}
 
         {showReviewControls ? (
-          <div className="border-t border-[color:var(--border-soft)] px-5 py-5">
+          <div
+            className={cn(
+              "border-t border-[color:var(--border-soft)] px-5 py-5",
+              presentation === "side-panel" && "chat-proposal-panel-actions sticky bottom-0 z-10 mt-auto !px-4 !py-4",
+            )}
+          >
             {showDecisionNote ? (
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -824,29 +1015,35 @@ export function ProposalCard({
                         : "Optional note for approval or rejection."
                     }
                     className="rounded-[var(--radius-md)] bg-transparent"
-                    contentClassName="min-h-[88px] bg-transparent text-sm leading-6 text-foreground"
+                    contentClassName={cn(
+                      "min-h-[88px] bg-transparent text-sm leading-6 text-foreground",
+                      presentation === "side-panel" && "!min-h-16",
+                    )}
                   />
                 </div>
               </label>
             ) : null}
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className={cn("mt-4 flex flex-wrap gap-2", presentation === "side-panel" && "!mt-3")}>
               {showApprovalActions && message.approval ? (
                 <>
                   <Button
                     size="sm"
-                    className="bg-green-700 text-white hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500"
+                    className={cn(
+                      "bg-green-700 text-white hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500",
+                      presentation === "side-panel" && "px-3 text-xs",
+                    )}
                     data-testid="proposal-review-approve"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "approve", message.id)}
                   >
-                    Approve
+                    {presentation === "side-panel" && issueProposal ? "Approve & create issue" : "Approve"}
                   </Button>
                   {showRevisionAction ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-foreground"
+                      className={cn("text-foreground", presentation === "side-panel" && "px-3 text-xs")}
                       data-testid="proposal-review-request-revision"
                       disabled={actionPending}
                       onClick={() => onApprovalAction(message.approval!.id, "requestRevision", message.id)}
@@ -857,7 +1054,10 @@ export function ProposalCard({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                    className={cn(
+                      "border-destructive/30 text-destructive hover:bg-destructive/10",
+                      presentation === "side-panel" && "px-3 text-xs",
+                    )}
                     data-testid="proposal-review-reject"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "reject", message.id)}
@@ -911,6 +1111,7 @@ export function ProposalCard({
           </div>
         ) : null}
       </div>
+      )}
     </div>
   );
 }
@@ -1331,7 +1532,19 @@ export function ChatUserPlainTextBody({
             ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(part.label))
             ?? null;
           const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || part.label;
-          return <SkillReferenceToken key={`${part.href}-${index}`} label={skillLabel} preview={preview} />;
+          return (
+            <SkillReferenceToken
+              key={`${part.href}-${index}`}
+              label={skillLabel}
+              preview={preview}
+              fallbackOpenHref={resolveSkillReferenceOpenHref(part.href)}
+              onOpen={onMarkdownLinkClick
+                ? (event, targetHref, targetLabel) => {
+                    handlePlainTextLinkClick(event, targetHref, targetLabel);
+                  }
+                : undefined}
+            />
+          );
         }
 
         const mention = resolvedMentionFromCurrentOptions(part.mention, mentions);
@@ -1716,6 +1929,7 @@ export function AskUserPanel({
   disabled,
   pendingFiles,
   onAddAttachment,
+  onDropAttachments,
   onRemovePendingFile,
   onPasteAttachment,
   onSubmit,
@@ -1725,6 +1939,7 @@ export function AskUserPanel({
   disabled: boolean;
   pendingFiles: File[];
   onAddAttachment: () => void;
+  onDropAttachments: (files: Iterable<File>) => void | Promise<void>;
   onRemovePendingFile: (fileKey: string) => void;
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
@@ -1741,6 +1956,10 @@ export function AskUserPanel({
   const freeformByQuestionId = activeDraftState.freeformByQuestionId;
   const currentQuestionIndex = activeDraftState.currentQuestionIndex;
   const reviewingAnswers = activeDraftState.reviewingAnswers;
+  const {
+    active: fileDragActive,
+    targetProps: fileDropTargetProps,
+  } = useChatComposerFileDrop(onDropAttachments);
 
   useEffect(() => {
     setDraftState(normalizeAskUserPanelDraft(
@@ -1866,8 +2085,13 @@ export function AskUserPanel({
     <div
       data-testid="chat-ask-user-panel"
       onPasteCapture={onPasteAttachment}
-      className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
+      {...fileDropTargetProps}
+      className={cn(
+        "relative rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]",
+        fileDragActive && "ring-2 ring-[color:var(--accent-base)] ring-offset-2 ring-offset-background",
+      )}
     >
+      {fileDragActive ? <ChatComposerFileDropOverlay /> : null}
       {hasMultipleQuestions ? (
         <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
@@ -1876,9 +2100,12 @@ export function AskUserPanel({
       ) : null}
 
       {reviewingAnswers ? (
-        <section className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3">
+        <section data-testid="chat-ask-user-content" className="min-w-0">
           <div className="text-sm font-medium text-foreground">Review answers</div>
-          <div className="mt-2 space-y-2">
+          <div
+            data-testid="chat-ask-user-review-scroll"
+            className="scrollbar-auto-hide mt-2 max-h-[min(48dvh,28rem)] space-y-2 overflow-y-auto overscroll-contain pr-1"
+          >
             {request.questions.map((question, index) => {
               const answer = answersWithAttachmentFallback[question.id];
               return (
@@ -1909,7 +2136,8 @@ export function AskUserPanel({
       ) : currentQuestion ? (
         <section
           key={currentQuestion.id}
-          className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3"
+          data-testid="chat-ask-user-content"
+          className="min-w-0"
         >
           <div className="text-sm font-medium text-foreground">
             {askUserQuestionTitle(currentQuestion)}
@@ -2001,7 +2229,7 @@ export function AskUserPanel({
                   },
                 }))}
                 placeholder="Type your answer..."
-                className="min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
+                className="min-h-20 max-h-[min(38dvh,22rem)] resize-y overflow-y-auto rounded-[var(--radius-md)] bg-background text-sm"
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -2131,6 +2359,11 @@ export function ChatMessageItem({
   onRefreshAssistantMessage,
   onOpenFile,
   onMarkdownLinkClick,
+  onSelectResponseAnnotation,
+  onResponseAnnotationsExpanded,
+  unlocatableResponseAnnotationId,
+  responseAnnotations = [],
+  onEditResponseAnnotation,
   turnBranchControls,
   skillReferences,
   inlineEdit,
@@ -2164,9 +2397,21 @@ export function ChatMessageItem({
   onRefreshAssistantMessage?: (message: ChatMessage) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  onSelectResponseAnnotation?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onResponseAnnotationsExpanded?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableResponseAnnotationId?: string | null;
+  responseAnnotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onEditResponseAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
   skillReferences: MarkdownSkillReferencePreview[];
   inlineEdit?: {
     draft: string;
+    canSubmitWithoutBody?: boolean;
     disabled: boolean;
     mentions: MentionOption[];
     surfaceRef: RefObject<HTMLDivElement | null>;
@@ -2183,6 +2428,7 @@ export function ChatMessageItem({
   issueCreatedMessage?: ChatMessage | null;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
+  const assistantAnnotationSourceRef = useRef<HTMLDivElement>(null);
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
     return (
       <ProposalCard
@@ -2241,20 +2487,42 @@ export function ChatMessageItem({
   }
 
   const isUser = message.role === "user";
-  const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
+  if (shouldHideSteerFallbackAssistantBubble(message)) return null;
+  const displayedState = displayedChatMessageState(message);
+  const inlineAnnotations = isUser
+    ? chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+    : [];
+  const inlineAnnotationAttachmentIds = new Set(
+    inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
+  );
+  const statusLabel = !isUser ? assistantStateLabel(displayedState) : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
-    (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
+    (attachment) => (
+      !inlineVisualAttachmentIds.has(attachment.id)
+      && !inlineAnnotationAttachmentIds.has(attachment.id)
+    ),
   );
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
-  const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
+  const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
     ? "Runtime unavailable"
     : "Response failed";
-  const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
+  const canAnnotateAssistantBody = !isUser
+    && message.kind === "message"
+    && !message.supersededAt
+    && message.body.trim().length > 0
+    && (message.status === "completed" || message.status === "stopped" || message.status === "failed");
+  const assistantResponseAnnotations = responseAnnotations.filter((annotation) => (
+    annotation.surface === "assistant_body"
+    && annotation.sourceMessageId === message.id
+  ));
   const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
+  const hasVisibleUserMessageContent = message.body.trim().length > 0
+    || visibleMessageAttachments.length > 0;
 
   if (!isUser) {
     return (
@@ -2267,7 +2535,7 @@ export function ChatMessageItem({
           />
           {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(message.status))}>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
                 {statusLabel}
               </span>
               {canContinueInterrupted ? (
@@ -2281,9 +2549,9 @@ export function ChatMessageItem({
               ) : null}
             </div>
           ) : null}
-          {message.status === "failed" ? (
+          {displayedState === "failed" ? (
             <div
-              className="mb-3 flex max-w-[72ch] items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-destructive"
+              className="mb-3 flex max-w-[72ch] flex-wrap items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-destructive"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <div className="min-w-0 flex-1" role="alert" aria-live="assertive">
@@ -2298,16 +2566,13 @@ export function ChatMessageItem({
                   </div>
                 ) : null}
               </div>
-              {canRetryFailed ? (
-                <button
-                  type="button"
-                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/30 bg-background/70 px-2 text-xs font-medium text-destructive transition-colors hover:bg-background"
-                  onClick={() => onRetryFailedMessage?.(message)}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-                  Retry
-                </button>
-              ) : null}
+              <ChatFailedMessageActions
+                message={message}
+                conversation={conversation}
+                agents={agents}
+                canRetry={canRetryFailed}
+                onRetry={onRetryFailedMessage}
+              />
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
@@ -2315,13 +2580,30 @@ export function ChatMessageItem({
               <TextDots text="Thinking" className="text-muted-foreground" />
             </div>
           ) : (
-            <ChatLongMessageBody
-              body={message.body}
-              message={message}
-              skillReferences={skillReferences}
-              onMarkdownLinkClick={onMarkdownLinkClick}
-              className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-            />
+            <div
+              ref={assistantAnnotationSourceRef}
+              {...(canAnnotateAssistantBody ? {
+                [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
+                [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
+                "data-annotation-surface": "assistant_body",
+                "data-message-id": message.id,
+              } : {})}
+              className="relative"
+            >
+              <ChatLongMessageBody
+                body={message.body}
+                message={message}
+                skillReferences={skillReferences}
+                onMarkdownLinkClick={onMarkdownLinkClick}
+                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+              />
+              <AnchoredResponseAnnotationMarkers
+                sourceRootRef={assistantAnnotationSourceRef}
+                source={message.body}
+                annotations={assistantResponseAnnotations}
+                onActivate={onEditResponseAnnotation}
+              />
+            </div>
           )}
           <ChatRichReferences message={message} />
           <ChatAttachmentList
@@ -2392,8 +2674,23 @@ export function ChatMessageItem({
   }
 
   return (
-    <div data-testid="chat-user-message" data-message-id={message.id} className="flex justify-end transition-all duration-200">
-      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}>
+    <div data-testid="chat-user-message-turn" data-message-id={message.id} className="flex justify-end transition-all duration-200">
+      <div
+        data-testid="chat-user-message"
+        data-message-id={message.id}
+        className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}
+      >
+        <SentResponseAnnotationsCard
+          annotations={inlineAnnotations}
+          attachments={message.attachments}
+          onSelect={onSelectResponseAnnotation}
+          onExpandedChange={(expanded) => onResponseAnnotationsExpanded?.(
+            inlineAnnotations,
+            expanded,
+          )}
+          unlocatableAnnotationId={unlocatableResponseAnnotationId}
+          className="mb-2"
+        />
         {isInlineEditing && inlineEdit ? (
           <div
             ref={inlineEdit.surfaceRef}
@@ -2420,10 +2717,10 @@ export function ChatMessageItem({
                 }
               }}
             />
-            {message.attachments.length > 0 ? (
+            {visibleMessageAttachments.length > 0 ? (
               <div className="mt-2">
                 <ChatAttachmentList
-                  attachments={message.attachments}
+                  attachments={visibleMessageAttachments}
                   onOpenFile={onOpenFile}
                 />
               </div>
@@ -2440,7 +2737,13 @@ export function ChatMessageItem({
               <Button
                 type="button"
                 size="sm"
-                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                disabled={
+                  inlineEdit.disabled
+                  || (
+                    inlineEdit.draft.trim().length === 0
+                    && !inlineEdit.canSubmitWithoutBody
+                  )
+                }
                 onClick={inlineEdit.onSubmit}
               >
                 Send
@@ -2449,7 +2752,7 @@ export function ChatMessageItem({
           </div>
         ) : askUserAnswer ? (
           <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
-        ) : (
+        ) : hasVisibleUserMessageContent ? (
           <div
             data-testid="chat-user-message-bubble"
             data-message-highlight-target="true"
@@ -2462,14 +2765,14 @@ export function ChatMessageItem({
               className="text-[15px] leading-[1.6]"
             />
             <ChatAttachmentList
-              attachments={message.attachments}
+              attachments={visibleMessageAttachments}
               onOpenFile={onOpenFile}
             />
           </div>
-        )}
-        {askUserAnswer && message.attachments.length > 0 ? (
+        ) : null}
+        {askUserAnswer && visibleMessageAttachments.length > 0 ? (
           <ChatAttachmentList
-            attachments={message.attachments}
+            attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}
           />
         ) : null}
@@ -2524,13 +2827,18 @@ export function OptimisticUserDraftItem({
   animateAskUserAnswer?: boolean;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
+  const hasVisibleUserMessageContent = body.trim().length > 0;
+
   return (
     <div className="flex justify-end transition-all duration-200">
       <div className="group flex max-w-[82%] flex-col items-end text-left">
         {askUserAnswer ? (
           <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
-        ) : (
-          <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
+        ) : hasVisibleUserMessageContent ? (
+          <div
+            data-testid="chat-user-message-bubble"
+            className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+          >
             <ChatLongMessageBody
               body={body}
               skillReferences={skillReferences}
@@ -2538,7 +2846,7 @@ export function OptimisticUserDraftItem({
               className="text-[15px] leading-7"
             />
           </div>
-        )}
+        ) : null}
         <div
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",
@@ -2601,19 +2909,22 @@ function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcrip
 export function LazyStreamTranscriptItem({
   summary,
   state,
+  generationTerminalReason,
   loading,
   onLoad,
 }: {
   summary: NonNullable<ChatMessage["transcriptSummary"]>;
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   loading?: boolean;
   onLoad: () => void;
 }) {
   const durationMs = transcriptSummaryDurationMs(summary);
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 
@@ -2649,26 +2960,53 @@ export function StreamTranscriptItem({
   entries,
   steerMessages = [],
   state,
+  generationTerminalReason,
   streamStartedAt,
   streamEndedAt,
   assistantMessageBody,
   showDeveloperDiagnostics,
+  open,
   defaultOpen = false,
   onOpenChange,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
   showDeveloperDiagnostics?: boolean;
+  open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: {
+    sourceConversationId: string;
+    sourceMessageId: string;
+    annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+    onActivateAnnotation?: (
+      annotationId: string,
+      anchor: HTMLButtonElement,
+    ) => void;
+  };
+  sentAnnotationContext?: {
+    onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+    onExpandedChange?: (
+      annotations: ChatInlineAnnotation[],
+      expanded: boolean,
+    ) => void;
+    unlocatableAnnotationId?: string | null;
+  };
 }) {
   const timelineEntries = useMemo(
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
@@ -2676,7 +3014,10 @@ export function StreamTranscriptItem({
   );
   const streamingActive = state === "streaming" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
-  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen || hasSteerInterjection);
+  const [internalProcessOpen, setInternalProcessOpen] = useState(
+    () => streamingActive || defaultOpen || hasSteerInterjection,
+  );
+  const processOpen = open ?? internalProcessOpen;
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -2686,7 +3027,7 @@ export function StreamTranscriptItem({
   }, [streamingActive]);
 
   useEffect(() => {
-    if (defaultOpen || hasSteerInterjection) setProcessOpen(true);
+    if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
   }, [defaultOpen, hasSteerInterjection]);
 
   const durationMs = useMemo(() => {
@@ -2698,10 +3039,11 @@ export function StreamTranscriptItem({
 
   if (timelineEntries.length === 0) return null;
 
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 
@@ -2709,45 +3051,45 @@ export function StreamTranscriptItem({
 
   return (
     <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
-      <div className="w-full max-w-3xl px-1 py-1">
-        <div className="flex items-center gap-3">
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
-          <button
-            type="button"
-            className={cn(
-              "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
-              streamingActive ? "cursor-default" : "hover:text-foreground",
-            )}
-            disabled={streamingActive}
-            onClick={() => {
-              if (!streamingActive) {
-                setProcessOpen((open) => {
-                  const next = !open;
+      <div className="w-full py-1">
+        <div className="max-w-3xl px-1">
+          <div className="flex items-center gap-3">
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+            <button
+              type="button"
+              className={cn(
+                "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
+                streamingActive ? "cursor-default" : "hover:text-foreground",
+              )}
+              disabled={streamingActive}
+              onClick={() => {
+                if (!streamingActive) {
+                  const next = !processOpen;
+                  if (open === undefined) setInternalProcessOpen(next);
                   onOpenChange?.(next);
-                  return next;
-                });
-              }
-            }}
-            aria-expanded={showBody}
-          >
-            {streamingActive ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-            ) : null}
-            <span className="whitespace-nowrap">
-              {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
-            </span>
-            {statusHint ? (
-              <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
-            ) : null}
-            {streamingActive ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : showBody ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            )}
-          </button>
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+                }
+              }}
+              aria-expanded={showBody}
+            >
+              {streamingActive ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              <span className="whitespace-nowrap">
+                {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
+              </span>
+              {statusHint ? (
+                <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
+              ) : null}
+              {streamingActive ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : showBody ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              )}
+            </button>
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+          </div>
         </div>
         {showBody ? (
           <div className="mt-3">
@@ -2761,7 +3103,11 @@ export function StreamTranscriptItem({
               showDeveloperDiagnostics={showDeveloperDiagnostics}
               hiddenAssistantMessageText={assistantMessageBody}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               onOpenAgent={onOpenAgent}
+              annotationSource={annotationSource}
+              sentAnnotationContext={sentAnnotationContext}
             />
           </div>
         ) : null}

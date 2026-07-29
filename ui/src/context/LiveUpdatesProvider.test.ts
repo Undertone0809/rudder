@@ -30,6 +30,45 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.issues.listUnreadTouchedByMe("organization-1"),
     });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.chats.workManifests("organization-1"),
+    });
+  });
+
+  it("refreshes the opened Run detail and event backfill on status changes", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      queryClient as never,
+      "organization-1",
+      "/ORG/agents/agent-1/runs/run-1",
+      {
+        type: "heartbeat.run.status",
+        orgId: "organization-1",
+        payload: {
+          runId: "run-1",
+          agentId: "agent-1",
+          status: "succeeded",
+        },
+      } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.runDetail("run-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.runEvents("run-1"),
+    });
   });
 });
 

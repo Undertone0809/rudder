@@ -1,5 +1,4 @@
 import {
-  type AnyPgColumn,
   index,
   integer,
   jsonb,
@@ -22,7 +21,6 @@ export const agents = pgTable(
     title: text("title"),
     icon: text("icon"),
     status: text("status").notNull().default("idle"),
-    reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
     capabilities: text("capabilities"),
     agentRuntimeType: text("agent_runtime_type").notNull().default("process"),
     agentRuntimeConfig: jsonb("agent_runtime_config").$type<Record<string, unknown>>().notNull().default({}),
@@ -38,8 +36,8 @@ export const agents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUq: uniqueIndex("agents_org_id_uq").on(table.orgId, table.id),
     companyStatusIdx: index("agents_company_status_idx").on(table.orgId, table.status),
-    companyReportsToIdx: index("agents_company_reports_to_idx").on(table.orgId, table.reportsTo),
     companyWorkspaceKeyIdx: uniqueIndex("agents_org_workspace_key_idx").on(table.orgId, table.workspaceKey),
   }),
 );

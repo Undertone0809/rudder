@@ -1,77 +1,81 @@
 ---
 title: "Create an Agent"
-description: "Create a durable Agent with a clear role, capability boundary, runtime, reporting line, and low-risk verification run."
+description: "Add a reusable Agent with a clear job, runtime, instructions, and safe first task."
 icon: "bot"
 keywords:
   - "create Rudder Agent"
-  - "Agent capabilities"
   - "Agent role"
+  - "Agent runtime"
 canonical: "https://docs.rudderhq.dev/how-to/create-agent"
 "og:url": "https://docs.rudderhq.dev/how-to/create-agent"
 hreflang_en: "https://docs.rudderhq.dev/how-to/create-agent"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/create-agent"
 ---
 
+Create another Agent when a recurring kind of work needs its own role or
+runtime. For a one-off request that fits an Agent you already have, use the
+existing Agent.
+
 <a id="completed-state" />
 
-## Completed state
+## What you will create
 
-At the end of this guide, the organization has one new active Agent with a
-recognizable responsibility, valid reporting line, bounded capabilities, saved
-runtime configuration, and one inspectable low-risk run.
-
-Create a durable Agent for repeated ownership. A one-off prompt that fits an
-existing role does not need a new Agent.
+This example creates a `Launch Writer` that drafts release and announcement
+copy. At the end, it will have a tested runtime and one small successful task.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-You need an organization, permission to create Agents, a repeated responsibility
-that is not already owned, and a runtime that Rudder can test. This example adds
-an Agent responsible for launch copy and uses a small announcement as the first
-task.
+You need an organization and a runtime that works on the Rudder host. For a
+local runtime, install and sign in to its CLI first.
+
+Decide what the Agent should own. “Help with anything” is too broad; “Draft and
+revise public launch copy” is easier to assign and review.
 
 <a id="case-backed-steps" />
 
-## Create the launch writer
+## Create the Agent
 
 1. Open **Agents** and choose **New Agent**.
-2. Name the Agent `Launch Writer` and give it a title that describes its
-   position, such as `Release Communications Writer`.
-3. Choose the role used by the organization structure and set **Reports to** to
-   an active Agent in the same organization.
-4. Select and configure the runtime, then run **Test runtime chain**.
-5. For a local runtime, write the prompt template that frames the role and its
-   boundaries. Set the run policy, and enable only the optional Skills this
-   responsibility needs.
-6. Choose **Create agent**. A policy may leave the new Agent pending approval
-   instead of immediately invokable.
-7. After creating the Agent, open **Configuration**. Write **Capabilities** as
-   an acceptance boundary, then review **Permissions** on the same page.
-8. Open **Budget** and set the monthly limit appropriate for this role.
-9. Assign a low-risk launch-announcement Issue with clear acceptance criteria,
-   or ask for the same bounded draft in Chat.
-10. Inspect the Agent Run, draft output, validation note, cost when available,
-   and any blocker.
+2. Enter `Launch Writer` as the name and use a title such as `Release
+   Communications Writer`.
+3. Choose the closest role and write a short capability statement:
+
+   ```text
+   Drafts and revises public launch copy from approved product facts.
+   Flags unsupported claims and does not publish without human review.
+   ```
+
+4. Choose the runtime this Agent will use. Configure the model or command, then
+   run **Test runtime chain**.
+5. Add role instructions or Skills only when they are already useful for this
+   responsibility.
+6. Review permissions and set a monthly budget appropriate for the work.
+7. Choose **Create agent**.
+8. In Chat, ask for a two-paragraph announcement draft. Keep the first task
+   small enough to judge immediately.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the result
 
-Agent detail shows the intended role, reporting line, capabilities, permissions,
-runtime, Skills, and budget. The low-risk run uses that runtime and leaves an
-output plus a clear completion or blocker signal on its source Chat or Issue.
+Open the Agent and confirm its role, capability statement, runtime, permissions,
+Skills, and budget. Then open the test Run and verify that the intended runtime
+produced an answer or a clear blocker.
 
 <a id="recovery" />
 
-## Recovery
+## If it does not work
 
-If creation is blocked, check organization scope, create-Agent permission,
-reporting-line eligibility, and runtime test output. Pending-approval, paused,
-terminated, and revoked-access Agents are not ordinary invokable Agents.
+- **The runtime test fails:** install or sign in to the CLI, correct the command,
+  and test again.
+- **The Agent accepts the wrong work:** narrow the capability statement and the
+  task instructions.
+- **The Agent is pending or paused:** resolve the approval or status before
+  trying to run it.
+- **The first task is too risky:** replace it with a short draft or read-only
+  check until the setup is proven.
 
-If the first run accepts the wrong work, tighten the capability statement and
-assignment context. If it cannot start, repair the runtime with [Configure an
-Agent runtime](/how-to/configure-agent-runtime), then repeat the low-risk run
-before assigning broader work.
+For detailed runtime troubleshooting, see [Configure an Agent
+runtime](/how-to/configure-agent-runtime).

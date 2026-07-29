@@ -10,6 +10,17 @@ const OPERATOR_HIDDEN_RUN_EVENT_TYPES = new Set([
   "issue.execution_released",
 ]);
 
+const INVOCATION_HIDDEN_RUN_EVENT_TYPES = new Set([
+  ...OPERATOR_HIDDEN_RUN_EVENT_TYPES,
+  "transcript.entry",
+]);
+
+export function operatorVisibleInvocationRunEvents(
+  events: HeartbeatRunEvent[],
+): HeartbeatRunEvent[] {
+  return events.filter((event) => !INVOCATION_HIDDEN_RUN_EVENT_TYPES.has(event.eventType));
+}
+
 function humanizeEventType(eventType: string): string {
   return eventType
     .split(/[._-]+/)

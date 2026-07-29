@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { testEnvironment } from "./test.js";
+import { DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC, testEnvironment } from "./test.js";
 
 describe("codex testEnvironment", () => {
   const originalPath = process.env.PATH;
@@ -20,11 +20,29 @@ describe("codex testEnvironment", () => {
     else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
   });
 
+  async function writeFakeCodex(tempDir: string, source: string): Promise<string> {
+    if (process.platform === "win32") {
+      const script = path.join(tempDir, "codex.js");
+      const command = path.join(tempDir, "codex.cmd");
+      await writeFile(script, source, "utf8");
+      await writeFile(command, '@echo off\r\nnode "%~dp0codex.js" %*\r\n', "utf8");
+      return command;
+    }
+
+    const command = path.join(tempDir, "codex");
+    await writeFile(command, source, "utf8");
+    await chmod(command, 0o755);
+    return command;
+  }
+
+  it("allows a full three-minute window for cold local probes", () => {
+    expect(DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC).toBe(180);
+  });
+
   it("allows slow successful local probes by default", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-"));
-    const command = path.join(tempDir, "codex");
-    await writeFile(
-      command,
+    await writeFakeCodex(
+      tempDir,
       [
         "#!/usr/bin/env node",
         "setTimeout(() => {",
@@ -32,9 +50,7 @@ describe("codex testEnvironment", () => {
         "  process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\\n');",
         "}, 11_000);",
       ].join("\n"),
-      "utf8",
     );
-    await chmod(command, 0o755);
     process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ""}`;
 
     try {
@@ -54,7 +70,6 @@ describe("codex testEnvironment", () => {
   it("sanitizes unsupported inherited service_tier values before probing Codex", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-envtest-"));
     const binDir = path.join(tempDir, "bin");
-    const command = path.join(binDir, "codex");
     const sharedCodexHome = path.join(tempDir, "shared-codex-home");
     const rudderHome = path.join(tempDir, "rudder-home");
     const instanceId = "envtest";
@@ -70,8 +85,8 @@ describe("codex testEnvironment", () => {
       ].join("\n"),
       "utf8",
     );
-    await writeFile(
-      command,
+    await writeFakeCodex(
+      binDir,
       [
         "#!/usr/bin/env node",
         "const fs = require('node:fs');",
@@ -84,9 +99,7 @@ describe("codex testEnvironment", () => {
         "process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hello' } }) + '\\n');",
         "process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\\n');",
       ].join("\n"),
-      "utf8",
     );
-    await chmod(command, 0o755);
     process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
     process.env.CODEX_HOME = sharedCodexHome;
     process.env.RUDDER_HOME = rudderHome;

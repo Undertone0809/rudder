@@ -82,12 +82,18 @@ to the next base to be visible as updates to stable users.
 
 `scripts/release.sh <channel> --preflight` performs these version, existing-tag,
 existing-npm-version, and stable-notes checks without installing dependencies
-or building the workspace. GitHub release automation runs it before expensive
-work. After a stable succeeds, `scripts/prepare-next-release.mjs` idempotently
-updates current `main` to the next patch base, pushes one generated
-`[skip release]` maintenance commit, and explicitly dispatches CI for that SHA.
-Normal contributors still use pull requests; only this release handoff uses the
-narrow direct-push path.
+or building the workspace. Stable preflight additionally requires matching
+English and Chinese public changelog entries. GitHub release automation runs it
+before expensive work, then promotes the verified changelog from the immutable
+stable tag to `docs.rudderhq.dev` after a separately confirmed docs deployment.
+The public entries are product communication: they require a short user-facing
+summary, locale-appropriate headings, and only non-empty categories. CI,
+workflow, branch, source-locking, approval, and deployment mechanics belong in
+maintainer records rather than the public changelog.
+After both the stable and public changelog deploy succeed,
+`scripts/prepare-next-release.mjs` idempotently updates current `main` to the
+next patch base with one `[skip release]` maintenance commit pushed directly to
+`main`, then explicitly dispatches CI for that exact SHA.
 
 ## Version formats
 

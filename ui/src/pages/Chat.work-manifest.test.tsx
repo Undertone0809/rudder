@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
+import type {
+  ChatWorkManifestItem,
+  ChatWorkManifestResponse,
+  ChatWorkManifestSubagentSummary,
+} from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -57,13 +61,45 @@ function attachmentItem(id: string, title: string, contentType: string | null = 
   };
 }
 
-function referenceItem(id: string, targetType: ChatWorkManifestItem["targetType"], title: string): ChatWorkManifestItem {
+function subagent(
+  threadId: string,
+  state: "active" | "done",
+  status: ChatWorkManifestSubagentSummary["status"],
+  updatedAt: string,
+): ChatWorkManifestSubagentSummary {
+  return {
+    callId: `call-${threadId}`,
+    threadId,
+    sourceMessageId: `message-${threadId}`,
+    runId: `run-${threadId}`,
+    label: `Agent ${threadId}`,
+    prompt: `Investigate ${threadId}`,
+    avatarSeed: `avatar-${threadId}`,
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    state,
+    status,
+    startedAt: "2026-07-29T08:00:00.000Z",
+    updatedAt,
+  };
+}
+
+function referenceItem(
+  id: string,
+  targetType: ChatWorkManifestItem["targetType"],
+  title: string,
+  issueStatus?: string,
+): ChatWorkManifestItem {
   return {
     ...item(id, "reference", title),
     targetType,
     url: null,
     metadata: targetType === "issue" || targetType === "issue_comment"
-      ? { issueId: id, commentId: targetType === "issue_comment" ? `comment-${id}` : null }
+      ? {
+        issueId: id,
+        commentId: targetType === "issue_comment" ? `comment-${id}` : null,
+        ...(issueStatus ? { issueStatus } : {}),
+      }
       : targetType === "automation"
         ? { automationId: id }
         : targetType === "chat_conversation"
@@ -78,11 +114,13 @@ const manifest: ChatWorkManifestResponse = {
   outputs: [item("out-1", "output", "Report.md"), item("out-2", "output", "Site build")],
   sources: [item("src-1", "source", "Brief.md"), item("src-2", "source", "Data.csv"), item("src-3", "source", "Notes.txt")],
   references: [item("ref-1", "reference", "docs.example")],
+  subagents: { active: [], done: [], totalCount: 0 },
   project: { id: "project-1", totalCount: 9 },
 };
 
 const handlers = {
   onOpenItem: vi.fn(),
+  onOpenSubagents: vi.fn(),
   onJumpToMessage: vi.fn(),
 };
 
@@ -91,7 +129,7 @@ const wideProps = {
 };
 
 describe("ChatWorkManifest", () => {
-  it("renders ordered sections, bounded rows, and website details without project work", () => {
+  it("renders ordered sections and website details without project work", () => {
     const container = render(
       <ChatWorkManifest
         manifest={manifest}
@@ -108,8 +146,8 @@ describe("ChatWorkManifest", () => {
     expect(text.indexOf("Sources")).toBeLessThan(text.indexOf("References"));
     expect(text).toContain("Report.md");
     expect(text).toContain("Brief.md");
-    expect(text).not.toContain("Notes.txt");
-    expect(text).toContain("View all 3");
+    expect(text).toContain("Notes.txt");
+    expect(text).not.toContain("View all 3");
     expect(text).not.toContain("Project work");
     expect(text).not.toContain("9 items");
     expect(text).not.toContain("Browser");
@@ -160,9 +198,7 @@ describe("ChatWorkManifest", () => {
     );
 
     const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
-    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.textContent?.includes("View all 6"));
-    act(() => expandButton?.click());
+    expect(panel?.textContent).not.toContain("View all 6");
     const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
       .find((button) => button.title === title)
       ?.querySelector("[data-file-icon]")
@@ -183,7 +219,7 @@ describe("ChatWorkManifest", () => {
       outputs: [],
       sources: [],
       references: [
-        referenceItem("issue-1", "issue", "ZST-1"),
+        referenceItem("issue-1", "issue", "ZST-1", "blocked"),
         referenceItem("automation-1", "automation", "Daily report"),
         referenceItem("chat-1", "chat_conversation", "Planning chat"),
       ],
@@ -200,17 +236,55 @@ describe("ChatWorkManifest", () => {
     );
 
     const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
-    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.textContent?.includes("View all 3"));
-    act(() => expandButton?.click());
-    const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.title === title)
+    expect(panel?.textContent).not.toContain("View all 3");
+    const rowFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title);
+    const iconFor = (title: string) => rowFor(title)
       ?.querySelector("[data-file-icon]")
       ?.getAttribute("data-file-icon");
     expect(iconFor("ZST-1")).toBe("issue");
     expect(iconFor("Daily report")).toBe("automation");
     expect(iconFor("Planning chat")).toBe("chat");
+    const issueIcon = rowFor("ZST-1")?.querySelector("[data-file-icon='issue']");
+    expect(issueIcon?.getAttribute("data-issue-status")).toBe("blocked");
+    expect(issueIcon?.getAttribute("title")).toBe("Issue status: Blocked");
+    expect(issueIcon?.getAttribute("aria-hidden")).toBe("true");
+    expect(issueIcon?.querySelector("[data-issue-type-icon='true']")).not.toBeNull();
+    expect(issueIcon?.querySelector("[data-slot='issue-status-icon']")?.getAttribute("data-status"))
+      .toBe("blocked");
+    const issueRow = rowFor("ZST-1");
+    const statusDescriptionId = issueRow?.getAttribute("aria-describedby");
+    expect(statusDescriptionId).toBeTruthy();
+    expect(container.querySelector(`[id="${statusDescriptionId}"]`)?.textContent).toBe("Issue status: Blocked");
   });
+
+  it("keeps the full reference title accessible while constraining long rows to one truncated line", () => {
+    const longTitle = "Original referenced chat title that is deliberately longer than the compact manifest shelf";
+    const container = render(
+      <ChatWorkManifest
+        manifest={{
+          ...manifest,
+          totalCount: 1,
+          outputs: [],
+          sources: [],
+          references: [referenceItem("chat-long", "chat_conversation", longTitle)],
+        }}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        {...handlers}
+      />,
+    );
+
+    const row = container.querySelector<HTMLButtonElement>(`button[title="${longTitle}"]`);
+    const label = row?.querySelector("span.truncate");
+    expect(row?.title).toBe(longTitle);
+    expect(label?.textContent).toBe(longTitle);
+    expect(label?.className).toContain("block");
+    expect(label?.className).toContain("truncate");
+  });
+
   it("does not render while loading or when thread work is empty", () => {
     const loading = render(
       <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
@@ -240,6 +314,80 @@ describe("ChatWorkManifest", () => {
       />,
     );
     expect(projectOnly.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
+  });
+
+  it("renders subagents between Outputs and Sources with active-first avatars and counts", () => {
+    handlers.onOpenSubagents.mockClear();
+    const withSubagents: ChatWorkManifestResponse = {
+      ...manifest,
+      subagents: {
+        active: [
+          subagent("active-1", "active", "running", "2026-07-29T10:04:00.000Z"),
+          subagent("active-2", "active", "pending", "2026-07-29T10:03:00.000Z"),
+        ],
+        done: [
+          subagent("done-1", "done", "completed", "2026-07-29T10:06:00.000Z"),
+          subagent("done-2", "done", "failed", "2026-07-29T10:05:00.000Z"),
+          subagent("done-3", "done", "interrupted", "2026-07-29T10:02:00.000Z"),
+        ],
+        totalCount: 5,
+      },
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={withSubagents}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Outputs")).toBeLessThan(text.indexOf("Subagents"));
+    expect(text.indexOf("Subagents")).toBeLessThan(text.indexOf("Sources"));
+    expect(container.querySelectorAll("[data-subagent-avatar]")).toHaveLength(4);
+    expect(Array.from(container.querySelectorAll("[data-subagent-avatar]")).map(
+      (element) => element.getAttribute("data-subagent-avatar"),
+    )).toEqual(["active-1", "active-2", "done-1", "done-2"]);
+    const summary = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-work-manifest-subagents-summary']",
+    );
+    expect(summary?.textContent).toContain("2 active · 3 done");
+    act(() => summary?.click());
+    expect(handlers.onOpenSubagents).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Subagents N as the compact entry when subagents are the only work", () => {
+    const onlySubagents: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 0,
+      outputs: [],
+      sources: [],
+      references: [],
+      subagents: {
+        active: [],
+        done: [subagent("done-only", "done", "failed", "2026-07-29T10:00:00.000Z")],
+        totalCount: 1,
+      },
+      project: null,
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={onlySubagents}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+
+    expect(container.querySelector("[data-testid='chat-work-manifest']")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']")?.textContent)
+      .toContain("Subagents 1");
+    expect(container.textContent).toContain("1 done");
   });
 
   it("surfaces manifest request errors instead of treating them as empty", () => {
@@ -314,17 +462,30 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")).toBeNull();
   });
 
-  it("expands a bounded section with an accessible control", () => {
+  it("shows up to six items directly and expands a seventh with an accessible control", () => {
+    const sources = Array.from(
+      { length: 7 },
+      (_, index) => item(`source-${index + 1}`, "source", `Source ${index + 1}`),
+    );
     const container = render(
-      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+      <ChatWorkManifest
+        manifest={{ ...manifest, totalCount: 7, outputs: [], sources, references: [] }}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
     );
     const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((candidate) => candidate.textContent?.includes("View all 3"));
+      .find((candidate) => candidate.textContent?.includes("View all 7"));
     expect(button?.getAttribute("aria-expanded")).toBe("false");
     expect(button?.getAttribute("aria-controls")).toBe("chat-work-manifest-wide-sources");
+    expect(container.textContent).toContain("Source 6");
+    expect(container.textContent).not.toContain("Source 7");
     act(() => button?.click());
     expect(button?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).toContain("Notes.txt");
+    expect(container.textContent).toContain("Source 7");
     expect(button?.textContent).toContain("Show less");
   });
 

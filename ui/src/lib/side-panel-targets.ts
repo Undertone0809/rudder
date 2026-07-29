@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { parseMentionChipHref } from "@/lib/mention-chips";
+import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 
 export type SidePanelTarget =
   | {
@@ -7,6 +8,12 @@ export type SidePanelTarget =
       issueId: string;
       ref: string | null;
       commentId: string | null;
+      label: string;
+    }
+  | {
+      kind: "issue_proposal";
+      conversationId: string;
+      messageId: string;
       label: string;
     }
   | {
@@ -22,6 +29,11 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "subagents";
+      conversationId: string;
+      label: string;
+    }
+  | {
       kind: "subagent";
       callId: string;
       threadId: string;
@@ -34,12 +46,15 @@ export type SidePanelTarget =
       status: string;
       response: string | null;
       entries: TranscriptEntry[];
+      conversationId?: string;
+      sourceMessageId?: string;
     }
   | {
       kind: "side_chat";
       sourceConversationId: string;
       sourceMessageId: string | null;
       sourcePreview: string | null;
+      inlineAnnotations?: ChatInlineAnnotationInput[];
       conversationId: string | null;
       clientMutationId: string;
       label: string;
@@ -65,6 +80,12 @@ export type SidePanelTarget =
     }
   | {
       kind: "local_file";
+      filePath: string;
+      label: string;
+    }
+  | {
+      kind: "organization_skill_file";
+      skillId: string;
       filePath: string;
       label: string;
     }
@@ -143,9 +164,13 @@ function commentIdFromHash(url: URL) {
 
 export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
+  if (target.kind === "issue_proposal") {
+    return `issue-proposal:${target.conversationId}:${target.messageId}`;
+  }
   if (target.kind === "automation") return `automation:${target.automationId}`;
   if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
-  if (target.kind === "subagent") return `subagent:${target.callId}:${target.threadId}`;
+  if (target.kind === "subagents") return `subagents:${target.conversationId}`;
+  if (target.kind === "subagent") return `subagent:${target.threadId}`;
   if (target.kind === "side_chat") return target.conversationId
     ? `side-chat:${target.conversationId}`
     : `side-chat:draft:${target.clientMutationId}`;
@@ -153,6 +178,9 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
   if (target.kind === "local_file") return `local-file:${target.filePath}`;
+  if (target.kind === "organization_skill_file") {
+    return `organization-skill-file:${target.skillId}:${target.filePath}`;
+  }
   if (target.kind === "local_apps") return "local-apps";
   if (target.kind === "local_app") {
     return `local-app:${encodeURIComponent(target.desktopInstallationId)}:${encodeURIComponent(target.appPublicId)}:${encodeURIComponent(target.localBindingId)}`;
@@ -189,11 +217,13 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     const base = `/issues/${target.issueId}`;
     return target.commentId ? `${base}#comment-${encodeURIComponent(target.commentId)}` : base;
   }
+  if (target.kind === "issue_proposal") return null;
   if (target.kind === "automation") return `/automations/${target.automationId}`;
   if (target.kind === "chat") {
     const base = `/messenger/chat/${target.conversationId}`;
     return target.messageId ? `${base}?messageId=${encodeURIComponent(target.messageId)}` : base;
   }
+  if (target.kind === "subagents") return null;
   if (target.kind === "subagent") return null;
   if (target.kind === "side_chat") {
     if (target.conversationId) return `/messenger/chat/${target.conversationId}`;
@@ -203,6 +233,13 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;
   if (target.kind === "local_file") return null;
+  if (target.kind === "organization_skill_file") {
+    const search = new URLSearchParams({
+      skill: target.skillId,
+      skillFile: target.filePath,
+    });
+    return `/library?${search.toString()}`;
+  }
   if (target.kind === "local_apps" || target.kind === "local_app") return null;
   if (target.kind === "library_directory") {
     return target.directoryPath
@@ -266,6 +303,16 @@ function sidePanelTargetFromInternalRouteHref(
   }
 
   if (segments.at(-1) === "library") {
+    const skillId = (url.searchParams.get("skill") ?? "").trim();
+    if (skillId) {
+      return {
+        kind: "organization_skill_file",
+        skillId,
+        filePath: (url.searchParams.get("skillFile") ?? "SKILL.md").trim() || "SKILL.md",
+        label: sidePanelLabel(label, "Skill"),
+      };
+    }
+
     const documentId = (url.searchParams.get("document") ?? url.searchParams.get("doc") ?? "").trim();
     if (documentId) {
       return {

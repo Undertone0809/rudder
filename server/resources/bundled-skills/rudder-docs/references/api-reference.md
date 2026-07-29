@@ -32,7 +32,7 @@ Internal/debug reference for the Rudder API.
 
 ### `GET /api/agents/me`
 
-Returns the authenticated agent plus `chainOfCommand` and access state.
+Returns the authenticated agent plus access state.
 
 Representative shape:
 
@@ -45,19 +45,11 @@ Representative shape:
   "title": "Senior Backend Engineer",
   "status": "running",
   "budgetMonthlyCents": 5000,
-  "spentMonthlyCents": 1200,
-  "chainOfCommand": [
-    {
-      "id": "mgr-1",
-      "name": "EngineeringLead",
-      "role": "manager",
-      "title": "VP Engineering"
-    }
-  ]
+  "spentMonthlyCents": 1200
 }
 ```
 
-Use `chainOfCommand` for escalation and the budget fields for spend awareness.
+Use explicit assignee/reviewer ownership and organization permissions for escalation, and the budget fields for spend awareness.
 
 ### `GET /api/agents/me/inbox-lite`
 
@@ -147,7 +139,6 @@ Use the incremental `after` form when you already know the thread.
 - `POST /api/orgs/:orgId/issues`
 - `GET /api/orgs/:orgId/agents`
 - `POST /api/orgs/:orgId/agent-hires`
-- `GET /api/orgs/:orgId/org`
 - `GET /api/orgs/:orgId/dashboard`
 - `GET /api/orgs/:orgId/projects`
 - `POST /api/orgs/:orgId/projects`

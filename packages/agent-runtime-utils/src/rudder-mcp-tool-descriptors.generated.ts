@@ -3,7 +3,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "agent.me",
     "name": "rudder_agent_me",
-    "description": "Show the authenticated agent identity, budget, and chain of command.",
+    "description": "Show the authenticated agent identity and budget.",
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
@@ -69,6 +69,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "description": "Read a full issue by UUID or identifier.",
     "mutating": false,
     "requiresOrgId": false,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
+    "capabilityId": "issue.list",
+    "name": "rudder_issue_list",
+    "description": "List issues with optional status, assignee, and project filters without requiring a search query.",
+    "mutating": false,
+    "requiresOrgId": true,
     "requiresAgentId": false,
     "attachesRunIdWhenAvailable": false
   },
@@ -847,5 +856,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "8494e4678d53860a8b3d71f8d1a0c87d75360d4bf7184ba93b0a3c8d98acda58";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

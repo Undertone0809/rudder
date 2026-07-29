@@ -13,6 +13,7 @@ import {
   sidePanelTargetFromHref,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
+  type SidePanelTarget,
 } from "./side-panel-targets";
 
 describe("side panel targets", () => {
@@ -86,6 +87,12 @@ describe("side panel targets", () => {
       filePath: "docs/spec.md",
       label: "spec.md",
     });
+    expect(sidePanelTargetFromHref("/library?skill=skill-1&skillFile=SKILL.md", "browser")).toEqual({
+      kind: "organization_skill_file",
+      skillId: "skill-1",
+      filePath: "SKILL.md",
+      label: "browser",
+    });
   });
 
   it("generates stable keys and full page hrefs", () => {
@@ -104,6 +111,52 @@ describe("side panel targets", () => {
     const localFileTarget = { kind: "local_file", filePath: "/tmp/evidence.md", label: "evidence.md" } as const;
     expect(sidePanelTargetKey(localFileTarget)).toBe("local-file:/tmp/evidence.md");
     expect(sidePanelFullPageHref(localFileTarget)).toBeNull();
+
+    const issueProposalTarget = {
+      kind: "issue_proposal",
+      conversationId: "chat-1",
+      messageId: "proposal-1",
+      label: "Issue proposal",
+    } as const;
+    expect(sidePanelTargetKey(issueProposalTarget)).toBe("issue-proposal:chat-1:proposal-1");
+    expect(sidePanelFullPageHref(issueProposalTarget)).toBeNull();
+    expect(sidePanelTargetSupportsSavedView(issueProposalTarget)).toBe(false);
+
+    const subagentsTarget = {
+      kind: "subagents",
+      conversationId: "chat-1",
+      label: "Subagents",
+    } as const;
+    expect(sidePanelTargetKey(subagentsTarget)).toBe("subagents:chat-1");
+    expect(sidePanelFullPageHref(subagentsTarget)).toBeNull();
+
+    const subagentTarget: SidePanelTarget = {
+      kind: "subagent",
+      callId: "call-2",
+      threadId: "thread-shared",
+      avatarSeed: "avatar-2",
+      label: "Verifier",
+      senderLabel: "Main agent",
+      prompt: "Verify the work",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      status: "running",
+      response: null,
+      entries: [],
+    };
+    expect(sidePanelTargetKey(subagentTarget)).toBe("subagent:thread-shared");
+    expect(sidePanelTargetKey({ ...subagentTarget, callId: "call-latest", status: "completed" }))
+      .toBe("subagent:thread-shared");
+
+    const skillFileTarget = {
+      kind: "organization_skill_file",
+      skillId: "skill-1",
+      filePath: "SKILL.md",
+      label: "browser",
+    } as const;
+    expect(sidePanelTargetKey(skillFileTarget)).toBe("organization-skill-file:skill-1:SKILL.md");
+    expect(sidePanelFullPageHref(skillFileTarget)).toBe("/library?skill=skill-1&skillFile=SKILL.md");
+    expect(sidePanelTargetSupportsSavedView(skillFileTarget)).toBe(false);
 
     const issuePlaceholder = { kind: "placeholder", targetKind: "issue", label: "Issue" } as const;
     expect(sidePanelTargetKey(issuePlaceholder)).toBe("placeholder:issue");

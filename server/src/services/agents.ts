@@ -39,6 +39,7 @@ import { resolveHomeAwarePath, resolveOrganizationAgentsDir } from "../home-path
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { pickUniqueAgentName } from "./agent-name-pool.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
+import { ensureOrganizationManagedMcpBindingsForAgent } from "./mcp/managed-bindings.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -52,7 +53,6 @@ const CONFIG_REVISION_FIELDS = [
   "name",
   "role",
   "title",
-  "reportsTo",
   "capabilities",
   "agentRuntimeType",
   "agentRuntimeConfig",
@@ -118,7 +118,6 @@ function buildConfigSnapshot(
     name: row.name,
     role: row.role,
     title: row.title,
-    reportsTo: row.reportsTo,
     capabilities: row.capabilities,
     agentRuntimeType: row.agentRuntimeType,
     agentRuntimeConfig,
@@ -220,8 +219,6 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
     name: snapshot.name,
     role: snapshot.role,
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
-    reportsTo:
-      typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
     capabilities:
       typeof snapshot.capabilities === "string" || snapshot.capabilities === null
         ? snapshot.capabilities
@@ -406,27 +403,6 @@ export function agentService(db: Db) {
     return stripWorkspaceKey(row);
   }
 
-  async function ensureManager(orgId: string, managerId: string) {
-    const manager = await getById(managerId);
-    if (!manager) throw notFound("Manager not found");
-    if (manager.orgId !== orgId) {
-      throw unprocessable("Manager must belong to same organization");
-    }
-    return manager;
-  }
-
-  async function assertNoCycle(agentId: string, reportsTo: string | null | undefined) {
-    if (!reportsTo) return;
-    if (reportsTo === agentId) throw unprocessable("Agent cannot report to itself");
-
-    let cursor: string | null = reportsTo;
-    while (cursor) {
-      if (cursor === agentId) throw unprocessable("Reporting relationship would create cycle");
-      const next = await getById(cursor);
-      cursor = next?.reportsTo ?? null;
-    }
-  }
-
   async function assertCompanyShortnameAvailable(
     orgId: string,
     candidateName: string,
@@ -473,13 +449,6 @@ export function agentService(db: Db) {
     }
     if (data.workspaceKey !== undefined && data.workspaceKey !== existing.workspaceKey) {
       throw conflict("Agent workspace key is immutable");
-    }
-
-    if (data.reportsTo !== undefined) {
-      if (data.reportsTo) {
-        await ensureManager(existing.orgId, data.reportsTo);
-      }
-      await assertNoCycle(id, data.reportsTo);
     }
 
     if (data.name !== undefined) {
@@ -561,10 +530,6 @@ export function agentService(db: Db) {
       orgId: string,
       data: Omit<typeof agents.$inferInsert, "orgId"> & { name?: string | null },
     ) => {
-      if (data.reportsTo) {
-        await ensureManager(orgId, data.reportsTo);
-      }
-
       const existingAgents = await db
         .select({
           id: agents.id,
@@ -591,21 +556,25 @@ export function agentService(db: Db) {
       const role = data.role ?? "general";
       const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
       const icon = normalizeCreatedAgentAvatarIcon(data.icon);
-      const created = await db
-        .insert(agents)
-        .values({
-          ...data,
-          id: agentId,
-          name: uniqueName,
-          orgId,
-          role,
-          icon,
-          permissions: normalizedPermissions,
-          workspaceKey,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+      const created = await db.transaction(async (tx) => {
+        const row = await tx
+          .insert(agents)
+          .values({
+            ...data,
+            id: agentId,
+            name: uniqueName,
+            orgId,
+            role,
+            icon,
+            permissions: normalizedPermissions,
+            workspaceKey,
+          })
+          .returning()
+          .then((rows) => rows[0]);
 
+        await ensureOrganizationManagedMcpBindingsForAgent(tx, orgId, row.id);
+        return row;
+      });
       return normalizeAgentRow(created);
     },
 
@@ -679,7 +648,6 @@ export function agentService(db: Db) {
       if (!existing) return null;
 
       return db.transaction(async (tx) => {
-        await tx.update(agents).set({ reportsTo: null }).where(eq(agents.reportsTo, id));
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.agentId, id));
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.agentId, id));
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.agentId, id));
@@ -821,46 +789,6 @@ export function agentService(db: Db) {
         .where(eq(agentApiKeys.id, keyId))
         .returning();
       return rows[0] ?? null;
-    },
-
-    orgForCompany: async (orgId: string) => {
-      const rows = await db
-        .select()
-        .from(agents)
-        .where(and(eq(agents.orgId, orgId), ne(agents.status, "terminated")));
-      const normalizedRows = rows.filter((row) => !isHiddenSystemAgentMetadata(row.metadata)).map(normalizeAgentRow);
-      const byManager = new Map<string | null, typeof normalizedRows>();
-      for (const row of normalizedRows) {
-        const key = row.reportsTo ?? null;
-        const group = byManager.get(key) ?? [];
-        group.push(row);
-        byManager.set(key, group);
-      }
-
-      const build = (managerId: string | null): Array<Record<string, unknown>> => {
-        const members = byManager.get(managerId) ?? [];
-        return members.map((member) => ({
-          ...member,
-          reports: build(member.id),
-        }));
-      };
-
-      return build(null);
-    },
-
-    getChainOfCommand: async (agentId: string) => {
-      const chain: { id: string; name: string; role: string; title: string | null }[] = [];
-      const visited = new Set<string>([agentId]);
-      const start = await getById(agentId);
-      let currentId = start?.reportsTo ?? null;
-      while (currentId && !visited.has(currentId) && chain.length < 50) {
-        visited.add(currentId);
-        const mgr = await getById(currentId);
-        if (!mgr) break;
-        chain.push({ id: mgr.id, name: mgr.name, role: mgr.role, title: mgr.title ?? null });
-        currentId = mgr.reportsTo ?? null;
-      }
-      return chain;
     },
 
     runningForAgent: (agentId: string) =>

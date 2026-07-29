@@ -211,6 +211,7 @@ describe("OnboardingWizard runtime config", () => {
       id: "secret-1",
       orgId: "org-1",
       name: "onboarding-deepseek-api-key",
+      purpose: "user_managed",
       provider: "local_encrypted",
       externalRef: null,
       latestVersion: 1,
@@ -229,7 +230,6 @@ describe("OnboardingWizard runtime config", () => {
       title: "Founder Agent",
       icon: null,
       status: "active",
-      reportsTo: null,
       capabilities: null,
       agentRuntimeType: "pi_local",
       agentRuntimeConfig: {},
@@ -307,6 +307,11 @@ describe("OnboardingWizard runtime config", () => {
             dangerouslySkipPermissions: false,
             permissionMode: "auto",
           }),
+          runtimeConfig: {
+            heartbeat: expect.objectContaining({
+              maxConcurrentRuns: 8,
+            }),
+          },
         }));
       });
     });

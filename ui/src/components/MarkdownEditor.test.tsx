@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
 import {
+  formatComposerCursorInsertion,
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
   MarkdownEditor,
+  type MarkdownEditorRef,
   splitPlainTextMarkdownSourceByAtomicReferences,
 } from "./MarkdownEditor";
 
@@ -22,6 +24,7 @@ const mdxEditorMocks = vi.hoisted(() => ({
     defaultSelection?: "rootStart" | "rootEnd";
     preventScroll?: boolean;
   } | undefined>,
+  onSetMarkdown: null as null | ((value: string) => string),
   navigate: vi.fn(),
 }));
 
@@ -162,6 +165,7 @@ vi.mock("@mdxeditor/editor", async () => {
     },
     ref: React.ForwardedRef<{
       focus: () => void;
+      getMarkdown: () => string | undefined;
       insertMarkdown: (value: string) => void;
       setMarkdown: (value: string) => void;
     }>,
@@ -175,6 +179,7 @@ vi.mock("@mdxeditor/editor", async () => {
       focus: (_callbackFn?: () => void, opts?: { defaultSelection?: "rootStart" | "rootEnd"; preventScroll?: boolean }) => {
         mdxEditorMocks.focusCalls.push(opts);
       },
+      getMarkdown: () => undefined,
       insertMarkdown: (value: string) => {
         const selection = window.getSelection();
         const anchorNode = selection?.anchorNode;
@@ -200,7 +205,7 @@ vi.mock("@mdxeditor/editor", async () => {
         setMarkdown((current) => current + value);
       },
       setMarkdown: (value: string) => {
-        setMarkdown(value);
+        setMarkdown(mdxEditorMocks.onSetMarkdown?.(value) ?? value);
       },
     }));
 
@@ -319,6 +324,7 @@ afterEach(() => {
   mdxEditorMocks.linkDialogPlugin.mockClear();
   mdxEditorMocks.lastEditorProps = null;
   mdxEditorMocks.focusCalls = [];
+  mdxEditorMocks.onSetMarkdown = null;
   mdxEditorMocks.navigate.mockReset();
   markdownMentionsMocks.mentions = [];
   markdownMentionsMocks.onMentionQueryChange.mockReset();
@@ -326,6 +332,108 @@ afterEach(() => {
 });
 
 describe("MarkdownEditor", () => {
+  it("publishes a controlled list source before synchronously importing it", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const editorRef = createRef<MarkdownEditorRef>();
+
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value="Initial instructions"
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    mdxEditorMocks.onSetMarkdown = () => editorRef.current?.getMarkdown?.() ?? "";
+    const listOnlyInstructions = [
+      "1. Gather open issues.",
+      "2. Review evidence.",
+      "3. Summarize next actions.",
+    ].join("\n");
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value={listOnlyInstructions}
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    expect(container.querySelector('[contenteditable="true"]')?.textContent).toBe(listOnlyInstructions);
+    expect(editorRef.current?.getMarkdown?.()).toBe(listOnlyInstructions);
+  });
+
+  it("adds only the boundary spacing needed for cursor insertions", () => {
+    expect(formatComposerCursorInsertion("alpha", 0, "Please explain.").value)
+      .toBe("Please explain. alpha");
+    expect(formatComposerCursorInsertion("alpha beta", 6, "Please explain.").value)
+      .toBe("alpha Please explain. beta");
+    expect(formatComposerCursorInsertion("alpha", 5, "Please explain.").value)
+      .toBe("alpha Please explain.");
+    expect(formatComposerCursorInsertion("前后", 1, "请详细解释。").value)
+      .toBe("前请详细解释。后");
+  });
+
+  it("inserts text at the remembered composer cursor after selection moves outside the editor", () => {
+    const container = document.createElement("div");
+    const source = document.createElement("div");
+    source.textContent = "response selection";
+    document.body.append(container, source);
+    const root = createRoot(container);
+    const editorRef = createRef<MarkdownEditorRef>();
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+      source.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value="alpha beta"
+          onChange={onChange}
+          plainText
+        />,
+      );
+    });
+    const editableText = container.querySelector('[contenteditable="true"]')?.firstChild;
+    expect(editableText).toBeInstanceOf(Text);
+    const composerRange = document.createRange();
+    composerRange.setStart(editableText!, "alpha ".length);
+    composerRange.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(composerRange);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const responseRange = document.createRange();
+    responseRange.selectNodeContents(source);
+    selection.removeAllRanges();
+    selection.addRange(responseRange);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      expect(editorRef.current?.insertTextAtSelection("explain ")).toBe(true);
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha explain beta");
+  });
+
   it("keeps one local skill option when the global catalog points to the same skill", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");
@@ -543,6 +651,48 @@ describe("MarkdownEditor", () => {
     expect(document.body.textContent).toContain("Architecture diagram");
   });
 
+  it("shows image actions when an inline editor image is right-clicked", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <ImagePreviewProvider>
+          <MarkdownEditor
+            value="![Draft evidence](/api/attachments/test/content)"
+            onChange={() => undefined}
+          />
+        </ImagePreviewProvider>,
+      );
+    });
+
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    act(() => {
+      image?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 32,
+        clientY: 48,
+      }));
+    });
+
+    const contextMenu = document.body.querySelector('[data-testid="markdown-image-context-menu"]');
+    expect(contextMenu).toBeTruthy();
+    expect(contextMenu?.textContent).toContain("Open Image");
+    expect(contextMenu?.textContent).toContain("Copy Image");
+    expect(contextMenu?.textContent).toContain("Download Image");
+  });
+
   it("disables the default inline image toolbar when image uploads are enabled", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -626,6 +776,96 @@ describe("MarkdownEditor", () => {
     });
 
     expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
+  });
+
+  it("hides the placeholder as soon as the editable DOM receives text", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value=""
+          onChange={() => undefined}
+          placeholder="Add instructions e.g. look for crashes in Sentry"
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    expect(editable).not.toBeNull();
+
+    act(() => {
+      editable!.textContent = "给我推送每日的消息流";
+      editable!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
+  });
+
+  it("shows the placeholder after programmatically deleting the editor's only token", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    function ControlledEditor() {
+      const [value, setValue] = useState("[ZST-357](issue://issue-1?r=ZST-357)");
+      return (
+        <MarkdownEditor
+          value={value}
+          onChange={setValue}
+          placeholder="Add instructions"
+          plainText
+        />
+      );
+    }
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<ControlledEditor />);
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    const token = container.querySelector<HTMLElement>("[data-mention-kind='issue']");
+    expect(editable).not.toBeNull();
+    expect(token).not.toBeNull();
+
+    act(() => {
+      editable!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(editable!, 1);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await act(async () => {
+      editable!.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "deleteContentBackward",
+      }));
+    });
+
+    expect(editable!.textContent).toBe("");
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("false");
   });
 
   it("decorates legacy editor mention token spans with issue comment status semantics", async () => {

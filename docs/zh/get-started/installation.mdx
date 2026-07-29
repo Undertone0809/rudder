@@ -1,7 +1,7 @@
 ---
-title: "快速开始"
-description: "安装 Rudder Desktop，确认本地启动成功，并在启动失败时安全恢复。"
-icon: "zap"
+title: "安装 Rudder"
+description: "安装 Rudder 桌面应用，并打开你的本地工作空间。"
+icon: "download"
 keywords:
   - "安装 Rudder"
   - "Rudder CLI"
@@ -12,57 +12,60 @@ hreflang_en: "https://docs.rudderhq.dev/get-started/installation"
 hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/installation"
 ---
 
-完成本页后，Rudder Desktop 会在你的电脑上打开，之后也可以直接用 `rudder` 命令启动。
+Rudder 可以在 macOS、Windows 和 Linux 上本地运行。安装命令会下载适合你电脑
+的桌面应用，并安装 `rudder` 命令，方便以后再次启动。
 
-首次安装前，请准备好受支持的桌面系统、终端、下载所需的网络，以及为当前用户安装应用的权限。
+开始前需要：
 
-## 安装并打开 Rudder
+- Node.js 20 或更高版本，它会提供 `npx` 命令
+- 一个终端和首次下载所需的网络
+- 为当前用户安装应用的权限
 
-运行公开安装命令：
+## 1. 运行安装命令
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-这条命令会准备可持续使用的 Rudder CLI，按所选发布通道下载便携版 Desktop，并打开应用。CLI 和 Desktop 会保持在同一个版本。
+第一次下载可能需要几分钟。完成后，Rudder Desktop 会自动打开。
 
-![Rudder CLI 终端流程](../../images/installation-cli.png)
+## 2. 确认 Rudder 已经打开
 
-安装完成后，可以直接运行：
+当桌面窗口让你创建或选择组织时，安装就完成了。Rudder 把团队工作空间称为
+“组织”。你不需要另装 PostgreSQL，也不需要手动启动服务端。
+
+以后直接运行：
 
 ```bash
 rudder start
 ```
 
-Desktop 窗口进入组织界面，就说明启动成功。接下来可以创建第一个组织。
+接下来，连接一个 Agent 运行工具，并交给它一件小任务。
+
+<CardGroup cols={1}>
+  <Card title="完成第一个任务" icon="play" href="/zh/get-started/first-organization">
+    创建组织，连接 Agent，并拿到一个真实结果。
+  </Card>
+</CardGroup>
 
 <a id="startup-recovery" />
 
-## Desktop 无法启动时
+## Rudder 没有打开怎么办
 
-正常启动时，窗口只显示 Rudder 标识和动态效果，不会展示技术阶段名称或百分比。短暂停留在这个等待画面并不代表失败。
+先在当前窗口选择**重试**。Rudder 只会重新启动一次，不会因为重复点击而打开
+多个本地服务。
 
-只有本地托管服务明确报告启动失败后，同一个窗口才会显示可读错误和恢复入口：
+如果仍然失败：
 
-- **Try again**：在当前窗口发起一次全新的启动尝试。连续点击不会并行启动多个运行环境，也不会打开多个窗口。
-- **Email support**：打开一封收件人为 `zeeland4work@gmail.com`、可以编辑的邮件草稿。Rudder 不会自动发送邮件、上传本地数据或附加工作区文件。如果邮件应用无法打开，请使用 **Copy support email** 和 **Copy diagnostic**。
-- **Report on GitHub**：只会打开 Rudder 固定的[公开 GitHub Issues 缺陷报告表单](https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml)。Rudder 不会替你提交 Issue。如果浏览器无法打开，请使用 **Copy issue link**，自行打开这个固定地址，再用 **Copy diagnostic** 复制诊断信息；粘贴前先检查内容。
-- **Technical details**：只展开经过允许、范围受限的字段和路径。**Copy diagnostic** 会复制与支持入口相同的安全诊断信息。路径可用时，**Open data folder** 会打开发生失败的实例文件夹；如果无法自动打开，请复制其中显示的 **Instance folder** 路径，再通过文件管理器打开。
+1. 打开**技术详情**，阅读错误说明。
+2. 选择**复制诊断信息**，复制经过筛选的诊断摘要。
+3. 选择**在 GitHub 报告**或**联系支持**。Rudder 只会打开草稿，不会自动发送，
+   也不会上传你的本地文件。
 
-分享前先阅读诊断信息。不要在支持请求中加入凭据、数据库、`.env` 文件或私有工作区内容。
+分享前请检查复制的内容。不要附上凭据、数据库、`.env` 文件或私人工作空间内容。
 
-## 更新时还有任务正在运行
+如果终端提示 `npx: command not found`，请安装 Node.js 20 或更高版本，重新打开
+终端，再运行安装命令。
 
-打包版 Rudder Desktop 可以在 Agent 运行期间下载并校验更新。是否中断当前工作，由你决定：
-
-- **Update when idle**：保留现有运行，等它们结束后再更新。
-- **Stop runs and update now**：取消正在运行的任务，退出 Rudder 并立即更新。
-- **Cancel**：继续使用当前版本。
-
-如果更新失败或下载过期，失败状态会留在界面上，并提供重试和版本页面入口。
-
-<CardGroup cols={1}>
-  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    完成一件任务，并检查它留下的结果。
-  </Card>
-</CardGroup>
+如果 Agent 仍在工作时出现更新，选择**空闲时更新**，让本次运行先完成。只有在
+确认可以取消当前任务时，才选择**停止运行并立即更新**。

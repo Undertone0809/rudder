@@ -84,6 +84,49 @@ const NORMALIZED_RESERVED_MODEL_ARGUMENTS = new Set([
   "authorization",
 ]);
 
+const LEGACY_ARGUMENT_ALIASES: Record<string, Record<string, string>> = {
+  "agent.skills.enable": {
+    selections: "selectionRefs",
+    skills: "selectionRefs",
+  },
+  "issue.get": { issueId: "issue" },
+  "issue.context": { issueId: "issue" },
+  "issue.checkout": { issueId: "issue" },
+  "issue.comment": { issueId: "issue" },
+  "issue.comments.list": { issueId: "issue" },
+  "issue.comments.get": { issueId: "issue", commentId: "comment" },
+  "issue.update": { issueId: "issue" },
+  "issue.review": { issueId: "issue" },
+  "issue.commit": { issueId: "issue" },
+  "issue.done": { issueId: "issue" },
+  "issue.block": { issueId: "issue" },
+  "project.get": { projectId: "project" },
+  "project.update": { projectId: "project" },
+  "approval.get": { approvalId: "approval" },
+  "approval.issues": { approvalId: "approval" },
+  "approval.comment": { approvalId: "approval" },
+  "skill.get": { skillId: "skill" },
+  "skill.file": { skillId: "skill" },
+  "automation.get": { automationId: "automation" },
+  "automation.runs": { automationId: "automation" },
+  "automation.triggers.list": { automationId: "automation" },
+  "automation.triggers.create": { automationId: "automation" },
+  "automation.triggers.update": { triggerId: "trigger" },
+  "automation.triggers.delete": { triggerId: "trigger" },
+  "automation.triggers.rotate-secret": { triggerId: "trigger" },
+  "automation.update": { automationId: "automation" },
+  "automation.enable": { automationId: "automation" },
+  "automation.disable": { automationId: "automation" },
+  "automation.run": { automationId: "automation" },
+  "runs.transcript": { maxOutputChars: "maxChars" },
+  "chat.get": { chatId: "chat" },
+  "chat.messages": { chatId: "chat" },
+  "chat.transcript": { chatId: "chat" },
+  "chat.read": { chatId: "chat" },
+  "chat.send": { chatId: "chat" },
+  "chat.archive": { chatId: "chat" },
+};
+
 export interface TempFilePlan {
   flag: string;
   contents: string;
@@ -115,14 +158,18 @@ export function buildAgentV1ToolCallPlan(
   rawArgs: unknown,
   env: McpServerEnv = buildMcpServerEnv(),
 ): AgentV1ToolCallPlan {
-  const input = isRecord(rawArgs) ? rawArgs : {};
   const capabilityId = toolNameToCapabilityId(toolName);
   if (!capabilityId) {
     throw new Error(`Unknown Rudder MCP tool: ${toolName}`);
   }
+  if (rawArgs !== undefined && rawArgs !== null && !isRecord(rawArgs)) {
+    throwInvalidMcpArgument(toolName, "arguments", "must be object");
+  }
+  const input = normalizeLegacyToolArguments(capabilityId, isRecord(rawArgs) ? rawArgs : {});
   const capability = getAgentCliCapabilityById(capabilityId);
   rejectModelProvidedRuntimeIdentity(input);
   rejectUnsupportedToolArguments(toolName, input);
+  validateMcpToolArguments(toolName, input);
   rejectUnsupportedBrowserLocatorAction(toolName, input);
   assertBrowserCapabilityEnabled(capabilityId, env);
   assertRuntimeMcpContext(capability, env);
@@ -392,7 +439,10 @@ async function callTool(
     (err as Error & { code?: string }).code = "rudder_mcp_tool_not_available";
     throw err;
   }
-  const args = record.arguments;
+  const rawArgs = record.arguments;
+  const args = isRecord(rawArgs)
+    ? normalizeLegacyToolArguments(toolNameToCapabilityId(toolName) ?? "", rawArgs)
+    : rawArgs;
   const plan = buildAgentV1ToolCallPlan(toolName, args, env);
   const directResult = await callToolDirectlyIfSupported(toolName, args, env, signal);
   if (directResult) return directResult;
@@ -444,6 +494,7 @@ async function callToolDirectlyIfSupported(
   const capabilityId = toolNameToCapabilityId(toolName);
   if (!capabilityId) return null;
   const input = isRecord(rawArgs) ? rawArgs : {};
+  if (hasLocalImageInputs(input.images)) return null;
   const api = mcpApiClient(env, signal);
   const success = (data: unknown) => mcpSuccess(
     data,
@@ -496,6 +547,30 @@ async function callToolDirectlyIfSupported(
         { status: "done", comment },
       ));
     }
+    case "runs.list":
+      return success(await api.get(
+        `/api/run-intelligence/orgs/${encodeURIComponent(requiredRuntimeString(env, "RUDDER_ORG_ID"))}/runs?${buildDirectRunsListQuery(input)}`,
+      ));
+    case "runs.get":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}?projection=summary`,
+      ));
+    case "runs.events":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/events?${buildDirectRunEventsQuery(input)}`,
+      ));
+    case "runs.log":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/log?${buildDirectRunLogQuery(input)}`,
+      ));
+    case "runs.transcript":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/transcript?${buildDirectRunTranscriptQuery(input)}`,
+      ));
+    case "runs.errors":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/errors?${buildDirectRunErrorsQuery(input)}`,
+      ));
     case "browser.tabs":
       return success(await api.post("/api/browser/tabs", {}));
     case "browser.user-tabs":
@@ -563,6 +638,95 @@ async function callToolDirectlyIfSupported(
     default:
       return null;
   }
+}
+
+function buildDirectRunsListQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({ projection: "summary" });
+  appendOptionalQuery(params, "updatedAfter", input.updatedAfter);
+  appendOptionalQuery(params, "runIdPrefix", input.runIdPrefix);
+  appendOptionalQuery(params, "agentId", input.relatedAgentId);
+  appendOptionalQuery(params, "status", input.status);
+  appendOptionalQuery(params, "runtime", input.runtime);
+  appendOptionalQuery(params, "issueId", input.issueId);
+  appendOptionalQuery(params, "usedSkill", input.usedSkill);
+  appendOptionalQuery(params, "loadedSkill", input.loadedSkill);
+  appendOptionalQuery(params, "createdBefore", input.createdBefore);
+  appendOptionalQuery(params, "cursor", input.cursor);
+  params.set("limit", String(parsePositiveInteger(input.limit, 50)));
+  return params.toString();
+}
+
+function buildDirectRunEventsQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    afterSeq: String(parseNonNegativeInteger(input.afterSeq, 0)),
+    limit: String(parsePositiveInteger(input.limit, 200)),
+    maxChars: String(parsePositiveInteger(input.maxChars, 1200)),
+    projection: "compact",
+  });
+  appendOptionalQuery(params, "cursor", input.cursor);
+  return params.toString();
+}
+
+function buildDirectRunLogQuery(input: Record<string, unknown>): string {
+  return new URLSearchParams({
+    offset: String(parseNonNegativeInteger(input.offset, 0)),
+    limitBytes: String(parsePositiveInteger(input.limitBytes, 256_000)),
+  }).toString();
+}
+
+function buildDirectRunTranscriptQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    contextTurns: String(parsePositiveInteger(input.contextTurns, 1)),
+    order: input.chronological === true || input.narrative === true ? "oldest" : "newest",
+    output: "compact",
+    includeOutputs: input.includeOutput === true || input.narrative === true ? "true" : "false",
+    maxChars: String(parsePositiveInteger(input.maxChars ?? input.maxOutputChars, 1200)),
+  });
+  if (input.errorsOnly === true) params.set("errorsOnly", "true");
+  appendOptionalQuery(params, "aroundError", input.aroundError);
+  appendOptionalQuery(params, "cursor", input.cursor);
+  if (input.turnLimit !== undefined) {
+    params.set("turnLimit", String(parsePositiveInteger(input.turnLimit, 20)));
+  }
+  return params.toString();
+}
+
+function buildDirectRunErrorsQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    maxChars: String(parsePositiveInteger(input.maxChars, 1200)),
+  });
+  appendOptionalQuery(params, "cursor", input.cursor);
+  return params.toString();
+}
+
+function appendOptionalQuery(params: URLSearchParams, key: string, value: unknown): void {
+  const rendered = optionalString(value);
+  if (rendered) params.set(key, rendered);
+}
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function requiredRuntimeString(env: McpServerEnv, key: keyof McpServerEnv): string {
+  const value = optionalString(env[key]);
+  if (value) return value;
+  const err = new Error(`Rudder MCP runtime context is incomplete. Missing ${String(key)}.`);
+  (err as Error & { code?: string }).code = "rudder_mcp_missing_runtime_context";
+  throw err;
+}
+
+function hasLocalImageInputs(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.some((entry) => typeof entry === "string" && entry.trim().length > 0);
 }
 
 function mcpApiClient(env: McpServerEnv, signal?: AbortSignal): RudderApiClient {
@@ -686,10 +850,8 @@ function cliArgsForCapability(
       pushOptional(args, "--role", input.role);
       pushOptional(args, "--title", input.title);
       pushOptional(args, "--capabilities", input.capabilities ?? input.description);
-      pushOptional(args, "--reports-to", input.reportsTo);
       pushBoolean(args, "--clear-title", input.clearTitle);
       pushBoolean(args, "--clear-capabilities", input.clearCapabilities ?? input.clearDescription);
-      pushBoolean(args, "--clear-reports-to", input.clearReportsTo);
       return args;
     }
     case "agent.skills.create": {
@@ -716,6 +878,13 @@ function cliArgsForCapability(
     }
     case "issue.get":
       return ["issue", "get", requiredAnyString(input, ["issue", "issueId"])];
+    case "issue.list": {
+      const args = ["issue", "list"];
+      pushOptional(args, "--status", input.status);
+      pushOptional(args, "--assignee-agent-id", input.assigneeAgentId);
+      pushOptional(args, "--project-id", input.projectId);
+      return args;
+    }
     case "issue.search": {
       const args = ["issue", "search", requiredString(input, "query")];
       pushOptional(args, "--status", input.status);
@@ -1236,6 +1405,22 @@ function pushImages(args: string[], value: unknown): void {
   }
 }
 
+function normalizeLegacyToolArguments(
+  capabilityId: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const aliases = LEGACY_ARGUMENT_ALIASES[capabilityId];
+  if (!aliases) return input;
+
+  const normalized = { ...input };
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (!(alias in normalized)) continue;
+    if (!(canonical in normalized)) normalized[canonical] = normalized[alias];
+    delete normalized[alias];
+  }
+  return normalized;
+}
+
 function pushStringListArgs(args: string[], value: unknown, key: string): void {
   const values = Array.isArray(value)
     ? value.map((entry) => optionalString(entry)).filter((entry): entry is string => Boolean(entry))
@@ -1284,6 +1469,130 @@ function rejectUnsupportedToolArguments(toolName: string, input: Record<string, 
   const unsupported = Object.keys(input).filter((key) => !supported.has(key)).sort();
   if (unsupported.length === 0) return;
   const err = new Error(`Unsupported argument${unsupported.length === 1 ? "" : "s"} for ${toolName}: ${unsupported.join(", ")}`);
+  (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
+  throw err;
+}
+
+function validateMcpToolArguments(toolName: string, input: Record<string, unknown>): void {
+  const tool = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools
+    .find((entry) => entry.name === toolName);
+  if (!tool) return;
+
+  const schema = tool.inputSchema as typeof tool.inputSchema & {
+    anyOf?: Array<{ required?: unknown }>;
+  };
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  for (const key of required) {
+    const value = input[key];
+    const missing = value === undefined
+      || value === null
+      || (typeof value === "string" && value.trim().length === 0)
+      || (Array.isArray(value) && value.length === 0);
+    if (missing) throwInvalidMcpArgument(toolName, key, "is required");
+  }
+  if (Array.isArray(schema.anyOf)) {
+    const matches = schema.anyOf.some((candidate) => {
+      if (!isRecord(candidate) || !Array.isArray(candidate.required)) return false;
+      return candidate.required.every((key) => {
+        const value = input[String(key)];
+        return value !== undefined
+          && value !== null
+          && !(typeof value === "string" && value.trim().length === 0)
+          && !(Array.isArray(value) && value.length === 0);
+      });
+    });
+    if (!matches) {
+      const alternatives = schema.anyOf
+        .flatMap((candidate) => isRecord(candidate) && Array.isArray(candidate.required) ? candidate.required : [])
+        .map(String);
+      throwInvalidMcpArgument(toolName, alternatives.join(" or "), "is required");
+    }
+  }
+
+  for (const [key, value] of Object.entries(input)) {
+    const property = schema.properties[key];
+    if (!isRecord(property) || value === undefined) continue;
+    const violation = jsonSchemaViolation(value, property);
+    if (violation) throwInvalidMcpArgument(toolName, key, violation);
+  }
+}
+
+function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): string | null {
+  if (Array.isArray(schema.oneOf)) {
+    const matches = schema.oneOf.some((candidate) =>
+      isRecord(candidate) && jsonSchemaViolation(value, candidate) === null
+    );
+    if (!matches) return "does not match any allowed shape";
+  }
+
+  const types = Array.isArray(schema.type) ? schema.type : schema.type === undefined ? [] : [schema.type];
+  if (types.length > 0) {
+    const validType = types.some((type) => (
+      type === "string" ? typeof value === "string"
+        : type === "number" ? typeof value === "number" && Number.isFinite(value)
+          : type === "boolean" ? typeof value === "boolean"
+            : type === "array" ? Array.isArray(value)
+              : type === "object" ? isRecord(value)
+                : false
+    ));
+    if (!validType) return `must be ${types.join(" or ")}`;
+  }
+
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+      return `must contain at least ${schema.minLength} character(s)`;
+    }
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+      return `must contain at most ${schema.maxLength} characters`;
+    }
+    if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+      return `must be one of: ${schema.enum.join(", ")}`;
+    }
+  }
+  if (typeof value === "number") {
+    if (typeof schema.minimum === "number" && value < schema.minimum) {
+      return `must be at least ${schema.minimum}`;
+    }
+    if (typeof schema.maximum === "number" && value > schema.maximum) {
+      return `must be at most ${schema.maximum}`;
+    }
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      return `must contain at least ${schema.minItems} items`;
+    }
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      return `must contain at most ${schema.maxItems} items`;
+    }
+    if (isRecord(schema.items)) {
+      for (const [index, item] of value.entries()) {
+        const violation = jsonSchemaViolation(item, schema.items);
+        if (violation) return `item ${index} ${violation}`;
+      }
+    }
+  }
+  if (isRecord(value) && schema.type === "object") {
+    const properties = isRecord(schema.properties) ? schema.properties : {};
+    const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+    for (const key of required) {
+      if (!(key in value)) return `field ${key} is required`;
+    }
+    if (schema.additionalProperties === false) {
+      const unsupported = Object.keys(value).filter((key) => !(key in properties));
+      if (unsupported.length > 0) return `contains unsupported field(s): ${unsupported.sort().join(", ")}`;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const childSchema = properties[key];
+      if (!isRecord(childSchema)) continue;
+      const violation = jsonSchemaViolation(child, childSchema);
+      if (violation) return `field ${key} ${violation}`;
+    }
+  }
+  return null;
+}
+
+function throwInvalidMcpArgument(toolName: string, key: string, reason: string): never {
+  const err = new Error(`Invalid argument for ${toolName}: ${key} ${reason}. Consult tools/list for the exact schema.`);
   (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
   throw err;
 }

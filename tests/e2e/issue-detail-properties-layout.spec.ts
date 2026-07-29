@@ -58,7 +58,7 @@ async function readResponsiveIssueLayout(page: Page) {
 }
 
 test.describe("Issue detail properties layout", () => {
-  test("keeps assignee and reviewer identity metadata readable in the sidebar", async ({ page }) => {
+  test("keeps selected Agent identity compact across Issue Properties surfaces", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
 
@@ -70,7 +70,7 @@ test.describe("Issue detail properties layout", () => {
 
     const assigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
-        name: "Ulysses",
+        name: "Ulysses With A Deliberately Long Operational Assignment Name",
         role: "general",
         title: "Chief Operating Officer",
       },
@@ -80,7 +80,7 @@ test.describe("Issue detail properties layout", () => {
 
     const reviewerRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
-        name: "Tobias",
+        name: "Tobias With A Deliberately Long Independent Review Name",
         role: "ceo",
         title: "Work Lead / Issue Owner",
       },
@@ -104,35 +104,108 @@ test.describe("Issue detail properties layout", () => {
 
     const propertiesPanel = page.getByRole("region", { name: "Issue properties" });
     await expect(propertiesPanel).toBeVisible();
-    await expect(propertiesPanel.getByText("Ulysses", { exact: true })).toBeVisible();
-    await expect(propertiesPanel.getByText("Chief Operating Officer", { exact: true })).toBeVisible();
-    await expect(propertiesPanel.getByText("Tobias", { exact: true })).toBeVisible();
-    await expect(propertiesPanel.getByText("Work Lead / Issue Owner", { exact: true })).toBeVisible();
+    await expect(
+      propertiesPanel.getByText("Ulysses With A Deliberately Long Operational Assignment Name", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      propertiesPanel.getByText("Tobias With A Deliberately Long Independent Review Name", { exact: true }),
+    ).toBeVisible();
+    await expect(propertiesPanel.getByText("Chief Operating Officer", { exact: true })).toHaveCount(0);
+    await expect(propertiesPanel.getByText("Work Lead / Issue Owner", { exact: true })).toHaveCount(0);
 
     const principalRows = await propertiesPanel.locator('[data-slot="assignee-label"][data-kind="agent"]').evaluateAll((nodes) =>
       nodes.map((node) => {
-        const badge = node.querySelector<HTMLElement>('[data-slot="agent-title-badge"]');
+        const avatar = node.querySelector<HTMLElement>("svg, img");
         const button = node.closest("button") as HTMLElement | null;
 
         return {
           layout: node.getAttribute("data-layout"),
+          avatarStyle: node.getAttribute("data-agent-avatar-style"),
+          hasAvatarFrame: Boolean(node.querySelector('[data-slot="assignee-agent-avatar-frame"]')),
+          hasTitleBadge: Boolean(node.querySelector('[data-slot="agent-title-badge"]')),
+          avatarWidth: avatar?.getBoundingClientRect().width ?? 0,
+          avatarHeight: avatar?.getBoundingClientRect().height ?? 0,
           rowClientWidth: node.clientWidth,
           rowScrollWidth: node.scrollWidth,
           triggerClientWidth: button?.clientWidth ?? 0,
           triggerScrollWidth: button?.scrollWidth ?? 0,
-          badgeClientWidth: badge?.clientWidth ?? 0,
-          badgeScrollWidth: badge?.scrollWidth ?? 0,
         };
       }),
     );
 
     expect(principalRows).toHaveLength(2);
     for (const row of principalRows) {
-      expect(row.layout).toBe("stacked");
+      expect(row.layout).toBe("inline");
+      expect(row.avatarStyle).toBe("bare");
+      expect(row.hasAvatarFrame).toBe(false);
+      expect(row.hasTitleBadge).toBe(false);
+      expect(row.avatarWidth).toBe(24);
+      expect(row.avatarHeight).toBe(24);
       expect(row.rowScrollWidth).toBeLessThanOrEqual(row.rowClientWidth);
       expect(row.triggerScrollWidth).toBeLessThanOrEqual(row.triggerClientWidth);
-      expect(row.badgeScrollWidth).toBeLessThanOrEqual(row.badgeClientWidth);
     }
+
+    await page.screenshot({
+      path: testInfo.outputPath("issue-properties-selected-agents-desktop.png"),
+      fullPage: false,
+    });
+
+    await propertiesPanel.getByRole("button", { name: /Ulysses/ }).click();
+    await expect(page.getByText("Chief Operating Officer", { exact: true })).toBeVisible();
+    await expect(
+      page.locator('[data-slot="agent-menu-supporting-label"]').filter({ hasText: "Chief Operating Officer" }),
+    ).toHaveText("Chief Operating Officer");
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 900, height: 900 });
+    await expect.poll(() => readResponsiveIssueLayout(page)).toMatchObject({
+      mode: "compact",
+      visiblePropertiesCount: 1,
+      hasHorizontalOverflow: false,
+    });
+    const compactProperties = page.getByRole("region", { name: "Issue properties" });
+    await expect(compactProperties.locator('[data-slot="agent-title-badge"]')).toHaveCount(0);
+    await expect(
+      compactProperties.locator('[data-slot="assignee-label"][data-agent-avatar-style="bare"]'),
+    ).toHaveCount(2);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobilePropertiesButton = page
+      .getByTestId("issue-detail-heading")
+      .getByRole("button", { name: "Properties", exact: true });
+    await expect(mobilePropertiesButton).toBeVisible();
+    await expect(page.getByRole("region", { name: "Issue properties" })).toBeHidden();
+    await mobilePropertiesButton.click();
+    const propertiesDialog = page.getByRole("dialog", { name: "Properties" });
+    await expect(propertiesDialog).toBeVisible();
+    await expect(propertiesDialog.locator('[data-slot="agent-title-badge"]')).toHaveCount(0);
+    await expect(
+      propertiesDialog.locator('[data-slot="assignee-label"][data-agent-avatar-style="bare"]'),
+    ).toHaveCount(2);
+    const mobileOverflow = await propertiesDialog.evaluate((dialog) => ({
+      dialogClientWidth: dialog.clientWidth,
+      dialogScrollWidth: dialog.scrollWidth,
+      labels: Array.from(
+        dialog.querySelectorAll<HTMLElement>('[data-slot="assignee-label"][data-kind="agent"]'),
+      ).map((label) => {
+        const trigger = label.closest("button");
+        return {
+          labelClientWidth: label.clientWidth,
+          labelScrollWidth: label.scrollWidth,
+          triggerClientWidth: trigger?.clientWidth ?? 0,
+          triggerScrollWidth: trigger?.scrollWidth ?? 0,
+        };
+      }),
+    }));
+    expect(mobileOverflow.dialogScrollWidth).toBeLessThanOrEqual(mobileOverflow.dialogClientWidth);
+    for (const row of mobileOverflow.labels) {
+      expect(row.labelScrollWidth).toBeLessThanOrEqual(row.labelClientWidth);
+      expect(row.triggerScrollWidth).toBeLessThanOrEqual(row.triggerClientWidth);
+    }
+    await page.screenshot({
+      path: testInfo.outputPath("issue-properties-selected-agents-mobile.png"),
+      fullPage: false,
+    });
   });
 
   test("reflows the same Issue Detail through the real Side Panel split and resize workflow", async ({ page }, testInfo) => {

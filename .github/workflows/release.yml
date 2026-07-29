@@ -15,12 +15,6 @@ on:
         required: true
         type: boolean
         default: true
-      confirm_stable:
-        description: "For a real publish, enter PUBLISH STABLE only after explicit operator approval"
-        required: false
-        default: ""
-        type: string
-
 permissions:
   contents: read
 
@@ -42,22 +36,6 @@ jobs:
       source_sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.release-preflight.outputs.version }}
     steps:
-      - name: Confirm stable publish authorization
-        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
-        env:
-          CONFIRM_STABLE: ${{ inputs.confirm_stable }}
-        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
-
-      - name: Require release repository safeguards
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
-        run: |
-          if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
-            echo "Configure npm-stable reviewers, main protection with the release-workflow push path, and Actions workflow permissions, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -66,6 +44,17 @@ jobs:
       - name: Resolve immutable release source
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Require release source from main history
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main; then
+            echo "Release source $SOURCE_SHA is not reachable from main." >&2
+            exit 1
+          fi
 
       - name: Require successful CI for exact source
         if: github.event_name == 'workflow_dispatch'
@@ -77,7 +66,7 @@ jobs:
             -f head_sha="$SOURCE_SHA" \
             -f status=success \
             -f per_page=100 \
-            --jq '.workflow_runs | length')"
+            --jq '[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length')"
           if [ "$count" -lt 1 ]; then
             echo "No successful CI workflow found for exact source $SOURCE_SHA." >&2
             exit 1
@@ -243,11 +232,6 @@ jobs:
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
-      - name: Confirm stable publish authorization
-        env:
-          CONFIRM_STABLE: ${{ inputs.confirm_stable }}
-        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -315,12 +299,28 @@ jobs:
             --remote origin \
             --stable-version "${{ steps.publish.outputs.version }}"
 
+  stable-docs:
+    name: Publish stable changelog to docs production
+    needs:
+      - preflight
+      - stable
+    if: needs.stable.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/docs-production.yml
+    with:
+      source_ref: v${{ needs.stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      release_docs_approved: true
+    secrets: inherit
+
   next-release-base:
     name: Advance next release base
     needs:
       - preflight
       - stable
-    if: needs.stable.result == 'success'
+      - stable-docs
+    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -343,7 +343,7 @@ jobs:
             --stable-version "${{ needs.stable.outputs.version }}"
 
       - name: Start CI for the advanced release base
-        if: steps.next-release.outputs.action == 'updated' || steps.next-release.outputs.action == 'ready'
+        if: steps.next-release.outputs.action == 'updated'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

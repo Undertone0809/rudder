@@ -1343,7 +1343,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentAssignee ? (
-                      <AgentMenuLabel agent={currentAssignee} />
+                      <AgentMenuLabel agent={currentAssignee} agentAvatarStyle="bare" />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1356,9 +1356,9 @@ export function NewIssueDialog() {
                   const assignee = parseAssigneeValue(option.id).assigneeAgentId
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
-                  return (
-                    assignee ? <AgentMenuLabel agent={assignee} /> : <span className="truncate">{option.label}</span>
-                  );
+                  return assignee
+                    ? <AgentMenuLabel agent={assignee} agentAvatarStyle="bare" />
+                    : <span className="truncate">{option.label}</span>;
                 }}
               />
             </div>
@@ -1426,7 +1426,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentReviewer ? (
-                      <AgentMenuLabel agent={currentReviewer} />
+                      <AgentMenuLabel agent={currentReviewer} agentAvatarStyle="bare" />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1439,9 +1439,9 @@ export function NewIssueDialog() {
                   const reviewer = parseAssigneeValue(option.id).assigneeAgentId
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
-                  return (
-                    reviewer ? <AgentMenuLabel agent={reviewer} /> : <span className="truncate">{option.label}</span>
-                  );
+                  return reviewer
+                    ? <AgentMenuLabel agent={reviewer} agentAvatarStyle="bare" />
+                    : <span className="truncate">{option.label}</span>;
                 }}
               />
             </div>

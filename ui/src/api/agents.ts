@@ -20,6 +20,9 @@ import type {
   CreateCustomIntegration,
   CustomIntegrationSummary,
   HeartbeatRun,
+  McpAgentAccessMode,
+  McpAgentConnectionSummary,
+  McpProviderAvailability,
   OrganizationSkillCreateRequest,
   UpdateAgentIntegrationSettings,
   UpdateCustomIntegrationBinding,
@@ -46,14 +49,6 @@ export interface ClaudeLoginResult {
   loginUrl: string | null;
   stdout: string;
   stderr: string;
-}
-
-export interface OrgNode {
-  id: string;
-  name: string;
-  role: string;
-  status: string;
-  reports: OrgNode[];
 }
 
 export interface AgentHireResponse {
@@ -85,7 +80,6 @@ export const agentsApi = {
   list: (orgId: string) => api.get<Agent[]>(`/orgs/${orgId}/agents`),
   suggestName: (orgId: string) =>
     api.get<AgentNameSuggestion>(`/orgs/${encodeURIComponent(orgId)}/agents/name-suggestion`),
-  org: (orgId: string) => api.get<OrgNode[]>(`/orgs/${orgId}/org`),
   listConfigurations: (orgId: string) =>
     api.get<Record<string, unknown>[]>(`/orgs/${orgId}/agent-configurations`),
   get: async (id: string, orgId?: string) => {
@@ -175,6 +169,28 @@ export const agentsApi = {
     api.delete<CustomIntegrationSummary>(
       agentPath(id, orgId, `/custom-integrations/${encodeURIComponent(integrationId)}`),
     ),
+  listMcpConnections: (id: string, orgId?: string) =>
+    api.get<McpAgentConnectionSummary[]>(agentPath(id, orgId, "/mcp-connections")),
+  listMcpProviderStatus: (id: string, orgId?: string) =>
+    api.get<McpProviderAvailability[]>(agentPath(id, orgId, "/mcp-provider-status")),
+  updateMcpConnectionBinding: (
+    id: string,
+    connectionId: string,
+    data: {
+      status?: "active" | "disabled" | "revoked";
+      accessMode?: McpAgentAccessMode;
+      expectedRevision?: number;
+      enabledToolIds?: string[];
+    },
+    orgId?: string,
+  ) => api.put<McpAgentConnectionSummary>(
+    agentPath(id, orgId, `/mcp-connections/${encodeURIComponent(connectionId)}`),
+    data,
+  ),
+  revokeMcpConnectionBinding: (id: string, connectionId: string, orgId?: string) =>
+    api.delete<McpAgentConnectionSummary>(
+      agentPath(id, orgId, `/mcp-connections/${encodeURIComponent(connectionId)}`),
+    ),
   listConfigRevisions: (id: string, orgId?: string) =>
     api.get<AgentConfigRevision[]>(agentPath(id, orgId, "/config-revisions")),
   getConfigRevision: (id: string, revisionId: string, orgId?: string) =>
@@ -230,12 +246,25 @@ export const agentsApi = {
     api.get<AgentSkillSnapshot>(agentPath(id, orgId, "/skills")),
   skillsAnalytics: (
     id: string,
-    options?: { orgId?: string; windowDays?: number; startDate?: string; endDate?: string },
+    options?: {
+      orgId?: string;
+      windowDays?: number;
+      startDate?: string;
+      endDate?: string;
+      from?: string;
+      to?: string;
+      timezoneOffsetMinutes?: number;
+    },
   ) => {
     const params = new URLSearchParams();
     if (options?.windowDays) params.set("windowDays", String(options.windowDays));
     if (options?.startDate) params.set("startDate", options.startDate);
     if (options?.endDate) params.set("endDate", options.endDate);
+    if (options?.from) params.set("from", options.from);
+    if (options?.to) params.set("to", options.to);
+    if (options?.timezoneOffsetMinutes != null) {
+      params.set("timezoneOffsetMinutes", String(options.timezoneOffsetMinutes));
+    }
     const suffix = params.size > 0 ? `/skills/analytics?${params.toString()}` : "/skills/analytics";
     return api.get<AgentSkillAnalytics>(agentPath(id, options?.orgId, suffix));
   },

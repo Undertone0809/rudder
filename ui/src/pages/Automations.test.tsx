@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, forwardRef, type RefObject } from "react";
+import { act, forwardRef, type RefObject, useImperativeHandle, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../context/I18nContext";
@@ -266,11 +266,17 @@ vi.mock("../components/MarkdownEditor", () => ({
       mentionMenuPlacement?: "caret" | "container";
       plainText?: boolean;
     },
-    _ref,
+    ref,
   ) {
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    useImperativeHandle(ref, () => ({
+      focus: () => textareaRef.current?.focus(),
+      getMarkdown: () => textareaRef.current?.value ?? props.value ?? "",
+    }));
     markdownEditorProps.push(props);
     return (
       <textarea
+        ref={textareaRef}
         aria-label="Instructions"
         value={props.value ?? ""}
         placeholder={props.placeholder}
@@ -452,7 +458,8 @@ describe("Automations", () => {
 
     expect(document.body.textContent).toContain("Track as issue");
     expect(document.body.textContent).toContain("Create");
-    expect(runbookInput?.value).toContain("board-tracked work");
+    expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
+    const originalInstructions = runbookInput?.value;
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -470,8 +477,8 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value).toContain("each run's final result to a new Rudder chat");
-    expect(runbookInput?.value).not.toContain("board-tracked work so the result can be reviewed");
+    expect(runbookInput?.value).toBe(originalInstructions);
+    expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -480,7 +487,7 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value.match(/each run's final result to a new Rudder chat/g)).toHaveLength(1);
+    expect(runbookInput?.value).toBe(originalInstructions);
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -532,7 +539,7 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("New chat per run");
   });
 
-  it("preserves nonempty Markdown boundaries while switching output method", async () => {
+  it("preserves nonempty Markdown without injecting output instructions while switching output method", async () => {
     renderPage();
     await act(async () => {
       await Promise.resolve();
@@ -546,13 +553,11 @@ describe("Automations", () => {
     });
 
     const prefix = "\n  **Keep exact instructions**  \n";
-    const chatInstruction = "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
-    const trackInstruction = "Output: create or update board-tracked work so the result can be reviewed.";
     const runbookInput = document.querySelector(
       'textarea[aria-label="Instructions"]',
     ) as HTMLTextAreaElement;
     await act(async () => {
-      setTextareaValue(runbookInput, `${prefix}\n\n${chatInstruction}`);
+      setTextareaValue(runbookInput, prefix);
       document.body.querySelector<HTMLButtonElement>(
         '[data-testid="automation-create-output-mode"]',
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -565,7 +570,7 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput.value).toBe(`${prefix}\n\n${trackInstruction}`);
+    expect(runbookInput.value).toBe(prefix);
   });
 
   it("opens the composer from the header as a blank prompt input", async () => {
@@ -636,6 +641,75 @@ describe("Automations", () => {
     expect(document.body.textContent).toContain("Schedule 0 18 * * *");
     expect(document.body.textContent).toContain("Send to chat");
     expect(document.body.querySelector('[data-testid="automation-template-picker"]')).toBeNull();
+  });
+
+  it.each([
+    {
+      locale: "en",
+      useTemplateLabel: "Use template",
+      templateTitles: [
+        "Daily review",
+        "Bug triage",
+        "PR review reminder",
+        "Weekly progress report",
+        "Documentation check",
+        "Daily news digest",
+        "Daily standup review",
+      ],
+    },
+    {
+      locale: "zh-CN",
+      useTemplateLabel: "使用模板",
+      templateTitles: [
+        "每日回顾",
+        "Bug 分诊",
+        "PR review 提醒",
+        "周进展报告",
+        "文档检查",
+        "每日信息简报",
+        "日会",
+      ],
+    },
+  ])("keeps standalone output descriptions out of every $locale automation template", async ({
+    locale,
+    useTemplateLabel,
+    templateTitles,
+  }) => {
+    document.documentElement.lang = locale;
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    for (const templateTitle of templateTitles) {
+      const useTemplateButton = Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes(useTemplateLabel));
+      expect(useTemplateButton).toBeTruthy();
+      await act(async () => {
+        useTemplateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+
+      const templatePicker = document.body.querySelector('[data-testid="automation-template-picker"]');
+      const templateButton = Array.from(templatePicker?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.includes(templateTitle));
+      expect(templateButton).toBeTruthy();
+      await act(async () => {
+        templateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+
+      const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
+      expect(runbookInput).toBeTruthy();
+      expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
+    }
   });
 
   it("renders localized use-case templates for Chinese UI", async () => {
@@ -852,7 +926,7 @@ describe("Automations", () => {
     expect(selectedMentionIds).toContain("skill:agent:build-advisor");
   });
 
-  it("allows creating an automation without selecting a project", async () => {
+  it("submits live editor instructions when creating without a project", async () => {
     renderPage();
 
     await act(async () => {
@@ -886,6 +960,9 @@ describe("Automations", () => {
     expect(createButton).toBeTruthy();
     expect(createButton?.disabled).toBe(false);
 
+    const currentInstructions = "每天汇总最新消息并发送给我";
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    valueSetter?.call(runbookInput!, currentInstructions);
     await act(async () => {
       createButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
@@ -894,9 +971,9 @@ describe("Automations", () => {
 
     expect(mockCreateAutomation).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "帮我 flomo 打 tag",
+      instructions: currentInstructions,
       projectId: null,
       assigneeAgentId: "agent-1",
-      instructions: "\n  **Keep exact instructions**  \n",
       outputMode: "chat_output",
       chatConversationId: null,
       notifyOnIssueCreated: false,

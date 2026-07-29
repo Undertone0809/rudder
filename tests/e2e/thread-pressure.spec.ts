@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  chatConversations,
   chatMessages,
   createDb,
   heartbeatRuns,
   issueComments,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
 } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
@@ -15,6 +18,184 @@ const CHAT_MESSAGE_COUNT = 2_000;
 const ISSUE_COMMENT_COUNT = 500;
 const TERMINAL_RUN_COUNT = 250;
 const ACTIVE_RUN_COUNT = 2;
+const MESSENGER_THREAD_COUNT = 220;
+
+async function measureScrollFrames(page: Page, selector: string, durationMs: number) {
+  const session = await page.context().newCDPSession(page);
+  await session.send("Performance.enable");
+  const readTaskDuration = async () => {
+    const result = await session.send("Performance.getMetrics") as {
+      metrics: Array<{ name: string; value: number }>;
+    };
+    return result.metrics.find((metric) => metric.name === "TaskDuration")?.value ?? 0;
+  };
+  const taskDurationBefore = await readTaskDuration();
+  const frameMetrics = await page.locator(selector).evaluate(async (element, duration) => {
+    const scrollElement = element as HTMLElement;
+    const frameIntervals: number[] = [];
+    const longTasks: number[] = [];
+    let previousFrame = performance.now();
+    let observer: PerformanceObserver | null = null;
+    if (typeof PerformanceObserver !== "undefined") {
+      observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) longTasks.push(entry.duration);
+      });
+      try {
+        observer.observe({ entryTypes: ["longtask"] });
+      } catch {
+        observer = null;
+      }
+    }
+
+    const startedAt = performance.now();
+    await new Promise<void>((resolve) => {
+      const step = (now: number) => {
+        frameIntervals.push(now - previousFrame);
+        previousFrame = now;
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const maxScroll = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+        scrollElement.scrollTop = maxScroll * progress;
+        if (progress < 1) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+    observer?.disconnect();
+
+    const sorted = [...frameIntervals].sort((left, right) => left - right);
+    const percentile = (fraction: number) => sorted[Math.min(
+      sorted.length - 1,
+      Math.max(0, Math.ceil(sorted.length * fraction) - 1),
+    )] ?? 0;
+    const droppedFrames = frameIntervals.reduce(
+      (total, interval) => total + Math.max(0, Math.round(interval / 16.67) - 1),
+      0,
+    );
+    return {
+      durationMs: performance.now() - startedAt,
+      frameCount: frameIntervals.length,
+      droppedFrames,
+      droppedFrameRatio: droppedFrames / Math.max(1, frameIntervals.length + droppedFrames),
+      p95FrameIntervalMs: percentile(0.95),
+      maxFrameIntervalMs: sorted.at(-1) ?? 0,
+      longTaskCount: longTasks.length,
+      longTaskTotalMs: longTasks.reduce((total, value) => total + value, 0),
+      maxLongTaskMs: longTasks.length > 0 ? Math.max(...longTasks) : 0,
+    };
+  }, durationMs);
+  const taskDurationAfter = await readTaskDuration();
+  await session.detach();
+  return {
+    ...frameMetrics,
+    rendererTaskDurationMs: (taskDurationAfter - taskDurationBefore) * 1_000,
+  };
+}
+
+async function measureRuntimeFootprint(page: Page) {
+  const session = await page.context().newCDPSession(page);
+  await session.send("Performance.enable");
+  await session.send("HeapProfiler.collectGarbage");
+  const [domCounters, performanceMetrics] = await Promise.all([
+    session.send("Memory.getDOMCounters") as Promise<{
+      documents: number;
+      jsEventListeners: number;
+      nodes: number;
+    }>,
+    session.send("Performance.getMetrics") as Promise<{
+      metrics: Array<{ name: string; value: number }>;
+    }>,
+  ]);
+  await session.detach();
+  const metrics = new Map(performanceMetrics.metrics.map((metric) => [metric.name, metric.value]));
+  return {
+    documents: domCounters.documents,
+    domNodes: domCounters.nodes,
+    jsEventListeners: domCounters.jsEventListeners,
+    jsHeapUsedMb: (metrics.get("JSHeapUsedSize") ?? 0) / (1024 * 1024),
+    jsHeapTotalMb: (metrics.get("JSHeapTotalSize") ?? 0) / (1024 * 1024),
+  };
+}
+
+async function measureMessengerFastScrollCoverage(page: Page) {
+  return page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
+    const scrollElement = element as HTMLElement;
+    const maxScroll = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    const targets = Array.from({ length: 36 }, (_, index) => {
+      const phase = index % 12;
+      return phase < 6
+        ? 0.12 + phase * 0.14
+        : 0.82 - (phase - 6) * 0.14;
+    }).concat([0.82, 0.68, 0.54, 0.4]);
+    let blankSamples = 0;
+    let maxBlankPx = 0;
+    let samplesWithVisibleThreadRows = 0;
+    const visibleGroupTestIds = new Set<string>();
+    const samples: Array<{
+      fraction: number;
+      maxBlankPx: number;
+      scrollTop: number;
+      visibleCoverageCount: number;
+    }> = [];
+
+    for (const fraction of targets) {
+      scrollElement.scrollTop = maxScroll * fraction;
+      scrollElement.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      const viewport = scrollElement.getBoundingClientRect();
+      const coverageRows = Array.from(
+        scrollElement.querySelectorAll<HTMLElement>(
+          [
+            "[data-messenger-thread-key]",
+            "[data-messenger-scroll-coverage-row]",
+          ].join(", "),
+        ),
+      )
+        .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.bottom > viewport.top && rect.top < viewport.bottom);
+      const visibleThreadRows = coverageRows.filter(({ row }) => (
+        row.hasAttribute("data-messenger-thread-key")
+      ));
+      if (visibleThreadRows.length > 0) samplesWithVisibleThreadRows += 1;
+      for (const { row } of visibleThreadRows) {
+        const groupSurface = row.closest<HTMLElement>("[data-messenger-scroll-coverage-surface]");
+        const groupTestId = groupSurface?.dataset.testid;
+        if (groupTestId) visibleGroupTestIds.add(groupTestId);
+      }
+      const intervals = coverageRows
+        .map(({ rect }) => ({
+          start: Math.max(viewport.top, rect.top),
+          end: Math.min(viewport.bottom, rect.bottom),
+        }))
+        .sort((left, right) => left.start - right.start);
+
+      let cursor = viewport.top;
+      let sampleMaxBlankPx = 0;
+      for (const interval of intervals) {
+        sampleMaxBlankPx = Math.max(sampleMaxBlankPx, interval.start - cursor);
+        cursor = Math.max(cursor, interval.end);
+      }
+      sampleMaxBlankPx = Math.max(sampleMaxBlankPx, viewport.bottom - cursor);
+      maxBlankPx = Math.max(maxBlankPx, sampleMaxBlankPx);
+      if (sampleMaxBlankPx > 64) blankSamples += 1;
+      samples.push({
+        fraction,
+        maxBlankPx: sampleMaxBlankPx,
+        scrollTop: scrollElement.scrollTop,
+        visibleCoverageCount: intervals.length,
+      });
+    }
+
+    return {
+      blankSamples,
+      maxBlankPx,
+      sampleCount: targets.length,
+      samplesWithVisibleThreadRows,
+      samples,
+      visibleGroupTestIds: Array.from(visibleGroupTestIds).sort(),
+    };
+  });
+}
 
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
@@ -39,14 +220,37 @@ async function selectOrganization(page: Page, orgId: string) {
 }
 
 test("keeps whale Chat and Issue detail correct without terminal run-log fanout", async ({ page }, testInfo) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 1600, height: 900 });
+  const websocketUrls: string[] = [];
+  let activeOrganizationWebSockets = 0;
+  let maxConcurrentOrganizationWebSockets = 0;
+  page.on("websocket", (socket) => {
+    websocketUrls.push(socket.url());
+    if (!new URL(socket.url()).pathname.endsWith("/events/ws")) return;
+    activeOrganizationWebSockets += 1;
+    maxConcurrentOrganizationWebSockets = Math.max(
+      maxConcurrentOrganizationWebSockets,
+      activeOrganizationWebSockets,
+    );
+    socket.on("close", () => {
+      activeOrganizationWebSockets = Math.max(0, activeOrganizationWebSockets - 1);
+    });
+  });
 
   const orgResponse = await page.request.post("/api/orgs", {
     data: { name: `Thread-Pressure-${Date.now()}` },
   });
   expect(orgResponse.ok()).toBe(true);
   const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+  const sessionResponse = await page.request.get("/api/auth/get-session");
+  expect(sessionResponse.ok()).toBe(true);
+  const session = await sessionResponse.json() as {
+    session?: { userId?: string | null };
+    user?: { id?: string | null };
+  };
+  const currentUserId = session.user?.id ?? session.session?.userId;
+  expect(currentUserId).toBeTruthy();
 
   const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
     data: {
@@ -66,10 +270,57 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     data: {
       title: "Two thousand message pressure chat",
       preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: { body: "Disposable performance pressure seed." },
     },
   });
   expect(chatResponse.ok()).toBe(true);
   const chat = await chatResponse.json() as { id: string };
+
+  const messengerBase = Date.now() - 60_000;
+  const messengerThreadIds: string[] = [];
+  await insertGeneratedChunks(
+    MESSENGER_THREAD_COUNT,
+    (index) => {
+      const activityAt = new Date(messengerBase - index * 1_000);
+      const id = randomUUID();
+      messengerThreadIds.push(id);
+      return {
+        id,
+        orgId: organization.id,
+        title: `Disposable performance thread ${String(index + 1).padStart(3, "0")}`,
+        summary: `Synthetic Messenger pressure row ${index + 1}.`,
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: null,
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    },
+    (rows) => e2eDb.insert(chatConversations).values(rows),
+  );
+  const pressureGroups = [
+    { id: randomUUID(), name: "Pressure group A", sortOrder: 0 },
+    { id: randomUUID(), name: "Pressure group B", sortOrder: 1 },
+  ];
+  await e2eDb.insert(messengerCustomGroups).values(pressureGroups.map((group) => ({
+    ...group,
+    orgId: organization.id,
+    userId: currentUserId!,
+    icon: "folder::slate",
+  })));
+  await e2eDb.insert(messengerCustomGroupEntries).values(
+    messengerThreadIds.slice(0, 80).map((conversationId, index) => ({
+      orgId: organization.id,
+      userId: currentUserId!,
+      groupId: pressureGroups[Math.floor(index / 40)]!.id,
+      threadKey: `chat:${conversationId}`,
+      sortOrder: index % 40,
+    })),
+  );
 
   const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
@@ -106,12 +357,15 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     (rows) => e2eDb.insert(chatMessages).values(rows),
   );
 
+  const issueCommentIds: string[] = [];
   await insertGeneratedChunks(
     ISSUE_COMMENT_COUNT,
     (index) => {
       const createdAt = new Date(anchor + Math.floor(index / 4) * 1_000);
+      const id = randomUUID();
+      issueCommentIds.push(id);
       return {
-        id: randomUUID(),
+        id,
         orgId: organization.id,
         issueId: issue.id,
         authorAgentId: index % 5 === 0 ? null : agent.id,
@@ -186,22 +440,102 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     && new URL(response.url()).pathname === `/api/chats/${chat.id}/messages`
   ));
   const chatStartedAt = Date.now();
-  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}?perfBaseline=1`);
   const chatApiResponse = await chatApiResponsePromise;
   expect(chatApiResponse.ok()).toBe(true);
   const chatPayload = await chatApiResponse.json() as unknown[];
-  expect(chatPayload).toHaveLength(CHAT_MESSAGE_COUNT);
+  expect(chatPayload).toHaveLength(CHAT_MESSAGE_COUNT + 1);
+  await expect(page.getByText(`Pressure chat message ${CHAT_MESSAGE_COUNT}.`, { exact: false })).toBeVisible({ timeout: 30_000 });
+  const beforeChatReadyMs = Date.now() - chatStartedAt;
+  const beforeChatDomMessages = await page.locator("[data-message-id]").count();
+  const beforeChatScrollMetrics = await measureScrollFrames(
+    page,
+    "[data-testid='chat-messages-scroll-region']",
+    5_000,
+  );
+  const beforeSidebarScrollMetrics = await measureScrollFrames(
+    page,
+    "[data-testid='workspace-sidebar'] nav",
+    5_000,
+  );
+  await page.waitForTimeout(500);
+  const beforeMountedMessengerRows = await page.locator("[data-messenger-thread-key]").count();
+  const beforeRuntimeFootprint = await measureRuntimeFootprint(page);
+
+  const optimizedStartedAt = Date.now();
+  websocketUrls.length = 0;
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
   await expect(page.getByText(`Pressure chat message ${CHAT_MESSAGE_COUNT}.`, { exact: false })).toBeVisible({ timeout: 30_000 });
   const chatDomMessages = await page.locator("[data-message-id]").count();
-  const chatReadyMs = Date.now() - chatStartedAt;
+  const chatVirtualRows = await page.locator("[data-virtualized-activity-key]").count();
+  const chatReadyMs = Date.now() - optimizedStartedAt;
+  expect(chatDomMessages).toBeLessThan(60);
+  expect(chatVirtualRows).toBeLessThan(30);
+  const chatScrollMetrics = await measureScrollFrames(page, "[data-testid='chat-messages-scroll-region']", 5_000);
+  const sidebarScrollMetrics = await measureScrollFrames(
+    page,
+    "[data-testid='workspace-sidebar'] nav",
+    5_000,
+  );
+  await page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  });
+  const pressureGroupA = page.getByTestId(
+    `messenger-thread-section-custom-group-${pressureGroups[0]!.id}`,
+  );
+  await expect(pressureGroupA).toBeVisible({ timeout: 10_000 });
+  const pressureGroupAToggle = pressureGroupA.getByRole("button", {
+    name: pressureGroups[0]!.name,
+    exact: true,
+  });
+  await pressureGroupAToggle.click();
+  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "true");
+  await pressureGroupAToggle.click();
+  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "false");
+  for (const group of pressureGroups) {
+    await expect(page.getByTestId(
+      `messenger-section-virtual-entries-custom-group-${group.id}`,
+    )).toHaveCount(1);
+  }
+  const messengerFastScrollCoverage = await measureMessengerFastScrollCoverage(page);
+  console.log(`THREAD_PRESSURE_FAST_SCROLL_COVERAGE ${JSON.stringify(messengerFastScrollCoverage)}`);
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
+  expect(messengerFastScrollCoverage.blankSamples).toBe(0);
+  expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(64);
+  expect(messengerFastScrollCoverage.samplesWithVisibleThreadRows).toBe(
+    messengerFastScrollCoverage.sampleCount,
+  );
+  expect(messengerFastScrollCoverage.visibleGroupTestIds).toEqual(
+    pressureGroups.map((group) => (
+      `messenger-thread-section-custom-group-${group.id}`
+    )).sort(),
+  );
+  await page.waitForTimeout(500);
+  const mountedMessengerRows = await page.locator("[data-messenger-thread-key]").count();
+  const genericOrganizationWebSockets = new Set(
+    websocketUrls.filter((url) => new URL(url).pathname.endsWith("/events/ws")),
+  );
+  expect(genericOrganizationWebSockets.size).toBe(1);
+  const loadedMessengerVirtualHeight = await page.locator("[data-testid='messenger-virtual-directory']")
+    .evaluate((element) => Number.parseFloat((element as HTMLElement).style.height) || 0);
+  // Messenger deliberately keeps about one viewport ahead plus a small
+  // trailing buffer mounted so a fast trackpad fling cannot outrun the next
+  // virtual range commit. The result remains bounded well below the complete
+  // 221-row pressure list.
+  expect(mountedMessengerRows).toBeLessThan(80);
+  const runtimeFootprint = await measureRuntimeFootprint(page);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-chat.png" });
 
   const requestedLogRunIds: string[] = [];
+  const requestedLogRequests: Array<{ runId: string; at: number }> = [];
   page.on("request", (request) => {
     const pathname = new URL(request.url()).pathname;
     const match = pathname.match(/^\/api\/agent-runs\/([^/]+)\/log$/u);
     if (request.method() === "GET" && match?.[1]) {
       requestedLogRunIds.push(match[1]);
+      requestedLogRequests.push({ runId: match[1], at: Date.now() });
     }
   });
 
@@ -223,8 +557,21 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(runsApiResponse.ok()).toBe(true);
   expect(await commentsApiResponse.json()).toHaveLength(ISSUE_COMMENT_COUNT);
   expect(await runsApiResponse.json()).toHaveLength(TERMINAL_RUN_COUNT + ACTIVE_RUN_COUNT);
-  await expect(page.locator("[data-run-id]")).toHaveCount(TERMINAL_RUN_COUNT, { timeout: 30_000 });
+  const issueVirtualTimeline = page.getByTestId("comment-thread-virtual-timeline");
+  await expect(issueVirtualTimeline).toBeVisible({ timeout: 30_000 });
+  expect(await page.locator("[data-run-id]").count()).toBeLessThan(30);
+  expect(await issueVirtualTimeline.locator("[data-virtualized-activity-key]").count()).toBeLessThan(30);
+  const issueScroll = page.getByTestId("issue-detail-main-scroll");
+  await issueScroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
   await expect(page.getByText(`Pressure issue comment ${ISSUE_COMMENT_COUNT}.`, { exact: false })).toBeVisible({ timeout: 30_000 });
+  const deepCommentId = issueCommentIds.at(-1);
+  expect(deepCommentId).toBeTruthy();
+  await page.evaluate((commentId) => {
+    window.location.hash = `comment-${commentId}`;
+  }, deepCommentId!);
+  await expect(page.locator(`#comment-${deepCommentId}`)).toBeVisible({ timeout: 10_000 });
   const issueReadyMs = Date.now() - issueStartedAt;
   await page.waitForTimeout(2_500);
 
@@ -250,6 +597,9 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   );
   await expect(page.getByText(activeIncrementalEvidence, { exact: false })).toBeVisible({ timeout: 10_000 });
 
+  await issueScroll.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   const expandedTerminalRunId = terminalRunIds[0]!;
   const terminalLogRequest = page.waitForRequest((request) => (
     request.method() === "GET"
@@ -275,11 +625,36 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await expect(terminalRow.getByText(terminalEvidence, { exact: false })).toBeVisible({ timeout: 10_000 });
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-issue.png" });
 
-  const browserMetrics = {
+  const beforeMetrics = {
+    chat: {
+      apiRows: chatPayload.length,
+      domMessages: beforeChatDomMessages,
+      readyMs: beforeChatReadyMs,
+      scroll: beforeChatScrollMetrics,
+    },
+    messenger: {
+      seededThreads: MESSENGER_THREAD_COUNT + 1,
+      mountedRows: beforeMountedMessengerRows,
+      scroll: beforeSidebarScrollMetrics,
+    },
+    runtime: beforeRuntimeFootprint,
+  };
+  const afterMetrics = {
     chat: {
       apiRows: chatPayload.length,
       domMessages: chatDomMessages,
+      virtualRows: chatVirtualRows,
       readyMs: chatReadyMs,
+      scroll: chatScrollMetrics,
+    },
+    messenger: {
+      seededThreads: MESSENGER_THREAD_COUNT + 1,
+      mountedRows: mountedMessengerRows,
+      virtualHeightPx: loadedMessengerVirtualHeight,
+      scroll: sidebarScrollMetrics,
+    },
+    realtime: {
+      genericOrganizationWebSockets: genericOrganizationWebSockets.size,
     },
     issue: {
       comments: ISSUE_COMMENT_COUNT,
@@ -290,10 +665,77 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       uniqueLogRequestsBeforeExpansion: [...new Set(requestedLogRunIds.filter((id) => id !== expandedTerminalRunId))].length,
       terminalLogRequestsAfterExpansion: requestedLogRunIds.filter((id) => terminalRunIdSet.has(id)),
     },
+    runtime: runtimeFootprint,
   };
-  await testInfo.attach("thread-pressure-browser-metrics", {
-    body: Buffer.from(JSON.stringify(browserMetrics, null, 2)),
+  await testInfo.attach("thread-pressure-before-metrics", {
+    body: Buffer.from(JSON.stringify(beforeMetrics, null, 2)),
     contentType: "application/json",
   });
-  console.log(`THREAD_PRESSURE_METRICS ${JSON.stringify(browserMetrics)}`);
+  await testInfo.attach("thread-pressure-after-metrics", {
+    body: Buffer.from(JSON.stringify(afterMetrics, null, 2)),
+    contentType: "application/json",
+  });
+  console.log(`THREAD_PRESSURE_BEFORE_METRICS ${JSON.stringify(beforeMetrics)}`);
+  console.log(`THREAD_PRESSURE_AFTER_METRICS ${JSON.stringify(afterMetrics)}`);
+
+  websocketUrls.length = 0;
+  requestedLogRunIds.length = 0;
+  requestedLogRequests.length = 0;
+  const activeRunDetailId = activeRunIds[0]!;
+  const activeRunDetailLogRequest = page.waitForRequest((request) => (
+    request.method() === "GET"
+    && new URL(request.url()).pathname === `/api/agent-runs/${activeRunDetailId}/log`
+  ));
+  const activeRunDetailLink = page.locator(
+    `a[href$="/agents/${agent.id}/runs/${activeRunDetailId}"]`,
+  ).first();
+  await expect(activeRunDetailLink).toBeVisible();
+  await activeRunDetailLink.click();
+  await page.waitForURL(
+    new RegExp(`/agents/${agent.id}/runs/${activeRunDetailId}(?:\\?|$)`, "u"),
+  );
+  await activeRunDetailLogRequest;
+  await expect(page.getByText(`ACTIVE_RUN_INITIAL_EVIDENCE_${activeRunDetailId}`, { exact: false }))
+    .toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(4_200);
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-agent-run.png", fullPage: false });
+  expect(maxConcurrentOrganizationWebSockets).toBe(1);
+  const activeRunLogRequests = requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  );
+  expect(activeRunLogRequests.length).toBeGreaterThanOrEqual(3);
+  expect(activeRunLogRequests.length).toBeLessThanOrEqual(4);
+  for (let index = 1; index < activeRunLogRequests.length; index += 1) {
+    expect(activeRunLogRequests[index]!.at - activeRunLogRequests[index - 1]!.at)
+      .toBeGreaterThan(1_000);
+  }
+
+  const terminalTransitionEvidence = "ACTIVE_RUN_TERMINAL_EVIDENCE";
+  await fs.appendFile(
+    path.join(E2E_INSTANCE_ROOT, "data", "run-logs", activeLogRef!),
+    `${JSON.stringify({
+      ts: new Date().toISOString(),
+      stream: "stdout",
+      chunk: `${JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: terminalTransitionEvidence },
+      })}\n`,
+    })}\n`,
+    "utf8",
+  );
+  const cancelResponse = await page.request.post(`/api/agent-runs/${activeRunDetailId}/cancel`);
+  expect(cancelResponse.ok()).toBe(true);
+  await expect(page.getByText("cancelled", { exact: true }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText(terminalTransitionEvidence, { exact: false })).toBeVisible({
+    timeout: 10_000,
+  });
+  const terminalRequestCount = requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  ).length;
+  await page.waitForTimeout(2_500);
+  expect(requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  )).toHaveLength(terminalRequestCount);
 });

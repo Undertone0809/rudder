@@ -13,6 +13,8 @@ export type DesktopSystemPermissions = {
   automation?: DesktopSystemPermissionStatus;
 };
 
+export type DesktopSystemPermissionId = keyof DesktopSystemPermissions;
+
 export type DesktopBootState = {
   capabilities?: {
     badgeCount?: boolean;
@@ -229,6 +231,7 @@ export type DesktopLocalAppDefinitionDraft = {
 
 export type DesktopPreparedLocalAppDefinition = DesktopLocalAppDefinitionDraft & {
   trustFingerprint: string;
+  iconDataUrl?: string | null;
 };
 
 export type DesktopLocalAppDefinition = DesktopPreparedLocalAppDefinition & {
@@ -271,6 +274,12 @@ export type DesktopLocalAppAttestedTarget = {
 export type DesktopWebLinkRequest = {
   url: string;
   source: "link" | "browser_popup";
+  sourceWebContentsId?: number;
+};
+
+export type DesktopBrowserShortcutRequest = {
+  action: BrowserShortcutAction | "close_tab";
+  sourceWebContentsId?: number;
 };
 
 export type DesktopShellApi = {
@@ -301,12 +310,19 @@ export type DesktopShellApi = {
   onUpdateProgress?(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
   setDeferredUpdatePromptReady?(ready: boolean): Promise<void>;
   setSidePanelCloseShortcutActive?(active: boolean): Promise<void>;
-  setBrowserSurfaceShortcutActive?(active: boolean): Promise<void>;
-  onBrowserShortcut?(listener: (action: BrowserShortcutAction) => void): () => void;
+  setBrowserSurfaceShortcutActive?(
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ): Promise<void>;
+  onBrowserShortcut?(
+    listener: (request: DesktopBrowserShortcutRequest) => void,
+  ): () => void;
   onCloseSidePanelActiveTab?(listener: () => void): () => void;
+  onOpenEmptySidePanel?(listener: () => void): () => void;
   onDeferredUpdatePrompt?(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
   respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
+  openSystemPermissionSettings?(permission: DesktopSystemPermissionId): Promise<void>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
   forceOpenExternal?(target: string): Promise<void>;

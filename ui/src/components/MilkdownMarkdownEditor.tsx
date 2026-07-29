@@ -2,6 +2,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { getImagePreviewElementDetails, getImagePreviewName } from "@/lib/image-preview";
+import { useNavigate } from "@/lib/router";
 import { commandsCtx, defaultValueCtx, Editor, editorViewCtx, rootCtx } from "@milkdown/kit/core";
 import { history, redoCommand, undoCommand } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
@@ -61,6 +62,11 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import {
+  getImageContextMenuTarget,
+  ImageContextMenu,
+  type ImageContextMenuTarget,
+} from "./ImageContextMenu";
 import type { InlineTokenClickEvent, MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
@@ -1064,6 +1070,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   activateInlineTokensOnPlainClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
+  const navigate = useNavigate();
   const editorValue = useMemo(() => normalizeRelaxedMarkdownSyntax(value), [value]);
   const issueMentions = useMemo(() => {
     const optionByKey = mentionOptionMap(mentions ?? []);
@@ -1116,6 +1123,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const mentionIndexRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenuTarget | null>(null);
   const { openImagePreview } = useImagePreview();
   const mentionMenuRef = useScrollbarActivityRef();
   const translatedPlaceholder = useMemo(
@@ -1253,6 +1261,21 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     return available;
   }, [get, getInstance, loading]);
 
+  const insertTextAtSelection = useCallback((text: string) => {
+    if (!text) return false;
+    let inserted = false;
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      const view = getMilkdownProseMirrorView(ctx);
+      if (!view) return;
+      const { from, to } = view.state.selection;
+      view.dispatch(view.state.tr.insertText(text, from, to));
+      view.focus?.();
+      inserted = true;
+    });
+    return inserted;
+  }, [get, getInstance, loading]);
+
   const repairUnexpectedBlankDom = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
     if (!(editable instanceof HTMLElement)) return;
@@ -1265,12 +1288,13 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
 
   useImperativeHandle(forwardedRef, () => ({
     focus,
+    insertTextAtSelection,
     getMarkdown: getCurrentMarkdown,
     undo: () => runHistoryCommand("undo"),
     redo: () => runHistoryCommand("redo"),
     canUndo: () => getHistoryAvailability("undo"),
     canRedo: () => getHistoryAvailability("redo"),
-  }), [focus, getCurrentMarkdown, getHistoryAvailability, runHistoryCommand]);
+  }), [focus, getCurrentMarkdown, getHistoryAvailability, insertTextAtSelection, runHistoryCommand]);
 
   useEffect(() => {
     if (editorValue === latestValueRef.current) return;
@@ -1505,6 +1529,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   return (
     <div
       ref={containerRef}
+      data-inline-token-click-mode={activateInlineTokensOnPlainClick ? "plain" : "modified"}
       className={cn(
         "relative rudder-milkdown-scope",
         bordered ? "rounded-md border border-border bg-transparent" : "bg-transparent",
@@ -1681,7 +1706,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         }
         const navigationPath = rudderTokenNavigationPath(href);
         if (!navigationPath) return;
-        window.location.assign(navigationPath);
+        navigate(navigationPath);
       }}
       onDoubleClickCapture={(event) => {
         const target = event.target;
@@ -1696,6 +1721,15 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           testId: "markdown-editor-image-preview-dialog",
           titleFallback: "Image preview",
         });
+      }}
+      onContextMenuCapture={(event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const image = target.closest("img");
+        if (!(image instanceof HTMLImageElement) || !image.src) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setImageContextMenu(getImageContextMenuTarget(image, event.clientX, event.clientY));
       }}
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
@@ -1911,6 +1945,22 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           })()}
           </div>
         </BrowserPortal>
+      ) : null}
+      {imageContextMenu ? (
+        <ImageContextMenu
+          name={imageContextMenu.name}
+          onClose={() => setImageContextMenu(null)}
+          onOpen={() => openImagePreview({
+            alt: imageContextMenu.alt,
+            name: imageContextMenu.name,
+            naturalSize: imageContextMenu.naturalSize,
+            src: imageContextMenu.src,
+            testId: "markdown-editor-image-preview-dialog",
+            titleFallback: "Image preview",
+          })}
+          position={imageContextMenu.position}
+          src={imageContextMenu.src}
+        />
       ) : null}
     </div>
   );

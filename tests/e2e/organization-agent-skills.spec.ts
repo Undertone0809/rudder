@@ -51,6 +51,48 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeCodexInstalledSkillContentCaptureStub(
+  commandPath: string,
+  capturePath: string,
+  skillSlug: string,
+) {
+  const script = `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const skillRoot = path.join(process.env.CODEX_HOME || "", "skills", ${JSON.stringify(skillSlug)});
+  const read = (relativePath) => fs.readFileSync(path.join(skillRoot, relativePath), "utf8");
+  const payload = {
+    skill: read("SKILL.md"),
+    reference: read("references/guide.md"),
+    script: read("scripts/check.mjs"),
+    asset: read("assets/template.txt"),
+  };
+  fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
+  fs.appendFileSync(${JSON.stringify(capturePath)}, JSON.stringify(payload) + "\\n", "utf8");
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-editable-skill", model: "gpt-5.4" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "item.completed", item: { id: "msg-1", type: "agent_message", text: "captured editable skill" } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + "\\n");
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function readJsonLines<T>(filePath: string): Promise<T[]> {
+  try {
+    return (await fs.readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as T);
+  } catch {
+    return [];
+  }
+}
+
 async function readNamedSkillSwitchOrder(root: Locator, skillNames: string[]) {
   return await root.locator('[role="switch"]').evaluateAll(
     (nodes, names) =>
@@ -62,6 +104,71 @@ async function readNamedSkillSwitchOrder(root: Locator, skillNames: string[]) {
 }
 
 test.describe("Organization and agent skills", () => {
+  test("shows the Agent Skills introduction once and remembers dismissal", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Org-Skills-Onboarding-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+    };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Skills Explorer",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: E2E_CODEX_STUB,
+          model: "gpt-5.4",
+          env: {
+            CODEX_HOME: path.join(E2E_HOME, ".codex"),
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
+    const agentMain = page.locator("#main-content");
+    const onboardingCallout = agentMain.getByTestId("agent-skills-onboarding");
+    await expect(onboardingCallout).toBeVisible();
+    await expect(
+      onboardingCallout.getByRole("heading", { name: "Build your agent's skill set" }),
+    ).toBeVisible();
+    await expect(
+      onboardingCallout.getByText(/local runtimes such as Codex and Claude Code/),
+    ).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(agentMain.getByPlaceholder("Search skills")).toBeEnabled();
+
+    await page.setViewportSize({ width: 420, height: 800 });
+    const onboardingCalloutBox = await onboardingCallout.boundingBox();
+    expect(onboardingCalloutBox).not.toBeNull();
+    expect(onboardingCalloutBox!.x).toBeGreaterThanOrEqual(0);
+    expect(onboardingCalloutBox!.x + onboardingCalloutBox!.width).toBeLessThanOrEqual(420);
+    await expect(onboardingCallout.getByRole("button", { name: "Got it" })).toBeVisible();
+
+    await onboardingCallout.getByRole("button", { name: "Got it" }).click();
+    await expect(onboardingCallout).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
+
+    await page.reload();
+    await expect(agentMain.getByTestId("agent-skills-onboarding")).toHaveCount(0);
+  });
+
   test("shows seeded community presets in the new-agent picker while keeping bundled defaults hidden", async ({ page }) => {
     const organizationName = `Org-New-Agent-Skills-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {
@@ -110,6 +217,73 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByText("rudder-docs")).toHaveCount(0);
     await expect(newAgentMain.getByText("rudder-create-agent")).toHaveCount(0);
     await expect(newAgentMain.getByText("rudder-create-plugin")).toHaveCount(0);
+  });
+
+  test("persists selected new-agent skills by canonical public reference", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Org-New-Agent-Skill-Selection-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+      urlKey: string;
+    };
+
+    const customSkillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "Alpha Test",
+        slug: "alpha-test",
+        markdown: "---\nname: alpha-test\ndescription: Alpha test skill.\n---\n\n# Alpha Test\n",
+      },
+    });
+    expect(customSkillRes.ok()).toBe(true);
+    const customSkill = await customSkillRes.json() as { key: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/agents/new`);
+
+    const newAgentMain = page.locator("#main-content");
+    await expect(newAgentMain.getByRole("heading", { name: "Organization skills" })).toBeVisible();
+
+    const deepResearchToggle = newAgentMain.getByRole("switch", { name: /\/deep-research$/ });
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "false");
+    await expect(deepResearchToggle.locator("..")).toContainText("Community preset");
+    await deepResearchToggle.click();
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "true");
+    await deepResearchToggle.click();
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "false");
+
+    const alphaToggle = newAgentMain.getByRole("switch", { name: /\/alpha-test$/ });
+    await expect(alphaToggle).toHaveAttribute("aria-checked", "false");
+    await expect(alphaToggle.locator("..")).toContainText("Alpha test skill.");
+    await expect(alphaToggle.locator("..")).toContainText("/alpha-test");
+    await alphaToggle.click();
+    await expect(alphaToggle).toHaveAttribute("aria-checked", "true");
+
+    await newAgentMain.getByPlaceholder("Agent name").fill("Skill Selection Agent");
+    const hireResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/agent-hires`)
+    ));
+    await newAgentMain.getByRole("button", { name: "Create agent" }).click();
+    const hireResponse = await hireResponsePromise;
+    expect(hireResponse.ok()).toBe(true);
+    const hireRequest = hireResponse.request().postDataJSON() as { desiredSkills?: string[] };
+    expect(hireRequest.desiredSkills).toContain(`org/${organization.urlKey}/alpha-test`);
+    const hireResult = await hireResponse.json() as { agent: { id: string } };
+
+    const skillSnapshotRes = await page.request.get(
+      `/api/agents/${hireResult.agent.id}/skills?orgId=${encodeURIComponent(organization.id)}`,
+    );
+    expect(skillSnapshotRes.ok()).toBe(true);
+    const skillSnapshot = await skillSnapshotRes.json() as { desiredSkills: string[] };
+    expect(skillSnapshot.desiredSkills).toContain(`org:${customSkill.key}`);
   });
 
   test("seeds bundled and community preset org skills and keeps bundled Rudder skills always enabled", async ({ page }) => {
@@ -903,5 +1077,126 @@ test.describe("Organization and agent skills", () => {
     await expect(
       fs.readFile(path.join(materializedSkillCreator, "eval-viewer", "generate_review.py"), "utf8"),
     ).resolves.toContain("def main");
+  });
+
+  test("reuses a complete editable organization skill and loads local edits on the next run", async ({ page }) => {
+    const suffix = Date.now();
+    const skillSlug = `editable-runtime-${suffix}`;
+    const sourceRoot = path.join(E2E_HOME, "skill-imports", skillSlug);
+    const capturePath = path.join(E2E_HOME, "captures", `${skillSlug}.jsonl`);
+    const captureCommandPath = path.join(E2E_HOME, "bin", `${skillSlug}-capture`);
+    await Promise.all([
+      fs.mkdir(path.join(sourceRoot, "references"), { recursive: true }),
+      fs.mkdir(path.join(sourceRoot, "scripts"), { recursive: true }),
+      fs.mkdir(path.join(sourceRoot, "assets"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(
+        path.join(sourceRoot, "SKILL.md"),
+        `---\nname: ${skillSlug}\ndescription: Editable runtime skill.\n---\n\n# Version one\n`,
+        "utf8",
+      ),
+      fs.writeFile(path.join(sourceRoot, "references", "guide.md"), "# Guide one\n", "utf8"),
+      fs.writeFile(path.join(sourceRoot, "scripts", "check.mjs"), "export const version = 1;\n", "utf8"),
+      fs.writeFile(path.join(sourceRoot, "assets", "template.txt"), "template-one\n", "utf8"),
+    ]);
+    await writeCodexInstalledSkillContentCaptureStub(captureCommandPath, capturePath, skillSlug);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Org-Editable-Runtime-Skill-${suffix}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string };
+
+    const importRes = await page.request.post(`/api/orgs/${organization.id}/skills/import`, {
+      data: { source: sourceRoot },
+    });
+    expect(importRes.ok()).toBe(true);
+    const imported = await importRes.json() as {
+      imported: Array<{
+        id: string;
+        key: string;
+        fileInventory: Array<{ path: string }>;
+      }>;
+    };
+    expect(imported.imported).toHaveLength(1);
+    const [skill] = imported.imported;
+    expect(skill!.fileInventory.map((entry) => entry.path)).toEqual(expect.arrayContaining([
+      "SKILL.md",
+      "references/guide.md",
+      "scripts/check.mjs",
+      "assets/template.txt",
+    ]));
+    const detailRes = await page.request.get(
+      `/api/orgs/${organization.id}/skills/${skill!.id}`,
+    );
+    expect(detailRes.ok()).toBe(true);
+    await expect(detailRes.json()).resolves.toMatchObject({ editable: true });
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Editable Skill Runner",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: captureCommandPath,
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const syncRes = await page.request.post(
+      `/api/agents/${agent.id}/skills/sync?orgId=${encodeURIComponent(organization.id)}`,
+      { data: { desiredSkills: [skill!.key] } },
+    );
+    expect(syncRes.ok()).toBe(true);
+
+    const firstRunRes = await page.request.post(
+      `/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`,
+    );
+    expect(firstRunRes.ok()).toBe(true);
+    await expect.poll(async () => (await readJsonLines(capturePath)).length).toBe(1);
+    await expect.poll(async () => (await readJsonLines<{
+      skill: string;
+      reference: string;
+      script: string;
+      asset: string;
+    }>(capturePath))[0]).toMatchObject({
+      skill: expect.stringContaining("# Version one"),
+      reference: "# Guide one\n",
+      script: "export const version = 1;\n",
+      asset: "template-one\n",
+    });
+
+    const editRes = await page.request.patch(
+      `/api/orgs/${organization.id}/skills/${skill!.id}/files`,
+      {
+        data: {
+          path: "SKILL.md",
+          content: `---\nname: ${skillSlug}\ndescription: Editable runtime skill.\n---\n\n# Version two\n`,
+        },
+      },
+    );
+    expect(editRes.ok()).toBe(true);
+
+    const secondRunRes = await page.request.post(
+      `/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`,
+    );
+    expect(secondRunRes.ok()).toBe(true);
+    await expect.poll(async () => (await readJsonLines(capturePath)).length).toBe(2);
+    const captures = await readJsonLines<{
+      skill: string;
+      reference: string;
+      script: string;
+      asset: string;
+    }>(capturePath);
+    expect(captures[1]).toMatchObject({
+      skill: expect.stringContaining("# Version two"),
+      reference: "# Guide one\n",
+      script: "export const version = 1;\n",
+      asset: "template-one\n",
+    });
   });
 });

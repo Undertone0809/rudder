@@ -57,37 +57,66 @@ external release blocker for docs-site publishing. Do not silently count a
 failed docs workflow as handled; either escalate the credential/account issue to
 the Vercel owner or explicitly scope docs-site publishing out of that release.
 
-## Authorization Gates
+## Release Command Contract
 
 Release preparation and release execution are separate operations:
 
-1. **Review Ready** — identify the exact source SHA, complete verification,
-   prepare release notes/screenshots, push the feature branch, and open the PR.
-2. **Landing/Staging Gate** — obtain explicit permission before merging to
-   `main` when that merge publishes a canary or updates docs staging.
-3. **Production Gate** — report the exact source ref, version/tag, production
-   targets, successful and failing checks, and rollback point; then stop and wait
-   for an operator to explicitly approve the production release.
+1. **Review Ready** — identify the exact source SHA, complete verification, and
+   prepare release notes/screenshots.
+2. **Release execution** — an explicit release/publish request authorizes
+   immediately freezing the reviewed source, committing and pushing any
+   release-only narratives directly to `main`, waiting for exact-source CI,
+   running preflight and package validation, and publishing all standard
+   surfaces in one production execution.
+3. **Status and verification** — report the exact source ref, version/tag,
+   targets, successful and failing checks, and rollback point. An explicit
+   release/publish imperative authorizes the release agent to complete the
+   standard GitHub Actions publish and verification without a second approval.
+   If the version is omitted, infer the single consistent stable target from the
+   current release context and repository scripts, state it, and proceed.
 
 Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
-a plan do not satisfy the production gate. A staging approval is not production
-approval. Agents and automation must not set `dry_run: false`, enter workflow
-confirmation strings, or synthesize a release tag as evidence of approval. The
-operator's explicit authorization must exist before those values are supplied.
-That stable-release authorization also covers the deterministic post-release
-commit that advances `main` to the next patch base; it does not authorize any
-other direct change to `main`.
+a plan do not request publication. Imperatives such as `release`, `publish`,
+`发版`, and `发布` do. Once that request exists, the release agent completes all
+standard release surfaces, including production docs and the deterministic
+post-release version commit on `main`, without returning PR or authorization
+tasks to the operator.
 
-The workflow also fails closed unless `npm-stable` has required reviewers,
-`main` is protected for normal changes, and the release workflow has a narrowly
-scoped path to push the generated post-stable version commit and dispatch its
-CI. These repository settings are part of the release gate, not optional
-documentation.
+The workflow still fails closed on machine evidence: the release source must be
+reachable from `main`, have successful exact-source CI, pass stable preflight,
+and preserve immutable npm/tag semantics. The `npm-stable` environment remains
+main-only and non-interactive, with no reviewer click or wait timer.
 
-Even when an initial request or plan includes production deployment, always
-pause at the production gate after presenting the reviewed source, target,
-checks, known failures, and rollback point. Only the operator's latest explicit
-approval for that described release authorizes proceeding.
+### Fast Stable Operating Model
+
+Use this model for an explicit stable release:
+
+1. Freeze one immutable source SHA immediately. Do not extend the release window
+   to absorb later unrelated `main` commits.
+2. If release narratives are missing, assign one bounded release-notes subagent
+   to draft `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` from the locked diff while the primary agent runs
+   read-only preflight. The primary agent reviews and integrates the drafts.
+3. Require successful exact-source CI, stable preflight, immutable npm/tag
+   checks, and package validation before publication.
+4. Run one production stable execution. Do not make a separate dry-run workflow
+   a human or agent hand-off and then repeat checkout, dependency installation,
+   and validation in a second run.
+5. Preserve every public-surface verification gate, especially the real
+   Windows/macOS/Linux install smoke.
+
+The workflow still exposes `dry_run` for read-only preview requests and
+troubleshooting. For an already-authorized release whose equivalent machine
+gates passed, use the production path directly; `dry_run: true` is not a
+mandatory first dispatch.
+
+Only an explicit production-release instruction authorizes proceeding. Once it
+exists and the reviewed source, resolved target, checks, known failures, and
+rollback point are recorded, the agent owns the remaining landing, publish,
+recovery, verification, cleanup, and closeout steps end to end.
+Separate authority is still required for destructive or nonstandard actions
+such as npm unpublish, force-pushing published tags, deleting the active canary
+line, weakening repository protections, or expanding the release scope.
 
 ## Docs Site Releases
 
@@ -98,14 +127,17 @@ The public docs site uses separate staging and production channels:
   runs automatically on `main` pushes that touch the docs tree or docs deployment
   workflow.
 - `docs.rudderhq.dev` is production. It does not auto-follow `main`.
-  Publish it manually with
+  An approved stable release invokes
   [`.github/workflows/docs-production.yml`](../.github/workflows/docs-production.yml)
-  from the Actions tab.
+  against its immutable `vX.Y.Z` tag after the npm, GitHub Release, and Desktop
+  asset steps succeed. Other docs changes still publish manually from the
+  Actions tab.
 
 Production docs publishes create a git tag in the form `docs/vYYYY.MM.DD`, for
 example `docs/v2026.05.27`. If the default date tag already exists for a
 different commit, pass a more specific `tag_name` input such as
-`docs/v2026.05.27.2`.
+`docs/v2026.05.27.2`. A stable-release docs deployment uses the immutable,
+versioned marker `docs/release/vX.Y.Z` instead.
 
 Canaries cover verification, npm, a traceability tag, and Desktop portable assets.
 
@@ -115,6 +147,12 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stables publish from an explicitly chosen source ref
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
+- stable public changelog entries are always present in both `docs/releases.mdx`
+  and `docs/zh/releases.mdx`
+- public changelog entries describe user-visible outcomes, omit empty
+  categories, and keep release-engineering details in maintainer documentation
+- stable docs production is promoted from the matching immutable `vX.Y.Z` tag
+  only after explicit docs-domain authorization
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
@@ -140,11 +178,17 @@ The release workflow dispatches the Desktop workflow explicitly after pushing th
 canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another
 workflow.
 
-Canary and stable publication use the same non-cancelling concurrency group, so
-their npm/Desktop orchestration cannot run at the same time. GitHub retains at
-most one pending job per group rather than a FIFO queue. If a pending manual
-stable is superseded by a newer pending run, rerun the same locked stable SHA
-after the active publication finishes; do not silently retarget it.
+Canary and stable publication currently use the same non-cancelling concurrency
+group. An explicit stable release takes priority over an in-flight canary for
+the same or an older version base after the locked stable source passes
+exact-source CI and preflight. Record whether canary npm/tag mutation completed,
+then stop its remaining Desktop wait and dispatch stable; do not unpublish the
+canary npm version. Never stop an active next-base canary or a canary whose
+source is not superseded by the stable release.
+
+GitHub retains at most one pending job per group rather than a FIFO queue. If a
+pending manual stable is superseded, rerun the same locked stable SHA; do not
+silently retarget it.
 
 Users install canaries with:
 
@@ -165,24 +209,30 @@ Inputs:
 - `source_ref`
   - commit SHA, branch, or tag
 - `dry_run`
-  - preview only when true
-- `confirm_stable`
-  - leave empty for dry runs
-  - after explicit production authorization, enter `PUBLISH STABLE` for the
-    real stable release
+  - optional read-only preview when true; an authorized stable release normally
+    uses `false` after equivalent exact-source gates pass
 
 Before running stable:
 
-1. pick the canary commit or tag you trust
-2. confirm the committed public package version is the stable version you want to ship
-3. create or update `releases/vX.Y.Z.md` on that source ref
-4. confirm that exact source commit has a successful `CI` run
-5. run the workflow with `dry_run: true`
-6. present the exact source ref, version, checks, targets, and rollback point;
-   obtain explicit production approval
-7. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
-8. after stable is published, confirm the workflow directly committed the
-   next-patch base to `main` and its explicitly dispatched CI succeeded
+1. freeze the tested canary commit or immutable SHA immediately
+2. confirm the committed public package version is the stable version you want
+   to ship
+3. if narratives are missing, start a bounded release-notes subagent in
+   parallel with read-only preflight; review and commit
+   `releases/vX.Y.Z.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx`
+4. confirm that exact final source commit has successful `CI`, stable preflight,
+   package validation, and no existing immutable npm version/tag
+5. present the exact source ref, version, checks, targets, data impact, and
+   rollback point as a progress update
+6. if a same-base canary is only waiting for Desktop assets, record its npm/tag
+   state and stop the remaining wait; do not unpublish it
+7. run one production workflow with `dry_run: false`; the existing release
+   request remains the npm, GitHub, Desktop, and production-docs authorization
+8. continue without another confirmation unless the user excluded
+   `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
+9. after stable and the docs deployment are both published, confirm the
+   workflow committed the next-patch base directly to `main` and its explicitly
+   dispatched CI succeeded
 
 Example:
 
@@ -199,6 +249,8 @@ The workflow:
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
 - starts the desktop release workflow for `vX.Y.Z`
+- invokes docs production from the same `vX.Y.Z` source and verifies the public
+  docs domains before advancing the next release base
 - deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
@@ -206,8 +258,8 @@ The workflow:
 - commits the next canary/stable base directly to `main` with `[skip release]`
   and dispatches the trusted CI workflow with the immutable bump SHA, unless
   `main` already advanced
-- records the announcement channel, and publishes docs production when website
-  content is part of the release scope
+- makes the website changelog deployment a required stable-release surface;
+  canary releases never deploy it
 
 Users install stable Rudder with:
 
@@ -286,28 +338,38 @@ The public docs changelog must be updated in the same stable-release pass:
 
 Canaries do not get changelog files.
 
+`./scripts/release.sh stable --preflight` fails closed unless all three stable
+release narratives exist on the selected source: `releases/vX.Y.Z.md`, the
+English `## vX.Y.Z` entry, and the Chinese `## vX.Y.Z` entry. Each public entry
+must include the version's GitHub Release link, a one-sentence user-facing
+summary, and at least one non-empty change category.
+
 Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
 release title, tag, author, and publish date around the notes:
 
 ```md
-## New Features
+This release helps users ...
+
+## New
 
 - ...
 
-## Improvements
+## Improved
 
 - ...
 
-## Bug Fixes
+## Fixed
 
 - ...
 ```
 
 Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
-standalone prose summary before `## New Features`.
+installation instructions. Omit any category that has no user-facing item.
 
-For the public docs changelog, keep `## vX.Y.Z` as the version heading, then
-use the same changelog categories inside that version entry:
+For public docs, keep `## vX.Y.Z` as the version heading and write each locale
+naturally. English uses `New`, `Improved`, `Fixed`, and optional
+`Upgrade notes`; Chinese uses `新功能`, `改进`, `问题修复`, and optional `升级说明`.
+Only include categories that contain meaningful user-facing changes:
 
 ```md
 ## vX.Y.Z
@@ -316,36 +378,67 @@ Released: YYYY-MM-DD
 
 [GitHub Release](...)
 
-### New Features
+One sentence describing the release's value to users.
+
+### New
 
 - ...
 
-### Improvements
-
-- ...
-
-### Bug Fixes
+### Fixed
 
 - ...
 ```
 
-Do not use release-section labels such as `Highlights`, `Install`, or
-`重点变化` in `releases/vX.Y.Z.md`, `docs/releases.mdx`, or
-`docs/zh/releases.mdx`. The stable changelog taxonomy is always `New Features`,
-`Improvements`, and `Bug Fixes`, in that order.
+```md
+## vX.Y.Z
 
-Recommended local generation flow:
+发布时间：YYYY-MM-DD
 
-```bash
-VERSION="$(./scripts/release.sh stable --print-version)"
-claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Use the release-changelog skill to draft or update releases/v${VERSION}.md for Rudder. Read doc/engineering/RELEASING.md and .agents/skills/release-changelog/SKILL.md, then generate the stable changelog for v${VERSION} from commits since the last stable tag. Use exactly these top-level sections in order: ## New Features, ## Improvements, ## Bug Fixes. Do not create a canary changelog."
+[GitHub Release](...)
+
+一句话说明这个版本为用户带来的价值。
+
+### 新功能
+
+- ...
+
+### 问题修复
+
+- ...
 ```
 
-The repo intentionally does not run this through GitHub Actions because:
+Write from the user's perspective: what they can now do, what became easier or
+more reliable, and whether they need to take action. Do not expose release
+plumbing such as CI checks, source locking, branch history, workflow inputs,
+account approvals, deployment authorization, or maintainer-only cleanup.
+Put those details in engineering docs or the release closeout record.
+
+Recommended agent generation flow:
+
+1. Freeze the stable SHA and previous stable tag.
+2. Start one release-notes subagent with that exact diff and the three required
+   output paths. Ask it to draft only user-visible outcomes, localized
+   naturally, with no release plumbing.
+3. In parallel, keep the primary agent on version/tag/npm preflight and CI
+   evidence.
+4. Have the primary agent review factual coverage, integrate the three files,
+   and run stable preflight plus docs checks.
+
+The subagent drafts narratives but does not select or retarget the release
+source, publish, or push independently. The repo intentionally does not generate
+notes through GitHub Actions because:
 
 - canaries are too frequent
 - stable notes are the only public narrative surface that needs LLM help
 - maintainer LLM tokens should not live in Actions
+
+If stable npm publication succeeds but the docs-production child workflow
+fails, do not publish the same npm version again. Fix the docs deployment and
+use **Re-run failed jobs** for the original Release workflow so it reuses the
+existing `vX.Y.Z` tag. The next-release-base job remains blocked until the
+matching public changelog deploy passes. For historical releases such as
+`v0.5.1`, which predate this automation, run `Docs production` manually from
+the immutable stable tag after explicit docs-domain approval.
 
 ## Smoke Testing
 

@@ -51,32 +51,7 @@ export function writeAgentOrder(storageKey: string, orderedIds: string[]) {
 }
 
 export function sortAgentsByDefaultSidebarOrder(agents: Agent[]): Agent[] {
-  if (agents.length === 0) return [];
-
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const childrenOf = new Map<string | null, Agent[]>();
-  for (const agent of agents) {
-    const parentId = agent.reportsTo && byId.has(agent.reportsTo) ? agent.reportsTo : null;
-    const siblings = childrenOf.get(parentId) ?? [];
-    siblings.push(agent);
-    childrenOf.set(parentId, siblings);
-  }
-
-  for (const siblings of childrenOf.values()) {
-    siblings.sort((left, right) => left.name.localeCompare(right.name));
-  }
-
-  const sorted: Agent[] = [];
-  const queue = [...(childrenOf.get(null) ?? [])];
-  while (queue.length > 0) {
-    const agent = queue.shift();
-    if (!agent) continue;
-    sorted.push(agent);
-    const children = childrenOf.get(agent.id);
-    if (children) queue.push(...children);
-  }
-
-  return sorted;
+  return [...agents].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function sortAgentsByStoredOrder(agents: Agent[], orderedIds: string[]): Agent[] {

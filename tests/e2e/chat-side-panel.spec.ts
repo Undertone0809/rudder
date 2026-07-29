@@ -86,8 +86,14 @@ async function installDesktopShellFileLauncherStub(page: Page) {
   });
 }
 
-async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath: string) {
-  await page.addInitScript((targetPath) => {
+async function installDesktopShellLocalFilePreviewStub(
+  page: Page,
+  canonicalPath: string,
+  expectedFileName = "Chat.parts.tsx",
+  sourceLocation?: string,
+  content = "export const localFileSidePanelEvidence = true;",
+) {
+  await page.addInitScript(({ targetPath, fileName, requestedPath, previewContent }) => {
     const previewCalls: string[] = [];
     Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
       configurable: true,
@@ -99,16 +105,18 @@ async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath:
         openPath: async () => {},
         previewLocalFile: async (filePath: string) => {
           previewCalls.push(filePath);
-          if (filePath !== targetPath) throw new Error(`Unexpected local file path: ${filePath}`);
+          if (filePath !== requestedPath) throw new Error(`Unexpected local file path: ${filePath}`);
           return {
             canonicalPath: targetPath,
-            fileName: "Chat.parts.tsx",
+            fileName,
             parentPath: targetPath.slice(0, targetPath.lastIndexOf("/")),
-            contentType: "text/plain; charset=utf-8",
-            previewKind: "text",
-            content: "export const localFileSidePanelEvidence = true;",
+            contentType: fileName.endsWith(".md")
+              ? "text/markdown; charset=utf-8"
+              : "text/plain; charset=utf-8",
+            previewKind: fileName.endsWith(".md") ? "markdown" : "text",
+            content: previewContent,
             base64: null,
-            sizeBytes: 47,
+            sizeBytes: previewContent.length,
             modifiedAt: "2026-07-21T00:00:00.000Z",
             truncated: false,
           };
@@ -116,11 +124,20 @@ async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath:
         setSidePanelCloseShortcutActive: async () => {},
       },
     });
-  }, expectedPath);
+  }, {
+    targetPath: canonicalPath,
+    fileName: expectedFileName,
+    previewContent: content,
+    requestedPath: sourceLocation ? `${canonicalPath}:${sourceLocation}` : canonicalPath,
+  });
 }
 
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
+    let openEmptySidePanelListener: (() => void) | null = null;
+    Object.assign(window, {
+      __emitDesktopOpenEmptySidePanel: () => openEmptySidePanelListener?.(),
+    });
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: {
@@ -129,6 +146,12 @@ async function installBrowserDesktopStub(page: Page) {
         forceOpenExternal: async () => {},
         setSidePanelCloseShortcutActive: async () => {},
         onCloseSidePanelActiveTab: () => () => {},
+        onOpenEmptySidePanel: (listener: () => void) => {
+          openEmptySidePanelListener = listener;
+          return () => {
+            openEmptySidePanelListener = null;
+          };
+        },
         onBrowserReset: () => () => {},
       },
     });
@@ -150,9 +173,9 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 }
 
 test.describe("Chat Side Panel", () => {
-  test("opens source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
-    const localFilePath = "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx";
-    await installDesktopShellLocalFilePreviewStub(page, localFilePath);
+  test("opens titled source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
+    const localFilePath = "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution/transcripts-and-results.md";
+    await installDesktopShellLocalFilePreviewStub(page, localFilePath, "transcripts-and-results.md", "40");
 
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -181,7 +204,7 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "completed",
-      body: `Inspect [Chat.parts.tsx](${localFilePath}:656).`,
+      body: `Inspect [Transcripts And Results](${localFilePath}:40).`,
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -195,24 +218,121 @@ test.describe("Chat Side Panel", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
-    const localFileLink = assistantMessage.getByRole("link", { name: "Chat.parts.tsx" });
+    const localFileLink = assistantMessage.getByRole("link", { name: "Transcripts And Results" });
     await expect(localFileLink).toBeVisible({ timeout: 15_000 });
-    await expect(localFileLink.locator('[data-local-file-icon="code"]')).toBeVisible();
+    await expect(localFileLink.locator('[data-local-file-icon="document"]')).toBeVisible();
     await localFileLink.click();
 
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel).toContainText("Chat.parts.tsx");
-    await expect(sidePanel.getByTestId("transcript-local-file-code-preview")).toContainText(
+    await expect(sidePanel).toContainText("transcripts-and-results.md");
+    await expect(sidePanel.getByTestId("transcript-local-file-markdown-preview")).toContainText(
       "localFileSidePanelEvidence",
     );
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
-    ))).toEqual(expect.arrayContaining([localFilePath]));
+    ))).toEqual(expect.arrayContaining([`${localFilePath}:40`]));
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-local-file-link.png"),
+      fullPage: true,
+    });
+  });
+
+  test("resolves a relative command-read file against the recorded command cwd", async ({ page }, testInfo) => {
+    const commandCwd = "/Users/zeeland/projects/rudder-oss";
+    const relativePath = "doc/README.md";
+    const resolvedPath = `${commandCwd}/${relativePath}`;
+    await installDesktopShellLocalFilePreviewStub(
+      page,
+      resolvedPath,
+      "README.md",
+      undefined,
+      "# Rudder documentation\n\nResolved from the command working directory.",
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Relative-Command-File-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Command Workspace Agent",
+    });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Relative command file preview",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Read the Rudder documentation." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "The documentation is ready.",
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "tool_call",
+            ts: "2026-07-27T10:00:00.000Z",
+            name: "command_execution",
+            toolUseId: "command-read-doc",
+            input: {
+              command: "sed -n '1,120p' doc/README.md",
+              cwd: commandCwd,
+            },
+          },
+          {
+            kind: "tool_result",
+            ts: "2026-07-27T10:00:01.000Z",
+            toolUseId: "command-read-doc",
+            content: "command: sed -n '1,120p' doc/README.md\nstatus: completed\nexit_code: 0",
+            isError: false,
+          },
+        ],
+      },
+      replyingAgentId: agent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const transcript = page.getByTestId("chat-transcript-item");
+    await transcript.getByRole("button", { name: /Worked for/i }).click();
+    const fileButton = transcript.getByRole("button", { name: "Open file README.md", exact: true });
+    await expect(fileButton).toHaveAttribute("data-transcript-file-target", resolvedPath);
+    await fileButton.click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible();
+    await expect(sidePanel.getByTestId("transcript-local-file-markdown-preview")).toContainText(
+      "Resolved from the command working directory.",
+    );
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
+    ))).toEqual(expect.arrayContaining([resolvedPath]));
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-command-relative-file-preview.png"),
       fullPage: true,
     });
   });
@@ -867,7 +987,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("automation-detail-shell")).toHaveCount(0);
   });
 
-  test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
+  test("opens inspectable references in the Side Panel and navigates chat references to Messenger", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -957,6 +1077,7 @@ test.describe("Chat Side Panel", () => {
         title: "Referenced detail chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Open the referenced detail chat." },
       },
     });
     expect(referencedChatRes.ok(), await referencedChatRes.text()).toBe(true);
@@ -981,6 +1102,7 @@ test.describe("Chat Side Panel", () => {
         title: "Reference host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Show the linked work references." },
       },
     });
     expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
@@ -1037,11 +1159,20 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
+    const issueTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="issue"]');
+    await expect(issueTab.locator('[data-slot="side-panel-tab-issue-status-icon"]')).toHaveAttribute(
+      "data-status",
+      "in_progress",
+    );
 
     const propertiesPanel = sidePanel.getByRole("region", { name: "Issue properties" });
     await propertiesPanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
     await page.getByRole("menuitemradio", { name: "Done" }).click();
     await expect(propertiesPanel.getByText("Done", { exact: true })).toBeVisible();
+    await expect(issueTab.locator('[data-slot="side-panel-tab-issue-status-icon"]')).toHaveAttribute(
+      "data-status",
+      "done",
+    );
 
     const reassigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -1176,6 +1307,9 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await assistantMessage.locator('a[data-mention-kind="automation"]').filter({ hasText: automation.title }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
+    await expect(
+      sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="automation"] svg'),
+    ).toBeVisible();
     await expect(sidePanel).toContainText("Codex verification automation");
     await expect(sidePanel).toContainText("Active");
     await expect(sidePanel).toContainText("Next run");
@@ -1187,6 +1321,9 @@ test.describe("Chat Side Panel", () => {
 
     await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
+    await expect(
+      sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="library_file"] svg'),
+    ).toBeVisible();
     const libraryPath = sidePanel.getByRole("navigation", { name: "Library file path" });
     await expect(libraryPath).toContainText("docs");
     await expect(libraryPath).toContainText(libraryFileName);
@@ -1194,10 +1331,74 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Library preview should render beside the active chat.");
 
     await assistantMessage.getByRole("link", { name: "Referenced detail chat" }).click();
-    await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
-    await expect(sidePanel).toContainText("Referenced detail chat");
-    await expect(sidePanel).toContainText("Referenced chat body should render beside the active chat.");
-    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${referencedChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-assistant-message")).toContainText(
+      "Referenced chat body should render beside the active chat.",
+    );
+  });
+
+  test("navigates a chat reference directly without opening a Side Panel chat tab", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Reference-Navigation-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Reference Navigation Agent" });
+
+    const targetRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Direct navigation target",
+        initialMessage: { body: "This is the destination chat." },
+      },
+    });
+    expect(targetRes.ok(), await targetRes.text()).toBe(true);
+    const targetChat = await targetRes.json() as { id: string };
+
+    const hostRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Direct navigation host",
+        initialMessage: { body: "Show the referenced destination." },
+      },
+    });
+    expect(hostRes.ok(), await hostRes.text()).toBe(true);
+    const hostChat = await hostRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [Direct navigation target](${buildChatMentionHref(targetChat.id)}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+    const reference = page.locator('a[data-mention-kind="chat"]', { hasText: "Direct navigation target" });
+    await expect(reference).toBeVisible({ timeout: 15_000 });
+    await reference.click();
+
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${targetChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-user-message")).toContainText("This is the destination chat.");
+    await page.screenshot({
+      path: "/tmp/rudder-chat-reference-direct-navigation.png",
+      fullPage: true,
+    });
   });
 
   test("keeps the issue Side Panel in one scroll flow with a pinned composer", async ({ page }, testInfo) => {
@@ -1355,6 +1556,7 @@ test.describe("Chat Side Panel", () => {
           title,
           issueCreationMode: "manual_approval",
           planMode: false,
+          initialMessage: { body: `Open ${title}.` },
         },
       });
       expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -1377,13 +1579,26 @@ test.describe("Chat Side Panel", () => {
       return chat;
     }
 
-    const panelTargetA = await createChat("Panel target A", "Panel target A body.");
-    const panelTargetB = await createChat("Panel target B", "Panel target B body.");
+    async function createIssue(title: string, description: string) {
+      const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+        data: {
+          title,
+          description,
+          status: "todo",
+          priority: "medium",
+        },
+      });
+      expect(issueRes.ok(), await issueRes.text()).toBe(true);
+      return issueRes.json() as Promise<{ id: string; identifier: string | null; title: string }>;
+    }
+
+    const panelTargetA = await createIssue("Panel target A", "Panel target A body.");
+    const panelTargetB = await createIssue("Panel target B", "Panel target B body.");
     const otherChat = await createChat("Other chat without panel history", "Other chat has no panel history.");
     const thirdChat = await createChat("Third chat without panel history", "Third chat has no panel history.");
     const hostChat = await createChat("Session state host chat", [
-      `Compare [Panel target A](${buildChatMentionHref(panelTargetA.id)}) beside this chat.`,
-      `Compare [Panel target B](${buildChatMentionHref(panelTargetB.id)}) beside this chat.`,
+      `Compare [Panel target A](${buildIssueMentionHref(panelTargetA.id, panelTargetA.identifier ?? panelTargetA.id)}) beside this chat.`,
+      `Compare [Panel target B](${buildIssueMentionHref(panelTargetB.id, panelTargetB.identifier ?? panelTargetB.id)}) beside this chat.`,
     ].join("\n\n"));
 
     await page.goto("/");
@@ -1397,12 +1612,12 @@ test.describe("Chat Side Panel", () => {
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
     await expect(assistantMessage).toContainText("Panel target A", { timeout: 15_000 });
 
-    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target A" }).click();
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: "Panel target A" }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel).toContainText("Panel target A body.");
 
-    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target B" }).click();
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: "Panel target B" }).click();
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
@@ -1739,7 +1954,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
 
-    await sidePanel.getByRole("button", { name: /Library/ }).click();
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
     await expect(sidePanel).toContainText("Library root");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
 
@@ -1752,6 +1967,58 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeHidden();
     await page.getByTestId("side-panel-hover-edge").hover();
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
+  });
+
+  test("opens the panel picker from the Desktop new-tab event without creating placeholder tabs", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    await installEnabledBrowserSettingsStub(page);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Desktop-Side-Panel-New-Tab-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+
+    const emitDesktopNewTab = () => page.evaluate(() => (
+      window as typeof window & { __emitDesktopOpenEmptySidePanel(): void }
+    ).__emitDesktopOpenEmptySidePanel());
+    const sidePanel = page.getByTestId("chat-side-panel");
+
+    await expect(sidePanel).toHaveCount(0);
+    await emitDesktopNewTab();
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+
+    await emitDesktopNewTab();
+    await emitDesktopNewTab();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+
+    await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(sidePanel).toBeHidden();
+
+    await emitDesktopNewTab();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(3);
   });
 
   test("animates the Side Panel shell and auto-collapses during narrow resize", async ({ page }) => {
@@ -1816,7 +2083,7 @@ test.describe("Chat Side Panel", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
   });
 
-  test("keeps the main workspace mounted but inert while the Side Panel is expanded", async ({ page }) => {
+  test("keeps the main workspace mounted but fully hidden and inert while the Side Panel is expanded", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Global-Side-Panel-Expanded-${Date.now()}`,
@@ -1852,7 +2119,10 @@ test.describe("Chat Side Panel", () => {
     await expect(mainWorkspace).toBeAttached();
     await expect(mainWorkspace).toHaveAttribute("aria-hidden", "true");
     await expect(mainWorkspace).toHaveAttribute("inert", "");
-    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
+    await expect(mainWorkspace).toHaveCSS("border-left-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("border-right-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("box-shadow", "none");
+    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(0.5);
 
     const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
     const expandedSidePanelBox = await sidePanel.boundingBox();
@@ -1871,6 +2141,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
@@ -1894,6 +2166,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
   });
 
   test("keeps resize continuous through the 2:1 auto-expand boundary", async ({ page }) => {
@@ -2024,17 +2298,19 @@ test.describe("Chat Side Panel", () => {
         await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
         await expect(main).toHaveAttribute("aria-hidden", "true");
         await expect(main).toHaveAttribute("inert", "");
+        await expect(main).toHaveCSS("border-left-width", "0px");
+        await expect(main).toHaveCSS("border-right-width", "0px");
+        await expect.poll(async () => (await main.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
+          .toBeLessThanOrEqual(0.5);
         await expect.poll(async () => {
-          const [stackBox, panelBox, mainBox] = await Promise.all([
+          const [stackBox, panelBox] = await Promise.all([
             page.getByTestId("workspace-main-panel-stack").boundingBox(),
             sidePanel.boundingBox(),
-            main.boundingBox(),
           ]);
-          if (!stackBox || !panelBox || !mainBox) return Number.POSITIVE_INFINITY;
+          if (!stackBox || !panelBox) return Number.POSITIVE_INFINITY;
           return Math.max(
             Math.abs(panelBox.x - stackBox.x),
             Math.abs((panelBox.x + panelBox.width) - (stackBox.x + stackBox.width)),
-            mainBox.width,
           );
         }).toBeLessThanOrEqual(2);
 
@@ -2044,21 +2320,15 @@ test.describe("Chat Side Panel", () => {
     }
   });
 
-  test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
-    await installBrowserDesktopStub(page);
-    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
-      data: { enabled: true, openLinksIn: "built_in" },
-    });
-    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
-
+  test("keeps desktop chat usable beside the Side Panel without a toolbar clearance strip", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Chat-Toolbar-Clearance-${Date.now()}`,
+        name: `Chat-No-Clearance-${Date.now()}`,
         issuePrefix: `CTC${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
       },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
     await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -2066,6 +2336,7 @@ test.describe("Chat Side Panel", () => {
         title: "Interrupted chat beside Browser",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Keep desktop chat controls readable while the transcript scrolls." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -2078,7 +2349,13 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "interrupted",
-      body: "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+      body: [
+        "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+        ...Array.from(
+          { length: 32 },
+          (_, index) => `Preserved transcript line ${index + 1} remains visible while scrolling in desktop chat.`,
+        ),
+      ].join("\n\n"),
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -2089,46 +2366,146 @@ test.describe("Chat Side Panel", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
 
     await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
     await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await sidePanel.getByRole("button", { name: /Browser/ }).click();
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
 
-    const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
     const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
     const chatActionsButton = page.getByTestId("chat-actions-trigger");
     const assistantMessage = page.getByTestId("chat-assistant-message");
-    await expect(toolbarClearance).toBeVisible();
+    const transcriptLine = assistantMessage.getByText(
+      "Preserved transcript line 1 remains visible while scrolling in desktop chat.",
+      { exact: true },
+    );
+    const scrollRegion = page.getByTestId("chat-messages-scroll-region");
+    await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
     await expect(chatActionsButton).toBeVisible();
     await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+    await expect(transcriptLine).toBeVisible();
+    await scrollRegion.evaluate((element) => {
+      element.scrollTop = 0;
+    });
 
-    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, scrollRegionBox] = await Promise.all([
-      toolbarClearance.boundingBox(),
-      openSidebarButton.boundingBox(),
-      chatActionsButton.boundingBox(),
-      assistantMessage.boundingBox(),
-      page.getByTestId("chat-messages-scroll-region").boundingBox(),
-    ]);
-    expect(toolbarBox).not.toBeNull();
+    const [openSidebarBox, chatActionsBox, messageBox, transcriptLineBox, scrollRegionBox, mainCardBox] =
+      await Promise.all([
+        openSidebarButton.boundingBox(),
+        chatActionsButton.boundingBox(),
+        assistantMessage.boundingBox(),
+        transcriptLine.boundingBox(),
+        scrollRegion.boundingBox(),
+        page.getByTestId("chat-main-workspace-card").boundingBox(),
+      ]);
     expect(openSidebarBox).not.toBeNull();
     expect(chatActionsBox).not.toBeNull();
     expect(messageBox).not.toBeNull();
+    expect(transcriptLineBox).not.toBeNull();
     expect(scrollRegionBox).not.toBeNull();
+    expect(mainCardBox).not.toBeNull();
 
-    const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
-    expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
-    expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(openSidebarBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(chatActionsBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(messageBox!.y).toBeGreaterThanOrEqual(scrollRegionBox!.y);
+    const controlsMessageOverlapWidth = Math.max(
+      0,
+      Math.min(chatActionsBox!.x + chatActionsBox!.width, messageBox!.x + messageBox!.width)
+        - Math.max(chatActionsBox!.x, messageBox!.x),
+    );
+    const controlsMessageOverlapHeight = Math.max(
+      0,
+      Math.min(chatActionsBox!.y + chatActionsBox!.height, messageBox!.y + messageBox!.height)
+        - Math.max(chatActionsBox!.y, messageBox!.y),
+    );
+    expect(controlsMessageOverlapWidth * controlsMessageOverlapHeight).toBe(0);
+
+    const scrollAmount = Math.max(1, transcriptLineBox!.y - (scrollRegionBox!.y + 10));
+    await scrollRegion.evaluate((element, nextScrollTop) => {
+      element.scrollTop = nextScrollTop;
+      element.dispatchEvent(new Event("scroll"));
+    }, scrollAmount);
+    await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const scrolledTranscriptLineBox = await transcriptLine.boundingBox();
+    expect(scrolledTranscriptLineBox).not.toBeNull();
+    expect(scrolledTranscriptLineBox!.y).toBeLessThan(transcriptLineBox!.y);
 
     await page.screenshot({
-      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel.png",
+      path: "/tmp/rudder-chat-without-toolbar-clearance.png",
+      fullPage: true,
+    });
+  });
+
+  test("keeps each newly opened Side Panel tab fully visible", async ({ page }, testInfo) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Visible-Side-Panel-Tab-${Date.now()}`,
+        issuePrefix: `VST${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Visible Tab Agent" });
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Visible Side Panel tab host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Keep new tabs visible." },
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    const openNewBrowserTab = page.getByRole("button", { name: "Open new browser tab" }).last();
+    await expect(openNewBrowserTab).toBeVisible();
+    const tabScroller = sidePanel.getByTestId("chat-side-panel-tab-scroller");
+    const activeTabShell = sidePanel.locator(
+      '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+    ).locator("..");
+    const expectActiveTabContained = async () => {
+      await expect.poll(async () => {
+        const [activeBox, scrollerBox] = await Promise.all([
+          activeTabShell.boundingBox(),
+          tabScroller.boundingBox(),
+        ]);
+        if (!activeBox || !scrollerBox) return false;
+        return activeBox.x >= scrollerBox.x - 1
+          && activeBox.x + activeBox.width <= scrollerBox.x + scrollerBox.width + 1;
+      }).toBe(true);
+    };
+    for (let index = 0; index < 5; index += 1) {
+      await openNewBrowserTab.click();
+      await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(index + 2);
+      await expectActiveTabContained();
+    }
+
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(6);
+    await expect(sidePanel.getByTestId("chat-side-panel-add-tab")).toBeVisible();
+    await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-active-tab-visible.png"),
       fullPage: true,
     });
   });
@@ -2225,6 +2602,15 @@ test.describe("Chat Side Panel", () => {
       element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "localhost" }));
     });
     await expect(activeBrowserTab).toContainText("localhost");
+    await stableWebview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-favicon-updated"), {
+        favicons: ["http://localhost:4173/favicon.ico"],
+      }));
+    });
+    await expect(activeBrowserTab.getByTestId("chat-side-panel-tab-browser-favicon")).toHaveAttribute(
+      "src",
+      "http://localhost:4173/favicon.ico",
+    );
 
     const dispatchBrowserShortcut = async (key: string, code: string, shiftKey = false) => {
       await sidePanel.getByLabel("Browser URL").evaluate((element, shortcut) => {

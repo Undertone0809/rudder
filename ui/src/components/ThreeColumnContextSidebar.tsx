@@ -68,7 +68,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   MoreHorizontal,
-  Network,
   PanelLeft,
   PencilLine,
   Pin,
@@ -1014,7 +1013,6 @@ export function ThreeColumnContextSidebar() {
   });
   const orgContextItems = [
     { key: "dashboard", to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", active: /^\/dashboard(?:\/|$)/.test(relativePath) },
-    { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },
     {

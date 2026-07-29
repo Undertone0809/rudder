@@ -2,7 +2,7 @@
 
 **Download a organization.**
 
-ClipHub is the public registry where people share, discover, and download Rudder organization configurations. A organization template is a portable artifact containing an entire org — agents, reporting structure, adapter configs, role definitions, seed tasks — ready to spin up with one command.
+ClipHub is the public registry where people share, discover, and download Rudder organization configurations. A organization template is a portable artifact containing an entire org — agents, adapter configs, role definitions, seed tasks — ready to spin up with one command.
 
 ---
 
@@ -23,7 +23,6 @@ A ClipHub package is a **organization template export** — the portable artifac
 | Component | Description |
 |---|---|
 | **Organization metadata** | Name, description, intended use case, category |
-| **Org chart** | Full reporting hierarchy — who reports to whom |
 | **Agent definitions** | Every agent: name, role, title, capabilities description |
 | **Adapter configs** | Per-agent adapter type and configuration (SOUL.md, runtime-owned wakeup prompt settings, CLAUDE.md, process commands, webhook URLs — whatever the adapter needs) |
 | **Seed tasks** | Optional starter tasks and initiatives to bootstrap the organization's first run |
@@ -36,10 +35,10 @@ Templates are **structure, not state.** No in-progress tasks, no historical cost
 Not every use case needs a whole organization. ClipHub also supports publishing individual components:
 
 - **Agent templates** — a single agent config (e.g. "Senior TypeScript Engineer", "SEO Content Writer", "DevOps Agent")
-- **Team templates** — a subtree of the org chart (e.g. "Marketing Team: CMO + 3 reports", "Engineering Pod: Tech Lead + 4 Engineers")
+- **Team templates** — a curated set of complementary agents (for example, "Marketing Team: Strategist + Writer + Analyst")
 - **Adapter configs** — reusable adapter configurations independent of any specific agent role
 
-These can be mixed into existing organizations. Download an agent, slot it into your org, assign a manager, go.
+These can be mixed into existing organizations. Download an agent, add it to your org, configure its ownership boundaries, and go.
 
 ---
 
@@ -54,7 +53,7 @@ The homepage surfaces organizations across several dimensions:
 - **Recent** — latest published or updated
 - **Categories** — browseable by use case (see Categories below)
 
-Each listing shows: name, short description, org size (agent count), category, adapter types used, star count, download count, and a mini org chart preview.
+Each listing shows: name, short description, org size (agent count), category, adapter types used, star count, download count, and a compact agent roster preview.
 
 ### Search
 
@@ -71,7 +70,6 @@ Also supports filtering by: category, agent count range, adapter types, star cou
 Clicking into a organization template shows:
 
 - **Full description** — what this organization does, how it operates, what to expect
-- **Interactive org chart** — visual tree of every agent with role, title, and capabilities
 - **Agent list** — expandable details for each agent (adapter type, config summary, role description)
 - **Seed tasks** — the starter initiatives and tasks included
 - **Budget overview** — suggested cost structure
@@ -259,7 +257,7 @@ Report
 
 1. Open ClipHub, browse by category or search "dev shop for building SaaS"
 2. Find a template that fits — "Lean SaaS Dev Shop (CEO + CTO + 3 Engineers)"
-3. Read the description, inspect the org chart, check the comments
+3. Read the description, inspect the agent roster, check the comments
 4. Run `rudder install cliphub:acme/lean-saas-shop`
 5. Rudder creates the organization locally with all agents pre-configured
 6. Set your API keys, adjust budgets, add your initial tasks
@@ -286,7 +284,7 @@ Report
 1. Search ClipHub for agent templates: "senior python engineer"
 2. Find a well-starred agent config
 3. Install just that agent: `rudder install cliphub:acme/senior-python-eng --agent`
-4. Assign it to a manager in your existing organization
+4. Configure its role, capabilities, permissions, and runtime in your existing organization
 5. Done
 
 ---
@@ -309,7 +307,7 @@ ClipHub is to Rudder what a package registry is to a language runtime: optional,
 
 - [ ] Template publishing (upload via CLI or web)
 - [ ] Template browsing (list, filter by category)
-- [ ] Template detail page (description, org chart, agent list, install command)
+- [ ] Template detail page (description, agent list, install command)
 - [ ] Semantic search (vector embeddings)
 - [ ] `rudder install cliphub:<publisher>/<slug>` CLI command
 - [ ] GitHub OAuth authentication

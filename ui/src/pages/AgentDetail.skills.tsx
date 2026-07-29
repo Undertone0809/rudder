@@ -34,6 +34,7 @@ import {
   agentsApi
 } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
+import { AgentSkillsOnboarding } from "../components/AgentSkillsOnboarding";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { useToast } from "../context/ToastContext";
 import {
@@ -590,6 +591,10 @@ export function AgentSkillsTab({
 
   return (
     <div className="max-w-6xl space-y-3">
+      {skillSnapshot && skillSnapshot.mode !== "unsupported" ? (
+        <AgentSkillsOnboarding />
+      ) : null}
+
       <section className="space-y-3">
         <div className="space-y-1">
           <div className="min-w-0">

@@ -6,6 +6,15 @@ export {
   redactTranscriptEntryPaths
 } from "./log-redaction.js";
 export {
+  MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS,
+  ManagedExternalMcpConfigurationError,
+  parseManagedExternalMcpBindings,
+  preflightManagedExternalMcpBindings,
+  resolveManagedExternalMcpBindings,
+  type ManagedExternalMcpBinding,
+  type ResolvedManagedExternalMcpBinding
+} from "./managed-external-mcp.js";
+export {
   buildModelAttemptSpecs,
   isSuccessfulRuntimeResult,
   normalizeModelFallbacks,

@@ -23,11 +23,19 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-skeleton[\s\S]*?animation: none !important/);
   });
 
+  it("moves top-side popovers upward as they open and preserves an exit animation", () => {
+    expect(motionCss).toContain('.motion-surface-pop[data-side="top"]');
+    expect(motionCss).toContain("@keyframes rudder-surface-pop-in-top");
+    expect(motionCss).toContain("@keyframes rudder-surface-pop-out-top");
+    expect(motionCss).toMatch(
+      /@keyframes rudder-surface-pop-in-top[\s\S]*?translateY\(var\(--motion-distance-small\)\)[\s\S]*?translateY\(0\)/,
+    );
+  });
+
   it("defines reduced-motion fallbacks for repeated product motion", () => {
     expect(motionCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(motionCss).toContain(".motion-live-surface::before");
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
-    expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain(".motion-chat-empty-recent-conversations");
@@ -68,6 +76,18 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform-origin: bottom center");
   });
 
+  it("animates Issue proposal compact and card states with a reduced-motion fallback", () => {
+    expect(motionCss).toMatch(
+      /\.chat-proposal-compact \{[\s\S]*?animation: rudder-proposal-compact-in/,
+    );
+    expect(motionCss).toMatch(
+      /\.chat-review-block--inline \{[\s\S]*?animation: rudder-proposal-card-in/,
+    );
+    expect(motionCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.chat-proposal-compact,[\s\S]*?\.chat-review-block--inline,[\s\S]*?animation: none !important/,
+    );
+  });
+
   it("defines an enter animation for draft chat heading changes", () => {
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain("@keyframes rudder-chat-empty-heading-enter");
@@ -106,12 +126,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-context-nav--agent-list");
     expect(motionCss).toContain(".motion-context-nav--project-card-list");
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
-  });
-
-  it("keeps organization structure edges stable while zooming", () => {
-    expect(motionCss).toContain(".motion-org-edge");
-    expect(motionCss).toContain("stroke-linecap: round");
-    expect(motionCss).toContain("vector-effect: non-scaling-stroke");
   });
 
   it("highlights kanban card borders on hover and keyboard focus", () => {

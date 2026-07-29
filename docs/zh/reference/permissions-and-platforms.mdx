@@ -1,11 +1,11 @@
 ---
-title: "权限与平台"
-description: "查询部署信任、本地运行环境目录、凭据、内置浏览器访问和各平台文件行为。"
+title: "权限、凭据和平台"
+description: "了解本地信任、凭据保存位置、外部连接限制，以及不同平台的差异。"
 icon: "shield-check"
 keywords:
-  - "Rudder 运行环境权限"
+  - "Rudder 权限"
   - "Agent 凭据"
-  - "本地运行环境平台"
+  - "Rudder 平台"
 canonical: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 "og:url": "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 hreflang_en: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
@@ -14,69 +14,66 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 
 <a id="definition" />
 
-## 定义
-
-权限说明一个参与者或运行环境可以访问什么。平台处理说明 Rudder 如何在
-macOS、Linux 和 Windows 上维持这些边界。提示词或运行环境选项都不能越过
-当前组织、工作区、部署模式和已配置能力授予额外权限。
+Agent 只能使用当前组织、任务、工作区和连接设置允许的文件、工具、网站与服务。
+Prompt 不能自己获得更多访问权。
 
 <a id="states" />
 
-## 状态与模式
+## 部署模式
 
-| 部署模式 | 人员访问方式 | 适用范围 |
+| 模式 | 人员访问方式 | 适用场景 |
 | --- | --- | --- |
-| `local_trusted` | 无需登录 | 仅监听本机回环地址的单负责人实例 |
-| `authenticated` 与 `private` | 需要登录 | 受信任的私有网络 |
-| `authenticated` 与 `public` | 需要登录 | 需要更严格检查的公网部署 |
+| 本地可信 | 无需登录 | 一位负责人使用只监听本机的实例 |
+| 登录 + 私有网络 | 需要登录 | 受信任的私有网络 |
+| 登录 + 公网 | 需要登录 | 需要更严格检查的公网部署 |
 
-本地运行环境测试会返回 `pass`、`warn` 或 `fail`。警告表示需要检查一项具体
-配置，不能据此认定所有能力都已可用。
+运行环境测试会返回 `pass`、`warn` 或 `fail`。警告表示有一项内容需要检查，不
+代表所有功能都已经可用。
 
 <a id="constraints" />
 
-## 约束
+## 凭据保存在什么地方
 
-- 本地可信运行环境进程通常使用负责人的 `HOME` 和 `USERPROFILE`。服务商配置、
-  已选技能、会话和临时状态保存在适配器托管位置。
-- 凭据留在服务商或负责人原本管理的路径中。不要把秘密复制到文档、提示词、
-  Library 文件或 Issue 评论。
-- Rudder 决定一次运行可以看到哪些技能。不能因为早先运行曾经加载过，就继续
-  暴露已停用或无关的技能。
-- 缺少必要工作区、权限、登录或技能时，应返回可操作的错误，不能把问题拖到
-  服务商执行阶段后变成不明失败。
+- Codex 或 Claude 等本地命令行工具继续把登录信息放在服务商或用户原本的位置。
+- Rudder 管理的外部连接凭据会加密保存在服务端。Agent 运行工具只会收到临时
+  代理身份，不会拿到保存的凭据。
+- 不要把密钥复制到 Prompt、Library 文件、Issue、截图或文档。
+- 重新连接 OAuth 服务时，旧连接会保持可用，直到新授权成功。明确断开会立即
+  停止访问。
+
+## 外部 MCP 访问
+
+组织连接可以为每个 Agent 设置简单访问级别：
+
+- Supabase 和 Linear：无访问、只读或读写
+- Notion：无访问，或使用服务商授权的访问
+
+“读写”不包括破坏性、计费、管理或未知工具。同一正式服务商同时有 Agent 连接
+和组织连接时，先使用 Agent 连接。Agent 连接选择**无访问**表示明确阻止；如果
+希望改用可用的组织连接，应断开这个 Agent 连接。
+
+降低访问会阻止当前运行之后的调用；提高访问从下一次运行开始。
 
 <a id="boundaries" />
 
-## 边界
+## 浏览器与平台差异
 
-Rudder Desktop 的内置浏览器按操作系统用户和本地 Rudder 实例保留一个网站
-会话。同一实例中的组织和受支持本地 Agent 标签页共享 Cookie 与网站数据，
-但标签页控制仍受组织、Agent、运行和标签页范围约束。Agent 不会获得原始
-Cookie、密码、任意 JavaScript 执行权限或其他运行的标签页。
+Rudder Desktop 会为当前系统用户和本地实例保留一份网站登录资料。组织之间共享
+这些网站数据，但 Agent 标签页仍然只属于自己的组织、Agent、运行和标签页。
 
-Cookie 导入目前只支持 macOS 上受支持的本地 Chrome、Microsoft Edge 和 Brave
-配置，并且需要负责人确认。它不会导入密码。Windows 和 Linux 暂不支持导入。
+Cookie 导入目前只支持 macOS 上受支持的 Chrome、Edge 和 Brave 配置，不会
+导入密码。Windows 和 Linux 目前不支持 Cookie 导入。
 
-在 Windows 上，普通目录符号链接需要提升权限时，Rudder 可以改用目录联接点
-或安全复制。负责人不应仅为了加载一项已选技能就以管理员身份运行 Rudder。
+在 Windows 上，符号链接需要管理员权限时，Rudder 可以使用目录联接点或安全
+复制。你不应该仅为了加载技能而以管理员身份运行整个 Rudder。
 
 <a id="examples" />
 
 ## 例子
 
-- 本地 Codex 运行可以使用负责人现有的 Codex 登录，Rudder 则把已选技能和
-  会话状态保存在托管位置。
-- 关闭 Agent 浏览器访问会移除托管控制能力，但保留负责人的标签页和网站数据。
-  只有清除浏览数据才会删除共享网站会话。
-- Windows 上创建技能链接返回 `EPERM` 时，Rudder 应使用受支持的备用方式，
-  或在服务商执行前说明需要修复的路径和权限。
-
-<CardGroup cols={2}>
-  <Card title="配置 Agent 运行环境" icon="terminal" href="/zh/how-to/configure-agent-runtime">
-    配置凭据并测试运行环境是否就绪。
-  </Card>
-  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
-    了解共享网站会话和隔离标签页控制。
-  </Card>
-</CardGroup>
+- 本地 Codex Agent 可以使用你已有的 Codex 登录，但仍然只能看到本次运行允许
+  的工作上下文和 Rudder 工具。
+- 关闭 Agent 浏览器访问会关掉受控标签页，但保留你自己的标签页和网站登录。
+- 提高 Agent 的 MCP 访问后，开始一次新运行测试新工具。
+- Windows 技能链接失败时，使用受支持的备用方式或修复指定路径权限，不要直接
+  让整个应用以管理员身份运行。

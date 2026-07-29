@@ -1,0 +1,9 @@
+DROP INDEX "mcp_connections_org_official_canonical_uq";--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD COLUMN "scope" text DEFAULT 'organization' NOT NULL;--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD COLUMN "owner_agent_id" uuid;--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD CONSTRAINT "mcp_connections_owner_agent_id_agents_id_fk" FOREIGN KEY ("owner_agent_id") REFERENCES "public"."agents"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "mcp_connections_agent_official_canonical_uq" ON "mcp_connections" USING btree ("org_id","owner_agent_id","provider") WHERE "mcp_connections"."provider" in ('supabase', 'linear', 'notion') and "mcp_connections"."canonical_state" = 'canonical' and "mcp_connections"."scope" = 'agent';--> statement-breakpoint
+CREATE INDEX "mcp_connections_owner_agent_idx" ON "mcp_connections" USING btree ("owner_agent_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "mcp_connections_org_official_canonical_uq" ON "mcp_connections" USING btree ("org_id","provider") WHERE "mcp_connections"."provider" in ('supabase', 'linear', 'notion') and "mcp_connections"."canonical_state" = 'canonical' and "mcp_connections"."scope" = 'organization';--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD CONSTRAINT "mcp_connections_scope_owner_check" CHECK (("mcp_connections"."scope" = 'organization' and "mcp_connections"."owner_agent_id" is null) or ("mcp_connections"."scope" = 'agent' and "mcp_connections"."owner_agent_id" is not null));--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD CONSTRAINT "mcp_connections_scope_check" CHECK ("mcp_connections"."scope" in ('organization', 'agent'));

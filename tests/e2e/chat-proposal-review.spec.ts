@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -8,6 +8,7 @@ async function selectInlineEntityOption(page: Page, name: string) {
   const popover = page.locator(".motion-inline-selector-pop:visible").last();
   await expect(popover).toBeVisible();
   await popover.getByRole("button", { name }).click();
+  await expect(page.locator(".motion-inline-selector-pop:visible")).toHaveCount(0);
 }
 
 async function createSkill(request: APIRequestContext, orgId: string, name: string, slug: string) {
@@ -84,6 +85,67 @@ process.stdin.on("end", async () => {
   return stubPath;
 }
 
+async function writeOriginalImageProposalStub(name: string) {
+  await fs.mkdir(E2E_BIN_DIR, { recursive: true });
+  const stubPath = path.join(E2E_BIN_DIR, `${name}.js`);
+  const stubSource = `#!/usr/bin/env node
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const evidencePath = prompt.match(/"name":\\s*"proposal-evidence\\.png"[\\s\\S]{0,320}?"contentPath":\\s*"([^"]+)"/)?.[1] ?? null;
+  const isRevision = prompt.includes("Retain the relevant original image and narrow the acceptance wording.");
+  const hasPromptContract = prompt.includes("For initial and revised issue proposals")
+    && prompt.includes("canonical contentPath")
+    && prompt.includes("localPath is temporary runtime inspection context only")
+    && prompt.includes("do not copy every attachment indiscriminately")
+    && (!isRevision || prompt.includes("re-check relevant user image attachments across the available recentMessages history"));
+  const imageMarkdown = evidencePath ? "![Original issue evidence](" + evidencePath + ")" : "";
+  const description = hasPromptContract && evidencePath
+    ? [
+        isRevision ? "## Revised proposal" : "## Initial proposal",
+        "",
+        isRevision
+          ? "Keep the source screenshot and narrow acceptance to the observed state."
+          : "Use the operator's source screenshot as the requirement and acceptance reference.",
+        "",
+        imageMarkdown,
+      ].join("\\n")
+    : "Prompt contract or canonical image evidence is missing.";
+  const result = {
+    kind: "issue_proposal",
+    body: isRevision ? "I revised the proposal and retained the original evidence." : "I drafted the proposal with the original evidence.",
+    structuredPayload: {
+      issueProposal: {
+        title: "Original image proposal test",
+        description,
+        priority: "medium",
+        assigneeUnassignedReason: "The operator will choose an owner after reviewing the preserved evidence.",
+      },
+    },
+  };
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-original-image-proposal", model: "gpt-5.4" }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "item.completed",
+    item: {
+      type: "agent_message",
+      text: result.body + "\\n" + sentinel + JSON.stringify(result),
+    },
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "turn.completed",
+    usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+  }) + "\\n");
+});
+`;
+  await fs.writeFile(stubPath, stubSource, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
 async function createProposalOrg(page: Page, name: string, command: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
@@ -103,8 +165,147 @@ async function createProposalOrg(page: Page, name: string, command: string) {
   return { ...organization, chatAgent };
 }
 
+async function proposalEvidenceScreenshotPath(testInfo: TestInfo, filename: string) {
+  const evidenceDir = process.env.RUDDER_R6Z27_SCREENSHOT_DIR?.trim();
+  if (!evidenceDir) return testInfo.outputPath(filename);
+  await fs.mkdir(evidenceDir, { recursive: true });
+  return path.join(evidenceDir, filename);
+}
+
 test.describe("Chat proposal review block", () => {
-  test("collapses long proposal details until the operator expands them", async ({ page }) => {
+  test("preserves a relevant original image across proposal revision and the created issue", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const command = await writeOriginalImageProposalStub("proposal-review-original-image");
+    const organization = await createProposalOrg(page, `OriginalImage-${Date.now()}`, command);
+
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    const fileInput = page.locator('input[type="file"]').first();
+    await fileInput.setInputFiles([
+      {
+        name: "proposal-evidence.png",
+        mimeType: "image/png",
+        buffer: await fs.readFile(path.resolve("ui/public/rudder-logo.png")),
+      },
+      {
+        name: "unrelated-reference.png",
+        mimeType: "image/png",
+        buffer: await fs.readFile(path.resolve("ui/public/favicon-32x32.png")),
+      },
+    ]);
+    await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(2);
+    await composer.fill("Please draft an issue proposal using the screenshot that shows the requirement.");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const initialReviewBlock = page.getByTestId("proposal-review-block").first();
+    await expect(initialReviewBlock).toBeVisible({ timeout: 30_000 });
+    await expect(initialReviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(initialReviewBlock.getByAltText("Original issue evidence")).toBeVisible();
+    await expect(initialReviewBlock.getByAltText("unrelated-reference.png")).toHaveCount(0);
+    await initialReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const initialProposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    await expect(initialProposalPanel).toBeVisible();
+    await expect(page.getByTestId("proposal-review-compact")).toBeVisible();
+    const initialPanelReviewBlock = initialProposalPanel.getByTestId("proposal-review-block");
+    await initialPanelReviewBlock.locator(".chat-review-details-body").screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "initial-proposal-original-image.png"),
+      animations: "disabled",
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
+    const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(messagesRes.ok()).toBe(true);
+    const messages = await messagesRes.json();
+    const originalUserMessage = messages.find((message: {
+      role: string;
+      attachments: Array<{ originalFilename: string | null }>;
+    }) =>
+      message.role === "user"
+      && message.attachments.some((attachment) => attachment.originalFilename === "proposal-evidence.png"),
+    );
+    expect(originalUserMessage).toBeTruthy();
+    const evidenceAttachment = originalUserMessage.attachments.find(
+      (attachment: { originalFilename: string | null }) => attachment.originalFilename === "proposal-evidence.png",
+    );
+    const unrelatedAttachment = originalUserMessage.attachments.find(
+      (attachment: { originalFilename: string | null }) => attachment.originalFilename === "unrelated-reference.png",
+    );
+    expect(evidenceAttachment?.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+    expect(unrelatedAttachment?.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+
+    const revisionFeedback = "Retain the relevant original image and narrow the acceptance wording.";
+    await initialPanelReviewBlock
+      .getByTestId("proposal-review-note")
+      .locator(".rudder-mdxeditor-content[contenteditable='true']")
+      .fill(revisionFeedback);
+    await initialPanelReviewBlock.getByRole("button", { name: "Request changes" }).click();
+
+    await expect(initialPanelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
+    const revisedReviewBlock = page
+      .getByTestId("chat-messages-content")
+      .getByTestId("proposal-review-block")
+      .last();
+    await expect(revisedReviewBlock).toHaveAttribute("data-status", "pending", { timeout: 30_000 });
+    await expect(revisedReviewBlock.getByRole("heading", { name: "Revised proposal" })).toBeVisible();
+    const revisedImage = revisedReviewBlock.getByAltText("Original issue evidence");
+    await expect(revisedImage).toBeVisible();
+    await expect(revisedImage).toHaveAttribute("src", evidenceAttachment.contentPath);
+    await expect(revisedReviewBlock.locator(`img[src="${unrelatedAttachment.contentPath}"]`)).toHaveCount(0);
+    await revisedReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const revisedProposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    await expect(revisedProposalPanel).toBeVisible();
+    await revisedProposalPanel.locator(".chat-review-details-body").screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "revised-proposal-original-image.png"),
+      animations: "disabled",
+    });
+
+    const revisedMessagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(revisedMessagesRes.ok()).toBe(true);
+    const revisedMessages = await revisedMessagesRes.json();
+    const proposalDescriptions = revisedMessages
+      .filter((message: { kind: string }) => message.kind === "issue_proposal")
+      .map((message: { structuredPayload?: { issueProposal?: { description?: string } } }) =>
+        message.structuredPayload?.issueProposal?.description ?? "",
+      );
+    expect(proposalDescriptions).toHaveLength(2);
+    expect(proposalDescriptions.every((description: string) =>
+      description.includes(`![Original issue evidence](${evidenceAttachment.contentPath})`),
+    )).toBe(true);
+    expect(proposalDescriptions.join("\n")).not.toContain(unrelatedAttachment.contentPath);
+    expect(proposalDescriptions.join("\n")).not.toContain("localPath");
+    expect(proposalDescriptions.join("\n")).not.toContain("rudder-chat-attachments-");
+
+    const revisedPanelReviewBlock = revisedProposalPanel.getByTestId("proposal-review-block");
+    await revisedPanelReviewBlock.getByTestId("proposal-review-approve").click();
+    await expect(revisedPanelReviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
+    const createdIssueLink = revisedPanelReviewBlock.locator(".chat-system-issue-link").last();
+    await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
+    await createdIssueLink.click();
+
+    await expect(page.getByRole("heading", { name: "Original image proposal test" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "Revised proposal" })).toBeVisible();
+    const issueImage = page.getByAltText("Original issue evidence");
+    await expect(issueImage).toBeVisible();
+    await expect(issueImage).toHaveAttribute("src", evidenceAttachment.contentPath);
+    await expect(page.locator(`img[src="${unrelatedAttachment.contentPath}"]`)).toHaveCount(0);
+
+    const issuesRes = await page.request.get(`/api/orgs/${organization.id}/issues`);
+    expect(issuesRes.ok()).toBe(true);
+    const issues = await issuesRes.json();
+    const createdIssue = issues.find((issue: { title: string }) => issue.title === "Original image proposal test");
+    expect(createdIssue?.description).toContain(`![Original issue evidence](${evidenceAttachment.contentPath})`);
+    expect(createdIssue?.description).not.toContain(unrelatedAttachment.contentPath);
+    expect(createdIssue?.description).not.toContain("localPath");
+    expect(createdIssue?.description).not.toContain("rudder-chat-attachments-");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "created-issue-original-image.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+
+  test("opens long proposal details in a Side Panel tab and restores the inline card after close", async ({ page }, testInfo) => {
     const command = await writeProposalStub("proposal-review-long-details", {
       kind: "issue_proposal",
       body: "Create a long proposal for the details expansion test.",
@@ -140,9 +341,14 @@ test.describe("Chat proposal review block", () => {
     await composer.fill("please draft a long issue proposal");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const reviewBlock = page.getByTestId("proposal-review-block").last();
+    const reviewBlock = page.locator(".chat-review-block--inline").last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toContainText("Reason: This proposal is intentionally unassigned while the operator reviews the long details.");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-inline-card.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
     const details = reviewBlock.locator(".chat-review-details-body");
     const expandButton = reviewBlock.getByRole("button", { name: "Show full proposal" });
     await expect(expandButton).toBeVisible();
@@ -161,16 +367,99 @@ test.describe("Chat proposal review block", () => {
 
     await expandButton.click();
 
-    await expect(reviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
+    const compactProposal = page.getByTestId("proposal-review-compact");
+    await expect(compactProposal).toBeVisible();
+    await expect(reviewBlock).toHaveCount(0);
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveText("Issue proposal");
+    await expect(sidePanel.getByRole("status")).toHaveText("Issue proposal opened in Side Panel.");
+    const panelReviewBlock = sidePanel.getByTestId("proposal-review-block");
+    const panelDetails = panelReviewBlock.locator(".chat-review-details-body");
     await expect
       .poll(async () =>
-        details.evaluate((element) => ({
+        panelDetails.evaluate((element) => ({
           expanded: element.scrollHeight <= element.clientHeight + 1,
           collapsed: element.classList.contains("chat-review-details-body--collapsed"),
           fadeVisible: element.classList.contains("chat-review-details-body--can-expand"),
         })),
       )
       .toEqual({ expanded: true, collapsed: false, fadeVisible: false });
+    await expect(panelDetails).toContainText("Acceptance: Clicking show full proposal reveals every line without clipping.");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-side-panel.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
+
+    await expect(compactProposal).toHaveAttribute("aria-expanded", "true");
+    await compactProposal.click();
+    await expect(sidePanel).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    const restoredReviewBlock = page.locator(".chat-review-block--inline").last();
+    await expect(restoredReviewBlock).toBeVisible();
+    await expect(restoredReviewBlock).toHaveClass(/chat-review-block--inline/);
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-restored-card.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
+
+    await restoredReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const reopenedForHidePanel = page.getByTestId("chat-side-panel");
+    const compactBeforeHide = page.getByTestId("proposal-review-compact");
+    await expect(reopenedForHidePanel).toBeVisible();
+    await expect(compactBeforeHide).toHaveAttribute("aria-expanded", "true");
+
+    await reopenedForHidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(reopenedForHidePanel).toHaveCount(0);
+    await expect(compactBeforeHide).toBeVisible();
+    await expect(compactBeforeHide).toHaveAttribute("aria-expanded", "false");
+
+    await compactBeforeHide.click();
+    const reopenedPanel = page.getByTestId("chat-side-panel");
+    await expect(reopenedPanel).toBeVisible();
+
+    await reopenedPanel.getByTestId("chat-side-panel-add-tab").click();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await reopenedPanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(reopenedPanel.getByRole("tab", { name: "Library" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    const registeredCompactProposal = page.getByTestId("proposal-review-compact");
+    await expect(registeredCompactProposal).toHaveAttribute("aria-expanded", "false");
+    await registeredCompactProposal.click();
+    await expect(reopenedPanel).toBeVisible();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(registeredCompactProposal).toHaveAttribute("aria-expanded", "true");
+
+    await registeredCompactProposal.click();
+    await expect(reopenedPanel).toBeVisible();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(reopenedPanel.getByRole("tab", { name: "Library" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    await expect(page.locator(".chat-review-block--inline")).toHaveCount(1);
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(
+        testInfo,
+        "issue-proposal-sibling-tab-remains-open.png",
+      ),
+      animations: "disabled",
+      fullPage: true,
+    });
+
+    await reopenedPanel.getByTestId("chat-side-panel-tab").hover();
+    await reopenedPanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(reopenedPanel).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-block")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Show full proposal" })).toBeVisible();
   });
 
   test("keeps decision note inside the review block and restores the composer after rejection", async ({ page }) => {
@@ -294,23 +583,33 @@ test.describe("Chat proposal review block", () => {
     await composer.fill("please draft an issue");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const reviewBlock = page.getByTestId("proposal-review-block").first();
+    const reviewBlock = page
+      .getByTestId("chat-messages-content")
+      .getByTestId("proposal-review-block")
+      .first();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await reviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const proposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    const panelReviewBlock = proposalPanel.getByTestId("proposal-review-block");
+    await expect(panelReviewBlock).toBeVisible();
     const revisionFeedback = "Narrow the acceptance criteria before I approve this.";
-    await reviewBlock
+    await panelReviewBlock
       .getByTestId("proposal-review-note")
       .locator(".rudder-mdxeditor-content[contenteditable='true']")
       .fill(revisionFeedback);
-    await reviewBlock.getByRole("button", { name: "Request changes" }).click();
+    await panelReviewBlock.getByRole("button", { name: "Request changes" }).click();
 
-    await expect(reviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
+    await expect(panelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
     await expect(page.getByText('Please revise the proposal "Review block revision test"')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(revisionFeedback).last()).toBeVisible();
     await expect(page.getByTestId("proposal-review-block")).toHaveCount(2, { timeout: 15_000 });
-    await expect(page.getByTestId("proposal-review-block").last()).toHaveAttribute("data-status", "pending");
+    await expect(
+      page.getByTestId("chat-messages-content").getByTestId("proposal-review-block"),
+    ).toHaveAttribute("data-status", "pending");
   });
 
-  test("shows approved proposals as completed review blocks", async ({ page }) => {
+  test("shows approved proposals as completed review blocks", async ({ page }, testInfo) => {
+    await page.addInitScript(() => window.localStorage.setItem("rudder.theme", "dark"));
     const command = await writeProposalStub("proposal-review-approve", {
       kind: "issue_proposal",
       body: "Create a scoped issue for this approval-state test.",
@@ -339,8 +638,9 @@ test.describe("Chat proposal review block", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const reviewBlock = page.getByTestId("proposal-review-block").last();
-    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toBeVisible({ timeout: 30_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await expect(reviewBlock.locator("h2")).toHaveText("Execution plan");
     await expect(reviewBlock.locator("ul li")).toHaveCount(2);
     await expect(reviewBlock.locator("code")).toContainText("pnpm test:e2e");
@@ -363,6 +663,24 @@ test.describe("Chat proposal review block", () => {
     const createdIssueLink = outcome.locator(".chat-system-issue-link").last();
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await expect(createdIssueLink).toHaveAttribute("href", /\/issues\//);
+    const createdIssueRef = (await createdIssueLink.textContent())?.trim();
+    expect(createdIssueRef).toBeTruthy();
+    const manifest = page.getByRole("complementary", { name: "Conversation files and links" });
+    await expect(manifest).toBeVisible({ timeout: 15_000 });
+    const createdIssueManifestRow = manifest.getByRole("button", {
+      name: `${createdIssueRef} · Review block approval test`,
+      exact: true,
+    });
+    await expect(createdIssueManifestRow).toBeVisible();
+    const createdIssueStatusIcon = createdIssueManifestRow
+      .locator("[data-file-icon='issue'][data-issue-status='todo'] [data-slot='issue-status-icon']");
+    await expect(createdIssueStatusIcon).toBeVisible();
+    await expect(createdIssueStatusIcon).toHaveAttribute("data-status", "todo");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-created-issue-manifest-dark.png"),
+      fullPage: true,
+    });
     await expect(page.locator(".chat-composer").last()).toBeVisible();
     const composerGap = await page.evaluate(() => {
       const scrollRegion = document.querySelector('[data-testid="chat-messages-scroll-region"]');
@@ -384,7 +702,27 @@ test.describe("Chat proposal review block", () => {
     expect(composerGap!.outerGap).toBeGreaterThanOrEqual(-1);
     expect(composerGap!.outerGap).toBeLessThanOrEqual(1);
     expect(["normal", "0px"]).toContain(composerGap!.layoutRowGap);
-    expect(composerGap!.contentPaddingBottom).toBe("0px");
+    expect(composerGap!.contentPaddingBottom).toBe("16px");
+    const restoredComposer = page.locator(".chat-composer .rudder-mdxeditor-content[contenteditable='true']").last();
+    await restoredComposer.fill("Preserve this draft while inspecting the created issue.");
+    const chatUrl = page.url();
+    await createdIssueManifestRow.click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(issueSidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
+    await expect(issueSidePanel).toContainText(createdIssueRef!);
+    await expect(issueSidePanel).toContainText("Review block approval test");
+    await expect(page).toHaveURL(chatUrl);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-created-issue-side-panel-dark.png"),
+      fullPage: true,
+    });
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+    await expect(manifest).toBeVisible();
+    await expect(restoredComposer).toHaveText("Preserve this draft while inspecting the created issue.");
     await createdIssueLink.click();
     await expect(page.getByRole("heading", { name: "Review block approval test" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Approval feedback")).toBeVisible({ timeout: 15_000 });
@@ -595,7 +933,7 @@ test.describe("Chat proposal review block", () => {
     await expect(page.getByText("Proposal Agent").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("lets operators edit proposal owner and reviewer before approval", async ({ page }) => {
+  test("lets operators edit proposal owner and reviewer before approval", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `EditableProposal-${Date.now()}`,
@@ -607,6 +945,7 @@ test.describe("Chat proposal review block", () => {
       data: {
         name: "Editable Owner",
         role: "engineer",
+        title: "Operator Assistant",
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {},
       },
@@ -617,6 +956,7 @@ test.describe("Chat proposal review block", () => {
       data: {
         name: "Editable Reviewer",
         role: "cto",
+        title: "Independent Reviewer",
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {},
       },
@@ -648,6 +988,9 @@ test.describe("Chat proposal review block", () => {
         title: "Editable principals proposal",
         preferredAgentId: chatAgent.id,
         issueCreationMode: "manual_approval",
+        initialMessage: {
+          body: "Prepare to draft an editable routing issue.",
+        },
       },
     });
     expect(conversationRes.ok()).toBe(true);
@@ -663,11 +1006,43 @@ test.describe("Chat proposal review block", () => {
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
     await reviewBlock.getByRole("button", { name: "Edit owner" }).click();
+    expect(
+      await page.locator('[data-slot="agent-menu-supporting-label"]:visible').allTextContents(),
+    ).toContain("Operator Assistant");
     await selectInlineEntityOption(page, "Editable Owner");
     await reviewBlock.getByRole("button", { name: "Edit reviewer" }).click();
+    expect(
+      await page.locator('[data-slot="agent-menu-supporting-label"]:visible').allTextContents(),
+    ).toContain("Independent Reviewer");
     await selectInlineEntityOption(page, "Editable Reviewer");
     await expect(reviewBlock).toContainText("Editable Owner");
     await expect(reviewBlock).toContainText("Editable Reviewer");
+    await expect(reviewBlock.getByText("Operator Assistant", { exact: true })).toHaveCount(0);
+    await expect(reviewBlock.getByText("Independent Reviewer", { exact: true })).toHaveCount(0);
+
+    const principalLabels = reviewBlock.locator(
+      '[data-slot="assignee-label"][data-kind="agent"][data-agent-avatar-style="bare"]',
+    );
+    await expect(principalLabels).toHaveCount(2);
+    await expect(reviewBlock.locator('[data-slot="assignee-agent-avatar-frame"]')).toHaveCount(0);
+    await expect(reviewBlock.locator('[data-slot="agent-title-badge"]')).toHaveCount(0);
+    const principalAvatars = await principalLabels.evaluateAll((labels) =>
+      labels.map((label) => {
+        const avatar = label.querySelector<HTMLElement>("svg, img");
+        return {
+          width: avatar?.getBoundingClientRect().width ?? 0,
+          height: avatar?.getBoundingClientRect().height ?? 0,
+        };
+      }),
+    );
+    expect(principalAvatars).toEqual([
+      { width: 24, height: 24 },
+      { width: 24, height: 24 },
+    ]);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-proposal-selected-agents.png"),
+      fullPage: false,
+    });
 
     await reviewBlock.getByRole("button", { name: "Approve" }).click();
 

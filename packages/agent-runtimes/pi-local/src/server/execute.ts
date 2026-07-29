@@ -14,7 +14,6 @@ import {
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
-  assertRudderMcpCoreAvailable,
   preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
@@ -56,6 +55,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  discoverPiManagedExternalMcpBindings,
+  renderPiManagedExternalMcpExtension,
+} from "./managed-external-mcp.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 import {
   ensurePiOpenCodeAnonymousModelsConfig,
@@ -68,6 +71,7 @@ import { resolveManagedPiHomeDir } from "./skills.js";
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const MAX_PI_LOG_TEXT_CHARS = 4_000;
 const MAX_PI_RESULT_STDOUT_BYTES = 64 * 1024;
+const PI_MANAGED_EXTERNAL_MCP_EXTENSION_NAME = "rudder-managed-external-mcp";
 const PI_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
@@ -332,6 +336,7 @@ async function ensurePiRudderToolsExtension(input: {
   runtimeEnv: Record<string, string>;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }): Promise<{
+  active: boolean;
   path: string;
   configuredToolCount: number;
   toolNames: string[];
@@ -361,7 +366,23 @@ async function ensurePiRudderToolsExtension(input: {
         runtimeEnv: input.runtimeEnv,
         browserEnabled: false,
       });
-  if (input.surface === "core") assertRudderMcpCoreAvailable(rudderMcpPreflight);
+  if (input.surface === "core" && !rudderMcpPreflight.available) {
+    await input.onLog(
+      "stderr",
+      `[rudder] Rudder MCP is unavailable; continuing without verified Rudder MCP tools: ${rudderMcpPreflight.diagnostic}\n`,
+    );
+    await fs.rm(extensionDir, { recursive: true, force: true });
+    return {
+      active: false,
+      path: extensionPath,
+      configuredToolCount: 0,
+      toolNames: [],
+      schemaFallbackReason: rudderMcpPreflight.diagnostic
+        ?? "Rudder MCP capability preparation failed.",
+      browserEnabled: input.browserEnabled,
+      rudderMcpPreflight,
+    };
+  }
   const browserEnabled = input.surface === "browser"
     ? input.browserEnabled && rudderMcpPreflight.browserAvailable === true
     : input.browserEnabled;
@@ -494,6 +515,7 @@ export default function rudderAgentTools(pi: ExtensionAPI) {
     await input.onLog("stderr", `[rudder] Pi Rudder tool extension fell back to permissive schemas: ${rudderMcpPreflight.diagnostic}\n`);
   }
   return {
+    active: true,
     path: extensionPath,
     configuredToolCount: toolEntries.length,
     toolNames,
@@ -794,7 +816,75 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     moduleDir: __moduleDir,
     runtimeEnv,
     onLog,
+  }).catch(async () => {
+    await fs.rm(
+      path.join(resolvePiExtensionsDir(managedHome), RUDDER_MCP_SERVER_NAME),
+      { recursive: true, force: true },
+    );
+    await onLog(
+      "stderr",
+      "[rudder] Rudder MCP capability preparation failed; continuing without Rudder MCP tools.\n",
+    );
+    return {
+      active: false,
+      path: path.join(resolvePiExtensionsDir(managedHome), RUDDER_MCP_SERVER_NAME, "index.ts"),
+      configuredToolCount: 0,
+      toolNames: [],
+      schemaFallbackReason: "Rudder MCP capability preparation failed.",
+      browserEnabled,
+      rudderMcpPreflight: {
+        available: false,
+        provenance: "repo" as const,
+        version: null,
+        contractVersion: null,
+        coreContractHash: null,
+        diagnosticCode: "core_bundle_handshake_failed" as const,
+        diagnostic: "Rudder MCP capability preparation failed.",
+        tools: [],
+      },
+    };
   });
+  const managedExternalMcpBindings = await discoverPiManagedExternalMcpBindings(
+    config,
+    runtimeEnv,
+    {
+      signal: ctx.abortSignal,
+      onFailure: async (serverName) => {
+        await onLog(
+          "stderr",
+          `[rudder] Managed MCP ${serverName ? `server "${serverName}"` : "configuration"} was unavailable during Pi tool discovery and was omitted.\n`,
+        );
+      },
+    },
+  );
+  const managedExternalMcpExtensionDir = path.join(
+    resolvePiExtensionsDir(managedHome),
+    PI_MANAGED_EXTERNAL_MCP_EXTENSION_NAME,
+  );
+  const managedExternalMcpExtensionPath = managedExternalMcpBindings.length > 0
+    ? path.join(managedExternalMcpExtensionDir, "index.ts")
+    : null;
+  if (managedExternalMcpExtensionPath) {
+    await fs.mkdir(managedExternalMcpExtensionDir, { recursive: true });
+    const tempPath = `${managedExternalMcpExtensionPath}.${runId}.tmp`;
+    try {
+      await fs.writeFile(
+        tempPath,
+        renderPiManagedExternalMcpExtension(managedExternalMcpBindings),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      await fs.rename(tempPath, managedExternalMcpExtensionPath);
+      await fs.chmod(managedExternalMcpExtensionPath, 0o600);
+    } finally {
+      await fs.rm(tempPath, { force: true });
+    }
+    await onLog(
+      "stdout",
+      `[rudder] Wrote managed Pi external MCP bridge with ${managedExternalMcpBindings.length} independent server${managedExternalMcpBindings.length === 1 ? "" : "s"}.\n`,
+    );
+  } else {
+    await fs.rm(managedExternalMcpExtensionDir, { recursive: true, force: true });
+  }
   const browserExtensionDir = path.join(resolvePiExtensionsDir(managedHome), RUDDER_BROWSER_MCP_SERVER_NAME);
   const attemptedBrowserPiExtension = browserEnabled
     ? await ensurePiRudderToolsExtension({
@@ -804,6 +894,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         moduleDir: __moduleDir,
         runtimeEnv,
         onLog,
+      }).catch(async () => {
+        await onLog(
+          "stderr",
+          "[rudder] Browser MCP capability preparation failed; continuing without browser tools.\n",
+        );
+        return null;
       })
     : null;
   const rudderBrowserPiExtensionPath = attemptedBrowserPiExtension?.browserEnabled
@@ -1011,10 +1107,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       "ls",
       ...rudderPiExtensionPath.toolNames,
       ...(rudderBrowserPiExtensionPath?.toolNames ?? []),
+      ...managedExternalMcpBindings.flatMap((binding) =>
+        binding.tools.map((tool) => tool.name)),
     ].join(","));
     args.push("--session", sessionFile);
-    args.push("--extension", rudderPiExtensionPath.path);
+    if (rudderPiExtensionPath.active) {
+      args.push("--extension", rudderPiExtensionPath.path);
+    }
     if (rudderBrowserPiExtensionPath) args.push("--extension", rudderBrowserPiExtensionPath.path);
+    if (managedExternalMcpExtensionPath) {
+      args.push("--extension", managedExternalMcpExtensionPath);
+    }
 
     // Disable Pi's default user/project skill discovery, then add only Rudder's
     // selected managed skill directory for this run.

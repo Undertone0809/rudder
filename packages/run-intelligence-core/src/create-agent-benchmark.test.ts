@@ -97,7 +97,6 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: "Chief Technology Officer",
     icon: "crown",
     status: "idle",
-    reportsTo: "agent-ceo",
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},
@@ -137,12 +136,11 @@ describe("create-agent benchmark helpers", () => {
   it("parses valid benchmark cases", () => {
     expect(parseCreateAgentCase({
       id: "approval-cto",
-      prompt: "Create a CTO agent that reports to the CEO.",
+      prompt: "Create a CTO agent for the organization.",
       expectedPath: "approval_required",
       expectedAgentShape: {
         role: "cto",
         title: "Chief Technology Officer",
-        reportsToFixture: "ceo",
         agentRuntimeType: "codex_local",
         desiredSkills: ["rudder/rudder-docs"],
         sourceIssueRequired: true,
@@ -157,7 +155,6 @@ describe("create-agent benchmark helpers", () => {
       expectedPath: "approval_required",
       expectedAgentShape: {
         role: "cto",
-        reportsToFixture: "ceo",
       },
     });
   });
@@ -187,7 +184,6 @@ describe("create-agent benchmark helpers", () => {
         name: "CTO",
         role: "cto",
         title: "Chief Technology Officer",
-        reportsToFixture: "ceo",
         agentRuntimeType: "codex_local",
         desiredSkills: ["rudder/rudder-docs"],
         sourceIssueRequired: true,
@@ -230,7 +226,6 @@ describe("create-agent benchmark helpers", () => {
     });
 
     expect(result.checks.create_agent_path_correct.value).toBe("pass");
-    expect(result.checks.create_agent_reports_to_valid.value).toBe("pass");
     expect(result.checks.create_agent_skills_valid.value).toBe("pass");
     expect(result.checks.create_agent_overall_correctness.value).toBe("pass");
     expect(result.finalClassification).toBe("pass");

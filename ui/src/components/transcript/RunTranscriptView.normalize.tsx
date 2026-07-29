@@ -1,7 +1,73 @@
+import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
+
+type ProvenancedTranscriptTextEntry = Extract<
+  TranscriptEntry,
+  { kind: "assistant" | "thinking" }
+> & Partial<{
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+}>;
+
+type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
+  steerMessage?: ChatMessage;
+};
+
+function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
+  return typeof entry.generationId === "string"
+    && Number.isInteger(entry.generationSeqStart)
+    && Number.isInteger(entry.generationSeqEnd)
+    ? {
+        generationId: entry.generationId,
+        generationSeqStart: entry.generationSeqStart!,
+        generationSeqEnd: entry.generationSeqEnd!,
+      }
+    : null;
+}
+
+function blockHasTranscriptProvenance(
+  block: TranscriptBlock,
+): block is Extract<TranscriptBlock, { type: "message" | "thinking" }> & {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+} {
+  return (block.type === "message" || block.type === "thinking")
+    && typeof block.generationId === "string"
+    && Number.isInteger(block.generationSeqStart)
+    && Number.isInteger(block.generationSeqEnd);
+}
+
+function canMergeTranscriptProvenance(
+  previous: TranscriptBlock,
+  current: ReturnType<typeof transcriptEntryProvenance>,
+  continuesDeltaGroup: boolean,
+  currentSegmentId?: string,
+) {
+  if (previous.type !== "message" && previous.type !== "thinking") return false;
+  if (previous.segmentId || currentSegmentId) {
+    return continuesDeltaGroup
+      && Boolean(
+        previous.segmentId
+        && currentSegmentId
+        && previous.segmentId === currentSegmentId,
+      )
+      && (
+        !current
+        || !blockHasTranscriptProvenance(previous)
+        || previous.generationId === current.generationId
+      );
+  }
+  if (!current) return !blockHasTranscriptProvenance(previous);
+  return continuesDeltaGroup
+    && blockHasTranscriptProvenance(previous)
+    && previous.generationId === current.generationId
+    && previous.generationSeqEnd + 1 === current.generationSeqStart;
+}
 
 export function formatSemanticDigest(
   infos: TranscriptToolSemanticInfo[],
@@ -438,6 +504,17 @@ export function normalizeTranscript(
     blocks.splice(pendingIndex, 1, block);
   };
 
+  const trustedImageResultInput = (toolName: string | undefined, content: string): unknown | null => {
+    if (toolName?.replace(/[\s_-]+/g, "").toLowerCase() !== "imageview") return null;
+    try {
+      const parsed = JSON.parse(content) as unknown;
+      const record = asRecord(parsed);
+      return typeof record?.path === "string" && record.path.trim() ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
   for (const entry of entries) {
     const previous = blocks[blocks.length - 1];
 
@@ -447,6 +524,9 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
+      const steerMessage = entry.kind === "user"
+        ? (entry as NativeSteerTranscriptEntry).steerMessage
+        : undefined;
       if (entry.kind === "user") {
         if (isInternalAgentInstructionText(entry.text)) {
           if (options?.showDeveloperDiagnostics) {
@@ -488,18 +568,27 @@ export function normalizeTranscript(
         }
       }
 
+      const provenance = entry.kind === "assistant"
+        ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
+        : null;
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
+      const continuesDeltaGroup = entry.kind === "assistant"
+        && entry.delta === true
+        && previousTextEntry?.kind === "assistant"
+        && previousTextEntry.delta
+        && !forceTextBoundary;
       if (
         previous?.type === "message"
         && previous.role === entry.kind
         && previous.source === (entry.kind === "user" ? entry.source : undefined)
         && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
+        && canMergeTranscriptProvenance(
+          previous,
+          provenance,
+          continuesDeltaGroup,
+          entry.kind === "assistant" ? entry.segmentId : undefined,
+        )
       ) {
-        const continuesDeltaGroup = entry.kind === "assistant"
-          && entry.delta === true
-          && previousTextEntry?.kind === "assistant"
-          && previousTextEntry.delta
-          && !forceTextBoundary;
         previous.text += continuesDeltaGroup
           || previous.text.endsWith("\n")
           || entry.text.startsWith("\n")
@@ -507,6 +596,20 @@ export function normalizeTranscript(
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
+        if (provenance && blockHasTranscriptProvenance(previous)) {
+          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
+            previous.generationSeqEnd = provenance.generationSeqEnd;
+          } else {
+            const mutableProvenance = previous as Partial<{
+              generationId: string;
+              generationSeqStart: number;
+              generationSeqEnd: number;
+            }>;
+            delete mutableProvenance.generationId;
+            delete mutableProvenance.generationSeqStart;
+            delete mutableProvenance.generationSeqEnd;
+          }
+        }
       } else {
         blocks.push({
           type: "message",
@@ -515,10 +618,13 @@ export function normalizeTranscript(
             source: entry.source,
             messageId: entry.messageId,
             controlActionId: entry.controlActionId,
+            steerMessage,
           } : {}),
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          ...(entry.kind === "assistant" && entry.segmentId ? { segmentId: entry.segmentId } : {}),
+          ...provenance,
         });
       }
       previousTextEntry = { kind: entry.kind, delta: entry.kind === "assistant" && entry.delta === true };
@@ -527,23 +633,43 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "thinking") {
+      const provenance = transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry);
       const isStreaming = streaming && entry.delta === true;
-      if (previous?.type === "thinking") {
-        const continuesDeltaGroup = entry.delta === true
-          && previousTextEntry?.kind === "thinking"
-          && previousTextEntry.delta
-          && !forceTextBoundary;
+      const continuesDeltaGroup = entry.delta === true
+        && previousTextEntry?.kind === "thinking"
+        && previousTextEntry.delta
+        && !forceTextBoundary;
+      if (
+        previous?.type === "thinking"
+        && canMergeTranscriptProvenance(previous, provenance, continuesDeltaGroup, entry.segmentId)
+      ) {
         previous.text += continuesDeltaGroup || previous.text.endsWith("\n") || entry.text.startsWith("\n")
           ? entry.text
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
+        if (provenance && blockHasTranscriptProvenance(previous)) {
+          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
+            previous.generationSeqEnd = provenance.generationSeqEnd;
+          } else {
+            const mutableProvenance = previous as Partial<{
+              generationId: string;
+              generationSeqStart: number;
+              generationSeqEnd: number;
+            }>;
+            delete mutableProvenance.generationId;
+            delete mutableProvenance.generationSeqStart;
+            delete mutableProvenance.generationSeqEnd;
+          }
+        }
       } else {
         blocks.push({
           type: "thinking",
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
+          ...provenance,
         });
       }
       previousTextEntry = { kind: entry.kind, delta: entry.delta === true };
@@ -576,6 +702,8 @@ export function normalizeTranscript(
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {
+        const imageInput = trustedImageResultInput(matched.name, entry.content);
+        if (imageInput !== null) matched.input = imageInput;
         mergeCollaborationToolResultInput(matched, entry.content);
         matched.result = entry.content;
         matched.isError = entry.isError;
@@ -583,13 +711,14 @@ export function normalizeTranscript(
         matched.endTs = entry.ts;
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
+        const imageInput = trustedImageResultInput(entry.toolName, entry.content);
         blocks.push({
           type: "tool",
           ts: entry.ts,
           endTs: entry.ts,
           name: entry.toolName ?? "tool",
           toolUseId: entry.toolUseId,
-          input: null,
+          input: imageInput,
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",

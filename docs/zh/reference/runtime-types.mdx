@@ -1,11 +1,11 @@
 ---
-title: "运行环境类型"
-description: "比较 Rudder 的运行环境选项、就绪状态、托管工具和适配器边界。"
+title: "运行工具类型"
+description: "比较 Rudder 可以用来执行 Agent 工作的本地程序。"
 icon: "terminal"
 keywords:
-  - "Rudder 运行环境类型"
-  - "Agent 运行环境"
+  - "Rudder 运行工具"
   - "Codex Claude Cursor Gemini OpenCode Pi"
+  - "Agent runtime"
 canonical: "https://docs.rudderhq.dev/zh/reference/runtime-types"
 "og:url": "https://docs.rudderhq.dev/zh/reference/runtime-types"
 hreflang_en: "https://docs.rudderhq.dev/reference/runtime-types"
@@ -14,73 +14,55 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/runtime-types"
 
 <a id="definition" />
 
-## 定义
-
-运行环境是执行 Agent 运行的适配器。Agent 是长期存在的团队成员，运行是
-一次有边界的尝试，运行环境则为这次尝试提供本地或外部执行能力。
+运行工具是执行一次 Agent 运行的程序或服务。Agent 负责长期职责，运行工具负责
+执行，运行记录保存这次尝试。
 
 <a id="states" />
 
-## 状态
+## Agent 设置里的本地运行工具
 
-标准 Agent 配置界面目前可使用以下本地选项：
-
-| 界面选项 | 运行环境值 | 本地命令 |
-| --- | --- | --- |
-| **Codex (local)** | `codex_local` | `codex` |
-| **Claude Code (local)** | `claude_local` | `claude` |
-| **Cursor (local)** | `cursor` | `cursor-agent` |
-| **Gemini CLI (local)** | `gemini_local` | `gemini` |
-| **OpenCode (local)** | `opencode_local` | `opencode` |
-| **Pi (local)** | `pi_local` | `pi` |
-
-可用性只是安装提示：
-
-| 就绪分组 | 含义 |
+| 选项 | 默认命令 |
 | --- | --- |
-| **Ready on this machine** | 服务端能在 PATH 中找到默认本地命令 |
-| **Needs setup** | Rudder 没有找到默认命令 |
-| **Other runtimes** | Rudder 无法通过本地命令探测判断是否就绪 |
+| Codex | `codex` |
+| Claude Code | `claude` |
+| Cursor | `cursor-agent` |
+| Gemini CLI | `gemini` |
+| OpenCode | `opencode` |
+| Pi | `pi` |
 
-配置后应运行 **Test runtime chain**。探测成功比可用性分组更能说明实际状态。
+设置表单会分成：
+
+- **本机已就绪：**Rudder 找到了默认命令。
+- **需要设置：**没有找到命令。
+- **其他运行工具：**无法通过本地命令判断是否就绪。
+
+始终选择**测试运行时链路**。找到命令并不代表已经登录或配置正确。
 
 <a id="constraints" />
 
-## 约束
+## 不同工具支持的功能不同
 
-各运行环境的能力不同。Codex、Claude Code、OpenCode 和 Pi 可以通过受支持
-的 MCP 或原生桥接获得 Rudder 托管工具。Cursor 和 Gemini 使用各自的适配器
-行为。远程或不支持的适配器不能声称拥有并不存在的托管工具路径。
+模型选择、会话、技能、对话记录、费用、浏览器工具、Rudder 工具和运行中控制都
+取决于具体工具。Codex、Claude Code、OpenCode 和 Pi 支持 Rudder 托管控制
+工具；Cursor 和 Gemini 使用自己的连接方式。
 
-模型发现、会话复用、技能同步、记录解析、成本元数据和运行中控制都由具体
-适配器决定。备用运行环境是另一次明确尝试，不能证明主运行环境具有相同能力。
+界面只应显示所选工具真正支持的功能。切换备用工具会开始另一次尝试，不代表两个
+工具能力相同。
 
 <a id="boundaries" />
 
-## 边界
+## 设置运行工具不会自动获得什么
 
-通用 `process` 和 `http` 适配器属于内部或高级能力，不会作为普通运行环境
-选项出现。界面中显示为不可用或即将提供的注册项，并不表示当前配置可执行。
+选择运行工具不会自动获得所有组织、Issue、本地文件、凭据、网站或外部服务的
+访问权。权限仍然来自当前 Agent、任务、工作区和连接设置。
 
-Rudder 准备托管状态和本次任务选中的上下文，运行环境负责执行。运行环境配置
-不会增加 Issue、组织、文件系统、凭据或内置浏览器权限。
+通用进程和 HTTP 连接属于高级底层能力，不会作为普通设置选项出现。
 
 <a id="examples" />
 
-## 例子
+## 快速选择
 
-- 本地 Codex Agent 需要访问代码仓库和 Rudder 工具。选择 `codex_local`，
-  配好模型与权限，再通过 **Test runtime chain** 验证后分配工作。
-- OpenCode 命令已经安装，但缺少服务商登录。它可能显示为可用，完整测试仍会
-  报认证失败。修复服务商配置后重新测试。
-- 某个运行环境不支持原生运行中转向。Rudder 应如实说明“中断后继续”的备用
-  路径，不能返回原生 **Steer** 已成功的假象。
-
-<CardGroup cols={2}>
-  <Card title="配置 Agent 运行环境" icon="terminal" href="/zh/how-to/configure-agent-runtime">
-    完成配置并验证整条运行链。
-  </Card>
-  <Card title="权限与平台" icon="shield-check" href="/zh/reference/permissions-and-platforms">
-    检查本地信任、凭据、文件系统和浏览器边界。
-  </Card>
-</CardGroup>
+- 已经在本机使用 Codex：选择 Codex，测试链路，再完成一项小型 Chat 任务。
+- 找到命令但测试提示登录失败：先在 Rudder 外登录对应命令行工具。
+- 需要浏览器控制：使用 Desktop 本地可信模式下受支持的本地工具，并开启 Agent
+  浏览器访问。

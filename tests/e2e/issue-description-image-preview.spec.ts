@@ -87,6 +87,22 @@ test("issue description stays Library-style source-backed and preserves exact li
 test("issue description images reveal source while attachment images keep the global preview", async ({ page }) => {
   test.setTimeout(120_000);
 
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__rudderCopiedImage", {
+      configurable: true,
+      value: null,
+      writable: true,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        copyImage: async (payload: { filename: string; contentType: string; base64: string }) => {
+          (window as typeof window & { __rudderCopiedImage: typeof payload | null }).__rudderCopiedImage = payload;
+        },
+      },
+    });
+  });
+
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
     data: { name: `Issue-Description-Image-Preview-${Date.now()}` },
   });
@@ -183,16 +199,56 @@ test("issue description images reveal source while attachment images keep the gl
   });
   await expect(descriptionEditor.locator('img[alt="Description evidence"]:visible')).toBeVisible();
 
-  const attachmentPreviewButton = page.getByRole("button", {
-    name: "Open image preview: issue-evidence.png",
+  await page.keyboard.press("Escape");
+  await expect(previewDialog).toHaveCount(0);
+
+  const commentComposer = page.getByTestId("comment-thread-fixed-composer");
+  await commentComposer.locator('input[type="file"]').setInputFiles({
+    name: "draft-comment-evidence.png",
+    mimeType: "image/png",
+    buffer: imageBuffer,
   });
-  await expect(attachmentPreviewButton).toBeVisible();
-  await attachmentPreviewButton.click();
+  const draftCommentImage = commentComposer.locator('img[alt="draft-comment-evidence.png"]');
+  await expect(draftCommentImage).toBeVisible();
+  await draftCommentImage.click({ button: "right" });
+
+  const draftImageContextMenu = page.getByTestId("markdown-image-context-menu");
+  await expect(draftImageContextMenu).toBeVisible();
+  await expect(draftImageContextMenu.getByRole("menuitem", { name: "Open Image" })).toBeVisible();
+  await expect(draftImageContextMenu.getByRole("menuitem", { name: "Copy Image" })).toBeVisible();
+  await expect(draftImageContextMenu.getByRole("menuitem", { name: "Download Image" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-issue-draft-comment-copy-image.png", fullPage: false });
+  await draftImageContextMenu.getByRole("menuitem", { name: "Copy Image" }).click();
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & {
+      __rudderCopiedImage?: { filename: string; contentType: string; base64: string } | null;
+    }
+  ).__rudderCopiedImage)).toMatchObject({
+    filename: "draft-comment-evidence.png",
+    contentType: "image/png",
+  });
+  await expect(draftImageContextMenu).toHaveCount(0);
+
+  const attachmentName = page.getByRole("button", { name: "issue-evidence.png", exact: true });
+  await expect(attachmentName).toBeVisible();
+  await attachmentName.click();
 
   const attachmentPreview = page.getByTestId("issue-attachment-image-preview-dialog");
   await expect(attachmentPreview).toBeVisible();
   await expect(attachmentPreview.getByRole("button", { name: "Close image preview" })).toBeVisible();
   await expect(attachmentPreview.getByRole("button", { name: "Copy Image" })).toBeVisible();
   await expect(attachmentPreview.getByRole("button", { name: "Download Image" })).toBeVisible();
+  await attachmentPreview.getByAltText("issue-evidence.png").click({ button: "right" });
+  const previewImageContextMenu = page.getByTestId("image-preview-context-menu");
+  await expect(previewImageContextMenu.getByRole("menuitem", { name: "Copy Image" })).toBeVisible();
+  await previewImageContextMenu.getByRole("menuitem", { name: "Copy Image" }).click();
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & {
+      __rudderCopiedImage?: { filename: string; contentType: string; base64: string } | null;
+    }
+  ).__rudderCopiedImage)).toMatchObject({
+    filename: "issue-evidence.png",
+    contentType: "image/png",
+  });
   await page.screenshot({ path: "/tmp/rudder-issue-attachment-image-preview.png", fullPage: false });
 });

@@ -365,7 +365,7 @@ describe("heartbeat paused wakeups", () => {
     expect(runs).toHaveLength(0);
   });
 
-  it("replays paused mention wakes on resume without falling back to issue-lock deferral", async () => {
+  it("replays paused assignee mentions into the existing issue execution queue", async () => {
     const { orgId, agentId, issuePrefix } = await seedAgentFixture("paused");
     const issueId = await seedIssue({
       orgId,
@@ -411,6 +411,17 @@ describe("heartbeat paused wakeups", () => {
         pauseReason: null,
       })
       .where(eq(agents.id, agentId));
+    const pausedWakeup = await db
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.agentId, agentId),
+          eq(agentWakeupRequests.status, "deferred_agent_paused"),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    expect(pausedWakeup?.id).toBeTruthy();
     await seedRunningBlocker({ orgId, agentId, taskKey: "blocker-task" });
 
     const replay = await heartbeat.resumeDeferredWakeupsForAgent(agentId);
@@ -419,22 +430,27 @@ describe("heartbeat paused wakeups", () => {
     const wakeup = await db
       .select()
       .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.agentId, agentId), eq(agentWakeupRequests.reason, "issue_comment_mentioned")))
+      .where(eq(agentWakeupRequests.id, pausedWakeup!.id))
       .then((rows) => rows[0] ?? null);
-    expect(wakeup?.status).toBe("queued");
-    expect(wakeup?.runId).toBeTruthy();
-
-    const run = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, wakeup?.runId ?? ""))
-      .then((rows) => rows[0] ?? null);
-    expect(run?.status).toBe("queued");
-    expect(run?.contextSnapshot).toMatchObject({
+    expect(wakeup?.status).toBe("deferred_issue_execution");
+    expect(wakeup?.reason).toBe("issue_execution_deferred");
+    expect(wakeup?.runId).toBeNull();
+    expect((wakeup?.payload as Record<string, unknown>)._paperclipWakeContext).toMatchObject({
       issueId,
       wakeReason: "issue_comment_mentioned",
       wakeCommentId: commentId,
+      relationship: "assignee",
     });
+    const deferredMentionWakeups = await db
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.agentId, agentId),
+          eq(agentWakeupRequests.status, "deferred_issue_execution"),
+        ),
+      );
+    expect(deferredMentionWakeups).toEqual([{ id: pausedWakeup!.id }]);
   });
 
   it("replays paused on-demand wakes on resume", async () => {

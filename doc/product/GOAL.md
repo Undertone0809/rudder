@@ -57,7 +57,7 @@ The product should make that loop concrete without overclaiming automation. Rudd
 
 The central nervous system. Manages:
 
-- Agent registry and Organization Structure
+- Agent registry and configuration
 - Issue assignment and status
 - Budget and token spend tracking
 - Organization knowledge and reusable operating context

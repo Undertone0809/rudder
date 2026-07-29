@@ -75,6 +75,11 @@ function isToolError(item: Record<string, unknown>): boolean {
   );
 }
 
+function isImageViewErrorStatus(status: string): boolean {
+  return ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
+    .includes(status.trim().toLowerCase());
+}
+
 function normalizeTodoStatus(item: Record<string, unknown>): TranscriptTodoItemStatus {
   const rawStatus = asString(item.status) || asString(item.state);
   const normalizedStatus = rawStatus.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -209,6 +214,37 @@ function parseFileChangeItem(item: Record<string, unknown>, ts: string): Transcr
   return [{ kind: "system", ts, text: `file changes: ${preview}${more}` }];
 }
 
+function parseImageViewItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  const path = asString(item.path);
+  const status = asString(item.status, phase === "started" ? "in_progress" : "completed");
+  const id = asString(item.id);
+  const toolUseId = id || (path ? `image_view:${path}` : "image_view");
+  const evidence = { id, status, path };
+
+  if (phase === "started") {
+    return [{
+      kind: "tool_call",
+      ts,
+      name: "image_view",
+      toolUseId,
+      input: evidence,
+    }];
+  }
+
+  return [{
+    kind: "tool_result",
+    ts,
+    toolUseId,
+    toolName: "image_view",
+    content: JSON.stringify(evidence),
+    isError: isToolError(item) || isImageViewErrorStatus(status),
+  }];
+}
+
 function parseWebSearchItem(
   item: Record<string, unknown>,
   ts: string,
@@ -321,6 +357,9 @@ function parseCollabAgentTranscriptItems(items: unknown[], fallbackTs: string): 
       || type === "web_search"
       || type === "mcp_tool_call"
       || type === "collab_agent_tool_call"
+      || type === "collab_tool_call"
+      || type === "subAgentActivity"
+      || type === "sub_agent_activity"
     ) {
       return [
         ...parseCodexItem(item, ts, "started"),
@@ -349,6 +388,57 @@ function parseCollabAgentTranscripts(item: Record<string, unknown>, ts: string) 
   return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
+function subAgentActivityThreadId(item: Record<string, unknown>): string {
+  return firstString(item.agentThreadId, item.agent_thread_id);
+}
+
+function parseSubAgentActivityItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  if (phase === "started") return [];
+
+  const id = asString(item.id) || "sub_agent_activity";
+  const threadId = subAgentActivityThreadId(item);
+  const agentPath = firstString(item.agentPath, item.agent_path);
+  const activityKind = asString(item.kind, "updated");
+  const agentTranscripts = parseCollabAgentTranscripts(item, ts);
+  const receiverThreadIds = threadId ? [threadId] : [];
+  const input = {
+    id,
+    activity_kind: activityKind,
+    ...(agentPath ? { agent_path: agentPath } : {}),
+    receiver_thread_ids: receiverThreadIds,
+    ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+  };
+  const status = activityKind === "interrupted" ? "failed" : "completed";
+
+  return [
+    {
+      kind: "tool_call",
+      ts,
+      name: "subagent_activity",
+      toolUseId: id,
+      input,
+    },
+    {
+      kind: "tool_result",
+      ts,
+      toolUseId: id,
+      toolName: "subagent_activity",
+      content: JSON.stringify({
+        status,
+        activity_kind: activityKind,
+        ...(agentPath ? { agent_path: agentPath } : {}),
+        receiver_thread_ids: receiverThreadIds,
+        ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+      }),
+      isError: activityKind === "interrupted",
+    },
+  ];
+}
+
 function parseCollabAgentToolCallItem(
   item: Record<string, unknown>,
   ts: string,
@@ -356,10 +446,17 @@ function parseCollabAgentToolCallItem(
 ): TranscriptEntry[] {
   const id = asString(item.id) || "collab_agent_tool_call";
   const name = normalizeCollabAgentToolName(asString(item.tool));
-  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
-    ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+  const rawReceiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds
+    : Array.isArray(item.receiver_thread_ids)
+      ? item.receiver_thread_ids
+      : [];
+  const receiverThreadIds = rawReceiverThreadIds.length > 0
+    ? rawReceiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
     : [];
-  const agentsStates = asRecord(item.agentsStates) ?? {};
+  const agentsStates = asRecord(item.agentsStates) ?? asRecord(item.agents_states) ?? {};
+  const reasoningEffort = firstString(item.reasoningEffort, item.reasoning_effort);
+  const senderThreadId = firstString(item.senderThreadId, item.sender_thread_id);
 
   if (phase === "started") {
     return [{
@@ -371,8 +468,8 @@ function parseCollabAgentToolCallItem(
         id,
         ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
         ...(asString(item.model) ? { model: asString(item.model) } : {}),
-        ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-        ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
         receiver_thread_ids: receiverThreadIds,
         agents_states: agentsStates,
       },
@@ -390,8 +487,8 @@ function parseCollabAgentToolCallItem(
       status,
       ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
       ...(asString(item.model) ? { model: asString(item.model) } : {}),
-      ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-      ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
       receiver_thread_ids: receiverThreadIds,
       agents_states: agentsStates,
       ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
@@ -417,13 +514,33 @@ function parseCodexItem(
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
-    if (text) return [{ kind: "assistant", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    const messagePhase = item.phase === "commentary" || item.phase === "final_answer"
+      ? item.phase
+      : null;
+    if (text) {
+      return [{
+        kind: "assistant",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(messagePhase ? { phase: messagePhase } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [];
   }
 
   if (itemType === "reasoning") {
     const text = asString(item.text);
-    if (text) return [{ kind: "thinking", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    if (text) {
+      return [{
+        kind: "thinking",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [{ kind: "system", ts, text: phase === "started" ? "reasoning started" : "reasoning completed" }];
   }
 
@@ -439,12 +556,25 @@ function parseCodexItem(
     return parseMcpToolCallItem(item, ts, phase);
   }
 
-  if (itemType === "collab_agent_tool_call" || itemType === "collabAgentToolCall") {
+  if (
+    itemType === "collab_agent_tool_call"
+    || itemType === "collabAgentToolCall"
+    || itemType === "collab_tool_call"
+    || itemType === "collabToolCall"
+  ) {
     return parseCollabAgentToolCallItem(item, ts, phase);
+  }
+
+  if (itemType === "sub_agent_activity" || itemType === "subAgentActivity") {
+    return parseSubAgentActivityItem(item, ts, phase);
   }
 
   if (itemType === "file_change" && phase === "completed") {
     return parseFileChangeItem(item, ts);
+  }
+
+  if (itemType === "imageView" || itemType === "image_view") {
+    return parseImageViewItem(item, ts, phase);
   }
 
   if (itemType === "tool_use") {

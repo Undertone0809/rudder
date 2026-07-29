@@ -73,6 +73,19 @@ describe("ImagePreviewDialog", () => {
     expect(preview?.textContent).toContain("Download Image");
     expect(preview?.textContent).toContain("Show in folder");
 
+    const image = preview?.querySelector("img");
+    act(() => {
+      image?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 32,
+        clientY: 48,
+      }));
+    });
+    const contextMenu = document.body.querySelector('[data-testid="image-preview-context-menu"]');
+    expect(contextMenu?.textContent).toContain("Copy Image");
+    expect(contextMenu?.textContent).toContain("Download Image");
+
     await act(async () => {
       failImageLoad?.();
     });

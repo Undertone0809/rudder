@@ -1,0 +1,4 @@
+ALTER TABLE "agent_custom_integration_bindings" ADD CONSTRAINT "agent_custom_integration_bindings_access_mode_check" CHECK ("agent_custom_integration_bindings"."access_mode" in ('none', 'read_only', 'read_write', 'provider_granted', 'full'));--> statement-breakpoint
+ALTER TABLE "custom_integration_tools" ADD CONSTRAINT "custom_integration_tools_capability_class_check" CHECK ("custom_integration_tools"."capability_class" in ('read', 'normal_write', 'destructive', 'admin_or_billing', 'unknown'));--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD CONSTRAINT "mcp_connections_canonical_state_check" CHECK ("mcp_connections"."canonical_state" in ('canonical', 'superseded'));--> statement-breakpoint
+ALTER TABLE "mcp_connections" ADD CONSTRAINT "mcp_connections_scope_mode_check" CHECK ("mcp_connections"."scope_mode" is null or "mcp_connections"."scope_mode" in ('account', 'workspace', 'legacy_project'));

@@ -58,7 +58,6 @@ type AgentFixture = {
   title: string;
   icon: string;
   status: string;
-  reportsToKey?: string;
   budgetMonthlyCents: number;
   heartbeatIntervalSec: number;
   capabilities: string;
@@ -312,9 +311,6 @@ function validateReferences(
   const projectKeys = new Set(scenario.projects.map((project) => project.key));
   const issueKeys = new Set(issueFixtures.map((issue) => issue.key));
 
-  for (const agent of agentFixtures) {
-    if (agent.reportsToKey && !agentKeys.has(agent.reportsToKey)) throw new Error(`Bad reportsToKey: ${agent.key}`);
-  }
   for (const goal of scenario.goals) {
     if (goal.ownerAgentKey && !agentKeys.has(goal.ownerAgentKey)) throw new Error(`Bad goal owner: ${goal.key}`);
   }
@@ -453,7 +449,6 @@ async function main() {
     title: fixture.title,
     icon: fixture.icon,
     status: fixture.status,
-    reportsTo: fixture.reportsToKey ? mustGet(agentIds, fixture.reportsToKey, "agent") : null,
     capabilities: fixture.capabilities,
     agentRuntimeType: "process",
     agentRuntimeConfig: {

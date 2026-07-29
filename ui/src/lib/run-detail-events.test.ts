@@ -6,6 +6,7 @@ import {
   heartbeatRunEventText,
   heartbeatRunEventToTranscriptEntry,
   mergeTranscriptEntries,
+  operatorVisibleInvocationRunEvents,
 } from "./run-detail-events";
 
 function makeEvent(overrides: Partial<HeartbeatRunEvent> = {}): HeartbeatRunEvent {
@@ -148,6 +149,41 @@ describe("run-detail-events", () => {
 
     expect(entries).toEqual([
       expect.objectContaining({ text: "Visible terminal lifecycle evidence" }),
+    ]);
+  });
+
+  it("keeps transcript evidence out of invocation events without deleting diagnostic events", () => {
+    const invocationEvents = operatorVisibleInvocationRunEvents([
+      makeEvent({
+        seq: 1,
+        eventType: "adapter.invoke",
+        message: "adapter invocation",
+      }),
+      makeEvent({
+        seq: 2,
+        eventType: "transcript.entry",
+        message: "chat transcript entry",
+        payload: {
+          kind: "assistant",
+          text: "Visible in the Transcript tab instead.",
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        eventType: "error",
+        level: "error",
+        message: "runtime failed",
+      }),
+      makeEvent({
+        seq: 4,
+        eventType: "issue.execution_released",
+        message: "internal issue release",
+      }),
+    ]);
+
+    expect(invocationEvents.map((event) => event.message)).toEqual([
+      "adapter invocation",
+      "runtime failed",
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptSkillTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
 
 export function normalizePathTarget(value: string): string | null {
@@ -107,6 +107,17 @@ export function createTranscriptFileTargets(
     label,
     path: resolveTranscriptFileTarget(label, workingDirectory),
   }));
+}
+
+export function createTranscriptSkillTargets(
+  paths: string[],
+  record: Record<string, unknown> | null,
+): TranscriptSkillTarget[] {
+  const fileTargets = createTranscriptFileTargets(paths, record);
+  return fileTargets.flatMap((target) => {
+    const name = extractSkillSlugFromEntryPath(target.label);
+    return name ? [{ name, path: target.path }] : [];
+  });
 }
 
 export function extractRecordQuery(record: Record<string, unknown> | null): string | null {
@@ -319,15 +330,29 @@ export function summarizeMcpArgs(args: Record<string, unknown> | null): string |
   return parts.join(", ") || null;
 }
 
-export function formatMcpLabel(details: McpToolDetails): string {
-  return details.server ? `MCP · ${humanizeLabel(details.server)}` : "MCP";
+export function formatMcpLabel(_details: McpToolDetails): string {
+  return "MCP";
+}
+
+const MCP_SUMMARY_TOKEN_LABELS: Record<string, string> = {
+  api: "API",
+  github: "GitHub",
+  id: "ID",
+  pr: "PR",
+  rudder: "Rudder",
+  url: "URL",
+};
+
+function humanizeMcpToolName(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((token) => MCP_SUMMARY_TOKEN_LABELS[token.toLowerCase()] ?? token.toLowerCase())
+    .join(" ");
 }
 
 export function formatMcpSummary(details: McpToolDetails): string {
-  const tool = details.tool ?? "tool";
-  const server = details.server ? ` via ${details.server}` : "";
-  const args = summarizeMcpArgs(details.args);
-  return `Called ${tool}${server}${args ? ` · ${args}` : ""}`;
+  return `Call ${humanizeMcpToolName(details.tool ?? "tool")}`;
 }
 
 export function formatTargetAction(
@@ -572,6 +597,7 @@ export function describeCommandSemanticInfo(
         category: "skill",
         label: "Use skill",
         bucket: "explore",
+        skillTargets: createTranscriptSkillTargets(targets, record),
       };
     }
     const action = formatTargetAction("Read", targets, "file", "Read file");
@@ -863,6 +889,29 @@ function describeCodexAgentToolSemanticInfo(name: string, input: unknown): Trans
     };
   }
 
+  if (toolName === "subagent_activity") {
+    const activityKind = readStringField(record, ["activity_kind", "activityKind", "kind"]) ?? "updated";
+    const agentPath = readStringField(record, ["agent_path", "agentPath"]);
+    const agentName = agentPath?.split("/").filter(Boolean).at(-1)?.replace(/[_-]+/g, " ") ?? null;
+    const receiver = readCodexAgentReceivers(record)[0];
+    const label = agentName ?? (receiver ? truncate(receiver, 24) : "sub-agent");
+    const verb = activityKind === "started"
+      ? "Spawned"
+      : activityKind === "interrupted"
+        ? "Interrupted"
+        : activityKind === "completed"
+          ? "Completed"
+          : "Updated";
+    return {
+      category: "tool",
+      label: "Sub-agent activity",
+      summary: `${verb} ${label} agent`,
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
   if (toolName === "wait_agent") {
     const targets = Array.isArray(record.targets)
       ? record.targets.filter((target): target is string => typeof target === "string" && target.trim().length > 0)
@@ -1005,9 +1054,35 @@ export function isCommandTool(name: string, input: unknown): boolean {
   return Boolean(record && (typeof record.command === "string" || typeof record.cmd === "string"));
 }
 
-export function describeToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo {
+export function describeToolSemanticInfo(name: string, input: unknown, result?: string): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
+  const normalizedIdentifier = normalizedName.replace(/[\s_-]+/g, "");
   const record = asRecord(input);
+
+  if (normalizedIdentifier === "imageview") {
+    const sourcePath = readStringField(record, ["path"]);
+    const status = readStringField(record, ["status"])?.toLowerCase() ?? "";
+    const failed = ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
+      .includes(status);
+    const target = sourcePath ? createTranscriptFileTargets([sourcePath], record)[0] : null;
+    const displayLabel = sourcePath
+      ? sourcePath.replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).at(-1) ?? sourcePath
+      : "image";
+    return {
+      category: "image",
+      label: "View image",
+      summary: "Viewed an image",
+      bucket: "explore",
+      quantity: 1,
+      noun: "item",
+      ...(!failed && target?.path ? {
+        image: {
+          displayLabel,
+          path: target.path,
+        },
+      } : {}),
+    };
+  }
 
   const codexAgentToolInfo = describeCodexAgentToolSemanticInfo(name, input);
   if (codexAgentToolInfo) {
@@ -1017,6 +1092,13 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
   if (normalizedName === "skill") {
     const skill = readStringField(record, ["skill", "name"]);
     const skillAction = skill ? formatSkillUseAction([skill]) : null;
+    const explicitPath = readStringField(record, ["path", "sourcePath", "source_path", "skillPath", "skill_path"]);
+    const baseDirectory = result?.match(/^Base directory(?: for this skill)?:\s*(.+)$/mi)?.[1]?.trim() ?? null;
+    const sourcePath = explicitPath
+      ?? (baseDirectory ? `${baseDirectory.replace(/[\\/]+$/u, "")}/SKILL.md` : null);
+    const resolvedPath = sourcePath
+      ? createTranscriptFileTargets([sourcePath], record)[0]?.path ?? null
+      : null;
     return {
       category: "skill",
       label: "Use skill",
@@ -1024,6 +1106,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
       bucket: "explore",
       quantity: 1,
       noun: "skill",
+      skillTargets: skill ? [{ name: skill, path: resolvedPath }] : [],
     };
   }
 
@@ -1078,6 +1161,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
         category: "skill",
         label: "Use skill",
         bucket: "explore",
+        skillTargets: createTranscriptSkillTargets(paths, record),
       };
     }
     const action = formatTargetAction("Read", paths, "file", "Read file");

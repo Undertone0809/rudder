@@ -492,10 +492,6 @@ function ChatIssueCreationPayload({
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded-[calc(var(--radius-sm)-1px)] border border-primary/15 bg-primary/5 px-3 py-2">
-        <div className="text-sm font-medium text-foreground">Agent proposed a new issue from chat</div>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">Review the draft before Rudder creates it on the issue board.</p>
-      </div>
       <ChatField chatConversationId={payload.chatConversationId} chatConversation={context?.chatConversation} />
       <PayloadField label="Issue" value={proposal.title} />
       <PayloadField label="Priority" value={typeof proposal.priority === "string" ? formatPriorityLabel(proposal.priority) : proposal.priority} />

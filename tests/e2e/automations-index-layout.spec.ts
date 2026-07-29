@@ -278,6 +278,14 @@ test.describe("Automations index layout", () => {
 
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
+    const composer = page.getByTestId("automation-instructions-composer");
+    const instructionsPlaceholder = composer.getByText(
+      "Add instructions e.g. look for crashes in Sentry",
+      { exact: true },
+    );
+    await expect(instructionsPlaceholder).toBeVisible();
+    await composer.getByRole("textbox", { name: "editable markdown" }).fill("给我推送每日的消息流");
+    await expect(instructionsPlaceholder).toBeHidden();
     const outputMethod = page.getByTestId("automation-create-output-mode");
     await expect(outputMethod).toContainText("Send to chat");
     await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
@@ -300,9 +308,15 @@ test.describe("Automations index layout", () => {
     await expect(page.getByText("Persist tracked output", { exact: true })).toBeVisible();
     const automationsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`);
     expect(automationsRes.ok()).toBe(true);
-    const createdAutomation = ((await automationsRes.json()) as Array<{ title: string; outputMode: string }>)
+    const createdAutomation = ((await automationsRes.json()) as Array<{
+      title: string;
+      description: string | null;
+      outputMode: string;
+    }>)
       .find((automation) => automation.title === "Persist tracked output");
     expect(createdAutomation?.outputMode).toBe("track_issue");
+    expect(createdAutomation?.description).toBe("给我推送每日的消息流");
+    await expect(page.getByText("给我推送每日的消息流", { exact: true })).toBeVisible();
   });
 
   test("applies and creates the Daily review template from the composer header", async ({ page }, testInfo) => {
@@ -483,12 +497,15 @@ test.describe("Automations index layout", () => {
       .getByTestId("automation-instructions-composer")
       .locator('[data-editor-engine="codemirror-live-preview"]');
     await expect(instructionsEditor).toContainText("List all open issues labeled bug");
+    const originalInstructions = await instructionsEditor.textContent();
+    expect(originalInstructions).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
     await page.getByRole("button", { name: /Track as issue/ }).click();
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
-    await expect(instructionsEditor).toContainText("each run's final result to a new Rudder chat");
+    await expect(instructionsEditor).toHaveText(originalInstructions ?? "");
+    expect(await instructionsEditor.textContent()).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
     await expect(page.getByRole("button", { name: /^Create$/ })).toBeDisabled();
 
     await page.screenshot({

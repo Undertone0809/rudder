@@ -86,8 +86,10 @@ test.describe("Agent runs filter menu", () => {
         status: "failed",
         startedAt: new Date("2026-05-23T09:00:00.000Z"),
         finishedAt: new Date("2026-05-23T09:45:00.000Z"),
-        error: "Process lost",
+        error: "Process lost\nAPI_KEY=run-secret-must-not-leak",
         errorCode: "process_lost",
+        stdoutExcerpt: "request https://private.example.test/run?token=private-token",
+        stderrExcerpt: "Authorization: Bearer private-bearer\nconfig /Users/e2e/private/.env",
         retryOfRunId: selectedRunId,
         usageJson: {
           inputTokens: 450_000,
@@ -210,6 +212,39 @@ test.describe("Agent runs filter menu", () => {
     await expect(mainContent.getByText("Recovery")).toBeVisible();
     await expect(mainContent.getByText("process_lost", { exact: true })).toBeVisible();
     await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Issue")).toHaveCount(2);
+
+    await page.evaluate(() => {
+      (window as typeof window & { __openedRunIssueUrl?: string }).__openedRunIssueUrl = "";
+      window.open = ((target?: string | URL) => {
+        (window as typeof window & { __openedRunIssueUrl?: string }).__openedRunIssueUrl = String(target ?? "");
+        return window;
+      }) as typeof window.open;
+    });
+    await mainContent.getByTestId("run-report-issue").click();
+    const reportDialog = page.getByRole("dialog", { name: "Report this run failure" });
+    await expect(reportDialog).toBeVisible();
+    const diagnostics = reportDialog.getByTestId("run-issue-diagnostics");
+    const diagnosticValue = await diagnostics.inputValue();
+    expect(diagnosticValue).toContain(`Run ID: ${failedRunId}`);
+    expect(diagnosticValue).toContain("Error code: process_lost");
+    expect(diagnosticValue).toContain("API_KEY=[REDACTED]");
+    expect(diagnosticValue).toContain("Authorization: [REDACTED]");
+    expect(diagnosticValue).toContain("~/private/.env");
+    expect(diagnosticValue).not.toContain("run-secret-must-not-leak");
+    expect(diagnosticValue).not.toContain("private-bearer");
+    expect(diagnosticValue).not.toContain("private-token");
+
+    await reportDialog.getByRole("button", { name: "Open GitHub issue" }).click();
+    await expect(reportDialog).toHaveCount(0);
+    const openedIssueUrl = await page.evaluate(
+      () => (window as typeof window & { __openedRunIssueUrl?: string }).__openedRunIssueUrl ?? "",
+    );
+    const openedIssue = new URL(openedIssueUrl);
+    expect(openedIssue.origin).toBe("https://github.com");
+    expect(openedIssue.pathname).toBe("/Undertone0809/rudder/issues/new");
+    expect(openedIssue.searchParams.get("template")).toBe("bug_report.yml");
+    expect(openedIssue.searchParams.get("evidence")).toContain(`Run ID: ${failedRunId}`);
+    expect(openedIssueUrl).not.toContain("run-secret-must-not-leak");
 
     await mainContent.getByRole("button", { name: "Clear run filters" }).click();
     await expect(page).not.toHaveURL(/runStatus=failed/);

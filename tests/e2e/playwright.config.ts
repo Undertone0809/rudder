@@ -17,6 +17,7 @@ import {
 const PORT = E2E_PORT;
 const BASE_URL = E2E_BASE_URL;
 const USE_EXISTING_SERVER = process.env.RUDDER_E2E_USE_EXISTING_SERVER === "1";
+const PRODUCTION_UI = process.env.RUDDER_E2E_PRODUCTION_UI === "1";
 const CHROMIUM_EXECUTABLE_PATH = process.env.RUDDER_E2E_CHROMIUM_EXECUTABLE?.trim() || undefined;
 const E2E_CONFIG = path.join(E2E_INSTANCE_ROOT, "config.json");
 const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || null;
@@ -76,7 +77,7 @@ const SERVER_ENV_PREFIX = [
   `RUDDER_E2E_BASE_URL="${BASE_URL}"`,
   "RUDDER_FEISHU_APP_REGISTRATION_MOCK=instant",
   "RUDDER_FEISHU_LONG_CONNECTION_ENABLED=false",
-  "RUDDER_UI_DEV_MIDDLEWARE=true",
+  `RUDDER_UI_DEV_MIDDLEWARE=${PRODUCTION_UI ? "false" : "true"}`,
 ]
   .filter(Boolean)
   .join(" ");

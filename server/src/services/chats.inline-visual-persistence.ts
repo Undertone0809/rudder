@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { assets, chatAttachments, chatConversations, chatMessages } from "@rudderhq/db";
 import {
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   parseCodexInlineVisualDirectives,
   parseRudderInlineVisualPlacements,
@@ -11,6 +12,9 @@ import {
 } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { unprocessable } from "../errors.js";
+import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
+import { stripChatMetadataFromPayload } from "./chats.helpers.js";
 import type { MessageHydrationRow } from "./chats.types.js";
 
 type ChatTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -45,32 +49,43 @@ export async function listRecentUserChatMessages(db: Db, conversationId: string,
   return rows.reverse();
 }
 
-export async function copyForkInlineVisualMessages(input: {
+export async function copyForkChatMessages(input: {
   tx: ChatTransaction;
   messages: ChatMessageRow[];
-  sourceConversationId: string;
+  sourceConversation: typeof chatConversations.$inferSelect;
   targetConversationId: string;
   orgId: string;
 }) {
+  const copiedMessageIdBySourceId = new Map(
+    input.messages.map((message) => [message.id, randomUUID()]),
+  );
+  const resolveAnnotationSource = await createChatAnnotationCopySourceResolver({
+    tx: input.tx,
+    orgId: input.orgId,
+    sourceConversation: input.sourceConversation,
+    messages: input.messages,
+    operationLabel: "Fork",
+  });
+  const attachmentIds = new Set<string>();
   for (const message of input.messages) {
-    const copiedMessageId = randomUUID();
-    const visualMappings = chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
-    const visualMappingsV1 = rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
-    const readyAttachmentIds = [...visualMappings, ...visualMappingsV1]
+    for (const annotation of chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)) {
+      annotation.attachmentIds.forEach((attachmentId) => attachmentIds.add(attachmentId));
+    }
+    const visualMappings = chatInlineVisualMappingsFromStructuredPayload(
+      message.structuredPayload,
+    );
+    const visualMappingsV1 = rudderInlineVisualMappingsFromStructuredPayload(
+      message.structuredPayload,
+    );
+    [...visualMappings, ...visualMappingsV1]
       .filter((mapping) => mapping.status === "ready")
-      .map((mapping) => mapping.attachmentId);
-    const copiedAttachmentIdBySourceId = new Map<string, string>();
-    const pendingVisualAttachments: Array<{
-      id: string;
-      orgId: string;
-      conversationId: string;
-      messageId: string;
-      assetId: string;
-    }> = [];
-    if (readyAttachmentIds.length > 0) {
-      const sourceVisualAttachments = await input.tx
+      .forEach((mapping) => attachmentIds.add(mapping.attachmentId));
+  }
+  const sourceAttachments = attachmentIds.size > 0
+    ? await input.tx
         .select({
           id: chatAttachments.id,
+          messageId: chatAttachments.messageId,
           assetId: chatAttachments.assetId,
           contentType: assets.contentType,
           byteSize: assets.byteSize,
@@ -82,44 +97,110 @@ export async function copyForkInlineVisualMessages(input: {
         .from(chatAttachments)
         .innerJoin(assets, eq(chatAttachments.assetId, assets.id))
         .where(and(
-          eq(chatAttachments.conversationId, input.sourceConversationId),
-          eq(chatAttachments.messageId, message.id),
-          inArray(chatAttachments.id, readyAttachmentIds),
-        ));
-      const safeVisualAttachments = sourceVisualAttachments.filter((attachment) => {
-        if (
-          attachment.contentType !== "text/html"
-          || !attachment.createdByAgentId
-          || attachment.createdByUserId
-        ) return false;
-        return visualMappings.some((mapping) =>
-          mapping.status === "ready"
-          && mapping.attachmentId === attachment.id
-          && mapping.file === attachment.originalFilename
-        ) || visualMappingsV1.some((mapping) =>
-          mapping.status === "ready"
-          && mapping.attachmentId === attachment.id
-          && mapping.file === attachment.originalFilename
-          && mapping.contentType === attachment.contentType
-          && mapping.byteSize === attachment.byteSize
-          && mapping.sha256 === attachment.sha256.toLowerCase()
-        );
-      });
-      pendingVisualAttachments.push(...safeVisualAttachments.map((attachment) => {
-        const copiedAttachmentId = randomUUID();
-        copiedAttachmentIdBySourceId.set(attachment.id, copiedAttachmentId);
-        return {
-          id: copiedAttachmentId,
-          orgId: input.orgId,
-          conversationId: input.targetConversationId,
-          messageId: copiedMessageId,
-          assetId: attachment.assetId,
-        };
-      }));
+          eq(chatAttachments.orgId, input.orgId),
+          eq(chatAttachments.conversationId, input.sourceConversation.id),
+          eq(assets.orgId, input.orgId),
+          inArray(chatAttachments.id, [...attachmentIds]),
+        ))
+    : [];
+  const sourceAttachmentById = new Map(
+    sourceAttachments.map((attachment) => [attachment.id, attachment]),
+  );
+  const copiedAttachmentIdBySourceId = new Map<string, string>();
+  const copiedAttachments: Array<{
+    id: string;
+    orgId: string;
+    conversationId: string;
+    messageId: string;
+    assetId: string;
+  }> = [];
+  function copyAttachment(
+    sourceAttachmentId: string,
+    sourceMessageId: string,
+  ) {
+    const sourceAttachment = sourceAttachmentById.get(sourceAttachmentId);
+    if (!sourceAttachment || sourceAttachment.messageId !== sourceMessageId) {
+      throw unprocessable("Fork annotation attachment is not owned by its copied user message");
+    }
+    const existingId = copiedAttachmentIdBySourceId.get(sourceAttachmentId);
+    if (existingId) return existingId;
+    const copiedMessageId = copiedMessageIdBySourceId.get(sourceMessageId);
+    if (!copiedMessageId) {
+      throw unprocessable("Fork attachment owner falls outside the copied message range");
+    }
+    const copiedAttachmentId = randomUUID();
+    copiedAttachmentIdBySourceId.set(sourceAttachmentId, copiedAttachmentId);
+    copiedAttachments.push({
+      id: copiedAttachmentId,
+      orgId: input.orgId,
+      conversationId: input.targetConversationId,
+      messageId: copiedMessageId,
+      assetId: sourceAttachment.assetId,
+    });
+    return copiedAttachmentId;
+  }
+
+  const copiedMessages = input.messages.map((message) => {
+    const copiedMessageId = copiedMessageIdBySourceId.get(message.id)!;
+    const visualMappings = chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
+    const visualMappingsV1 = rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
+    const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
+      message.structuredPayload,
+    ).map((annotation) => {
+      const sourceMessage = resolveAnnotationSource(annotation);
+      const copiedSourceMessageId = sourceMessage
+        ? copiedMessageIdBySourceId.get(sourceMessage.id)
+        : null;
+      if (
+        !copiedSourceMessageId
+        || !sourceMessage
+        || sourceMessage.role !== "assistant"
+        || sourceMessage.kind !== "message"
+      ) {
+        throw unprocessable("Fork annotation source message falls outside the copied range");
+      }
+      return {
+        ...annotation,
+        sourceConversationId: input.targetConversationId,
+        sourceMessageId: copiedSourceMessageId,
+        attachmentIds: annotation.attachmentIds.map((attachmentId) =>
+          copyAttachment(attachmentId, message.id)
+        ),
+      };
+    });
+    function copiedSafeVisualAttachmentId(inputMapping: {
+      attachmentId: string;
+      file: string;
+      contentType?: string;
+      byteSize?: number;
+      sha256?: string;
+    }) {
+      const attachment = sourceAttachmentById.get(inputMapping.attachmentId);
+      if (
+        !attachment
+        || attachment.messageId !== message.id
+        || attachment.contentType !== "text/html"
+        || !attachment.createdByAgentId
+        || attachment.createdByUserId
+        || attachment.originalFilename !== inputMapping.file
+      ) {
+        return null;
+      }
+      if (
+        inputMapping.contentType !== undefined
+        && (
+          inputMapping.contentType !== attachment.contentType
+          || inputMapping.byteSize !== attachment.byteSize
+          || inputMapping.sha256 !== attachment.sha256.toLowerCase()
+        )
+      ) {
+        return null;
+      }
+      return copyAttachment(inputMapping.attachmentId, message.id);
     }
     const copiedVisualMappings = visualMappings.map((mapping) => {
       if (mapping.status === "unavailable") return mapping;
-      const copiedAttachmentId = copiedAttachmentIdBySourceId.get(mapping.attachmentId);
+      const copiedAttachmentId = copiedSafeVisualAttachmentId(mapping);
       return copiedAttachmentId
         ? { ...mapping, attachmentId: copiedAttachmentId }
         : {
@@ -131,7 +212,7 @@ export async function copyForkInlineVisualMessages(input: {
     });
     const copiedVisualMappingsV1 = visualMappingsV1.map((mapping) => {
       if (mapping.status === "unavailable") return mapping;
-      const copiedAttachmentId = copiedAttachmentIdBySourceId.get(mapping.attachmentId);
+      const copiedAttachmentId = copiedSafeVisualAttachmentId(mapping);
       return copiedAttachmentId
         ? { ...mapping, attachmentId: copiedAttachmentId }
         : {
@@ -143,10 +224,14 @@ export async function copyForkInlineVisualMessages(input: {
         };
     });
     const copiedStructuredPayload = {
+      ...(sanitizeChatStructuredPayload(
+        stripChatMetadataFromPayload(message.structuredPayload),
+      ) ?? {}),
+      ...(copiedAnnotations.length > 0 ? { inlineAnnotations: copiedAnnotations } : {}),
       ...(copiedVisualMappings.length > 0 ? { inlineVisuals: copiedVisualMappings } : {}),
       ...(copiedVisualMappingsV1.length > 0 ? { inlineVisualsV1: copiedVisualMappingsV1 } : {}),
-    };
-    await input.tx.insert(chatMessages).values({
+    } as Record<string, unknown>;
+    return {
       id: copiedMessageId,
       orgId: input.orgId,
       conversationId: input.targetConversationId,
@@ -162,10 +247,13 @@ export async function copyForkInlineVisualMessages(input: {
       turnVariant: 0,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
-    });
-    if (pendingVisualAttachments.length > 0) {
-      await input.tx.insert(chatAttachments).values(pendingVisualAttachments);
-    }
+    };
+  });
+  if (copiedMessages.length > 0) {
+    await input.tx.insert(chatMessages).values(copiedMessages);
+  }
+  if (copiedAttachments.length > 0) {
+    await input.tx.insert(chatAttachments).values(copiedAttachments);
   }
 }
 

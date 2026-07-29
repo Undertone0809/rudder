@@ -17,7 +17,6 @@
     "title": "Product Engineering Lead",
     "icon": "terminal",
     "status": "running",
-    "reportsToKey": "ada",
     "budgetMonthlyCents": 5400,
     "heartbeatIntervalSec": 7200,
     "capabilities": "Owns the core issue lifecycle, checkout semantics, run recovery, and code-review quality for Rudder's agent work loop."
@@ -29,7 +28,6 @@
     "title": "Workflow Product Manager",
     "icon": "radar",
     "status": "active",
-    "reportsToKey": "ada",
     "budgetMonthlyCents": 4200,
     "heartbeatIntervalSec": 10800,
     "capabilities": "Turns operator confusion into product requirements, validates Calendar and Dashboard stories, and keeps scenarios grounded in real user activity."
@@ -41,7 +39,6 @@
     "title": "Skill Platform Engineer",
     "icon": "puzzle",
     "status": "idle",
-    "reportsToKey": "linus",
     "budgetMonthlyCents": 3600,
     "heartbeatIntervalSec": 10800,
     "capabilities": "Maintains bundled skills, repository maintainer skills, eval harnesses, and adapter-facing developer documentation."
@@ -53,7 +50,6 @@
     "title": "Growth Operator",
     "icon": "rocket",
     "status": "running",
-    "reportsToKey": "ada",
     "budgetMonthlyCents": 5200,
     "heartbeatIntervalSec": 7200,
     "capabilities": "Runs Rudder's public launch motion: X posts, HN prep, founder DMs, community posts, demo clips, objection mining, and weekly growth reporting."
@@ -65,7 +61,6 @@
     "title": "Operator Experience Designer",
     "icon": "wand",
     "status": "active",
-    "reportsToKey": "grace",
     "budgetMonthlyCents": 3100,
     "heartbeatIntervalSec": 14400,
     "capabilities": "Improves dense operator surfaces, screenshot readiness, dashboard hierarchy, and UI copy for repeated use rather than marketing decoration."
@@ -77,7 +72,6 @@
     "title": "Messenger QA Lead",
     "icon": "message-square",
     "status": "paused",
-    "reportsToKey": "linus",
     "budgetMonthlyCents": 2800,
     "heartbeatIntervalSec": 14400,
     "capabilities": "Tests approvals, messenger issue intake, failed run handoff, and audit trails. Paused after hitting the monthly QA quota."
@@ -89,7 +83,6 @@
     "title": "Release Reliability Engineer",
     "icon": "shield",
     "status": "active",
-    "reportsToKey": "linus",
     "budgetMonthlyCents": 3900,
     "heartbeatIntervalSec": 10800,
     "capabilities": "Owns desktop packaged smoke, local profile isolation, migration reliability, npm release checks, and rollback notes."

@@ -15,6 +15,7 @@ import {
 } from "../services/index.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
+import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -346,7 +347,20 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     }
     let issue;
     try {
-      issue = await svc.update(id, updateFields);
+      const updateAuthorization =
+        req.actor.type === "agent" && req.actor.agentId
+          ? {
+              agentId: req.actor.agentId,
+              runId: req.actor.runId ?? null,
+              relationship: reviewDecision !== undefined
+                ? "reviewer" as const
+                : "assignee_or_reviewer" as const,
+              requireReviewableStatus: reviewDecision !== undefined,
+            }
+          : null;
+      issue = updateAuthorization
+        ? await svc.update(id, updateFields, updateAuthorization)
+        : await svc.update(id, updateFields);
     } catch (err) {
       if (err instanceof HttpError && err.status === 422) {
         logger.warn(
@@ -645,36 +659,12 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         for (const mentionedId of mentionedIds) {
           if (wakeups.has(mentionedId)) continue;
           if (actor.actorType === "agent" && actor.actorId === mentionedId) continue;
-          wakeups.set(mentionedId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: "issue_comment_mentioned",
-            payload: { issueId: id, commentId: comment.id },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: id,
-              taskId: id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              wakeReason: "issue_comment_mentioned",
-              wakeSource: "comment.mention",
-              source: "comment.mention",
-              issue: {
-                id: issue.id,
-                title: issue.title,
-                description: issue.description,
-                status: issue.status,
-                priority: issue.priority,
-              },
-              comment: {
-                id: comment.id,
-                body: comment.body,
-                authorAgentId: comment.authorAgentId,
-                authorUserId: comment.authorUserId,
-              },
-            },
-          });
+          wakeups.set(mentionedId, buildCommentMentionWakeup({
+            issue,
+            comment,
+            actor,
+            targetAgentId: mentionedId,
+          }));
         }
       }
 
@@ -807,7 +797,6 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       res.status(403).json({ error: "Agent authentication required" });
       return;
     }
-    if (!(await assertAgentRunCheckoutOwnership(req, res, issue))) return;
 
     const actor = getActorInfo(req);
     const commitRun = await resolveAgentIssueRunId(req, res, issue);

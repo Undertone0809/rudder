@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
-import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
@@ -63,9 +63,104 @@ describe("transcript file target resolution", () => {
     expect(resolveTranscriptFileTarget("https://example.com/file.ts")).toBeNull();
     expect(resolveTranscriptFileTarget("//server/share/file.ts")).toBeNull();
   });
+
+  it("rejects relative and dynamic working directories for relative file targets", () => {
+    expect(resolveTranscriptFileTarget("README.md", "workspace/project")).toBeNull();
+    expect(resolveTranscriptFileTarget("README.md", "/workspace/$PROJECT")).toBeNull();
+    expect(resolveTranscriptFileTarget("README.md", "C:\\Users\\%USERNAME%\\project")).toBeNull();
+  });
 });
 
 describe("RunTranscriptView", () => {
+  it("exposes each persisted process prose projection as one provenance-backed annotation source", () => {
+    const entries = [
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "Inspecting the edge case.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 4,
+        generationSeqEnd: 6,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "Checking another path.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 8,
+        generationSeqEnd: 8,
+      },
+    ] as unknown as TranscriptEntry[];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={entries}
+          annotationSource={{
+            sourceConversationId: "10000000-0000-4000-8000-000000000001",
+            sourceMessageId: "20000000-0000-4000-8000-000000000001",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(countOccurrences(html, 'data-annotation-surface="process_transcript"')).toBe(2);
+    expect(html).toContain('data-transcript-kind="thinking"');
+    expect(html).toContain('data-generation-seq-start="4"');
+    expect(html).toContain('data-generation-seq-end="6"');
+  });
+
+  it("coalesces only contiguous same-generation process deltas and expands their provenance", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "First ",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 4,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "second",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 5,
+        generationSeqEnd: 5,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:02.000Z",
+        text: "gap",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ] as unknown as TranscriptEntry[], false);
+
+    expect(blocks).toMatchObject([
+      {
+        type: "thinking",
+        text: "First second",
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 5,
+      },
+      {
+        type: "thinking",
+        text: "gap",
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ]);
+  });
+
   it("recognizes only local file targets for transcript links", () => {
     expect(resolveTranscriptLocalFileTarget("/Users/zeeland/work/result.md")).toBe("/Users/zeeland/work/result.md");
     expect(resolveTranscriptLocalFileTarget("file:///Users/zeeland/work/result%20copy.md")).toBe("/Users/zeeland/work/result copy.md");
@@ -138,6 +233,104 @@ describe("RunTranscriptView", () => {
     expect(blocks).toMatchObject([
       { type: "message", role: "assistant", text: "I read AGENTS.md and added E2E coverage." },
       { type: "thinking", text: "Checking the transcript renderer." },
+    ]);
+  });
+
+  it("reassembles production-shaped Chinese commentary by provider item across sequence gaps", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:00.000Z",
+        text: "我会先读取 ",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 4,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:01.000Z",
+        text: "`rudder",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:02.000Z",
+        text: "-docs`，再核对源码；",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 8,
+        generationSeqEnd: 8,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:03.000Z",
+        text: "确认字符不会丢失。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 11,
+        generationSeqEnd: 11,
+      },
+    ] as unknown as TranscriptEntry[], false);
+
+    expect(blocks).toMatchObject([{
+      type: "message",
+      role: "assistant",
+      segmentId: "commentary-production-1",
+      text: "我会先读取 `rudder-docs`，再核对源码；确认字符不会丢失。",
+    }]);
+    expect(blocks[0]).not.toHaveProperty("generationId");
+  });
+
+  it("keeps different commentary items and tool activity as visible boundaries", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:00.000Z",
+        text: "第一条进度。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-07-27T00:00:01.000Z",
+        name: "read",
+        toolUseId: "tool-1",
+        input: { path: "doc/README.md" },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-27T00:00:02.000Z",
+        toolUseId: "tool-1",
+        content: "done",
+        isError: false,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:03.000Z",
+        text: "第二条进度。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-2",
+      },
+    ], false);
+
+    expect(blocks).toMatchObject([
+      { type: "message", text: "第一条进度。", segmentId: "commentary-1" },
+      { type: "tool", toolUseId: "tool-1" },
+      { type: "message", text: "第二条进度。", segmentId: "commentary-2" },
     ]);
   });
 
@@ -371,7 +564,8 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("<strong>world</strong>");
+    expect(html).toContain('data-markdown-source-start="6" data-markdown-source-end="15"');
+    expect(html).toContain(">world</strong>");
     expect(html).toContain(">first</li>");
     expect(html).toContain(">second</li>");
   });
@@ -886,7 +1080,8 @@ describe("RunTranscriptView", () => {
 
     expect(html).not.toContain("Expand thinking");
     expect(html).not.toContain("Collapse thinking");
-    expect(html).toContain("<strong>Planning the response</strong>");
+    expect(html).toContain('data-markdown-source-start="0" data-markdown-source-end="25"');
+    expect(html).toContain(">Planning the response</strong>");
     expect(html).toContain("Final planning checkpoint remains visible inline.");
   });
 
@@ -1197,7 +1392,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("space-y-1.5");
     expect(html).toContain("Tool");
     const rowClass = classValueForText(html, "Tool");
-    const wrapperClass = html.match(/<div class="([^"]*)" title="[^"]*"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
+    const wrapperClass = html.match(/<div class="(py-[^"]*)" title="[^"]*">[\s\S]*?Tool/)?.[1] ?? "";
     expect(wrapperClass.split(" ")).toContain("py-0.5");
     expect(wrapperClass.split(" ")).not.toContain("py-1");
     expect(wrapperClass.split(" ")).not.toContain("py-1.5");
@@ -1617,6 +1812,8 @@ describe("RunTranscriptView", () => {
       scope: "stable_instructions",
       summary: "Gabriel updated stable memory instructions.",
       effect: "Effective next run",
+      rawText:
+        "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/gabriel--abc/instructions/MEMORY.md",
     });
     expect(blocks[1]).toMatchObject({
       type: "event",
@@ -1764,6 +1961,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain('data-transcript-action-icon="memory"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("$AGENT_HOME/instructions/MEMORY.md");
+    expect(html).not.toContain("Raw event");
     expect(html).not.toContain("file changes: update");
   });
 
@@ -1788,8 +1986,11 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Daily note");
     expect(html).not.toContain(">Failed<");
     expect(html).toContain("permission denied");
+    expect(html).toContain("Failure");
+    expect(html).toContain("Paths");
     expect(html).toContain("$AGENT_HOME/memory/2026-03-12.md");
-    expect(html).toContain("Raw event");
+    expect(html).not.toContain("Raw event");
+    expect(html).not.toContain("memory update failed: update");
     expect(html).toContain('aria-expanded="true"');
   });
 
@@ -1936,10 +2137,48 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Read ");
-    expect(html).toContain("docs/PRODUCT.md");
-    expect(html).toContain('aria-label="Open file docs/PRODUCT.md"');
+    expect(html).toContain(">PRODUCT.md</button>");
+    expect(html).not.toContain(">docs/PRODUCT.md</button>");
+    expect(html).toContain('aria-label="Open file PRODUCT.md"');
     expect(html).toContain('data-transcript-file-target="/Users/zeeland/work/rudder/docs/PRODUCT.md"');
     expect(html).toContain("underline-offset-4");
+  });
+
+  it("shows only the filename for long readable file paths while retaining the open target", () => {
+    const longFileLabel =
+      "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "read_file",
+              toolUseId: "read-long-1",
+              input: { path: longFileLabel },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "read-long-1",
+              content: "model cache",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(">models_cache.json</button>");
+    expect(html).not.toContain(`>${longFileLabel}</button>`);
+    expect(html).toContain('aria-label="Open file models_cache.json"');
+    expect(html).toContain(`data-transcript-file-target="${longFileLabel}"`);
+    expect(html).toContain("max-w-full");
+    expect(html).toContain("text-left");
+    expect(html).toContain("[overflow-wrap:anywhere]");
   });
 
   it("keeps mixed-success chat tool groups neutral and collapsed", () => {
@@ -2278,6 +2517,8 @@ describe("RunTranscriptView", () => {
         <RunTranscriptView
           density="compact"
           presentation="chat"
+          onOpenSkill={() => undefined}
+          canOpenSkill={() => true}
           entries={[
             {
               kind: "tool_call",
@@ -2298,9 +2539,18 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Use flomo-local-api skill");
+    expect(html).toContain(">Use </span><button type=\"button\"");
+    expect(html).toContain(">flomo-local-api</button><span> skill</span>");
     expect(html).toContain('data-transcript-action-icon="skill"');
+    expect(html).toContain('aria-label="Open skill flomo-local-api"');
+    expect(html).toContain('data-transcript-skill-path="/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md"');
+    expect(html).toContain('class="rounded-sm px-0.5 underline');
+    expect(html).toContain('hover:decoration-foreground focus-visible:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40');
+    expect(html).not.toContain('hover:bg-black');
+    expect(html).not.toContain('focus-visible:bg-black');
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    expect(html).not.toContain("Expand tool details");
+    expect(html).not.toContain("aria-expanded=");
   });
 
   it("summarizes shell reads of SKILL.md as skill use", () => {
@@ -2308,6 +2558,85 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Use flomo-local-api skill");
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    expect(html).not.toContain("Expand command details");
+    expect(html).not.toContain("aria-expanded=");
+  });
+
+  it("keeps skill actions non-expandable in detail transcripts", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "Skill",
+              toolUseId: "skill-detail-1",
+              input: { skill: "systematic-debugging" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "skill-detail-1",
+              content: "Loaded skill instructions",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use systematic-debugging skill");
+    expect(html).not.toContain("Expand tool details");
+    expect(html).not.toContain("aria-expanded=");
+  });
+
+  it("keeps an unresolved skill identity readable but non-actionable", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          onOpenSkill={() => undefined}
+          canOpenSkill={() => false}
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "Skill",
+              toolUseId: "skill-unresolved-1",
+              input: { skill: "ambiguous-skill" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "skill-unresolved-1",
+              content: "Loaded skill instructions",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use ambiguous-skill skill");
+    expect(html).toContain('data-transcript-skill-target="ambiguous-skill"');
+    expect(html).not.toContain('aria-label="Open skill ambiguous-skill"');
+  });
+
+  it("retains the Claude skill context source path as structured action evidence", () => {
+    const semantic = describeToolSemanticInfo(
+      "Skill",
+      { skill: "systematic-debugging" },
+      "Loaded skill context\nBase directory: /tmp/runtime/skills/systematic-debugging",
+    );
+
+    expect(semantic.skillTargets).toEqual([{
+      name: "systematic-debugging",
+      path: "/tmp/runtime/skills/systematic-debugging/SKILL.md",
+    }]);
   });
 
   it("folds Claude Code skill context user injections into the skill tool card", () => {
@@ -2457,7 +2786,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Web searched &quot;codex transcript web search keywords&quot;");
   });
 
-  it("renders MCP server, tool, and argument details in transcript summaries", () => {
+  it("keeps MCP summaries human-readable and hides server and argument details until expanded", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -2486,9 +2815,90 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Called fetch_pr via github");
-    expect(html).toContain("repo_full_name openai/codex");
-    expect(html).toContain("pr_number 123");
+    expect(html).toContain("Call fetch PR");
+    expect(html).toContain("/brands/github-logo.svg");
+    expect(html).toContain("dark:invert");
+    expect(html).not.toContain("Called fetch_pr via github");
+    expect(html).not.toContain("repo_full_name");
+    expect(html).not.toContain("openai/codex");
+    expect(html).not.toContain("pr_number");
+    expect(html).not.toContain("MCP · GitHub");
+    expect(html).toContain("aria-labelledby=");
+    expect(html).toContain("Expand tool details:");
+  });
+
+  it("uses exact MCP server aliases before applying a branded icon", () => {
+    expect(getTranscriptMcpBrandIcon("rudder-tools")?.label).toBe("Rudder");
+    expect(getTranscriptMcpBrandIcon("github-mcp")?.label).toBe("GitHub");
+    expect(getTranscriptMcpBrandIcon("not-rudder-official")).toBeNull();
+    expect(getTranscriptMcpBrandIcon("github-enterprise")).toBeNull();
+  });
+
+  it("falls back to the generic MCP icon for unknown and near-match servers", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__not-rudder-official__rudder_chat_transcript",
+              toolUseId: "mcp-near-match-1",
+              input: { chatId: "chat-1" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-near-match-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-transcript-action-icon="mcp"');
+    expect(html).not.toContain("/rudder-logo.png");
+  });
+
+  it("uses the Rudder logo and concise copy for Rudder MCP calls", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__rudder-tools__rudder_chat_transcript",
+              toolUseId: "mcp-rudder-1",
+              input: {
+                full: true,
+                chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-rudder-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Call Rudder chat transcript");
+    expect(html).toContain("/rudder-logo.png");
+    expect(html).toContain("h-3.5 w-3.5 object-contain");
+    expect(html).not.toContain("rudder-tools");
+    expect(html).not.toContain("eeb73ad1-e000-4dce-9d47-23106fa36bbc");
+    expect(html).not.toContain("full true");
   });
 
   it("renders Codex spawn agent tool payloads as readable transcript summaries", () => {
@@ -2595,6 +3005,61 @@ describe("RunTranscriptView", () => {
     expect(html).toContain('src="data:image/svg+xml');
     expect(html).not.toContain('data-transcript-action-icon="tool"');
     expect(html).not.toContain("Collab Tool Call");
+  });
+
+  it("renders Codex sub-agent activity as an inspectable agent row", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-07-28T00:00:01.000Z",
+              name: "subagent_activity",
+              toolUseId: "activity-1",
+              input: {
+                id: "activity-1",
+                activity_kind: "started",
+                agent_path: "/root/transcript_renderer_review",
+                receiver_thread_ids: ["thread-child-1"],
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-07-28T00:00:02.000Z",
+              toolUseId: "activity-1",
+              toolName: "subagent_activity",
+              content: JSON.stringify({
+                status: "completed",
+                activity_kind: "started",
+                agent_path: "/root/transcript_renderer_review",
+                receiver_thread_ids: ["thread-child-1"],
+                agent_transcripts: {
+                  "thread-child-1": {
+                    status: "completed",
+                    entries: [{
+                      kind: "assistant",
+                      ts: "2026-07-28T00:00:01.500Z",
+                      text: "Review passed.",
+                    }],
+                  },
+                },
+              }),
+              isError: false,
+            },
+          ]}
+          onOpenAgent={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Spawned transcript renderer review agent");
+    expect(html).toContain('data-transcript-agent-avatar="activity-1"');
+    expect(html).toContain('data-transcript-agent-inspect="thread-child-1"');
+    expect(html).toContain('aria-label="Inspect agent thread-child-1"');
+    expect(html).not.toContain("SubAgentActivity");
   });
 
   it("merges a later wait snapshot into the inspectable spawn agent", () => {
@@ -2913,7 +3378,7 @@ describe("RunTranscriptView", () => {
             {
               kind: "tool_call",
               ts: "2026-03-12T00:00:16.000Z",
-              name: "mcp__github__fetch_issue",
+              name: "mcp__example__fetch_issue",
               toolUseId: "mcp-1",
               input: { repo_full_name: "rudder/rudder", issue_number: 126 },
             },

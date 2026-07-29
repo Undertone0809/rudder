@@ -1806,7 +1806,15 @@ export function heartbeatService(
 
     getAgentSkillAnalytics: async (
       agentId: string,
-      opts?: { windowDays?: number; now?: Date; startDate?: string; endDate?: string },
+      opts?: {
+        windowDays?: number;
+        now?: Date;
+        startDate?: string;
+        endDate?: string;
+        from?: string;
+        to?: string;
+        timezoneOffsetMinutes?: number;
+      },
     ): Promise<AgentSkillAnalytics> => {
       const agent = await getAgent(agentId);
       if (!agent) throw notFound("Agent not found");

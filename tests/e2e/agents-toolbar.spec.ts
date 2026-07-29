@@ -3,10 +3,11 @@ import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Agents workspace entry", () => {
   test("opens the default agent overview from the rail and keeps only the team navigator in the context column", async ({ page }) => {
+    const uniqueIssuePrefix = `AT${Date.now().toString(36).slice(-8).toUpperCase()}`;
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `Agents-Toolbar-${Date.now()}`,
-        issuePrefix: "ATBAR",
+        issuePrefix: uniqueIssuePrefix,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -65,6 +66,10 @@ test.describe("Agents workspace entry", () => {
     await expect(teamCreateButton).toBeVisible();
     await teamCreateButton.click();
     await expect(page.getByText("Add a new agent")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ask Agent", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Ask the CEO to create a new agent", exact: true }),
+    ).toHaveCount(0);
     await page.getByRole("button", { name: "I want advanced configuration myself" }).click();
     await page.getByRole("button", { name: /Codex Local Codex agent/i }).click();
     const promptTemplateHelper = page.getByTestId("prompt-template-helper");
@@ -104,6 +109,5 @@ test.describe("Agents workspace entry", () => {
     await expect(page.getByRole("button", { name: "Filters" })).toHaveCount(0);
     await expect(page.getByText("Nothing here yet", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Create your first agent to get started.", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("No Organization Structure defined.", { exact: true })).toHaveCount(0);
   });
 });

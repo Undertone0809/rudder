@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = fs.readFileSync(
@@ -9,6 +10,12 @@ const mutationLedgerMigration = fs.readFileSync(
   new URL("./0110_supreme_mathemanic.sql", import.meta.url),
   "utf8",
 );
+const migrationsDirectory = new URL(".", import.meta.url);
+const loosePlacementMigrationName = fs.readdirSync(migrationsDirectory)
+  .find((name) => /^0117_.*\.sql$/.test(name));
+const loosePlacementMigration = loosePlacementMigrationName
+  ? fs.readFileSync(path.join(migrationsDirectory.pathname, loosePlacementMigrationName), "utf8")
+  : "";
 
 describe("Messenger Saved View work-package migration", () => {
   it("backfills multi-instance identity without rewriting compatibility resource keys", () => {
@@ -37,5 +44,12 @@ describe("Messenger Saved View work-package migration", () => {
     expect(mutationLedgerMigration).toContain('messenger_saved_view_mutations_org_user_mutation_uq');
     expect(mutationLedgerMigration).not.toContain('FOREIGN KEY ("saved_view_id")');
     expect(mutationLedgerMigration).not.toContain('FOREIGN KEY ("group_id")');
+  });
+
+  it("allows loose Keep receipts to persist without a custom group", () => {
+    expect(loosePlacementMigrationName).toBeDefined();
+    expect(loosePlacementMigration).toContain(
+      'ALTER TABLE "messenger_saved_view_mutations" ALTER COLUMN "group_id" DROP NOT NULL',
+    );
   });
 });

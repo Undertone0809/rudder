@@ -44,9 +44,12 @@ Notes:
   - Canary releases derive <version>-canary.N from the committed workspace
     semver, publish under npm dist-tag "canary", and create git tag
     canary/v<version>-canary.N.
-  - Stable release notes must already exist at releases/v<version>.md.
-  - --preflight checks the committed version, release notes, git tags, and npm
-    versions without installing dependencies, building, or publishing.
+  - Stable release notes must already exist at releases/v<version>.md and both
+    localized public changelog entries must exist in docs/releases.mdx and
+    docs/zh/releases.mdx.
+  - --preflight checks the committed version, release notes, public changelog,
+    git tags, and npm versions without installing dependencies, building, or
+    publishing.
   - --expected-version fails if a previously locked release version drifted
     before the publish command acquired its release lock.
   - Canary publish payloads are version-rewritten temporarily and restored on
@@ -196,8 +199,12 @@ if [ "$channel" = "stable" ] && [ ! -f "$NOTES_FILE" ]; then
   release_fail "stable release notes file is required at $NOTES_FILE before publishing stable."
 fi
 
+if [ "$channel" = "stable" ]; then
+  node "$REPO_ROOT/scripts/verify-stable-changelog.mjs" --version "$TARGET_STABLE_VERSION"
+fi
+
 if [ "$channel" = "canary" ] && [ -f "$NOTES_FILE" ]; then
-  release_info "  ✓ Stable release notes already exist at $NOTES_FILE"
+  release_info "  ✓ Stable release notes already exist at $NOTES_FILE" >&2
 fi
 
 if git_local_tag_exists "$tag_name" || git_remote_tag_exists "$tag_name" "$PUBLISH_REMOTE"; then
@@ -236,6 +243,7 @@ release_info "  Dist-tag: $DIST_TAG"
 release_info "  Git tag: $tag_name"
 if [ "$channel" = "stable" ]; then
   release_info "  Release notes: $NOTES_FILE"
+  release_info "  Public changelog: docs/releases.mdx and docs/zh/releases.mdx"
 fi
 
 set_cleanup_trap

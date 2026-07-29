@@ -1,0 +1,96 @@
+{
+  "schema": "rudder.agent-tool-reliability-baseline/v1",
+  "capturedAt": "2026-07-27T22:14:00+08:00",
+  "timezone": "Asia/Shanghai",
+  "window": {
+    "start": "2026-07-25T22:14:00+08:00",
+    "end": "2026-07-27T22:14:00+08:00",
+    "hours": 48
+  },
+  "population": {
+    "runs": 102,
+    "outcomes": {
+      "succeeded": 85,
+      "failed": 12,
+      "cancelled": 4,
+      "running": 1
+    },
+    "r6zRuns": 99,
+    "runtimeRuns": {
+      "codex_local": 94,
+      "claude_local": 8
+    },
+    "transcriptEntries": 54534,
+    "toolCalls": 2920
+  },
+  "exclusions": [
+    {
+      "runId": "e5913c44-00f0-4118-b27b-3c3da31f2",
+      "reason": "Intentional MCP diagnostic stress run",
+      "mcpCalls": 205,
+      "mcpErrors": 90
+    }
+  ],
+  "adjusted": {
+    "mcp": {
+      "runs": 62,
+      "calls": 483,
+      "errors": 41,
+      "errorRate": 0.0849,
+      "runsWithErrors": 27,
+      "runsWithErrorsThatSucceeded": 22
+    },
+    "cli": {
+      "runs": 22,
+      "calls": 81,
+      "errors": 8,
+      "errorRate": 0.0988
+    },
+    "runsUsingBoth": 19
+  },
+  "terminalFailureCauses": {
+    "chat_adapter_failed": 7,
+    "process_lost": 3,
+    "adapter_failed": 2
+  },
+  "contractShapeSignatures": [
+    {
+      "tool": "issue.search",
+      "shape": "missing_or_empty_query",
+      "observedCalls": 2
+    },
+    {
+      "tool": "issue.commit",
+      "shape": "summary_instead_of_message",
+      "observedCalls": 2
+    },
+    {
+      "tool": "runs.get",
+      "shape": "runIdPrefix_or_output_expansion_fields",
+      "observedCalls": null
+    },
+    {
+      "tool": "runs.list",
+      "shape": "includeOutput",
+      "observedCalls": null
+    },
+    {
+      "tool": "runs.transcript",
+      "shape": "runIdPrefix_or_limitBytes",
+      "observedCalls": null
+    },
+    {
+      "tool": "runs.by-skill",
+      "shape": "includeOutputs_or_includeTranscript",
+      "observedCalls": null
+    },
+    {
+      "tool": "user.activity",
+      "shape": "limit_above_100",
+      "observedCalls": null
+    }
+  ],
+  "primaryTarget": {
+    "contractShapeSignatureRecurrence": 0
+  }
+}

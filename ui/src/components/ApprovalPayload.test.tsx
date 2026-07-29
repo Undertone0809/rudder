@@ -189,7 +189,8 @@ describe("ApprovalPayloadRenderer", () => {
       { projects: [project], agents: [agent, reviewerAgent], chatConversation: { id: "chat-1", title: "Messenger intake" } },
     );
 
-    expect(html).toContain("Agent proposed a new issue from chat");
+    expect(html).not.toContain("Agent proposed a new issue from chat");
+    expect(html).not.toContain("Review the draft before Rudder creates it on the issue board.");
     expect(html).toContain("Messenger intake");
     expect(html).toContain('href="/messenger/chat/chat-1"');
     expect(html).toContain("Project Atlas");
@@ -197,7 +198,7 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).toContain("CTO");
     expect(html).toContain("<h2");
     expect(html).toContain("Review Summary");
-    expect(html).toContain("<strong>markdown</strong>");
+    expect(html).toMatch(/<strong[^>]*>markdown<\/strong>/);
     expect(html).toContain('src="/api/assets/approval-screenshot/content"');
     expect(html).not.toContain("project-1");
     expect(html).not.toContain("agent-1");

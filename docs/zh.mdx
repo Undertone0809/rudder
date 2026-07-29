@@ -1,10 +1,11 @@
 ---
 title: "Rudder"
-description: "Rudder 为人和 Agent 提供一个共同工作空间，让任务从目标走向可检查、可评审的结果。"
+description: "Build your self-improving Agent Team."
 icon: "/favicon.svg"
 keywords:
-  - "AI Agent 协作"
-  - "Agent 工作管理"
+  - "AI Agent 工作台"
+  - "Agent 团队"
+  - "Agent 任务管理"
   - "Rudder"
 canonical: "https://docs.rudderhq.dev/zh"
 "og:url": "https://docs.rudderhq.dev/zh"
@@ -12,69 +13,63 @@ hreflang_en: "https://docs.rudderhq.dev"
 hreflang_zh: "https://docs.rudderhq.dev/zh"
 ---
 
-<a id="example-release-work" />
+<a id="start-here" />
 
-发布 Rudder 0.5.0 需要实现、验证、评审和发布决定。Rudder 正是为这种工作而设计：多位参与者共同提供证据，最后由人判断结果是否可以交付。
+让 Agent 像人类队友一样思考、创造、探索，并在真实工作中持续成长。
 
-## Agent 工作需要共同记录
+Rudder 把目标、任务、Agent 的每次执行、评审和反馈串成一个不断改进的工作循环。
+人和 Agent 可以在同一个地方分配任务、查看结果、控制花费，并把真正有用的经验
+留给下一次工作。
 
-Rudder 是开源的 Agent 团队协作平台。它把目标、Chat、Issue、Agent、运行记录、产物、评审、预算和可复用指令连在一起，但不替代真正执行工作的运行环境。
+实际使用时，你把任务交给 Agent，看它执行，打开它产出的文件或回答，然后决定
+下一步。Rudder 会使用你已有的 Codex、Claude Code、本地命令或 Webhook，而
+不是替代它们。
 
-Agent 是有固定职责和配置的团队成员。Agent 运行是它的一次有边界的执行。Codex、Claude Code、本地进程或 webhook 才是被 Rudder 调用的运行环境。
+## Rudder 能帮你做什么
 
-![Rudder 工作空间概览](../images/board-overview.png)
+- **从 Chat 开始。** 让 Agent 写文案、改代码、做调研或产出其他明确结果，
+  不满意就继续聊。
+- **用 Issue 管理复杂任务。** 需要负责人、状态、依赖或独立评审时，再把
+  工作变成任务单。
+- **看清 Agent 做了什么。** 每次运行的结果、过程和可用日志都留在一起。
+- **找到真正的产物。** 文件、链接、截图和报告会连接到产生它们的任务。
+- **管理重复工作。** 用技能复用做法，用自动化定期运行，并及时发现费用和
+  失败。
 
-## 为什么要保留工作链
+## 一个简单的例子
 
-一次漂亮的回答很容易淹没在终端或长对话里。Rudder 会把前因后果放在可检查的位置：
+假设你想让 Agent 改善产品的上手页面：
 
-- 目标和项目说明为什么要做
-- Chat 或 Issue 保存请求与上下文
-- Agent 运行和对话记录说明执行过程
-- 文件、链接、截图等产物呈现结果
-- 评审结论、阻塞、审批和下一位负责人说明接下来怎么办
+1. 你在 Chat 里说明想要什么结果。
+2. Rudder 用你选择的运行工具和项目启动 Agent。
+3. 你查看进度，打开改好的文件或预览。
+4. 你要求继续修改，或者接受结果。
+5. 如果任务逐渐变复杂，再创建 Issue，把负责人和评审方式写清楚。
 
-想通过持续对话澄清、调整并完成任务时，用 Chat。需要指定负责人、跟踪依赖、显示状态或安排评审时，用 Issue。两种入口都能完成真实工作。
+这样过几天再回来看时，你不需要从终端、长对话和一堆来历不明的文件里重新
+拼出事情的经过。
 
-## 从一件小事开始
+## 三步开始
 
-先安装 Rudder，再从自己的工作里选一个边界清楚的部分。第一次只走完一个请求、一次运行、一个可检查的产物和一次评审决定。这正是 0.5.0 发布记录能够发挥作用的同一条工作链。
+1. 安装并打开 Rudder。
+2. 创建组织，也就是团队工作空间，再连接第一个 Agent 运行工具。
+3. 让 Agent 完成一件小而真实的事。
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-打开应用，创建组织，然后在 Chat 中把你的请求交给默认 Agent。如果这件事需要指定评审人或跟踪依赖，就创建 Issue。
-
 <CardGroup cols={2}>
-  <Card title="快速开始" icon="download" href="/zh/get-started/installation">
-    安装本地应用，并确认启动是否正常。
+  <Card title="1. 安装 Rudder" icon="download" href="/zh/get-started/installation">
+    在你的电脑上打开桌面应用。
   </Card>
-  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    走完请求、运行、结果和评审组成的第一条工作链。
+  <Card title="2. 完成第一个任务" icon="play" href="/zh/get-started/first-organization">
+    连接 Agent，并让它产出一个真正有用的结果。
   </Card>
-  <Card title="核心概念" icon="book-open" href="/zh/concepts/overview">
-    按五步阅读顺序建立产品整体认识。
+  <Card title="Rudder 如何工作" icon="book-open" href="/zh/concepts/overview">
+    完成第一次任务后，再了解几个必要概念。
   </Card>
-  <Card title="GDPval Harness Benchmark" icon="chart-bar" href="/zh/benchmarks/gdpval-harness">
-    查看 Rudder、Codex CLI 和 Claude Code 的 10 任务探索性对比协议与结果。
-  </Card>
-  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学会什么时候分配、评审、阻塞和关闭 Agent 工作。
-  </Card>
-  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
-    用明确的触发方式和结果去向运行重复的 Agent 工作。
-  </Card>
-  <Card title="内置 Browser" icon="globe" href="/zh/concepts/built-in-browser">
-    在 Rudder 旁边处理网页工作，并理解共享会话边界。
-  </Card>
-  <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
-    需要新角色时，添加职责和能力边界清楚的 Agent。
-  </Card>
-  <Card title="审批、预算和活动记录" icon="sliders-horizontal" href="/zh/reference/approvals-budgets-activity">
-    理解审批、预算限制、活动记录、运行摘要、Calendar 和 `Inbox`。
-  </Card>
-  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    选择任务入口，并找回需要处理的工作。
+  <Card title="该用 Chat 还是 Issue？" icon="messages-square" href="/zh/concepts/chat-messenger">
+    为下一件事选择最轻量的组织方式。
   </Card>
 </CardGroup>

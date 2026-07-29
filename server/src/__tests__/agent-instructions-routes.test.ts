@@ -91,7 +91,6 @@ function makeAgent() {
     role: "engineer",
     title: "Engineer",
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},

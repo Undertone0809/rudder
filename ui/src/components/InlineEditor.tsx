@@ -309,6 +309,7 @@ export function InlineEditor({
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
           documentIdentity={documentIdentity}
+          activateInlineTokensOnPlainClick={variant === "issue-description"}
           submitShortcut="mod-enter"
           onSubmit={() => {
             clearAutosaveDebounce();

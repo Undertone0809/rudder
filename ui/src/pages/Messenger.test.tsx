@@ -171,7 +171,7 @@ describe("Messenger page headers", () => {
     const html = renderIssueThread();
 
     expect(html).toContain(">Review Summary</h2>");
-    expect(html).toContain("<strong>Rendered</strong>");
+    expect(html).toMatch(/<strong[^>]*>Rendered<\/strong>/);
     expect(html).toContain("Alex comment");
     expect(html).not.toContain("Source comment by Alex");
     expect(html).toContain('href="/messenger/issues/RUD-4#comment-comment-4"');
@@ -348,6 +348,13 @@ describe("Messenger page headers", () => {
             id: "appr-1",
             type: "budget_override_required",
             status: "pending",
+            requestedByAgentId: "agent-requester-1",
+          },
+          requesterAgent: {
+            id: "agent-requester-1",
+            name: "Noah",
+            icon: null,
+            role: "engineer",
           },
         },
       ],
@@ -359,6 +366,8 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Approval objects stay inside the thread so decisions happen without losing context.");
     expect(html).toContain("budget_override_required");
     expect(html).toContain("Open full approval");
+    expect(html).toContain("Noah");
+    expect(html).not.toContain("Approvals assistant");
     expect(html).not.toContain("2 pending");
     expect(html).not.toContain("1 total");
   });

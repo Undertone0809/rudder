@@ -42,7 +42,8 @@ import { sidebarItemVariants } from "./sidebarItemStyles";
 function openExternalLink(target: string) {
   const desktopShell = readDesktopShell();
   if (desktopShell) {
-    void desktopShell.openExternal(target);
+    const openInSystemBrowser = desktopShell.forceOpenExternal ?? desktopShell.openExternal;
+    void openInSystemBrowser(target);
     return;
   }
   window.open(target, "_blank", "noopener,noreferrer");

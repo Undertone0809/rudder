@@ -5,7 +5,18 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunActivityChart, RunTriggerDistributionChart, SkillsUsageChart, SuccessRateChart, TokenUsageChart } from "./ActivityCharts";
+import {
+  IssueStatusPieChart,
+  PriorityPieChart,
+  RunActivityChart,
+  RunActivityPieChart,
+  RunTriggerDistributionChart,
+  SkillsUsageChart,
+  SkillsUsagePieChart,
+  SuccessRateChart,
+  TokenUsageChart,
+  TokenUsagePieChart,
+} from "./ActivityCharts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -159,6 +170,80 @@ describe("SkillsUsageChart", () => {
     expect(container.textContent).toContain("7");
     expect(container.textContent).toContain("Skill A");
     expect(container.textContent).toContain("Skill B");
+  });
+});
+
+describe("one-day distribution pie charts", () => {
+  it("renders run, issue, token, and skill distributions with accessible totals", () => {
+    const runs = [
+      { id: "run-1", status: "succeeded" },
+      { id: "run-2", status: "failed" },
+      { id: "run-3", status: "running" },
+    ] as HeartbeatRun[];
+    const costRows = [{
+      date: "2026-05-12",
+      costCents: 10,
+      inputTokens: 1_000,
+      cachedInputTokens: 600,
+      outputTokens: 200,
+      totalTokens: 1_200,
+      eventCount: 1,
+    }] satisfies CostTrendPoint[];
+
+    const container = render(
+      <div>
+        <RunActivityPieChart runs={runs} />
+        <PriorityPieChart issues={[{ priority: "high" }, { priority: "high" }, { priority: "low" }]} />
+        <IssueStatusPieChart issues={[{ status: "in_progress" }, { status: "done" }]} />
+        <TokenUsagePieChart rows={costRows} />
+        <SkillsUsagePieChart analytics={buildSkillAnalytics({
+          totalCount: 3,
+          totalRunsWithSkills: 1,
+          skills: [
+            {
+              key: "skill-a",
+              label: "Skill A",
+              count: 2,
+              evidence: "used",
+              evidenceCounts: { used: 2, requested: 0, loaded: 0 },
+            },
+            {
+              key: "skill-b",
+              label: "Skill B",
+              count: 1,
+              evidence: "used",
+              evidenceCounts: { used: 1, requested: 0, loaded: 0 },
+            },
+          ],
+        })} />
+      </div>,
+    );
+
+    expect(container.querySelector('[data-testid="run-activity-pie-chart"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="issue-priority-pie-chart"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="issue-status-pie-chart"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="token-usage-pie-chart"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="skills-usage-pie-chart"]')).toBeTruthy();
+    expect(container.textContent).toContain("Failed / timed out");
+    expect(container.textContent).toContain("Cached input");
+    expect(container.textContent).toContain("Skill A");
+    expect(container.textContent).toContain("Skill B");
+    expect(container.querySelector('[aria-label*="Succeeded 33%"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label*="Uncached input 33%"]')).toBeTruthy();
+  });
+
+  it("keeps explicit empty states for one-day pies", () => {
+    const container = render(
+      <div>
+        <RunActivityPieChart runs={[]} />
+        <TokenUsagePieChart rows={[]} />
+        <SkillsUsagePieChart analytics={null} />
+      </div>,
+    );
+
+    expect(container.textContent).toContain("No runs today");
+    expect(container.textContent).toContain("No token usage today");
+    expect(container.textContent).toContain("No skill usage today.");
   });
 });
 

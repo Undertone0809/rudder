@@ -724,7 +724,7 @@ export function OrganizationImport() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Organization Structure", href: "/org" },
+      { label: "Organization Settings", href: "/organization/settings" },
       { label: "Import" },
     ]);
   }, [setBreadcrumbs]);

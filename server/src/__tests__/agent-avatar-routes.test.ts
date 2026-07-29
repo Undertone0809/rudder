@@ -19,7 +19,6 @@ const baseAgent = {
   title: "Builder",
   icon: null,
   status: "idle",
-  reportsTo: null,
   capabilities: null,
   agentRuntimeType: "process",
   agentRuntimeConfig: {},
@@ -39,7 +38,6 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
   resolveByReference: vi.fn(),
   update: vi.fn(),
-  getChainOfCommand: vi.fn(),
 }));
 
 const mockAssetService = vi.hoisted(() => ({

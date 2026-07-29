@@ -142,11 +142,15 @@ function escapeHtmlAttribute(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-function createFaviconDataUrl(background: string, foreground: string): string {
+// Keep the official Rudder favicon self-contained because browsers do not reliably
+// resolve external image references nested inside a data URL favicon.
+const RUDDER_FAVICON_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAEr0lEQVR4nO1XS0ijSRCOMVH/PDyokKhJxPjEiwi6qFkdDIKIMMuOBsWLmMEHIl4UcYedgwePIqIO6EFQFN0RRxQRwYM3QRFk4wt1PIiXWTTiCxJjtJaqpHv/xJ0/2b14mYam/nRXV31dr67IZDIZvPKU/QAAzArB4+npiSaOu7s7mJ+fh5aWFsjPzwedTgfa2FjQ6XVQUFAAra2tsLCwAPf39y/OioekC8TD6/USdbvdMPLpE2RkZHC+iIgIiIqKgpiYGIiOjqbfbC8rKwtGR0fh4eEhQM5/AuD1Hzo+PobS0lLai4yMBI1GQxO/xedoT6sBjfqfvbKyMjg9/foCREgAXj/z5uYmJCcn07pWqwVBEOhboVCA0WiE4uJiqKiogKKiIjAYDLSO+yqVivjx22Qywfb2Nslj7pAE8ORnOjg4gKSkJK4chSuVSqirq4PV1VVwOp3E9/z8TPTy8hJWVlbAZqsBhUJJ/AyE0WQiSzIQIS3gdruhpKSEfsfGxvqEGI2kQKwUqcfjCfiNY2lpicBjXLDzVqsVPJ7H8FwwMDDAb45CUlNTYX9/n/vwT4cDuru7oby8HAoLC4n29PTA7u4u53E4HGR+uVzOLTEyMhIawPX1NUU7HsQIR3+ur6/TQbxtb28vrbNMEFPk7evrg8dH303RVZQpgkA8OTk5lMqSAGZnZ4lipCPt6Ojgt+rs7KQ1TDtUhhMDk33jOu6jNYLPaLU+eV++LEgDsL9/TxQFI4idnR0StLi4yNdZ7osnrmEKqjVqst74+Disra1BfX09tySeb29vlwaQl5dHAvAb04wFVmVlJTezWCmzgrguIHCMDbTe8PAwxYJCqaQ9i8UiDSA+Pp77uLm5mZSfn5+DTq+n1GJKkTKgLN9ra2vp5kdHRxQvWE9sNhvtq9VqoplZWdIABEHgzL99+EAA9vf3uHJWbHCmpaWB3d5I7sE6IE5FHA0NDdxqrIilp6dLA4iLi+PMXV1dvChhNEcqFKBP1EN1dTWMjY3B6enpi7cDawiO3z9+DHAZkxnSArm5uaDw+7O6poaE3d7eUjxkZ2dDVVUVWMusxJeSkgLv3v0KTqfv9mh2HAguOGAZgKLiImkAjY2NvN6bzWa4uLiAiYkJyMzMpOASv3osBqamprgVlpeXA4KUfavUvixoa2uTBjA9PU2U0kqjIZNhhKMyfAtihBjfzTD//bEyMzPDH6+EhAQCjzziNBX8aYj9hCSAq6srCi65PIKnl09hYO4jQASEtf7s7Ay+ffuLzgWnKjM/Wg5diO4M+Rb09/fz1Am+Cc4o0Y3e/vIWXC4XPcnsTDA/y6qhoaHwHiOX2wWWny3fFSgOqsnJSbDb7SGVY3PCgjSsfmBvb4/3A8GC0fz0SprN1B+wiP+ecmxWsDiF3Q94/R3RxsYG6BMT/9UdzP8YjAQqyDpMebLBAFtbW+F3RGwwEIeHh7x+Yyawl08lCBQLaA1UyJTiHkvP0jdv4OTkJEBe2ADEhzDIBgcHeZSziW4Ql2a2hv0ENh+sKga35mEDYCCYAGxWPv/xGZqamqDgpwIChHmPFP8X4OM1NzcHNzc3//9/gex1puwHAHhNK/wNmT/FQCPovQwAAAAASUVORK5CYII=";
+
+function createFaviconDataUrl(background: string): string {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">',
     `<rect width="24" height="24" rx="6" fill="${background}"/>`,
-    `<path stroke="${foreground}" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.15" d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>`,
+    `<image href="data:image/png;base64,${RUDDER_FAVICON_PNG_BASE64}" x="2" y="2" width="20" height="20" preserveAspectRatio="xMidYMid meet"/>`,
     "</svg>",
   ].join("");
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
@@ -178,7 +182,7 @@ export function getWorktreeUiBranding(env: NodeJS.ProcessEnv = process.env): Wor
     name,
     color,
     textColor,
-    faviconHref: createFaviconDataUrl(color, textColor),
+    faviconHref: createFaviconDataUrl(color),
     faviconLinks: null,
   };
 }

@@ -1,11 +1,11 @@
 ---
 title: "Issue 状态"
-description: "查询 Rudder 中每种 Issue 状态、评审规则，以及状态和负责人之间的边界。"
+description: "快速选择正确的 Issue 状态，并理解评审时会发生什么。"
 icon: "list-checks"
 keywords:
   - "Rudder Issue 状态"
-  - "Agent Issue 生命周期"
-  - "Issue 评审状态"
+  - "待整理 待办 进行中"
+  - "Issue 评审"
 canonical: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 "og:url": "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 hreflang_en: "https://docs.rudderhq.dev/reference/issue-statuses"
@@ -14,66 +14,50 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 
 <a id="definition" />
 
-## 定义
-
-每个 Issue 的状态都是它在生命周期中所处位置的持久信号。看板和 Agent
-通过它判断当前工作需要整理、执行、评审、解除阻塞，还是已经结束。
+状态用来表示任务接下来需要哪类行动。它不能代替负责人、评审人或书面上下文。
 
 <a id="states" />
 
-## 状态
+## 状态速查
 
-| 状态 | 含义 | 下一步通常由谁处理 |
+| 状态 | 含义 | 常见下一步 |
 | --- | --- | --- |
-| `backlog` | 已记录任务，但还需要整理 | 负责规划工作的人 |
-| `todo` | 请求和验收条件已经清楚 | 负责人 |
-| `in_progress` | 负责人正在执行 | 负责人 |
-| `blocked` | 某项明确的依赖或决策阻止了进展 | 能解除阻塞的人；这也是可评审状态 |
-| `in_review` | 已有可判断的产物和证据 | 评审人 |
-| `done` | 结果已接受，没有剩余必要工作 | 无，除非明确重新打开 Issue |
-| `cancelled` | 工作被有意停止，且没有已接受的结果 | 无，除非明确重新打开 Issue |
+| 待整理（`backlog`） | 仍需确定范围、优先级、负责人或验收条件 | 把任务写清楚 |
+| 待办（`todo`） | 一个负责人不需要更多决定就能开始 | 负责人开始 |
+| 进行中（`in_progress`） | 负责人正在处理 | 产出结果 |
+| 阻塞（`blocked`） | 必须先等人、依赖、权限或外部事件 | 写清并解除阻塞 |
+| 评审中（`in_review`） | 结果已经可以独立判断 | 评审人决定 |
+| 已完成（`done`） | 结果已经被接受 | 需要时再建后续任务 |
+| 已取消（`cancelled`） | 工作被主动停止，而且没有已接受结果 | 任务再次需要时才重新打开 |
 
 <a id="constraints" />
 
-## 约束
+## 会影响流程的规则
 
-- 一个 Issue 只有一名负责人。相互独立的工作应拆为子 Issue 或关联
-  Issue，不能给同一条记录安排多名负责人。
-- 评审结论必须带评论，而且只能在 Issue 为 `in_review` 或 `blocked` 时提交。
-- 负责人 Agent 尝试完成带评审人的 Issue 时，Rudder 会把状态改为
-  `in_review`。这条路径只能通过评审人接受结论后完成。
-- `done` 和 `cancelled` 都是关闭状态。只有评论带有明确的重新打开意图时，
-  Rudder 才会把它们恢复到 `todo`。
+- 新 Issue 通常从“待整理”开始。
+- 任务清楚到可以执行后，再分配给 Agent。
+- 已指定评审人时，负责人不能跳过评审，把结果直接当成已经接受。
+- 接受评审可以让 Issue 完成；要求修改会把下一步交回负责人。
+- Agent 运行失败不会自动完成 Issue。
+- `done` 和 `cancelled` 都是关闭状态。明确重新打开后，Issue 会回到 `todo`。
 
 <a id="boundaries" />
 
-## 边界
+## 状态和负责人是两件事
 
-状态不能替代负责人、任务领取或评审。添加评审人不会自动把 Issue
-移到 `in_review`；在普通评论中写“通过”也不会生成结构化评审结论。
+改变状态不会悄悄更换负责人。进入评审后，下一项决定由评审人处理，但执行负责人
+仍然会显示。
 
-`blocked` 应对应一项具体缺失条件，不是普通错误的收纳箱。工作不应继续时使用
-`cancelled`；已有结果被接受时应使用 `done`。重要的状态
-变更会留下活动记录，并始终受 Issue 所属组织的边界限制。
+向当前负责人或评审人发出明确请求时，可以启动 Agent 回复，不必把状态当成权限
+开关。日常规划仍应按上表使用状态，让看板容易理解。
 
 <a id="examples" />
 
 ## 例子
 
-- 一项请求还没有验收条件，先放在 `backlog`。结果定义清楚、负责人可以
-  开始后，再移到 `todo`。
-- Agent 完成了带评审人的 Issue。Issue 进入 `in_review`；评审人带评论
-  请求修改后，下一步回到负责人。
-- 工作必须等待客户提供文件。设为 `blocked`，在阻塞评论中写明缺少的
-  文件，收到后再继续。
-- 一项请求在结果被接受前撤回。把它设为 `cancelled`；请求恢复时，通过带有
-  明确重新打开意图的评论让它回到 `todo`。
-
-<CardGroup cols={2}>
-  <Card title="Issue 生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    从接收任务推进到接受结果。
-  </Card>
-  <Card title="评审 Agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
-    检查证据并记录评审结论。
-  </Card>
-</CardGroup>
+- 发布文案读者还没确定：留在“待整理”。
+- 要求和负责人都已经清楚：移到“待办”。
+- Agent 在等待产品决定：标记“阻塞”，并写明由谁决定。
+- 文件和检查已经准备好：移到“评审中”。
+- 评审人接受结果：Issue 可以进入“已完成”。
+- 请求被撤回：移到 `cancelled`。再次需要时，用评论说明原因并重新打开到 `todo`。

@@ -2,6 +2,13 @@ import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
+  FORBIDDEN_PRODUCTION_PACKAGES,
+  OPTIMIZATION_MANIFEST,
+  embeddedPostgresPlatformPackage,
+  packageHasTypeMetadata,
+} from "./optimize-server-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -152,6 +159,168 @@ async function verifyModuleResolution(serverPackageDir) {
   }
 }
 
+function isForbiddenProductionPackage(packageName) {
+  return FORBIDDEN_PRODUCTION_PACKAGES.has(packageName)
+    || packageName.startsWith("@esbuild/")
+    || packageName.startsWith("@rollup/")
+    || packageName.startsWith("@vitest/")
+    || packageName.startsWith("lightningcss-");
+}
+
+async function listVirtualStorePackageNames(serverPackageDir) {
+  const pnpmDir = path.join(serverPackageDir, "node_modules", ".pnpm");
+  if (!(await exists(pnpmDir))) return new Set();
+  const packageNames = new Set();
+  for (const storeEntry of await readdir(pnpmDir, { withFileTypes: true })) {
+    if (!storeEntry.isDirectory() || storeEntry.name === "node_modules") continue;
+    const storeNodeModules = path.join(pnpmDir, storeEntry.name, "node_modules");
+    if (!(await exists(storeNodeModules))) continue;
+    for (const entry of await readdir(storeNodeModules, { withFileTypes: true })) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      if (entry.name.startsWith("@")) {
+        const scopeDir = path.join(storeNodeModules, entry.name);
+        for (const scopedEntry of await readdir(scopeDir, { withFileTypes: true })) {
+          if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) continue;
+          const manifestPath = path.join(scopeDir, scopedEntry.name, "package.json");
+          if (!(await exists(manifestPath))) continue;
+          const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+          if (manifest.name) packageNames.add(manifest.name);
+        }
+        continue;
+      }
+      const manifestPath = path.join(storeNodeModules, entry.name, "package.json");
+      if (!(await exists(manifestPath))) continue;
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      if (manifest.name) packageNames.add(manifest.name);
+    }
+  }
+  return packageNames;
+}
+
+async function findNonRuntimeFiles(serverPackageDir, limit = 20) {
+  const matches = [];
+
+  async function walk(currentPath) {
+    if (matches.length >= limit) return;
+    for (const entry of await readdir(currentPath, { withFileTypes: true })) {
+      if (matches.length >= limit) return;
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+      if (
+        entry.isFile()
+        && (
+          entry.name.endsWith(".d.ts")
+          || entry.name.endsWith(".d.ts.map")
+          || entry.name.endsWith(".d.cts")
+          || entry.name.endsWith(".d.cts.map")
+          || entry.name.endsWith(".d.mts")
+          || entry.name.endsWith(".d.mts.map")
+          || entry.name.endsWith(".map")
+        )
+      ) {
+        matches.push(path.relative(serverPackageDir, entryPath));
+      }
+    }
+  }
+
+  await walk(serverPackageDir);
+  return matches;
+}
+
+async function findTypeMetadata(serverPackageDir, limit = 20) {
+  const matches = [];
+  async function walk(currentPath) {
+    if (matches.length >= limit) return;
+    for (const entry of await readdir(currentPath, { withFileTypes: true })) {
+      if (matches.length >= limit) return;
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+      } else if (entry.isFile() && entry.name === "package.json") {
+        const manifest = JSON.parse(await readFile(entryPath, "utf8"));
+        if (packageHasTypeMetadata(manifest)) {
+          matches.push(path.relative(serverPackageDir, entryPath));
+        }
+      }
+    }
+  }
+  await walk(serverPackageDir);
+  return matches;
+}
+
+async function verifyOptimizedProductionPackage(serverPackageDir) {
+  const optimizationPath = path.join(serverPackageDir, OPTIMIZATION_MANIFEST);
+  if (!(await exists(optimizationPath))) {
+    error(`production optimization manifest missing: ${optimizationPath}`);
+    return;
+  }
+  const optimization = JSON.parse(await readFile(optimizationPath, "utf8"));
+  if (optimization.version !== 1) {
+    error(`unsupported production optimization manifest version: ${optimization.version}`);
+  }
+
+  const installedPackageNames = await listVirtualStorePackageNames(serverPackageDir);
+  const forbiddenPackages = [...installedPackageNames].filter(isForbiddenProductionPackage).sort();
+  if (forbiddenPackages.length > 0) {
+    for (const packageName of forbiddenPackages) {
+      error(`build/test package present in production runtime: ${packageName}`);
+    }
+  } else {
+    ok("optional peer build/test packages removed");
+  }
+
+  const targetEmbeddedPlatformPackage = embeddedPostgresPlatformPackage(
+    optimization.platform,
+    optimization.arch,
+  );
+  const embeddedPlatformPackages = [...installedPackageNames]
+    .filter((packageName) => EMBEDDED_POSTGRES_PLATFORM_PACKAGES.has(packageName))
+    .sort();
+  if (optimization.bundledPostgres === true && embeddedPlatformPackages.length > 0) {
+    for (const packageName of embeddedPlatformPackages) {
+      error(`duplicate embedded PostgreSQL platform package present: ${packageName}`);
+    }
+  } else if (optimization.bundledPostgres === true && targetEmbeddedPlatformPackage) {
+    ok(`duplicate embedded PostgreSQL platform packages removed (target ${targetEmbeddedPlatformPackage})`);
+  }
+
+  const nonRuntimeFiles = await findNonRuntimeFiles(serverPackageDir);
+  if (nonRuntimeFiles.length > 0) {
+    for (const filePath of nonRuntimeFiles) {
+      error(`non-runtime type/source-map file present: ${filePath}`);
+    }
+  } else {
+    ok("type declarations and source maps removed");
+  }
+
+  const typeMetadata = await findTypeMetadata(serverPackageDir);
+  if (typeMetadata.length > 0) {
+    for (const filePath of typeMetadata) {
+      error(`non-runtime type metadata present: ${filePath}`);
+    }
+  } else {
+    ok("package type metadata removed");
+  }
+
+  try {
+    const requireFromPackage = createRequire(path.join(serverPackageDir, "package.json"));
+    const tokenizer = requireFromPackage("gpt-tokenizer/encoding/o200k_base");
+    const sample = "Rudder 世界";
+    const tokens = tokenizer.encode(sample, { disallowedSpecial: new Set() });
+    if (tokenizer.decode(tokens) !== sample) {
+      throw new Error("o200k_base encode/decode round trip did not preserve text");
+    }
+    ok("compact gpt-tokenizer o200k_base bundle checked");
+  } catch (e) {
+    error(`compact gpt-tokenizer bundle failed: ${e.message}`);
+  }
+}
+
 function packagedRuntimeSegment() {
   const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
   return `${process.platform}-${targetArch}`;
@@ -166,12 +335,27 @@ async function verifyPostgresRuntimePayload(serverPackageDir) {
     path.join(binDir, executable("initdb")),
     path.join(binDir, executable("pg_ctl")),
     path.join(binDir, executable("postgres")),
-    path.join(runtimeDir, "share", "postgresql", "postgres.bki"),
   ];
 
   const missing = [];
   for (const requiredPath of requiredPaths) {
     if (!(await exists(requiredPath))) missing.push(requiredPath);
+  }
+  const timezoneCandidates = [
+    path.join(runtimeDir, "share", "postgresql", "timezone"),
+    path.join(runtimeDir, "share", "timezone"),
+  ];
+  if (!(await Promise.all(timezoneCandidates.map((candidate) => exists(candidate)))).some(Boolean)) {
+    missing.push(timezoneCandidates.join(" or "));
+  }
+  for (const fileName of ["postgres.bki", "postgresql.conf.sample"]) {
+    const candidates = [
+      path.join(runtimeDir, "share", fileName),
+      path.join(runtimeDir, "share", "postgresql", fileName),
+    ];
+    if (!(await Promise.all(candidates.map((candidate) => exists(candidate)))).some(Boolean)) {
+      missing.push(candidates.join(" or "));
+    }
   }
 
   if (missing.length > 0) {
@@ -238,6 +422,7 @@ async function verifyServerPackage(serverPackageDir) {
     "ajv-formats",
     "hermes-paperclip-adapter",
     "@aws-sdk/client-s3",
+    "gpt-tokenizer",
   ];
   const present = new Set(packages.map((p) => p.name));
   const missingCritical = critical.filter((name) => !present.has(name));
@@ -274,7 +459,10 @@ async function verifyServerPackage(serverPackageDir) {
   // 6. PostgreSQL runtime payload required by packaged Desktop local startup.
   await verifyPostgresRuntimePayload(serverPackageDir);
 
-  // 7. The packaged CLI and external runtime cache must expose one Browser contract.
+  // 7. The production package contains runtime assets only.
+  await verifyOptimizedProductionPackage(serverPackageDir);
+
+  // 8. The packaged CLI and external runtime cache must expose one Browser contract.
   try {
     const result = await verifyBrowserBundle({ serverPackageDir });
     ok(`Browser bundle handshake checked (${result.browserTools.length} tools, ${result.provenance})`);

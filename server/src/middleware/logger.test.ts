@@ -5,6 +5,10 @@ import {
   markBrowserHttpRequestBodySensitive,
   markHttpRequestBodySensitive,
   requestBodyForLogs,
+  requestHeadersForLogs,
+  requestQueryForLogs,
+  requestUrlForLogs,
+  serializeHttpRequestForLogs,
 } from "./logger.js";
 
 describe("HTTP request-body logging", () => {
@@ -38,6 +42,80 @@ describe("HTTP request-body logging", () => {
     expect(requestBodyForLogs({ originalUrl: "/api/issues" }, body)).toBe(body);
   });
 
+  it("redacts direct and queued inline annotation request bodies", () => {
+    const direct = {
+      body: "",
+      inlineAnnotations: [{
+        selectedText: "PRIVATE_SELECTED_TEXT",
+        comment: "PRIVATE_OPERATOR_COMMENT",
+      }],
+    };
+    const queued = {
+      payload: {
+        body: "",
+        inlineAnnotations: [{
+          selectedText: "PRIVATE_THINKING_TEXT",
+          comment: null,
+        }],
+      },
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/messages" },
+      direct,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      queued,
+    )).toBe("[REDACTED]");
+    expect(JSON.stringify(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/messages" },
+      direct,
+    ))).not.toContain("PRIVATE_SELECTED_TEXT");
+    expect(JSON.stringify(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      queued,
+    ))).not.toContain("PRIVATE_THINKING_TEXT");
+  });
+
+  it("redacts multipart Queue payloads whose annotation JSON is still stringified", () => {
+    const payload = JSON.stringify({
+      body: "",
+      inlineAnnotations: [{
+        selectedText: "PRIVATE_MULTIPART_THINKING_TEXT",
+        comment: "PRIVATE_MULTIPART_OPERATOR_COMMENT",
+      }],
+    });
+    const multipartCreate = {
+      payload,
+      clientMutationId: "mutation-1",
+    };
+    const multipartUpdate = {
+      payload,
+      expectedVersion: "2",
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      multipartCreate,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue/queued-1" },
+      multipartUpdate,
+    )).toBe("[REDACTED]");
+
+    const logged = JSON.stringify([
+      requestBodyForLogs({}, multipartCreate),
+      requestBodyForLogs({}, multipartUpdate),
+    ]);
+    expect(logged).not.toContain("PRIVATE_MULTIPART_THINKING_TEXT");
+    expect(logged).not.toContain("PRIVATE_MULTIPART_OPERATOR_COMMENT");
+
+    expect(requestBodyForLogs({}, {
+      payload: "{\"inlineAnnotations\":[{\"selectedText\":\"PRIVATE_TRUNCATED_TEXT\"}",
+    })).toBe("[REDACTED]");
+  });
+
   it("keeps Browser bodies redacted when an HTTP request returns before its route", async () => {
     const app = express();
     let loggedBody: unknown;
@@ -59,5 +137,50 @@ describe("HTTP request-body logging", () => {
       .send({ function: "() => 'private-value'" });
     expect(mismatched.status).toBe(403);
     expect(loggedBody).toBe("[REDACTED]");
+  });
+
+  it("redacts OAuth callback URL and query before auth or route middleware runs", () => {
+    const req = {
+      originalUrl: "/api/mcp/oauth/callback?state=raw-state&code=raw-code&error_description=private",
+      url: "/api/mcp/oauth/callback?state=raw-state&code=raw-code&error_description=private",
+      query: {
+        state: "raw-state",
+        code: "raw-code",
+        error_description: "private",
+        iss: "https://oauth.example.test",
+      },
+      headers: {
+        referer: "https://oauth.example.test/authorize?state=referer-state&code_challenge=pkce-secret",
+        cookie: "oauth-session=cookie-secret",
+        authorization: "Bearer callback-secret",
+        "user-agent": "test",
+      },
+    };
+
+    expect(requestUrlForLogs(req)).toBe("/api/mcp/oauth/callback?[REDACTED]");
+    expect(requestQueryForLogs(req, req.query)).toBe("[REDACTED]");
+    expect(requestHeadersForLogs(req, req.headers)).toEqual({
+      referer: "[REDACTED]",
+      cookie: "[REDACTED]",
+      authorization: "[REDACTED]",
+      "user-agent": "test",
+    });
+    const serialized = serializeHttpRequestForLogs(req);
+    expect(serialized).toMatchObject({
+      url: "/api/mcp/oauth/callback?[REDACTED]",
+      query: "[REDACTED]",
+      headers: {
+        referer: "[REDACTED]",
+        cookie: "[REDACTED]",
+        authorization: "[REDACTED]",
+        "user-agent": "test",
+      },
+    });
+    expect(JSON.stringify({
+      url: requestUrlForLogs(req),
+      query: requestQueryForLogs(req, req.query),
+      headers: requestHeadersForLogs(req, req.headers),
+      serialized,
+    })).not.toMatch(/raw-state|raw-code|private|oauth\.example|referer-state|pkce-secret|cookie-secret|callback-secret/u);
   });
 });

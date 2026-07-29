@@ -37,6 +37,16 @@
   animation: rudder-surface-pop-out var(--motion-duration-fast) var(--motion-ease-exit) both;
 }
 
+.motion-surface-pop[data-side="top"]:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]),
+.motion-surface-pop[data-placement="top"]:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]) {
+  animation-name: rudder-surface-pop-in-top;
+}
+
+.motion-surface-pop[data-side="top"][data-state="closed"],
+.motion-surface-pop[data-placement="top"][data-state="closed"] {
+  animation-name: rudder-surface-pop-out-top;
+}
+
 .motion-modal {
   will-change: opacity, scale, filter;
 }
@@ -105,6 +115,23 @@
   will-change: opacity, transform, filter;
 }
 
+.chat-proposal-compact {
+  animation: rudder-proposal-compact-in var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  transform-origin: center top;
+  will-change: opacity, transform, filter;
+}
+
+.chat-review-block--inline {
+  animation: rudder-proposal-card-in var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  transform-origin: center top;
+  will-change: opacity, transform, filter;
+}
+
+.chat-review-block--side-panel {
+  animation: rudder-proposal-panel-content-in var(--motion-duration-standard) var(--motion-ease-enter) both;
+  will-change: opacity, transform;
+}
+
 @keyframes rudder-surface-pop-in {
   from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.97); }
   to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); }
@@ -112,6 +139,15 @@
 
 @keyframes rudder-surface-pop-out {
   to { opacity: 0; filter: blur(1px); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.99); }
+}
+
+@keyframes rudder-surface-pop-in-top {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(var(--motion-distance-small)) scale(0.97); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); }
+}
+
+@keyframes rudder-surface-pop-out-top {
+  to { opacity: 0; filter: blur(1px); transform: translateY(var(--motion-distance-small)) scale(0.99); }
 }
 
 @keyframes rudder-modal-in {
@@ -155,6 +191,37 @@
 @keyframes rudder-content-reveal {
   from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(var(--motion-distance-small)); }
   to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@keyframes rudder-proposal-compact-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--motion-blur-soft));
+    transform: translateY(var(--motion-distance-small)) scaleY(0.9);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes rudder-proposal-card-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--motion-blur-soft));
+    transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rudder-proposal-panel-content-in {
+  from { opacity: 0; transform: translateX(var(--motion-distance-small)); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @property --motion-live-surface-angle {
@@ -318,39 +385,6 @@
 
 .motion-kanban-card[data-just-dropped="true"] {
   animation: rudder-card-drop-settle var(--motion-duration-emphasis) var(--motion-ease-enter) both;
-}
-
-.motion-org-viewport[data-panning="false"] .motion-org-layer {
-  transition: transform var(--motion-duration-standard) var(--motion-ease-enter);
-}
-
-.motion-org-card {
-  animation: rudder-org-card-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.motion-org-card:hover {
-  transform: translateY(-1px);
-}
-
-.motion-org-edge {
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.motion-org-card[data-active="true"] {
-  box-shadow:
-    0 12px 32px -26px color-mix(in oklab, var(--accent-base) 64%, transparent),
-    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 36%, transparent);
-}
-
-.motion-org-edge[data-active="true"] {
-  stroke: color-mix(in oklab, var(--accent-base) 72%, var(--border));
-  stroke-dasharray: 7 9;
-  animation: rudder-org-edge-flow 1400ms linear infinite;
 }
 
 .motion-rail-nav {
@@ -807,23 +841,6 @@
   }
 }
 
-@keyframes rudder-org-card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.992);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes rudder-org-edge-flow {
-  to {
-    stroke-dashoffset: -16;
-  }
-}
-
 @keyframes rudder-chat-composer-menu-pop {
   0% {
     opacity: 0;
@@ -1056,8 +1073,6 @@
   .motion-live-dot::after,
   .motion-kanban-card[data-live="true"],
   .motion-kanban-card[data-just-dropped="true"],
-  .motion-org-card,
-  .motion-org-edge[data-active="true"],
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
   .motion-chat-side-panel,
@@ -1071,6 +1086,9 @@
   .motion-organization-menu-pop [data-org-menu-item],
   .motion-entity-preview-pop,
   .motion-disclosure-enter,
+  .chat-proposal-compact,
+  .chat-review-block--inline,
+  .chat-review-block--side-panel,
   .rudder-text-dots__dot {
     animation: none !important;
   }
@@ -1086,8 +1104,6 @@
   .motion-kanban-lane,
   .motion-kanban-card,
   .motion-draft-issue-card,
-  .motion-org-layer,
-  .motion-org-card,
   .motion-chat-empty-recent-conversations,
   .motion-chat-prompt-flow,
   .t-page-slide .t-page,

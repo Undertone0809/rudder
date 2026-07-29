@@ -14,7 +14,7 @@ import {
   type RudderMcpPreflightResult,
 } from "./rudder-mcp.js";
 
-const PREFLIGHT_TIMEOUT_MS = 10_000;
+const PREFLIGHT_TIMEOUT_MS = 3_000;
 const RUDDER_SCHEMA_KEYS = new Set([
   "type",
   "description",
@@ -30,6 +30,7 @@ const RUDDER_SCHEMA_KEYS = new Set([
   "minItems",
   "maxItems",
   "oneOf",
+  "anyOf",
 ]);
 const JSON_SCHEMA_TYPES = new Set([
   "array",
@@ -107,6 +108,16 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
   ) {
     return false;
   }
+  if (
+    schema.anyOf !== undefined
+    && (
+      !Array.isArray(schema.anyOf)
+      || schema.anyOf.length === 0
+      || !schema.anyOf.every(isValidRudderSchemaNode)
+    )
+  ) {
+    return false;
+  }
 
   const supportsObject = types.includes("object");
   const supportsArray = types.includes("array");
@@ -121,9 +132,10 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
   }
   if (schema.items !== undefined && (!supportsArray || !isValidRudderSchemaNode(schema.items))) return false;
   if (schema.required !== undefined) {
-    if (!supportsObject || !Array.isArray(schema.required)) return false;
+    if ((!supportsObject && types.length > 0) || !Array.isArray(schema.required)) return false;
     const required = schema.required;
     if (required.some((key) => typeof key !== "string") || new Set(required).size !== required.length) return false;
+    if (types.length === 0 && schema.properties === undefined) return true;
     if (
       typeof schema.properties !== "object"
       || schema.properties === null

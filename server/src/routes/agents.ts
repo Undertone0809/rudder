@@ -94,7 +94,6 @@ import { feishuIntegrationUserBindingService } from "../services/integrations/fe
 import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
-import { ORG_CHART_STYLES, renderOrgChartPng, renderOrgChartSvg, type OrgChartStyle, type OrgNode } from "./org-chart-svg.js";
 
 const AGENT_AVATAR_CONTENT_TYPES = new Set([
   "image/png",
@@ -568,8 +567,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, accessState, integrations, browserSettings] = await Promise.all([
-      svc.getChainOfCommand(agent.id),
+    const [accessState, integrations, browserSettings] = await Promise.all([
       buildAgentAccessState(agent),
       options?.restricted ? Promise.resolve([]) : integrationsSvc.listForAgent(agent.orgId, agent.id),
       options?.restricted ? Promise.resolve(null) : instanceSettings.getBrowser(),
@@ -596,7 +594,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
 
     return {
       ...(options?.restricted ? redactForRestrictedAgentView(agent) : publicAgent),
-      chainOfCommand,
       access: accessState,
       instructionsLibraryPath,
       ...(options?.restricted ? {} : {
@@ -976,10 +973,18 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     }
     if (actorAgent.id === targetAgent.id) return;
 
-    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
-    if (chainOfCommand.some((manager) => manager.id === actorAgent.id)) return;
-
-    throw forbidden("Only the target agent or an ancestor manager can update instructions path");
+    if (hasExplicitAgentCreationDeny(actorAgent)) {
+      throw forbidden("Only the target agent, CEO, or agent creators can update instructions path");
+    }
+    if (actorAgent.role === "ceo") return;
+    const allowedByGrant = await access.hasPermission(
+      targetAgent.orgId,
+      "agent",
+      actorAgent.id,
+      "agents:create",
+    );
+    if (allowedByGrant || canCreateAgents(actorAgent)) return;
+    throw forbidden("Only the target agent, CEO, or agent creators can update instructions path");
   }
 
   function summarizeAgentUpdateDetails(patch: Record<string, unknown>) {
@@ -1081,7 +1086,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       role: agent.role,
       title: agent.title,
       status: agent.status,
-      reportsTo: agent.reportsTo,
       agentRuntimeType: agent.agentRuntimeType,
       agentRuntimeConfig: redactEventPayload(agent.agentRuntimeConfig),
       runtimeConfig: redactEventPayload(agent.runtimeConfig),
@@ -1119,19 +1123,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       ...revision,
       beforeConfig: redactRevisionSnapshot(revision.beforeConfig),
       afterConfig: redactRevisionSnapshot(revision.afterConfig),
-    };
-  }
-
-  function toLeanOrgNode(node: Record<string, unknown>): Record<string, unknown> {
-    const reports = Array.isArray(node.reports)
-      ? (node.reports as Array<Record<string, unknown>>).map((report) => toLeanOrgNode(report))
-      : [];
-    return {
-      id: String(node.id),
-      name: String(node.name),
-      role: String(node.role),
-      status: String(node.status),
-      reports,
     };
   }
 
@@ -1230,11 +1221,26 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const endDate = typeof req.query.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.endDate)
       ? req.query.endDate
       : undefined;
+    const from = typeof req.query.from === "string" && Number.isFinite(new Date(req.query.from).getTime())
+      ? req.query.from
+      : undefined;
+    const to = typeof req.query.to === "string" && Number.isFinite(new Date(req.query.to).getTime())
+      ? req.query.to
+      : undefined;
+    const rawTimezoneOffsetMinutes = typeof req.query.timezoneOffsetMinutes === "string"
+      ? Number.parseInt(req.query.timezoneOffsetMinutes, 10)
+      : undefined;
+    const timezoneOffsetMinutes = Number.isFinite(rawTimezoneOffsetMinutes)
+      && Math.abs(rawTimezoneOffsetMinutes!) <= 14 * 60
+      ? rawTimezoneOffsetMinutes
+      : undefined;
 
     const analytics: AgentSkillAnalytics = await heartbeat.getAgentSkillAnalytics(agent.id, {
       windowDays: Number.isFinite(rawWindowDays) ? rawWindowDays : undefined,
       startDate,
       endDate,
+      ...(from && to && new Date(from) <= new Date(to) ? { from, to } : {}),
+      timezoneOffsetMinutes,
     });
     res.json(analytics);
   });
@@ -1490,38 +1496,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       });
 
     res.json(items);
-  });
-
-  router.get("/orgs/:orgId/org", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const tree = await svc.orgForCompany(orgId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    res.json(leanTree);
-  });
-
-  router.get("/orgs/:orgId/org.svg", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await svc.orgForCompany(orgId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const svg = renderOrgChartSvg(leanTree as unknown as OrgNode[], style);
-    res.setHeader("Content-Type", "image/svg+xml");
-    res.setHeader("Cache-Control", "no-cache");
-    res.send(svg);
-  });
-
-  router.get("/orgs/:orgId/org.png", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await svc.orgForCompany(orgId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const png = await renderOrgChartPng(leanTree as unknown as OrgNode[], style);
-    res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", "no-cache");
-    res.send(png);
   });
 
   router.get("/orgs/:orgId/agent-configurations", async (req, res) => {

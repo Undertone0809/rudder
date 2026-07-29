@@ -578,7 +578,8 @@ export function buildManifestFromPackageFiles(
       title,
       icon: asString(extension.icon),
       capabilities: asString(extension.capabilities),
-      reportsToSlug: asString(frontmatter.reportsTo) ?? asString(extension.reportsTo),
+      // Preserve the v4 wire shape without restoring reporting relationships.
+      reportsToSlug: null,
       agentRuntimeType: asString(extensionAdapter?.type) ?? "process",
       agentRuntimeConfig,
       runtimeConfig,

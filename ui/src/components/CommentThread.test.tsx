@@ -1150,6 +1150,51 @@ describe("CommentThread", () => {
     expect(commentBlock?.textContent).toContain("run run-1");
   });
 
+  it("keeps authored comments open by default and bounds the comment composer", () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "long-comment",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Long comment content. ".repeat(80),
+              createdAt: new Date("2026-05-07T00:01:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+            },
+            {
+              id: "image-comment",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Visual evidence\n\n![screenshot](https://example.com/screenshot.png)",
+              createdAt: new Date("2026-05-07T00:02:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:02:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+        />
+      </MemoryRouter>,
+    );
+
+    const longComment = container.querySelector("#comment-long-comment");
+    const imageComment = container.querySelector("#comment-image-comment");
+    const composerScroll = container.querySelector("[data-testid='issue-comment-composer-editor-scroll']");
+
+    expect(longComment?.getAttribute("aria-label")).toBeNull();
+    expect(imageComment?.getAttribute("aria-label")).toBeNull();
+    expect(longComment?.textContent).toContain("Long comment content.");
+    expect(imageComment?.textContent).toContain("Visual evidence");
+    expect(composerScroll?.className).toContain("max-h-[min(38dvh,22rem)]");
+    expect(composerScroll?.className).toContain("overflow-y-auto");
+    expect(composerScroll?.className).toContain("overscroll-contain");
+  });
+
   it("keeps collapsed comment headers compact and uses a chevron expander", async () => {
     const container = renderInteractive(
       <MemoryRouter>

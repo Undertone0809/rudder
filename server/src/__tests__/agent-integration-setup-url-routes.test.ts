@@ -117,7 +117,6 @@ function makeAgent() {
     urlKey: "builder",
     role: "engineer",
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},

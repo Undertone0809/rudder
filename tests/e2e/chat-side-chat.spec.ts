@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
@@ -14,6 +14,25 @@ import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+async function enableSideChatSkill(page: Page, orgId: string, agentIds: string[]) {
+  const skillRes = await page.request.post(`/api/orgs/${orgId}/skills`, {
+    data: {
+      name: "Side Chat Research",
+      slug: "side-chat-research",
+      markdown: "---\nname: side-chat-research\n---\n\n# Side Chat Research\n",
+    },
+  });
+  expect(skillRes.ok(), await skillRes.text()).toBe(true);
+  const skill = await skillRes.json() as { key: string };
+  for (const agentId of agentIds) {
+    const syncRes = await page.request.post(
+      `/api/agents/${agentId}/skills/sync?orgId=${encodeURIComponent(orgId)}`,
+      { data: { desiredSkills: [`org:${skill.key}`] } },
+    );
+    expect(syncRes.ok(), await syncRes.text()).toBe(true);
+  }
+}
+
 function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
@@ -26,6 +45,11 @@ async function seedSideChatSource(page: Page, name: string) {
     name: "Sidekick",
     command: E2E_CODEX_STUB,
   }) as { id: string };
+  const alternateAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Analyst",
+    command: E2E_CODEX_STUB,
+  }) as { id: string };
+  await enableSideChatSkill(page, organization.id, [agent.id, alternateAgent.id]);
   const conversationId = randomUUID();
   const assistantMessageId = randomUUID();
   await e2eDb.insert(chatConversations).values({
@@ -64,7 +88,7 @@ async function seedSideChatSource(page: Page, name: string) {
   await page.setViewportSize({ width: 1500, height: 940 });
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible({ timeout: 15_000 });
-  return { organization, conversationId, assistantMessageId };
+  return { organization, agent, alternateAgent, conversationId, assistantMessageId };
 }
 
 async function openFromAssistantAction(page: Page, assistantMessageId: string) {
@@ -73,7 +97,8 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   await assistant.getByRole("button", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   return panel;
 }
 
@@ -89,21 +114,51 @@ async function openSideChatTabContextMenu(page: Page, panel: Locator) {
   return { menu, sideChatTab };
 }
 
-async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConversationId: string) {
+async function sendFirstSideChatMessage(
+  page: Page,
+  panel: Locator,
+  sourceConversationId: string,
+  testInfo?: TestInfo,
+) {
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/side-chats`)
   ));
   await sideComposerEditor(panel).fill("What is the rollback trigger?");
   await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  const userMessage = panel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "What is the rollback trigger?",
+  });
+  await expect(userMessage).toBeVisible();
+  const streamingReply = panel.getByTestId("side-chat-streaming-reply");
+  await expect(streamingReply).toBeVisible();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
+  const creationPayload = createResponse.request().postDataJSON() as {
+    preferredAgentId?: string;
+    modelOverride?: string | null;
+    effortOverride?: string | null;
+  };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
+  const assistantDraft = streamingReply.getByText("Streaming reply", { exact: true });
+  await expect(assistantDraft).toBeVisible();
+  const assistantElement = await assistantDraft.elementHandle();
+  expect(assistantElement).not.toBeNull();
+  expect(await userMessage.evaluate((element, assistant) => (
+    Boolean(element.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING)
+  ), assistantElement!)).toBe(true);
+  if (testInfo) {
+    await page.screenshot({
+      path: testInfo.outputPath("side-chat-user-before-assistant.png"),
+      fullPage: true,
+    });
+  }
+  await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
-  return sideChat;
+  return { ...sideChat, creationPayload };
 }
 
 test("Side Chat preserves the main draft, streams like Chat, and is destroyed when closed", async ({ page }, testInfo) => {
@@ -116,11 +171,148 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
+  const mainComposerSurface = page.getByTestId("chat-composer-file-drop-target");
+  const sideComposerSurface = panel.getByTestId("side-chat-composer-file-drop-target");
+  await expect(mainComposerSurface).toHaveClass(/chat-composer/);
+  await expect(sideComposerSurface).toHaveClass(/chat-composer/);
+  await expect(mainComposerSurface.getByTestId("chat-composer-toolbar")).toBeVisible();
+  await expect(sideComposerSurface.getByTestId("side-chat-composer-toolbar")).toBeVisible();
+  await expect(mainComposerSurface.getByRole("button", { name: "Send" })).toHaveClass(
+    await sideComposerSurface.getByRole("button", { name: "Send Side Chat message" })
+      .getAttribute("class") ?? "",
+  );
+  await expect(panel.getByTestId("side-chat-project-chip")).toHaveCount(0);
+  await expect(panel).not.toContainText("No project");
+  const agentSelector = panel.getByTestId("side-chat-composer").getByTestId("chat-agent-selector");
+  await expect(agentSelector).toContainText("Sidekick");
+  await panel.getByRole("button", { name: "Add files and options" }).click();
+  await expect(page.getByRole("menuitem", { name: "Add files" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["pasted"], "side-chat-pasted.txt", {
+      type: "text/plain",
+    }));
+    element.querySelector('[data-testid="side-chat-composer-editor-scroll"]')
+      ?.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }));
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-pasted.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-pasted.txt" }).click();
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["dropped"], "side-chat-dropped.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new DragEvent("dragenter", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await expect(sideComposerSurface.getByTestId("chat-composer-file-drop-overlay")).toBeVisible();
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["dropped"], "side-chat-dropped.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-dropped.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-dropped.txt" }).click();
+  const sideFileInput = panel.getByTestId("side-chat-composer").locator('input[type="file"]');
+  await sideFileInput.setInputFiles({
+    name: "side-chat-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Side Chat attachment evidence"),
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-evidence.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-evidence.txt" }).click();
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toHaveCount(0);
+  await panel.getByRole("button", { name: "Skills" }).click();
+  const sideChatSkillMenu = page.getByTestId("side-chat-skill-menu");
+  await expect(sideChatSkillMenu).toBeVisible();
+  const sideChatSkill = sideChatSkillMenu
+    .getByRole("menuitem")
+    .filter({ hasText: /Side Chat Research|side-chat-research/ });
+  await expect(sideChatSkill).toBeVisible();
+  await sideChatSkill.click();
+  await expect(sideComposerEditor(panel)).toContainText("side-chat-research");
+  await sideComposerEditor(panel).fill("");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
-  await expect(panel.getByTestId("side-chat-icon")).toHaveClass(/lucide-circle-plus/);
-  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
+  await agentSelector.click();
+  const analystRow = page.getByTestId(`chat-agent-option-${source.alternateAgent.id}`);
+  await expect(analystRow.getByRole("menuitemradio")).toBeEnabled();
+  await analystRow.getByRole("menuitemradio").click();
+  await expect(agentSelector).toContainText("Analyst");
+  const runtimeSelector = analystRow.getByTestId("chat-agent-runtime-selector");
+  await expect(runtimeSelector).toBeVisible();
+  await runtimeSelector.click();
+  const runtimePanel = page.getByTestId("chat-agent-runtime-panel");
+  await expect(runtimePanel).toBeVisible();
+  const [runtimePanelBox, runtimeSelectorBox] = await Promise.all([
+    runtimePanel.boundingBox(),
+    runtimeSelector.boundingBox(),
+  ]);
+  expect(runtimePanelBox).not.toBeNull();
+  expect(runtimeSelectorBox).not.toBeNull();
+  expect(Math.abs(
+    runtimePanelBox!.y + runtimePanelBox!.height - runtimeSelectorBox!.y,
+  )).toBeLessThanOrEqual(12);
+  await page.screenshot({
+    path: testInfo.outputPath("side-chat-agent-runtime-draft.png"),
+    fullPage: true,
+  });
+  await page.getByTestId("chat-model-selector").click();
+  await page.getByTestId("chat-model-option-gpt-5.6-terra").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId, testInfo);
+  expect(sideChat.creationPayload).toMatchObject({
+    preferredAgentId: source.alternateAgent.id,
+    modelOverride: "gpt-5.6-terra",
+    effortOverride: null,
+  });
+
+  await expect(
+    agentSelector.getByLabel("Agent is bound to this chat"),
+  ).toHaveCount(0);
+  await agentSelector.click();
+  await expect(page.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
+  await expect(
+    page
+      .getByTestId(`chat-agent-option-${source.agent.id}`)
+      .getByRole("menuitemradio"),
+  ).toBeDisabled();
+  await expect(
+    page
+      .getByTestId(`chat-agent-option-${source.alternateAgent.id}`)
+      .getByTestId("chat-agent-runtime-selector"),
+  ).toBeVisible();
+  await expect(page.getByTestId("side-chat-agent-menu")).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: testInfo.outputPath(
+      "side-chat-agent-locked-runtime-available.png",
+    ),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
 
   const hiddenList = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
   expect(hiddenList.ok()).toBe(true);
@@ -136,7 +328,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   );
   expect(hiddenMessengerThread.status()).toBe(404);
 
-  await page.screenshot({ path: testInfo.outputPath("02-side-chat-active.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("04-side-chat-active.png"), fullPage: true });
   const destroyResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
@@ -148,7 +340,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel).toBeHidden();
   expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
-  await page.screenshot({ path: testInfo.outputPath("03-side-chat-destroyed.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("05-side-chat-destroyed.png"), fullPage: true });
 });
 
 test("the /side menu matches composer popovers and can move the same Side Chat to Messenger", async ({ page }, testInfo) => {
@@ -292,12 +484,13 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
   await page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger").click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
-  await expect(panel.getByTestId("chat-side-panel-empty-side chat-target")).toBeVisible();
+  await expect(panel.getByTestId("chat-side-panel-empty-side-chat-target")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("08-side-panel-empty-state.png"), fullPage: true });
 
-  await panel.getByTestId("chat-side-panel-empty-side chat-target").click();
+  await panel.getByTestId("chat-side-panel-empty-side-chat-target").click();
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   await expect(sideComposerEditor(panel)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("09-side-panel-entry-draft.png"), fullPage: true });
 

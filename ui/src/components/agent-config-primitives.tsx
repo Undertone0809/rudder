@@ -12,10 +12,9 @@ import { cn } from "../lib/utils";
 /* ---- Help text for (?) tooltips ---- */
 export const help: Record<string, string> = {
   name: "Display name for this agent.",
-  title: "Job title shown in the Organization Structure.",
+  title: "Job title shown on the agent profile.",
   role: "Organizational role. Determines position and capabilities.",
-  reportsTo: "The agent this one reports to in the org hierarchy.",
-  capabilities: "Describes what this agent can do. Shown in the Organization Structure and used for task routing.",
+  capabilities: "Describes what this agent can do and is used for task routing.",
   agentRuntimeType: "How this agent runs: local CLI (Claude/Codex/OpenCode), OpenClaw Gateway, spawned process, or generic HTTP webhook.",
   cwd: "Deprecated legacy working directory fallback for local runtimes. Existing agents may still carry this value, but new configurations should use project workspaces instead.",
   promptTemplate: "For new local agents, Rudder can materialize this as SOUL.md. For existing runtime configs, it is sent on every heartbeat; keep it small and use it for dynamic task framing, not large static instructions.",

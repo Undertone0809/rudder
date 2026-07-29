@@ -14,6 +14,7 @@ const desktopShellMock = {
   getSystemPermissions: vi.fn(),
   onBootState: vi.fn(),
   openExternal: vi.fn(),
+  openSystemPermissionSettings: vi.fn(),
   openNotificationSettings: vi.fn(),
   setBadgeCount: vi.fn(),
   showNotification: vi.fn(),
@@ -157,7 +158,9 @@ afterEach(() => {
   desktopShellMock.getSystemPermissions.mockReset();
   desktopShellMock.onBootState.mockReset();
   desktopShellMock.openExternal.mockReset();
+  desktopShellMock.openSystemPermissionSettings.mockReset();
   desktopShellMock.openNotificationSettings.mockReset();
+  vi.unstubAllGlobals();
   desktopShellMock.setBadgeCount.mockReset();
   desktopShellMock.showNotification.mockReset();
 });
@@ -210,6 +213,7 @@ describe("InstanceNotificationsSettings", () => {
   });
 
   it("shows desktop system-settings actions instead of browser permission action in the desktop shell", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
     desktopShellMock.getSystemPermissions.mockResolvedValue({
@@ -259,6 +263,39 @@ describe("InstanceNotificationsSettings", () => {
     expect(container.textContent).not.toContain("Preview badge");
     expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
     expect(container.textContent).not.toContain("Enable notifications");
+
+    await act(async () => {
+      const openSettingsButton = Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent?.trim() === "Open settings");
+      openSettingsButton?.click();
+      await Promise.resolve();
+    });
+    expect(desktopShellMock.openSystemPermissionSettings).toHaveBeenCalledWith("fullDiskAccess");
+  });
+
+  it("hides macOS permission actions on non-Mac desktop platforms", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    desktopShellValue = desktopShellMock;
+    desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({
+      fullDiskAccess: "unsupported",
+      accessibility: "unsupported",
+      automation: "unsupported",
+    });
+    desktopShellMock.getBootState.mockResolvedValue({
+      capabilities: { notifications: true, badgeCount: true },
+      permissions: { fullDiskAccess: "unsupported", accessibility: "unsupported", automation: "unsupported" },
+    });
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(Array.from(container.querySelectorAll("button"))
+      .filter((button) => button.textContent?.trim() === "Open settings"))
+      .toHaveLength(1);
   });
 
   it("hides desktop debug actions outside the dev desktop shell", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultCustomDateRange,
   floorDateToMinuteIso,
   resolvePresetDateRange,
 } from "./date-range-cache";
@@ -20,6 +21,36 @@ describe("date range cache helpers", () => {
     });
 
     expect(second).toEqual(first);
+  });
+
+  it("resolves Last 24 Hours as an exact minute-aligned rolling window", () => {
+    expect(resolvePresetDateRange({
+      preset: "24h",
+      now: new Date("2026-06-19T01:51:37.432Z"),
+    })).toEqual({
+      from: "2026-06-18T01:51:00.000Z",
+      to: "2026-06-19T01:51:00.000Z",
+      customReady: true,
+    });
+  });
+
+  it("resolves One Day from local midnight through the current moment", () => {
+    const now = new Date(2026, 5, 19, 13, 24, 37, 432);
+    expect(resolvePresetDateRange({
+      preset: "1d",
+      now,
+    })).toEqual({
+      from: new Date(2026, 5, 19, 0, 0, 0, 0).toISOString(),
+      to: now.toISOString(),
+      customReady: true,
+    });
+  });
+
+  it("defaults Custom to the latest seven local calendar days", () => {
+    expect(defaultCustomDateRange(new Date(2026, 5, 19, 13, 24))).toEqual({
+      from: "2026-06-13",
+      to: "2026-06-19",
+    });
   });
 
   it("preserves custom local-day boundaries", () => {
@@ -44,5 +75,17 @@ describe("date range cache helpers", () => {
     expect(resolvePresetDateRange({ preset: "7d", now, dayWindowMode: "lookback" }).from).toBe(
       new Date("2026-06-12T00:00:00").toISOString(),
     );
+  });
+
+  it("rejects reversed custom date ranges without emitting API bounds", () => {
+    expect(resolvePresetDateRange({
+      preset: "custom",
+      customFrom: "2026-06-20",
+      customTo: "2026-06-12",
+    })).toEqual({
+      from: "",
+      to: "",
+      customReady: false,
+    });
   });
 });

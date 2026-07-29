@@ -1,11 +1,11 @@
 ---
-title: "Automation output routing"
-description: "Compare tracked Issue and Chat output for Rudder Automations, including run records and failure evidence."
-icon: "route"
+title: "Choose Where Automation Results Go"
+description: "Compare Chat and Issue output for an Automation, including what you see when a run fails."
+icon: "split"
 keywords:
-  - "Automation output routing"
-  - "Rudder Automation Issue output"
-  - "Rudder Automation Chat output"
+  - "Automation Chat output"
+  - "Automation Issue output"
+  - "Rudder output routing"
 canonical: "https://docs.rudderhq.dev/reference/automation-output-routing"
 "og:url": "https://docs.rudderhq.dev/reference/automation-output-routing"
 hreflang_en: "https://docs.rudderhq.dev/reference/automation-output-routing"
@@ -14,67 +14,52 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 
 <a id="definition" />
 
-## Definition
-
-Automation output routing decides which work surface owns each execution
-result. Custom Automations default to Chat output. Tracked Issue output remains
-an explicit choice when repeated work needs Issue fields and lifecycle state.
+Every Automation needs a place for each result. Choose based on how people will
+use the output, not on how long the Agent takes.
 
 <a id="states" />
 
-## States and modes
+## Chat or Issue?
 
-| Output mode | Result of a real execution | Source link on the Automation Run |
+| Choose | Best when | Each real run creates |
 | --- | --- | --- |
-| `chat_output` | A new Messenger conversation for that execution | `linkedChatConversationId` |
-| `track_issue` | A new execution Issue that enters the normal assignment and review path | `linkedIssueId` |
+| Send to Chat | One person can read, discuss, and finish the result in conversation | A separate Messenger conversation |
+| Create an Issue | The result needs an owner, status, dependencies, a queue, or review | A normal tracked Issue |
 
-An Automation Run uses the exact states `received`, `running`, `coalesced`,
-`skipped`, `issue_created`, `completed`, and `failed`. `issue_created` records
-that tracked Issue output was created before that Issue follows its own
-lifecycle. The exact terminal state remains on the Run even when no new Chat or
-Issue is created.
+Both modes keep an Automation Run and the underlying Agent Run.
+
+Run history may show `received`, `running`, `coalesced`, `skipped`,
+`issue_created`, `completed`, or `failed`. These labels explain the dispatch;
+the linked Chat or Issue keeps its own work state.
 
 <a id="constraints" />
 
-## Constraints
+## What happens on skip or failure
 
-- Every real Chat-output execution gets its own conversation. Rudder does not
-  reuse an arbitrary human Chat as a permanent output sink.
-- Skipped or coalesced Runs do not create empty conversations.
-- A failed Chat-output Run keeps visible partial or fallback evidence.
-- Tracked Issue output follows normal assignment, status, Agent Run, Review,
-  and close-out rules after the Issue is created.
+- A skipped or combined dispatch keeps a Run record explaining why no new work
+  was created.
+- A failed Chat run keeps the linked conversation when one was already started,
+  including any partial result or visible failure message.
+- A failed Issue run keeps the Issue open with the failure available for
+  follow-up.
+- Changing output mode affects future runs, not old results.
 
 <a id="boundaries" />
 
-## Boundaries
+## Keep one source of truth
 
-Output mode does not decide whether work is important, expensive, or
-long-running. Choose the surface based on the coordination record people need.
-A governed policy may still require an Issue even when the result could be read
-in Chat.
+A Chat result stays with its conversation. An Issue result follows the normal
+Issue workflow. Messenger may alert you, but it does not become another copy of
+the task.
 
-The Automation Run remains the dispatch record in both modes. A Chat transcript
-does not replace the Run, and an execution Issue does not replace the
-Automation definition or schedule.
+A team policy can require Issue output for governed work even when Chat would
+otherwise be convenient.
 
 <a id="examples" />
 
 ## Examples
 
-- Send a daily digest to Chat when operators will read it and ask follow-up
-  questions in the resulting conversation.
-- Track a weekly compliance check as an Issue when it needs an assignee,
-  acceptance criteria, artifacts, and a reviewer decision.
-- If concurrency policy coalesces a duplicate tick, inspect the Automation Run
-  for the reason. Do not expect an empty Chat or Issue placeholder.
-
-<CardGroup cols={2}>
-  <Card title="Create an Automation" icon="workflow" href="/how-to/create-automation">
-    Configure the trigger, owner, context, and output mode.
-  </Card>
-  <Card title="Issue statuses" icon="list-checks" href="/reference/issue-statuses">
-    Check the lifecycle used by tracked Issue output.
-  </Card>
-</CardGroup>
+- Daily personal digest: Chat.
+- Weekly report that a manager must accept: Issue.
+- Webhook that creates follow-up work for a support queue: Issue.
+- Scheduled research summary that one operator reads and discusses: Chat.

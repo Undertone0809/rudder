@@ -1,11 +1,11 @@
 ---
-title: "Permissions and platforms"
-description: "Look up deployment trust, local runtime homes, credentials, Browser access, and platform-specific file behavior."
+title: "Permissions, Credentials, and Platforms"
+description: "Understand local trust, where credentials stay, how external connections are limited, and what differs by platform."
 icon: "shield-check"
 keywords:
-  - "Rudder runtime permissions"
+  - "Rudder permissions"
   - "Agent credentials"
-  - "local runtime platform"
+  - "Rudder platforms"
 canonical: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 "og:url": "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 hreflang_en: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
@@ -14,76 +14,75 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 
 <a id="definition" />
 
-## Definition
-
-Permissions describe what an actor or runtime may access. Platform handling
-describes how Rudder preserves those boundaries on macOS, Linux, and Windows.
-Neither a prompt nor a selected runtime can grant authority outside the active
-organization, workspace, deployment mode, and configured capability set.
+An Agent can use only the files, tools, websites, and services allowed by its
+current organization, task, workspace, and connection settings. A prompt cannot
+grant itself more access.
 
 <a id="states" />
 
-## States and modes
+## Deployment modes
 
-| Deployment mode | Human access | Intended exposure |
+| Mode | Human access | Intended use |
 | --- | --- | --- |
-| `local_trusted` | No login | One operator on a loopback-only local instance |
-| `authenticated` with `private` exposure | Login required | A trusted private network |
-| `authenticated` with `public` exposure | Login required | An internet-facing deployment with stricter checks |
+| Local trusted | No login | One operator using a loopback-only local instance |
+| Authenticated + private | Login required | A trusted private network |
+| Authenticated + public | Login required | An internet-facing deployment with stricter checks |
 
-A local runtime test reports `pass`, `warn`, or `fail`. Treat a warning as a
-specific setup condition to inspect, not as proof that every capability is
-available.
+A runtime environment test returns `pass`, `warn`, or `fail`. A warning names
+something to check; it is not proof that every feature works.
 
 <a id="constraints" />
 
-## Constraints
+## Where credentials stay
 
-- Local trusted runtime processes normally use the operator's `HOME` and
-  `USERPROFILE`. Provider-specific config, selected Skills, sessions, and
-  temporary state stay in adapter-managed locations.
-- Credentials remain in the path owned by the provider or operator. Do not
-  copy secrets into documentation, prompts, Library files, or Issue comments.
-- Rudder selects the Skills exposed to a Run. Stale, disabled, or unrelated
-  Skills must not remain visible because an earlier Run materialized them.
-- Required workspace, permission, login, or Skill failures should stop with an
-  actionable error instead of reaching the provider as an unexplained failure.
+- Local CLIs such as Codex or Claude keep their own login in the normal
+  provider or user location.
+- Rudder-managed external connection credentials are encrypted in server state.
+  Agent runtimes receive a temporary proxy identity, not the stored credential.
+- Never copy secrets into prompts, Library files, Issues, screenshots, or docs.
+- Reconnecting an OAuth service keeps the previous connection until the new
+  authorization succeeds. Explicit disconnect stops access immediately.
+
+## External MCP access
+
+Organization connections can give each Agent a simple access level:
+
+- Supabase and Linear: no access, read only, or read and write
+- Notion: no access or the access granted by the provider
+
+Read and write does not include destructive, billing, administrative, or
+unknown tools. An Agent-specific connection is used before an organization
+connection for the same official provider. Choosing **No access** on the Agent
+connection is an explicit block; disconnect that Agent connection if you want
+Rudder to use an available organization connection instead.
+
+Lowering access blocks later calls in an active Run. Increasing access starts
+with the next Run.
 
 <a id="boundaries" />
 
-## Boundaries
+## Browser and platform differences
 
-Rudder Desktop's Built-in Browser keeps one persistent website session per
-operating-system user and local Rudder instance. Organizations and supported
-local Agent tabs on that instance share cookies and site data. Tab control is
-still scoped by organization, Agent, Run, and tab. Agents do not receive raw
-cookies, passwords, arbitrary JavaScript execution, or another Run's tab.
+Rudder Desktop keeps one website login profile for the current operating-system
+user and local instance. Organizations share that website data, but Agent tabs
+remain limited to their own organization, Agent, Run, and tab.
 
-Cookie import is currently available on macOS for supported local Chrome,
-Microsoft Edge, and Brave profiles after operator confirmation. It does not
-import passwords. Windows and Linux cookie import are not supported.
+Cookie import is currently available on macOS for supported Chrome, Edge, and
+Brave profiles. It does not import passwords. Windows and Linux do not
+currently support cookie import.
 
-On Windows, Rudder may use junctions or safe copies where ordinary directory
-symlinks would require elevated privileges. Operators should not need to run
-Rudder as administrator merely to load a selected Skill.
+On Windows, Rudder may use directory junctions or safe copies where symlinks
+would require administrator rights. You should not need to run Rudder as
+administrator just to load a Skill.
 
 <a id="examples" />
 
 ## Examples
 
-- A local Codex Run can use the operator's existing Codex login while Rudder
-  keeps its selected Skills and session state in managed locations.
-- Turning off Agent Browser access removes the managed control capability but
-  preserves operator tabs and saved website data. Clearing browsing data is
-  the action that removes the shared website session.
-- A Windows Skill link returns `EPERM`. Rudder should use a supported fallback
-  or report which path and permission need repair before provider execution.
-
-<CardGroup cols={2}>
-  <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
-    Configure credentials and test runtime readiness.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Review the shared session and isolated tab-control model.
-  </Card>
-</CardGroup>
+- A local Codex Agent can use your existing Codex login, but still receives
+  only the work context and Rudder tools allowed for that Run.
+- Turning off Agent Browser access closes Agent-controlled tabs but keeps your
+  own tabs and website login data.
+- After increasing an Agent's MCP access, start a new Run to test the new tools.
+- When a Windows Skill link fails, use the supported fallback or fix the named
+  path permission rather than running the whole app as administrator.

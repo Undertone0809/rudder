@@ -380,11 +380,230 @@ export function ChartCard({ title, subtitle, children }: { title: string; subtit
   );
 }
 
+export type DistributionPieDatum = {
+  key: string;
+  label: string;
+  value: number;
+  color: string;
+};
+
+function buildDistributionPieGradient(items: DistributionPieDatum[]): string {
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  const visualWeights = items.map((item) => Math.max((item.value / total) * 100, 0.5));
+  const visualTotal = visualWeights.reduce((sum, value) => sum + value, 0);
+  let cursor = 0;
+  const stops = items.map((item, index) => {
+    const start = cursor;
+    cursor += (visualWeights[index]! / visualTotal) * 100;
+    return `${item.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+function compactDistributionItems(items: DistributionPieDatum[], visibleLimit: number): DistributionPieDatum[] {
+  const sorted = items
+    .filter((item) => item.value > 0)
+    .slice()
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label));
+  if (sorted.length <= visibleLimit + 1) return sorted;
+  const visible = sorted.slice(0, visibleLimit);
+  const hidden = sorted.slice(visibleLimit);
+  return [
+    ...visible,
+    {
+      key: "__other__",
+      label: `Other (${hidden.length})`,
+      value: hidden.reduce((sum, item) => sum + item.value, 0),
+      color: otherSkillsColor,
+    },
+  ];
+}
+
+export function DistributionPieChart({
+  items: rawItems,
+  emptyLabel,
+  totalLabel,
+  formatValue = (value) => value.toLocaleString(),
+  visibleLimit = 6,
+  testId = "distribution-pie-chart",
+  size = "compact",
+}: {
+  items: DistributionPieDatum[];
+  emptyLabel: string;
+  totalLabel: string;
+  formatValue?: (value: number) => string;
+  visibleLimit?: number;
+  testId?: string;
+  size?: "compact" | "large";
+}) {
+  const items = compactDistributionItems(rawItems, visibleLimit);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (total <= 0) return <p className="text-xs text-muted-foreground">{emptyLabel}</p>;
+
+  const accessibleSummary = items
+    .map((item) => `${item.label} ${formatPercent(item.value, total)}`)
+    .join(", ");
+
+  return (
+    <div
+      className={size === "large"
+        ? "grid items-center gap-6 rounded-lg border border-border p-5 sm:grid-cols-[11rem_minmax(0,1fr)]"
+        : "space-y-3"}
+      data-testid={testId}
+    >
+      <div
+        role="img"
+        aria-label={`${totalLabel}: ${accessibleSummary}`}
+        className={size === "large"
+          ? "relative mx-auto aspect-square w-44 rounded-full"
+          : "relative mx-auto aspect-square w-24 rounded-full"}
+        style={{ background: buildDistributionPieGradient(items) }}
+      >
+        <div className="absolute inset-[25%] flex flex-col items-center justify-center rounded-full bg-background px-1 text-center shadow-[0_0_0_1px_hsl(var(--border))]">
+          <span className={size === "large"
+            ? "max-w-full truncate text-xl font-semibold tabular-nums"
+            : "max-w-full truncate text-sm font-semibold tabular-nums"}
+          >
+            {formatValue(total)}
+          </span>
+          <span className="max-w-full truncate text-[9px] text-muted-foreground">{totalLabel}</span>
+        </div>
+      </div>
+      <div className={size === "large" ? "grid min-w-0 gap-2 sm:grid-cols-2" : "space-y-1.5"}>
+        {items.map((item) => (
+          <div key={item.key} className="flex min-w-0 items-center justify-between gap-2 text-[10px]">
+            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0 rounded-[2px]"
+                style={{ backgroundColor: item.color }}
+              />
+              <span className="truncate" title={item.label}>{item.label}</span>
+            </span>
+            <span className="shrink-0 tabular-nums text-foreground">
+              {formatValue(item.value)} · {formatPercent(item.value, total)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function formatPercent(value: number, total: number): string {
   if (total <= 0) return "0%";
   const percent = (value / total) * 100;
   if (percent >= 10 || percent === 100) return `${Math.round(percent)}%`;
   return `${percent.toFixed(1)}%`;
+}
+
+export function RunActivityPieChart({ runs }: { runs: HeartbeatRun[] }) {
+  const succeeded = runs.filter((run) => run.status === "succeeded").length;
+  const failed = runs.filter((run) => run.status === "failed" || run.status === "timed_out").length;
+  const other = Math.max(0, runs.length - succeeded - failed);
+  return (
+    <DistributionPieChart
+      items={[
+        { key: "succeeded", label: "Succeeded", value: succeeded, color: "#10b981" },
+        { key: "failed", label: "Failed / timed out", value: failed, color: "#ef4444" },
+        { key: "other", label: "Other", value: other, color: "#737373" },
+      ]}
+      emptyLabel="No runs today"
+      totalLabel="Runs"
+      testId="run-activity-pie-chart"
+    />
+  );
+}
+
+export function PriorityPieChart({
+  issues,
+}: {
+  issues: { priority: string }[];
+}) {
+  return (
+    <DistributionPieChart
+      items={priorityOrder.map((priority) => ({
+        key: priority,
+        label: formatPriorityLabel(priority),
+        value: issues.filter((issue) => issue.priority === priority).length,
+        color: priorityColors[priority],
+      }))}
+      emptyLabel="No issues today"
+      totalLabel="Issues"
+      testId="issue-priority-pie-chart"
+    />
+  );
+}
+
+export function IssueStatusPieChart({
+  issues,
+}: {
+  issues: { status: string }[];
+}) {
+  const counts = new Map<string, number>();
+  for (const issue of issues) counts.set(issue.status, (counts.get(issue.status) ?? 0) + 1);
+  return (
+    <DistributionPieChart
+      items={Array.from(counts.entries()).map(([status, value]) => ({
+        key: status,
+        label: statusLabels[status] ?? status,
+        value,
+        color: statusColors[status] ?? "#6b7280",
+      }))}
+      emptyLabel="No issues today"
+      totalLabel="Issues"
+      testId="issue-status-pie-chart"
+    />
+  );
+}
+
+export function TokenUsagePieChart({ rows }: { rows: CostTrendPoint[] }) {
+  const usage = rows.reduce(
+    (total, row) => {
+      const next = summarizeTokenUsage(row);
+      total.uncachedInputTokens += next.uncachedInputTokens;
+      total.cachedInputTokens += next.cachedInputTokens;
+      total.outputTokens += next.outputTokens;
+      return total;
+    },
+    { uncachedInputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+  );
+  return (
+    <DistributionPieChart
+      items={[
+        { key: "uncached-input", label: "Uncached input", value: usage.uncachedInputTokens, color: "#3b82f6" },
+        { key: "cached-input", label: "Cached input", value: usage.cachedInputTokens, color: "#06b6d4" },
+        { key: "output", label: "Output", value: usage.outputTokens, color: "#10b981" },
+      ]}
+      emptyLabel="No token usage today"
+      totalLabel="Tokens"
+      formatValue={formatTokens}
+      testId="token-usage-pie-chart"
+    />
+  );
+}
+
+export function SkillsUsagePieChart({
+  analytics,
+}: {
+  analytics: AgentSkillAnalytics | null | undefined;
+}) {
+  const items = (analytics?.skills ?? []).map((skill, index) => ({
+    key: skill.key,
+    label: skill.label,
+    value: skill.count,
+    color: skillsPalette[index % skillsPalette.length]!,
+  }));
+  return (
+    <DistributionPieChart
+      items={items}
+      emptyLabel="No skill usage today."
+      totalLabel="Skill uses"
+      visibleLimit={8}
+      testId="skills-usage-pie-chart"
+      size="large"
+    />
+  );
 }
 
 function formatTokenCacheRatio(parts: CostTrendPoint): string {

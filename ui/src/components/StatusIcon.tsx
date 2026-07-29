@@ -18,15 +18,24 @@ interface StatusIconProps {
   onChange?: (status: string) => void;
   className?: string;
   showLabel?: boolean;
+  dataSlot?: string;
 }
 
-function IssueStatusGlyph({ status, className }: { status: string; className?: string }) {
+function IssueStatusGlyph({
+  status,
+  className,
+  dataSlot = "issue-status-icon",
+}: {
+  status: string;
+  className?: string;
+  dataSlot?: string;
+}) {
   const colorClass = issueStatusIcon[status] ?? issueStatusIconDefault;
   const normalizedStatus = allStatuses.includes(status) ? status : "default";
 
   return (
     <span
-      data-slot="issue-status-icon"
+      data-slot={dataSlot}
       data-status={status}
       className={cn("inline-flex h-4 w-4 shrink-0 items-center justify-center", colorClass, className)}
       aria-hidden="true"
@@ -156,9 +165,9 @@ function StatusPickerOption({
   );
 }
 
-export function StatusIcon({ status, onChange, className, showLabel }: StatusIconProps) {
+export function StatusIcon({ status, onChange, className, showLabel, dataSlot }: StatusIconProps) {
   const [open, setOpen] = useState(false);
-  const icon = <IssueStatusGlyph status={status} className={className} />;
+  const icon = <IssueStatusGlyph status={status} className={className} dataSlot={dataSlot} />;
 
   if (!onChange) return showLabel ? <span className="inline-flex items-center gap-1.5">{icon}<span className="text-sm">{statusLabel(status)}</span></span> : icon;
 

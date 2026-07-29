@@ -2,6 +2,7 @@
 import { app, BrowserWindow, dialog, shell } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
 import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import {
@@ -12,6 +13,7 @@ import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
 } from "./post-update-reload.js";
+import { createDesktopUpdateChildEnvironment } from "./postgres-runtime.js";
 import {
   normalizeDesktopUpdateChannel,
   readDesktopUpdateChannel,
@@ -29,6 +31,40 @@ export { DESKTOP_FEEDBACK_EMAIL };
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
+
+export function resolveDesktopUpdateChildLaunch(options: {
+  cliArgs: string[];
+  childEnv: NodeJS.ProcessEnv;
+  execPath?: string;
+  resourcesPath?: string;
+  platform?: NodeJS.Platform;
+}): {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+} {
+  const command = options.execPath ?? process.execPath;
+  if ((options.platform ?? process.platform) !== "darwin") {
+    return {
+      command,
+      args: [DESKTOP_CLI_FLAG, ...options.cliArgs],
+      env: options.childEnv,
+    };
+  }
+  const resourcesPath = options.resourcesPath
+    ?? path.resolve(path.dirname(command), "..", "Resources");
+  return {
+    command,
+    args: [
+      path.join(resourcesPath, "server-package", "desktop-cli-runner.js"),
+      ...options.cliArgs,
+    ],
+    env: {
+      ...options.childEnv,
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+  };
+}
 
 type DesktopUpdateBlocker = {
   runId: string;
@@ -567,8 +603,7 @@ export function createDesktopUpdateFlow(context: {
       }
 
       const profileName = context.getBootState().runtime?.localEnv;
-      const args = [
-        DESKTOP_CLI_FLAG,
+      const cliArgs = [
         ...(profileName ? ["--local-env", profileName] : []),
         "start",
         "--no-cli",
@@ -581,9 +616,16 @@ export function createDesktopUpdateFlow(context: {
         "--desktop-wait-for-apply",
         ...(!forceWhenApplying ? ["--wait-for-active-runs"] : []),
       ];
-      const child = spawn(process.execPath, args, {
+      const childLaunch = resolveDesktopUpdateChildLaunch({
+        cliArgs,
+        childEnv: createDesktopUpdateChildEnvironment({
+          resourcesPath: process.resourcesPath,
+        }),
+        resourcesPath: process.resourcesPath,
+      });
+      const child = spawn(childLaunch.command, childLaunch.args, {
         detached: true,
-        env: process.env,
+        env: childLaunch.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
       let updateChildFinalized = false;

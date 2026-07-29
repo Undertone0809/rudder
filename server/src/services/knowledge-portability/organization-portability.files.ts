@@ -190,33 +190,8 @@ export function normalizePortableSidebarOrder(value: unknown): OrganizationPorta
   return sidebar.agents.length > 0 || sidebar.projects.length > 0 ? sidebar : null;
 }
 
-export function sortAgentsBySidebarOrder<T extends { id: string; name: string; reportsTo: string | null }>(agents: T[]) {
-  if (agents.length === 0) return [];
-
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const childrenOf = new Map<string | null, T[]>();
-  for (const agent of agents) {
-    const parentId = agent.reportsTo && byId.has(agent.reportsTo) ? agent.reportsTo : null;
-    const siblings = childrenOf.get(parentId) ?? [];
-    siblings.push(agent);
-    childrenOf.set(parentId, siblings);
-  }
-
-  for (const siblings of childrenOf.values()) {
-    siblings.sort((left, right) => left.name.localeCompare(right.name));
-  }
-
-  const sorted: T[] = [];
-  const queue = [...(childrenOf.get(null) ?? [])];
-  while (queue.length > 0) {
-    const agent = queue.shift();
-    if (!agent) continue;
-    sorted.push(agent);
-    const children = childrenOf.get(agent.id);
-    if (children) queue.push(...children);
-  }
-
-  return sorted;
+export function sortAgentsBySidebarOrder<T extends { name: string }>(agents: T[]) {
+  return [...agents].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function filterPortableExtensionYaml(yaml: string, selectedFiles: Set<string>) {
@@ -493,7 +468,6 @@ export const YAML_KEY_PRIORITY = [
   "schema",
   "kind",
   "slug",
-  "reportsTo",
   "skills",
   "owner",
   "assignee",

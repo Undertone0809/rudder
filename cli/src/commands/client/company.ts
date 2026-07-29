@@ -82,7 +82,7 @@ const IMPORT_INCLUDE_OPTIONS: Array<{
   { value: "organization", label: "Organization", hint: "name, branding, and organization settings" },
   { value: "projects", label: "Projects", hint: "projects and workspace metadata" },
   { value: "issues", label: "Tasks", hint: "tasks and recurring automations" },
-  { value: "agents", label: "Agents", hint: "agent records and organization structure" },
+  { value: "agents", label: "Agents", hint: "agent records and configuration" },
   { value: "skills", label: "Skills", hint: "organization skill packages and references" },
 ];
 

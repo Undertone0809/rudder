@@ -27,7 +27,7 @@ export const AGENT_STATUSES = [
 ] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
-export const AGENT_RUN_CONCURRENCY_DEFAULT = 3;
+export const AGENT_RUN_CONCURRENCY_DEFAULT = 8;
 export const AGENT_RUN_CONCURRENCY_MIN = 1;
 export const AGENT_RUN_CONCURRENCY_MAX = 10;
 
@@ -267,6 +267,7 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_skills_enable",
   "rudder_agent_skills_sync",
   "rudder_issue_get",
+  "rudder_issue_list",
   "rudder_issue_search",
   "rudder_issue_context",
   "rudder_issue_checkout",
@@ -371,7 +372,7 @@ export type CustomIntegrationScope = (typeof CUSTOM_INTEGRATION_SCOPES)[number];
 export const CUSTOM_INTEGRATION_STATUSES = ["active", "disabled", "error", "revoked"] as const;
 export type CustomIntegrationStatus = (typeof CUSTOM_INTEGRATION_STATUSES)[number];
 
-export const CUSTOM_INTEGRATION_TOOL_STATUSES = ["active", "disabled", "error"] as const;
+export const CUSTOM_INTEGRATION_TOOL_STATUSES = ["active", "disabled", "error", "removed"] as const;
 export type CustomIntegrationToolStatus = (typeof CUSTOM_INTEGRATION_TOOL_STATUSES)[number];
 
 export const CUSTOM_INTEGRATION_BINDING_STATUSES = ["active", "revoked"] as const;
@@ -379,6 +380,121 @@ export type CustomIntegrationBindingStatus = (typeof CUSTOM_INTEGRATION_BINDING_
 
 export const CUSTOM_INTEGRATION_TOOL_CALL_STATUSES = ["success", "error", "blocked"] as const;
 export type CustomIntegrationToolCallStatus = (typeof CUSTOM_INTEGRATION_TOOL_CALL_STATUSES)[number];
+
+export const MCP_CONNECTION_PROVIDERS = ["supabase", "linear", "notion", "custom"] as const;
+export type McpConnectionProvider = (typeof MCP_CONNECTION_PROVIDERS)[number];
+
+export const MCP_CONNECTION_TRANSPORTS = ["stdio", "streamable_http", "legacy_manual"] as const;
+export type McpConnectionTransport = (typeof MCP_CONNECTION_TRANSPORTS)[number];
+
+export const MCP_CONNECTION_SCOPES = ["organization", "agent"] as const;
+export type McpConnectionScope = (typeof MCP_CONNECTION_SCOPES)[number];
+
+export const MCP_CONNECTION_ACCESS_MODES = ["provider_default", "read_only", "read_write"] as const;
+export type McpConnectionAccessMode = (typeof MCP_CONNECTION_ACCESS_MODES)[number];
+
+export const MCP_AGENT_ACCESS_MODES = [
+  "none",
+  "read_only",
+  "read_write",
+  "provider_granted",
+  "full",
+] as const;
+export type McpAgentAccessMode = (typeof MCP_AGENT_ACCESS_MODES)[number];
+
+export const MCP_CONNECTION_CANONICAL_STATES = ["canonical", "superseded"] as const;
+export type McpConnectionCanonicalState = (typeof MCP_CONNECTION_CANONICAL_STATES)[number];
+
+export const MCP_PROVIDER_SCOPE_MODES = ["account", "workspace", "legacy_project"] as const;
+export type McpProviderScopeMode = (typeof MCP_PROVIDER_SCOPE_MODES)[number];
+
+export const MCP_PROVIDER_ORGANIZATION_STATES = [
+  "not_connected",
+  "connecting",
+  "connected",
+  "needs_attention",
+  "disconnected",
+] as const;
+export type McpProviderOrganizationState = (typeof MCP_PROVIDER_ORGANIZATION_STATES)[number];
+
+export const MCP_TOOL_CAPABILITY_CLASSES = [
+  "read",
+  "normal_write",
+  "destructive",
+  "admin_or_billing",
+  "unknown",
+] as const;
+export type McpToolCapabilityClass = (typeof MCP_TOOL_CAPABILITY_CLASSES)[number];
+
+export const MCP_CONNECTION_STATUSES = [
+  "draft",
+  "authorizing",
+  "selecting_scope",
+  "active",
+  "needs_reauth",
+  "disabled",
+  "revoked",
+  "error",
+] as const;
+export type McpConnectionStatus = (typeof MCP_CONNECTION_STATUSES)[number];
+
+export const MCP_OAUTH_GRANT_STATUSES = ["active", "needs_reauth", "revoked", "error"] as const;
+export type McpOAuthGrantStatus = (typeof MCP_OAUTH_GRANT_STATUSES)[number];
+
+export const MCP_OAUTH_SESSION_STATUSES = ["authorizing", "consumed", "expired", "error"] as const;
+export type McpOAuthSessionStatus = (typeof MCP_OAUTH_SESSION_STATUSES)[number];
+
+export const MCP_AGENT_BINDING_STATUSES = ["active", "disabled", "revoked"] as const;
+export type McpAgentBindingStatus = (typeof MCP_AGENT_BINDING_STATUSES)[number];
+
+export const MCP_OAUTH_SESSION_TTL_MS = 10 * 60 * 1000;
+
+export const MCP_PROVIDER_CATALOG = [
+  {
+    id: "supabase",
+    label: "Supabase",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: false,
+    scopeLabel: "Account",
+    transports: ["streamable_http"],
+    accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_write",
+  },
+  {
+    id: "linear",
+    label: "Linear",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: false,
+    scopeLabel: "Workspace",
+    transports: ["streamable_http"],
+    accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_write",
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: false,
+    scopeLabel: "Workspace",
+    transports: ["streamable_http"],
+    accessModes: ["provider_default"],
+    defaultAccessMode: "provider_default",
+  },
+  {
+    id: "custom",
+    label: "Custom MCP",
+    curated: false,
+    requiresOAuth: false,
+    requiresScopeSelection: false,
+    scopeLabel: "Server",
+    transports: ["stdio", "streamable_http"],
+    accessModes: ["provider_default", "read_only", "read_write"],
+    defaultAccessMode: "provider_default",
+  },
+] as const;
 
 export const CALENDAR_SOURCE_TYPES = ["rudder_local", "google_calendar", "agent_work", "system"] as const;
 export type CalendarSourceType = (typeof CALENDAR_SOURCE_TYPES)[number];
@@ -621,6 +737,13 @@ export const SECRET_PROVIDERS = [
   "vault",
 ] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
+
+export const ORGANIZATION_SECRET_PURPOSES = [
+  "user_managed",
+  "managed_mcp_connection",
+  "managed_mcp_oauth",
+] as const;
+export type OrganizationSecretPurpose = (typeof ORGANIZATION_SECRET_PURPOSES)[number];
 
 export const STORAGE_PROVIDERS = ["local_disk", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];

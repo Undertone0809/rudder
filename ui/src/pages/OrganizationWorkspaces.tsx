@@ -2290,7 +2290,7 @@ function OrganizationWorkspaceBrowserForOrganization({
             data-testid="org-workspaces-editor-card"
             data-active-surface={selectedWorkspaceSavePending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
             className={cn(
-              "rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1",
+              "rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col gap-1.5 bg-transparent lg:min-h-0 lg:flex-1",
               (selectedWorkspaceSavePending || uploadWorkspaceImage.isPending) && "active-surface-ring",
             )}
           >
@@ -2299,17 +2299,16 @@ function OrganizationWorkspaceBrowserForOrganization({
                 data-testid="org-workspaces-editor-tabs"
                 role="tablist"
                 aria-label="Open files"
-                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between rounded-tr-[var(--radius-lg)] border-r border-[color:var(--border-base)] bg-transparent"
+                className="workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]"
               >
                 <div
                   ref={setOpenFileTabsScrollerRef}
                   data-testid="org-workspaces-editor-tab-scroller"
-                  className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1"
+                  className="workspace-tab-strip rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
                 >
                   <>
-                    {openFilePaths.map((filePath, index) => {
+                    {openFilePaths.map((filePath) => {
                       const active = selectedFilePath === filePath;
-                      const first = index === 0;
                       const dragging = draggedTabPath === filePath;
                       const dropBefore = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "before";
                       const dropAfter = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "after";
@@ -2326,12 +2325,11 @@ function OrganizationWorkspaceBrowserForOrganization({
                           onDragEnd={handleOpenFileTabDragEnd}
                           onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                           className={cn(
-                            "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-[box-shadow,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                            "workspace-tab-pill rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex h-7 min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
                             active
-                              ? "rudder-doc-editor-tab--active mb-[-1px] h-[var(--rudder-doc-editor-tab-active-height)] overflow-visible rounded-t-[var(--rudder-doc-editor-tab-radius)] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                              : "mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)] translate-y-px overflow-hidden rounded-[var(--rudder-doc-editor-tab-radius)] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
-                            active && first && "rudder-doc-editor-tab--first-active",
-                            dragging && "opacity-55",
+                              ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
+                              : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                            dragging && "opacity-50",
                             dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
                             dropAfter && !dragging && "rudder-doc-editor-tab--drop-after",
                           )}
@@ -2341,7 +2339,7 @@ function OrganizationWorkspaceBrowserForOrganization({
                             role="tab"
                             aria-selected={active}
                             draggable={false}
-                            className="min-w-0 flex-1 truncate rounded-[10px] px-2 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            className="min-w-0 flex-1 truncate rounded-l-full px-2.5 py-1 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                             title={filePath}
                             onClick={() => handleSelectFile(filePath)}
                           >
@@ -2351,8 +2349,10 @@ function OrganizationWorkspaceBrowserForOrganization({
                             type="button"
                             draggable={false}
                             className={cn(
-                              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                              active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                              "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-[color,background-color,opacity] hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                              active
+                                ? "pointer-events-auto opacity-100"
+                                : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
                             )}
                             aria-label={`Close ${filePath}`}
                             onPointerDown={(event) => {
@@ -2368,17 +2368,20 @@ function OrganizationWorkspaceBrowserForOrganization({
                         </div>
                       );
                     })}
-                    <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-2 h-9 min-w-6 flex-1" />
+                    <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer h-7 min-w-6 flex-1" />
                   </>
                 </div>
               </div>
             ) : null}
-            {visibleWorkspaceBreadcrumbPath !== null ? (
-              <div
-                data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center justify-between gap-3 overflow-hidden border-x border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
-                aria-label="File path"
-              >
+            <div
+              className="workspace-tab-content-card workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]"
+            >
+              {visibleWorkspaceBreadcrumbPath !== null ? (
+                <div
+                  data-testid="org-workspaces-path-breadcrumb"
+                  className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center justify-between gap-3 overflow-hidden border-b border-[color:var(--border-base)] px-3 text-sm text-muted-foreground"
+                  aria-label="File path"
+                >
                 <div className="flex min-w-0 items-center gap-1 overflow-hidden">
                   {applyOrganizationSkillBreadcrumbLabels(
                     workspacePathBreadcrumb(
@@ -2452,16 +2455,13 @@ function OrganizationWorkspaceBrowserForOrganization({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-              </div>
-            ) : null}
-            <div
-              ref={libraryFindRootRef}
-              data-testid="org-workspaces-editor-content"
-              className={cn(
-                "min-h-0 flex-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)]",
-                !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "rounded-[var(--desktop-workspace-radius)] border-t",
-              )}
-            >
+                </div>
+              ) : null}
+              <div
+                ref={libraryFindRootRef}
+                data-testid="org-workspaces-editor-content"
+                className="min-h-0 flex-1 overflow-hidden bg-[color:var(--surface-elevated)]"
+              >
               <IssueDetailFind
                 highlightMode="css"
                 rootRef={libraryFindRootRef}
@@ -2851,6 +2851,7 @@ function OrganizationWorkspaceBrowserForOrganization({
                   {libraryCopy("cannotRenderInLibrary", locale)}
                 </div>
               )}
+              </div>
             </div>
           </section>
 

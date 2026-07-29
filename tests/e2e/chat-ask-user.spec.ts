@@ -179,6 +179,10 @@ test("ask_user focuses the answer panel until the user responds", async ({ page 
   await expect(panel).not.toContainText("Choose an answer to continue");
   await expect(panel).not.toContainText("The assistant is waiting on this decision.");
   await expect(page.locator(".chat-composer")).toHaveCount(0);
+  const content = panel.getByTestId("chat-ask-user-content");
+  await expect(content).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(content).toHaveCSS("border-top-width", "0px");
+  await expect(content).toHaveCSS("padding-top", "0px");
 
   await panel.getByRole("button", { name: /Narrow path/ }).click();
   await panel.getByRole("button", { name: "Submit answer" }).click();
@@ -318,6 +322,67 @@ test("ask_user steps multi-question requests through one question at a time", as
   await expect(answer).toContainText("Keep the browser regression small");
   await expect(answer).toContainText("Handoff");
   await expect(answer).toContainText("Full report");
+});
+
+test("ask_user keeps long review feedback inside a bounded scrolling region", async ({ page }) => {
+  const command = await writeAskUserStub(`ask-user-long-review-${Date.now()}`, {
+    questions: [
+      {
+        id: "scope",
+        header: "Scope",
+        question: "Which scope should the agent implement?",
+        options: [
+          { id: "narrow", label: "Narrow path", recommended: true },
+          { id: "broad", label: "Broad path" },
+        ],
+        allowFreeform: true,
+      },
+      {
+        id: "feedback",
+        header: "Feedback",
+        question: "What detailed feedback should the agent follow?",
+        options: [
+          { id: "summary", label: "Short summary" },
+          { id: "details", label: "Detailed notes" },
+        ],
+        allowFreeform: true,
+      },
+    ],
+  });
+  const organization = await createAskUserOrg(page, `AskUserLongReview-${Date.now()}`, command);
+
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Help me review detailed feedback");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await panel.getByRole("button", { name: /Narrow path/ }).click();
+  await panel.getByRole("button", { name: "Other" }).click();
+  await panel.getByPlaceholder("Type your answer...").fill(
+    Array.from({ length: 70 }, (_, index) => `Feedback line ${index + 1}`).join("\n"),
+  );
+  await panel.getByRole("button", { name: "Review answers" }).click();
+
+  const reviewScroll = panel.getByTestId("chat-ask-user-review-scroll");
+  await expect(reviewScroll).toBeVisible();
+  const metrics = await reviewScroll.evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    overflowY: getComputedStyle(node).overflowY,
+    viewportHeight: window.innerHeight,
+  }));
+  expect(metrics.overflowY).toBe("auto");
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  expect(metrics.clientHeight).toBeLessThanOrEqual(Math.min(metrics.viewportHeight * 0.48, 448) + 1);
+
+  await reviewScroll.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(() => reviewScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await expect(panel.getByRole("button", { name: "Submit answer" })).toBeVisible();
 });
 
 test("ask_user restores unfinished answers after leaving and returning to the chat", async ({ page }) => {

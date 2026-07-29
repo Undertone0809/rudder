@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { boardAuthService } from "../services/board-auth.js";
-import { logger } from "./logger.js";
+import { logger, requestUrlForLogs } from "./logger.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -37,7 +37,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           session = await opts.resolveSession(req);
         } catch (err) {
           logger.warn(
-            { err, method: req.method, url: req.originalUrl },
+            { err, method: req.method, url: requestUrlForLogs(req) },
             "Failed to resolve auth session from request headers",
           );
         }

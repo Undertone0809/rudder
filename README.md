@@ -1,16 +1,28 @@
+![Rudder — Build your self-improving Agent Team.](docs/images/rudder-social-card.png)
+
 # Rudder
 
 > Build your self-improving Agent Team.
 
 Agents that think, build, play, and learn from real work.
 
-[Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev)
+[Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev) | [Discord](https://discord.gg/ZcfWwPVkUz)
 
 Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
 Rudder began as a fork of an early version of Paperclip. That gave the project a practical starting point for agent operations; Rudder is now evolving around a sharper product idea: agent teams improve when real work leaves behind durable context, decisions, feedback, and reusable operating patterns.
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
+
+## A Better Harness for Agent Work
+
+We benchmarked Rudder, Codex CLI, and Claude Code on a random sample of professional tasks from OpenAI's GDPval dataset, with every system requesting the same model and reasoning effort. Rudder achieved the highest score under our local case-equal rubric metric.
+
+[![GDPval-based harness benchmark: Rudder 81.7, Codex CLI 75.7, and Claude Code 75.6.](docs/images/gdpval-harness-benchmark.png)](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
+
+A model is only as effective as the environment around it. Rudder gives agents durable context, coordinated tools, structured work, review feedback, budgets, and memory—helping them stay focused, preserve what they learn, and produce stronger results across real work.
+
+The benchmark provides directional evidence that the harness and work environment matter; it is not an official GDPval score or leaderboard result. [Read the methodology and evidence limits.](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
 
 ## The Work Loop
 
@@ -30,41 +42,20 @@ The most useful way to work with agents is closer to the way humans coordinate w
 
 People work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
 
-Rudder turns those coordination patterns into product primitives for agent teams:
-
-![Rudder issue board](./doc/assets/readme_imgs/1.png)
-
-![Rudder calendar](./doc/assets/readme_imgs/9.png)
-
-![Rudder organization structure](./doc/assets/readme_imgs/10.png)
-
-![Rudder approvals](./doc/assets/readme_imgs/2.png)
-
-![Rudder issue proposal](./doc/assets/readme_imgs/3.png)
-
-![Rudder heartbeats](./doc/assets/readme_imgs/4.png)
-
-![Rudder skills](./doc/assets/readme_imgs/5.png)
-
-![Rudder run transcript](./doc/assets/readme_imgs/6.png)
-
-![Rudder issue detail](./doc/assets/readme_imgs/8.png)
-
 - work belongs to an organization, not a loose thread
 - every issue should trace back to a goal
-- agents have roles, runtime config, reporting lines, and skills
+- agents have roles, runtime config, capabilities, and skills
 - chat and issues provide conversational and structured ways to move work forward, with execution attached to inspectable runs, outputs, reviews, and history
 - autonomy stays legible, governable, and budget-aware
 
 ## What Rudder Is
 
-Rudder is open-source software for assigning, running, reviewing, and improving agent work. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, feedback, and governance.
+Rudder is open-source software for assigning, running, reviewing, and improving agent work. One Rudder instance can run one or many organizations, each with its own goal, agents, issues, budgets, approvals, feedback, and governance.
 
 | Human team pattern | Rudder equivalent |
 | --- | --- |
 | Mission | Organization goal |
 | Employees | AI agents |
-| Org chart | Agent reporting structure |
 | Work ownership | Issues and assignments |
 | Team workflow | Workflow definitions and execution paths |
 | Operational memory | Comments, documents, run history, activity, and skills |
@@ -73,6 +64,14 @@ Rudder is open-source software for assigning, running, reviewing, and improving 
 | Budget discipline | Spend tracking and hard stops |
 
 Rudder coordinates agents. It does not force one runtime, one model, one prompt format, or one execution environment.
+
+## Bring Your Own Runtime
+
+Rudder is the coordination layer, not the model provider. Run agents with the local tools and provider accounts you already use—including Codex, Claude Code, Cursor, OpenClaw, Bash, or your own HTTP service. Local runtimes keep their existing installation, login, and credentials; Rudder connects assignment, context, execution, review, budgets, and memory around them.
+
+![Rudder coordinates agent teams across local runtimes and provider environments.](docs/images/rudder-runtime-adapters.svg)
+
+[See supported runtimes and configuration options.](https://docs.rudderhq.dev/reference/runtime-types)
 
 ## Get Started
 

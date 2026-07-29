@@ -119,13 +119,14 @@ export function normalizeBrowserSidePanelUrl(value: string): string {
 
 export function createBrowserSidePanelTarget(
   url = BROWSER_SIDE_PANEL_BLANK_URL,
-  options: { newTab?: boolean } = { newTab: true },
+  options: { favicon?: string | null; newTab?: boolean } = { newTab: true },
 ): Extract<SidePanelTarget, { kind: "browser" }> {
   return {
     kind: "browser",
     url,
     label: browserSidePanelLabel(url),
     tabId: browserTabId(),
+    ...(options.favicon ? { favicon: options.favicon } : {}),
     ...(options.newTab === false ? { dedupeKey: browserLinkDedupeKey(url) } : {}),
   };
 }

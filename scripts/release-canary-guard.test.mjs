@@ -38,10 +38,16 @@ function createReleaseRepo() {
 
   const repo = join(root, "repo");
   const remote = join(root, "remote.git");
+  mkdirSync(join(repo, "docs", "zh"), { recursive: true });
   mkdirSync(join(repo, "scripts"), { recursive: true });
   mkdirSync(join(repo, "cli"), { recursive: true });
 
-  for (const fileName of ["release.sh", "release-lib.sh", "release-package-map.mjs"]) {
+  for (const fileName of [
+    "release.sh",
+    "release-lib.sh",
+    "release-package-map.mjs",
+    "verify-stable-changelog.mjs",
+  ]) {
     cpSync(join(scriptsDir, fileName), join(repo, "scripts", fileName));
   }
   chmodSync(join(repo, "scripts", "release.sh"), 0o755);
@@ -52,6 +58,32 @@ function createReleaseRepo() {
     name: "@rudderhq/cli",
     version: "0.2.2",
   });
+  const englishChangelog = [
+    "## v0.2.2",
+    "",
+    "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)",
+    "",
+    "This release improves installation.",
+    "",
+    "### Improved",
+    "",
+    "- Improved installation.",
+    "",
+  ].join("\n");
+  const chineseChangelog = [
+    "## v0.2.2",
+    "",
+    "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)",
+    "",
+    "这个版本改善安装体验。",
+    "",
+    "### 改进",
+    "",
+    "- 改善安装体验。",
+    "",
+  ].join("\n");
+  writeFileSync(join(repo, "docs", "releases.mdx"), englishChangelog);
+  writeFileSync(join(repo, "docs", "zh", "releases.mdx"), chineseChangelog);
 
   exec("git", ["init", "--bare", remote], { cwd: root });
   exec("git", ["init"], { cwd: repo });
@@ -116,6 +148,27 @@ afterEach(() => {
 });
 
 describe("release canary base guard", () => {
+  it("keeps canary preflight stdout machine-readable when stable notes already exist", () => {
+    const { repo } = createReleaseRepo();
+    mkdirSync(join(repo, "releases"), { recursive: true });
+    writeJson(join(repo, "cli", "package.json"), {
+      name: "@rudderhq/cli",
+      version: "99.99.99",
+    });
+    writeFileSync(
+      join(repo, "releases", "v99.99.99.md"),
+      "This release improves installation.\n\n## Improved\n\n- Improved installation.\n",
+    );
+    exec("git", ["add", "."], { cwd: repo });
+    exec("git", ["commit", "-m", "prepare canary fixture"], { cwd: repo });
+
+    const result = runPreflight(repo, "canary");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("99.99.99-canary.0\n");
+    expect(result.stderr).toContain("Stable release notes already exist");
+  }, 30000);
+
   it("fails before deriving a canary when the committed base has a stable remote tag", () => {
     const { repo } = createReleaseRepo();
 
@@ -179,7 +232,10 @@ describe("release fast preflight", () => {
   it("rejects an already published stable before dependency installation or build", () => {
     const { repo } = createReleaseRepo();
     mkdirSync(join(repo, "releases"), { recursive: true });
-    writeFileSync(join(repo, "releases", "v0.2.2.md"), "# v0.2.2\n");
+    writeFileSync(
+      join(repo, "releases", "v0.2.2.md"),
+      "This release improves installation.\n\n## Improved\n\n- Improved installation.\n",
+    );
     exec("git", ["add", "releases/v0.2.2.md"], { cwd: repo });
     exec("git", ["commit", "-m", "notes"], { cwd: repo });
     exec("git", ["push", "origin", "main"], { cwd: repo });

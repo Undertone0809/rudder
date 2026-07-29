@@ -69,15 +69,14 @@ edit_policy: user_confirmed_only
 Why:
 
 - Agents are durable team members, not throwaway runtime processes. Their role,
-  capabilities, runtime, skills, budget, reporting line, and permissions define
+  capabilities, runtime, skills, budget, and permissions define
   what work Rudder may safely route to them.
 
 Product model:
 
 - An agent belongs to one organization.
-- Agent identity includes name, role, title, capabilities, status, reporting
-  line, runtime type/config, desired skills, budget, and permission/config
-  state.
+- Agent identity includes name, role, title, capabilities, status, runtime
+  type/config, desired skills, budget, and permission/config state.
 - Agent avatar identity uses the existing `agents.icon` field. Supported
   persisted generated references are deterministic Oreo
   `oreo:<shape>:<palette>:<uuid>` values and DiceBear Notionists values;
@@ -112,7 +111,7 @@ Flow:
 
 Invariants:
 
-- Agent identity and manager relationships do not cross organization boundary.
+- Agent identity does not cross the organization boundary.
 - Terminated or pending-approval agents are not ordinary invokable agents.
 - Runtime config is not only UI preference; it is execution contract.
 - Oreo shape, palette, and UUID segments must match the IDs and UUID grammar
@@ -136,8 +135,8 @@ Evidence:
   frame for a run.
 - The bundled `rudder-docs` Agent creation reference routes explicit creation
   requests through the existing identity, `canCreateAgents`, runtime discovery,
-  role enum, reporting-line, `SOUL.md`, source-issue, canonical hire,
-  direct-create, `pending_approval`, revision, and success-evidence semantics.
+  role enum, `SOUL.md`, source-issue, canonical hire, direct-create,
+  `pending_approval`, revision, and success-evidence semantics.
 
 ## AGENT.RUNTIME.ADAPTERS.001
 
@@ -193,21 +192,38 @@ Product model:
   `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and
   `gpt-5.2`; discovered OpenAI models do not augment or reorder it. Explicit
   custom model values may still be preserved where the editor supports them.
+- Chat conversation model and thinking-effort selection reuses the same
+  runtime-owned catalogs, Codex fixed ordering, dynamic runtime discovery, and
+  adapter-specific effort fields. The controls are nested under the currently
+  selected or bound Agent; they never replace Agent identity or create a
+  runtime choice outside that Agent's adapter capabilities. Switching the
+  draft Agent clears conversation overrides before deriving the new Agent's
+  defaults. A persisted unknown/custom current model may remain visible for
+  compatibility, but Chat does not add a new free-input model editor or a
+  second effort vocabulary.
+- The same hierarchy applies in provisional and persisted Side Chat composers.
+  A Side Chat begins from its source Agent identity at that Agent's defaults,
+  never from the source conversation's overrides. Its first Send persists the
+  explicitly selected Agent and nullable runtime overrides; afterward the Agent
+  is locked while Model / Thinking stays editable for later admissions.
 - New Codex agent configurations default to `gpt-5.6-sol`, including the
   onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants
   offer Light, Medium, High, Extra High, Max, and Ultra; the remaining curated
   Codex models offer Low, Medium, High, and Extra High. Switching models clears
   an effort value that the new model does not support, including primary,
-  fallback, and New Issue override surfaces.
+  fallback, New Issue override, and derived Chat conversation surfaces. Chat
+  performs this compatibility fallback only in the derived conversation config
+  and never writes it back to the Agent.
 - Runtime environment test results are tri-state operator evidence: `pass` is
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
 
 Flow:
 
-1. Agent config loads the operator-facing runtime choices, the runtime-owned
-   model catalog, and, when available, server-side CLI probe status.
+1. Agent config and Chat conversation overrides load the operator-facing
+   runtime choices, the runtime-owned model and effort catalogs, and, when
+   available, server-side CLI probe status.
 2. The runtime selector groups choices by setup state so the operator can see
    ready local runtimes, runtimes needing setup, and non-probed runtimes before
    choosing.
@@ -246,6 +262,9 @@ Invariants:
   types as first-class operator choices.
 - Codex model discovery must not turn the fixed Codex menu into an account- or
   API-key-dependent list. Catalog changes are deliberate product updates.
+- Conversation-scoped selectors must not create a second model/effort catalog
+  or reorder runtime-owned choices. Replacing the primary model or effort must
+  preserve the Agent fallback chain and all unrelated runtime configuration.
 - A warning-only environment result must remain distinguishable from both pass
   and fail while leaving supported configuration and recovery actions visible.
 - Runtime adapters must not expose Browser tools from inherited user MCP config
@@ -267,6 +286,9 @@ Evidence:
   fixed Codex model ordering, and hidden process/HTTP entries.
 - Adapter model tests prove Codex ignores discovered OpenAI models and returns
   the curated menu in its declared order.
+- Chat runtime-selector and assistant tests prove model/effort catalog reuse,
+  unknown current model compatibility, adapter-specific effort projection,
+  fallback preservation, and derived effort fallback.
 - Codex, Claude, OpenCode, and Pi execute tests cover managed Browser capability
   propagation and prove the eight Browser tools are absent when disabled.
 - Codex App Server tests cover bidirectional request handling, native

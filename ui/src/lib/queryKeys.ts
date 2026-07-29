@@ -24,6 +24,14 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-backup-files", backupId, directoryPath] as const,
     workspaceBackupFile: (orgId: string, backupId: string, filePath: string) =>
       ["organizations", orgId, "workspace-backup-file", backupId, filePath] as const,
+    mcpProviders: (orgId: string) => ["organizations", orgId, "mcp-providers"] as const,
+    mcpConnections: (orgId: string) => ["organizations", orgId, "mcp-connections"] as const,
+    mcpProviderStatus: (orgId: string) =>
+      ["organizations", orgId, "mcp-provider-status"] as const,
+    mcpConnectionTools: (orgId: string, connectionId: string) =>
+      ["organizations", orgId, "mcp-connections", connectionId, "tools"] as const,
+    mcpConnectionScopes: (orgId: string, connectionId: string) =>
+      ["organizations", orgId, "mcp-connections", connectionId, "scopes"] as const,
   },
   organizationSkills: {
     list: (orgId: string) => ["organization-skills", orgId] as const,
@@ -42,6 +50,8 @@ export const queryKeys = {
     skills: (id: string) => ["agents", "skills", id] as const,
     integrations: (id: string) => ["agents", "integrations", id] as const,
     customIntegrations: (id: string) => ["agents", "custom-integrations", id] as const,
+    mcpConnections: (id: string) => ["agents", "mcp-connections", id] as const,
+    mcpProviderStatus: (id: string) => ["agents", "mcp-provider-status", id] as const,
     skillsAnalytics: (id: string) => ["agents", "skills-analytics", id] as const,
     instructionsBundle: (id: string) => ["agents", "instructions-bundle", id] as const,
     instructionsFile: (id: string, relativePath: string) =>
@@ -93,6 +103,7 @@ export const queryKeys = {
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,
     messages: (orgId: string, chatId: string) => ["chats", orgId, "messages", chatId] as const,
+    workManifests: (orgId: string) => ["chats", orgId, "work-manifest"] as const,
     workManifest: (orgId: string, chatId: string) => ["chats", orgId, "work-manifest", chatId] as const,
     queue: (orgId: string, chatId: string) => ["chats", orgId, "queue", chatId] as const,
   },
@@ -111,6 +122,8 @@ export const queryKeys = {
     ) => ["messenger", orgId, "saved-views", visibility, limit, offset] as const,
     savedView: (orgId: string, savedViewId: string) =>
       ["messenger", orgId, "saved-views", "detail", savedViewId] as const,
+    primaryRailPins: (orgId: string) =>
+      ["messenger", orgId, "saved-views", "primary-rail-pins"] as const,
     customGroups: (orgId: string) => ["messenger", orgId, "groups"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,
@@ -205,8 +218,15 @@ export const queryKeys = {
   activity: (orgId: string, filtersKey: string = "all") => ["activity", orgId, filtersKey] as const,
   costs: (orgId: string, from?: string, to?: string) =>
     ["costs", orgId, from, to] as const,
-  costTrend: (orgId: string, from?: string, to?: string, scopeKind: string = "all", scopeId: string = "") =>
-    ["costs", "trend", orgId, from, to, scopeKind, scopeId] as const,
+  costTrend: (
+    orgId: string,
+    from?: string,
+    to?: string,
+    granularity: string = "day",
+    scopeKind: string = "all",
+    scopeId: string = "",
+  ) =>
+    ["costs", "trend", orgId, from, to, granularity, scopeKind, scopeId] as const,
   usageByProvider: (orgId: string, from?: string, to?: string) =>
     ["usage-by-provider", orgId, from, to] as const,
   usageByBiller: (orgId: string, from?: string, to?: string) =>
@@ -232,6 +252,7 @@ export const queryKeys = {
   heartbeats: (orgId: string, agentId?: string, limit?: number) =>
     queryKeys.agentRuns(orgId, agentId, limit),
   runDetail: (runId: string) => ["agent-run", runId] as const,
+  runEvents: (runId: string) => ["run-events", runId] as const,
   runWorkspaceOperations: (runId: string) => ["agent-run", runId, "workspace-operations"] as const,
   liveRuns: (orgId: string) => ["live-runs", orgId] as const,
   runIssues: (runId: string) => ["run-issues", runId] as const,

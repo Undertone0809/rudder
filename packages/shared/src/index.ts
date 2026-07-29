@@ -37,6 +37,11 @@ export {
   type RudderInlineVisualPlacement
 } from "./chat-inline-visuals.js";
 export {
+  collectChatSubagentInspections,
+  mergeChatSubagentSummaries,
+  type ChatSubagentInspection
+} from "./chat-subagents.js";
+export {
   extractVisibleChatWorkTargets,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
@@ -52,7 +57,7 @@ export {
   GOAL_STATUSES, HEARTBEAT_INVOCATION_SOURCES,
   HEARTBEAT_RUN_STATUSES, INSTANCE_USER_ROLES, INVITE_JOIN_TYPES, INVITE_TYPES, ISSUE_ORIGIN_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES, JOIN_REQUEST_STATUSES, JOIN_REQUEST_TYPES, LIVE_EVENT_TYPES, MEMBERSHIP_STATUSES, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, MESSENGER_FORK_GROUP_DEFAULT_ICON, MESSENGER_SYSTEM_THREAD_KINDS, MESSENGER_THREAD_KINDS, ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,
   ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES, ORGANIZATION_RESOURCE_KINDS,
-  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
+  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_SECRET_PURPOSES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
   PLUGIN_API_VERSION, PLUGIN_BRIDGE_ERROR_CODES, PLUGIN_CAPABILITIES, PLUGIN_CATEGORIES, PLUGIN_EVENT_TYPES, PLUGIN_JOB_RUN_STATUSES,
   PLUGIN_JOB_RUN_TRIGGERS, PLUGIN_JOB_STATUSES, PLUGIN_LAUNCHER_ACTIONS,
   PLUGIN_LAUNCHER_BOUNDS, PLUGIN_LAUNCHER_PLACEMENT_ZONES, PLUGIN_LAUNCHER_RENDER_ENVIRONMENTS,
@@ -64,10 +69,33 @@ export {
   type GoalStatus, type HeartbeatInvocationSource,
   type HeartbeatRunStatus, type InstanceUserRole, type InviteJoinType, type InviteType, type IssueOriginKind, type IssuePriority, type IssueStatus, type JoinRequestStatus, type JoinRequestType, type LiveEventType, type MembershipStatus, type MessengerSystemThreadKind, type MessengerThreadKind, type OrganizationIntelligenceProfilePurpose,
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
-  type OrganizationResourceSourceType, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
+  type OrganizationResourceSourceType, type OrganizationSecretPurpose, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
   type PluginJobRunTrigger, type PluginJobStatus, type PluginLauncherAction,
   type PluginLauncherBounds, type PluginLauncherPlacementZone, type PluginLauncherRenderEnvironment,
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
+} from "./constants.js";
+
+export {
+  MCP_AGENT_ACCESS_MODES,
+  MCP_AGENT_BINDING_STATUSES, MCP_CONNECTION_ACCESS_MODES, MCP_CONNECTION_CANONICAL_STATES, MCP_CONNECTION_PROVIDERS, MCP_CONNECTION_SCOPES,
+  MCP_CONNECTION_STATUSES,
+  MCP_CONNECTION_TRANSPORTS,
+  MCP_OAUTH_GRANT_STATUSES,
+  MCP_OAUTH_SESSION_STATUSES,
+  MCP_OAUTH_SESSION_TTL_MS,
+  MCP_PROVIDER_CATALOG,
+  MCP_PROVIDER_ORGANIZATION_STATES,
+  MCP_PROVIDER_SCOPE_MODES,
+  MCP_TOOL_CAPABILITY_CLASSES,
+  type McpAgentAccessMode,
+  type McpAgentBindingStatus, type McpConnectionAccessMode, type McpConnectionCanonicalState, type McpConnectionProvider, type McpConnectionScope,
+  type McpConnectionStatus,
+  type McpConnectionTransport,
+  type McpOAuthGrantStatus,
+  type McpOAuthSessionStatus,
+  type McpProviderOrganizationState,
+  type McpProviderScopeMode,
+  type McpToolCapabilityClass
 } from "./constants.js";
 
 export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
@@ -76,7 +104,12 @@ export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
 } from "./types/workspace-backup.js";
-export { KNOWN_WEBSITE_ICONS, resolveKnownWebsiteIcon, type KnownWebsiteIcon } from "./website-icons.js";
+export {
+  KNOWN_WEBSITE_ICONS,
+  MAX_BROWSER_FAVICON_LENGTH,
+  resolveKnownWebsiteIcon,
+  type KnownWebsiteIcon
+} from "./website-icons.js";
 
 export type {
   AgentCustomIntegrationBinding,
@@ -86,6 +119,26 @@ export type {
   CustomIntegrationToolCall,
   CustomIntegrationToolSummary
 } from "./types/custom-integration.js";
+
+export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
+  McpAgentBinding, McpAgentConnectionSummary,
+  McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
+  McpConnectionSummary,
+  McpCuratedSafeConfig,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse, McpProviderAvailability, McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./types/mcp.js";
 
 export {
   createCustomIntegrationSchema,
@@ -102,6 +155,40 @@ export {
   type CreateCustomIntegrationToolCall,
   type UpdateCustomIntegrationBinding
 } from "./validators/custom-integration.js";
+
+export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema, mcpAgentAccessModeSchema, mcpAgentBindingSchema, mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
+  mcpConnectionCanonicalStateSchema,
+  mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
+  mcpConnectionProviderSchema, mcpConnectionSafeConfigSchema, mcpConnectionScopeSchema, mcpConnectionSecretsMutationSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpCuratedSafeConfigSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema, mcpProviderAvailabilitySchema, mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema, mcpProviderMaxAccessSchema,
+  mcpProviderOrganizationStateSchema,
+  mcpProviderScopeModeSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  mcpToolCapabilityClassSchema,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
+} from "./validators/mcp.js";
 
 export {
   appendChatGenerationEventSchema,
@@ -124,7 +211,7 @@ export {
 
 export type {
   ActivityEvent, Agent,
-  AgentAccessState, AgentBrowserToolSummary, AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationSettings, AgentIntegrationSetupSession, AgentIntegrationSetupSessionStatus, AgentIntegrationSetupUrl, AgentIntegrationSummary, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRudderToolSummary, AgentRun, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
+  AgentAccessState, AgentBrowserToolSummary, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationSettings, AgentIntegrationSetupSession, AgentIntegrationSetupSessionStatus, AgentIntegrationSetupUrl, AgentIntegrationSummary, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRudderToolSummary, AgentRun, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts, AgentTaskSession,
   AgentWakeupRequest, Approval,
@@ -144,10 +231,10 @@ export type {
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
-  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
-  CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
+  CostTrendGranularity, CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
   GoalDependencies,
   GoalDependencyPreview, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode,
@@ -239,6 +326,10 @@ export {
 
 export { deriveAgentUrlKey, isUuidLike, normalizeAgentUrlKey } from "./agent-url-key.js";
 export { API, API_PREFIX } from "./api.js";
+export {
+  createMarkdownSourceBoundaryMap,
+  type MarkdownSourceBoundaryMap
+} from "./markdown-source-boundary.js";
 export { formatMessengerPreview, formatMessengerTitle, type MessengerPreviewOptions } from "./messenger-preview.js";
 export {
   ORGANIZATION_ISSUE_KEY_MAX_LENGTH,
@@ -319,6 +410,11 @@ export {
   type TokenUsageParts,
   type TokenUsageSummary
 } from "./token-usage.js";
+
+export {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatTranscriptLifecycleCandidate
+} from "./chat-transcript-visibility.js";
 
 export {
   ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,

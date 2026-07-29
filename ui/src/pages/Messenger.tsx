@@ -6,6 +6,7 @@ import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
+import { AgentIcon } from "@/components/AgentAvatar";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
 import {
@@ -20,6 +21,7 @@ import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/Mess
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { MessengerMainWorkbench } from "@/components/workbench/MessengerMainWorkbench";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -694,6 +696,7 @@ function MessengerApprovalCard({
   const chatConversation = chatConversationId
     ? chatConversations?.find((conversation) => conversation.id === chatConversationId) ?? null
     : null;
+  const requesterAgent = item.requesterAgent;
 
   const invalidateApprovalViews = async () => {
     await Promise.all([
@@ -727,8 +730,17 @@ function MessengerApprovalCard({
 
   return (
     <ThreadMessage
-      icon={<ShieldCheck className="h-5 w-5" />}
-      label="Approvals assistant"
+      icon={requesterAgent
+        ? (
+            <AgentIcon
+              icon={requesterAgent.icon}
+              role={requesterAgent.role}
+              fallbackSeed={requesterAgent.name}
+              className="size-full"
+            />
+          )
+        : <ShieldCheck className="h-5 w-5" />}
+      label={requesterAgent?.name ?? "Approvals assistant"}
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-approval-message-${item.id}`}
     >
@@ -1126,6 +1138,10 @@ export function Messenger() {
       setBreadcrumbs([{ label: "Saved view" }]);
       return;
     }
+    if (route.kind === "workbench") {
+      setBreadcrumbs([{ label: "Workbench" }]);
+      return;
+    }
     setBreadcrumbs([{ label: "Messenger" }]);
   }, [route.kind, route.kind === "system" ? route.threadKind : null, setBreadcrumbs]);
 
@@ -1142,6 +1158,9 @@ export function Messenger() {
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;
+  if (route.kind === "workbench" && selectedOrganizationId) {
+    return <MessengerMainWorkbench organizationId={selectedOrganizationId} />;
+  }
   if (route.kind === "saved_view" && selectedOrganizationId) {
     return <MessengerSavedViewWorkspace organizationId={selectedOrganizationId} savedViewId={route.savedViewId} />;
   }

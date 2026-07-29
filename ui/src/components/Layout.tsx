@@ -32,7 +32,7 @@ import {
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, isLegacyOrganizationSettingsRedirectPath, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { RUDDER_DOCS_URL } from "../lib/product-links";
@@ -125,6 +125,7 @@ function readRememberedWorkspacePath(): string {
     if (
       relativePath.startsWith("/instance/")
       || relativePath.startsWith("/organization/settings")
+      || isLegacyOrganizationSettingsRedirectPath(relativePath)
     ) {
       return DEFAULT_ORGANIZATION_HOME_PATH;
     }
@@ -381,6 +382,7 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/automations(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/messenger\/(?:workbench|saved)(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";
 }
 
@@ -766,13 +768,13 @@ function DesktopSidePanelSlot({
   return (
     <>
       <span ref={workspaceAnchorRef} className="hidden" aria-hidden="true" />
-      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-1" data-testid="side-panel-hover-edge">
         <Button
           type="button"
           variant="outline"
           size="icon"
           data-testid="global-side-panel-trigger"
-          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          className="pointer-events-none absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
           onClick={sidePanel.showPanel}
           aria-label="Open Side Panel"
           title="Open Side Panel"
@@ -1260,6 +1262,7 @@ export function Layout() {
     const relativePath = toOrganizationRelativePath(
       `${location.pathname}${location.search}${location.hash}`,
     );
+    if (isLegacyOrganizationSettingsRedirectPath(relativePath)) return;
     try {
       window.localStorage.setItem(LAST_WORKSPACE_PATH_KEY, relativePath);
     } catch {
@@ -1659,7 +1662,8 @@ export function Layout() {
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelContentInactive && "pointer-events-none",
+                          desktopSidePanelContentInactive
+                            && "pointer-events-none border-0 [box-shadow:none]",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (

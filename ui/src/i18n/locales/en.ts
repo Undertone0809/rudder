@@ -24,7 +24,6 @@ export const en = {
   "common.heartbeats": "Heartbeats",
   "common.plugins": "Plugins",
   "common.organizationSettings": "Organization Settings",
-  "common.structure": "Structure",
   "common.skills": "Skills",
   "common.costs": "Costs",
   "common.activity": "Activity",
@@ -50,6 +49,11 @@ export const en = {
   "browser.links.description": "This preference is independent of Browser access for Agents.",
   "browser.links.builtIn": "Rudder Built-in Browser",
   "browser.links.default": "Default browser",
+  "browser.onboarding.title": "Browse without leaving Rudder",
+  "browser.onboarding.description":
+    "Rudder starts with its Built-in Browser for web links. You can choose the Built-in Browser or your default browser under Settings → Desktop app → Browser.",
+  "browser.onboarding.settings": "Browser settings",
+  "browser.onboarding.dismiss": "Got it",
   "browser.data.title": "Browsing data",
   "browser.data.description": "Manage the instance-wide Browser profile.",
   "browser.data.trustDisclosure":
@@ -190,7 +194,6 @@ export const en = {
   "notFound.description.page": "This route does not exist.",
   "notFound.unknown": "unknown",
   "notFound.requestedPath": "Requested path:",
-  "notFound.openHome": "Open home",
   "notFound.goHome": "Go home",
   "organizationSettings.breadcrumb": "Settings",
   "organizationSettings.title": "Organization Settings",
@@ -208,11 +211,6 @@ export const en = {
   "organizationSettings.view.accessData": "Access & data",
   "organizationSettings.general.name.label": "Organization name",
   "organizationSettings.general.name.hint": "The display name for your organization.",
-  "organizationSettings.general.issueKey.label": "Issue key",
-  "organizationSettings.general.issueKey.hint": "Used in issue IDs. Changing it updates current IDs while old links remain valid.",
-  "organizationSettings.general.description.label": "Description",
-  "organizationSettings.general.description.hint": "Optional description shown in the organization profile.",
-  "organizationSettings.general.description.placeholder": "Optional organization description",
   "organizationSettings.appearance.logo.label": "Logo",
   "organizationSettings.appearance.logo.hint": "Upload a PNG, JPEG, WEBP, GIF, or SVG logo image.",
   "organizationSettings.appearance.logo.remove": "Remove logo",
@@ -303,10 +301,8 @@ export const en = {
     "\nYou MUST test Rudder-to-gateway reachability, call: {{url}}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Rudder. Test it. ",
   "organizationSettings.invites.prompt.body":
     "You're invited to join a Rudder organization.\n\nThe URLs you should try are:\n{{candidateList}}\n\nConnectivity guidance:\nIf you are running on a different machine than Rudder, Rudder must be reachable at one of the hostnames used above.\nVerify the hostname works from your runtime with: GET <base-url>/api/health\n\n{{connectivityBlock}}\n\nFor your \"agentName\", just use your own agent name (OpenClaw or whatever your name is) and send it directly.\nYou also need to send a gateway URL that Rudder can access. Check your config and include that URL.{{resolutionLine}}\n\n---\n\nThis onboarding flow is for OpenClaw Gateway.\nWhen you submit the join request, use:\n- `agentRuntimeType: \"openclaw_gateway\"`\n- `agentDefaultsPayload.url` as your `ws://` or `wss://` gateway URL\n- `agentDefaultsPayload.headers[\"x-openclaw-token\"]` with your gateway token\n- (legacy accepted) `agentDefaultsPayload.headers[\"x-openclaw-auth\"]`",
-  "organizationSettings.packages.description.before":
-    "Import and export have moved to dedicated pages accessible from the",
-  "organizationSettings.packages.structureLink": "Organization Structure",
-  "organizationSettings.packages.description.after": "header.",
+  "organizationSettings.packages.description":
+    "Move organization configuration and work between Rudder installations.",
   "organizationSettings.packages.export": "Export",
   "organizationSettings.packages.import": "Import",
   "organizationSettings.danger.description":
@@ -693,6 +689,11 @@ export const en = {
   "heartbeats.timerState": "Timer heartbeat state",
   "heartbeats.on": "On",
   "heartbeats.off": "Off",
+  "chat.annotations.selectionUnavailable": "Selection is no longer available",
+  "chat.annotations.selectionUnavailableBody": "Select the response text again and retry.",
+  "chat.annotations.couldNotAdd": "Could not add annotation",
+  "chat.annotations.added": "Annotation added",
+  "chat.annotations.removed": "Annotation removed",
 } as const;
 
 export type TranslationKey = keyof typeof en;

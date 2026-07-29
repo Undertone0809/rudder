@@ -1,11 +1,11 @@
 ---
 title: "Built-in Browser"
-description: "Use Rudder Desktop's shared website session while keeping Agent tab control isolated to one active run."
+description: "Open websites beside your work and, when allowed, let a local Agent use its own controlled tabs."
 icon: "globe"
 keywords:
   - "Rudder Browser"
-  - "agent browser control"
-  - "Desktop browser session"
+  - "Agent browser"
+  - "Desktop web session"
 canonical: "https://docs.rudderhq.dev/concepts/built-in-browser"
 "og:url": "https://docs.rudderhq.dev/concepts/built-in-browser"
 hreflang_en: "https://docs.rudderhq.dev/concepts/built-in-browser"
@@ -14,59 +14,49 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 
 <a id="definition" />
 
-## Definition
+## Two ways to use the Browser
 
-Rudder Desktop has a Built-in Browser for keeping web work beside the current
-Rudder surface. Ordinary web links can open in a Browser tab in the Side Panel,
-or the operator can choose the system browser.
+**You can browse beside Rudder.** Open a link in the Side Panel, move the same
+live tab into the main Messenger work area, or send it to your system browser.
+Moving a tab keeps its history, form state, scroll position, and zoom.
 
-The website profile belongs to the current operating-system user and canonical
-Rudder instance. It is deliberately shared across organizations in that local
-instance, so signing into a site in one organization can leave the same site
-signed in after switching organizations.
-
-Agent control uses a different boundary. A supported local Agent Run receives
-only bounded Browser actions, and each controlled tab belongs to that exact
-organization, Agent, Run, and tab lease.
+**An Agent can use controlled tabs.** Supported local Runs can navigate, read,
+click, type, and capture screenshots when Agent Browser access is enabled.
 
 <a id="case" />
 
-## One illustrative case
+## Example: check a published page
 
-A release Agent needs to check the public setup page before drafting an
-announcement. The operator is already signed in to the documentation provider
-through the shared Desktop Browser profile. During the Agent Run, the Agent
-opens its own tab, reads the published page, and captures a screenshot. It
-cannot read an operator tab or a tab leased to another run.
+Before writing a launch note, an Agent opens the public setup page in its own
+tab, checks the current command, and captures a screenshot. It cannot read the
+operator's open tabs or a tab owned by another Run.
 
 <a id="when-useful" />
 
-## When it is useful
+## Website login is shared on one local instance
 
-Use the Built-in Browser when a person wants web content in the Side Panel, or
-when an eligible local Agent needs audited navigation, reading, clicking,
-typing, or screenshots. The Agent Browser capability is available only in
-Desktop `local_trusted` mode for supported Claude, Codex, OpenCode, and Pi local
-runtimes while the instance setting is enabled.
+The operator Browser keeps one website profile for the current operating-system
+user and local Rudder instance. If you sign in to a site in one organization,
+the same site can still be signed in after switching organizations.
 
-On macOS, the operator can import supported cookies from a selected Chrome,
-Edge, or Brave profile after confirming the instance-wide effect. The import
-does not include passwords, history, bookmarks, extensions, or downloads.
+This makes normal browsing convenient, but it also means you should treat the
+Browser as one shared local identity. Clearing Browser data affects every
+organization in that local instance.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Agent tabs stay isolated
 
-Operator link routing and Agent Browser access are separate settings. Choosing
-the system browser for operator links does not disable Agent tools. Disabling
-Agent access closes Agent tabs and removes later tool access, but preserves the
-operator tabs, shared website data, and saved link preference.
+An Agent can use only the browser tabs Rudder opened for that piece of work. It
+cannot read raw cookies, saved passwords, arbitrary page scripts, or tabs from
+another Run.
 
-The highest-risk boundary is the shared website identity. All organizations in
-one local instance share the profile, but no run gains broad access to that
-profile. Agents receive no cookies, passwords, arbitrary page scripts, raw CDP,
-or model-supplied identity. Clearing Browser data affects the whole local
-instance and requires explicit confirmation.
+Choosing the system browser for your own links does not disable Agent Browser
+access. Turning off Agent access closes controlled Agent tabs but keeps your
+operator tabs and website data.
 
-See [Permissions and platforms](/reference/permissions-and-platforms) for the
-supported trust and platform boundaries.
+Agent Browser is available in Desktop local-trusted mode for supported local
+Codex, Claude, OpenCode, and Pi runtimes. On macOS, you can import supported
+cookies from a selected Chrome, Edge, or Brave profile after confirmation.
+
+See [Permissions and platforms](/reference/permissions-and-platforms).

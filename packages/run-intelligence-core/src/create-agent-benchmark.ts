@@ -15,8 +15,6 @@ export interface CreateAgentExpectedAgentShape {
   name?: string;
   role?: string;
   title?: string | null;
-  reportsTo?: string | null;
-  reportsToFixture?: string | null;
   agentRuntimeType?: string;
   desiredSkills?: string[];
   sourceIssueRequired?: boolean;
@@ -81,7 +79,6 @@ export interface CreateAgentEvalResult {
     create_agent_request_completed: CreateAgentEvalCheck;
     create_agent_path_correct: CreateAgentEvalCheck;
     create_agent_payload_valid: CreateAgentEvalCheck;
-    create_agent_reports_to_valid: CreateAgentEvalCheck;
     create_agent_runtime_valid: CreateAgentEvalCheck;
     create_agent_skills_valid: CreateAgentEvalCheck;
     create_agent_source_issue_linked: CreateAgentEvalCheck;
@@ -160,10 +157,6 @@ export function parseCreateAgentCase(raw: unknown): CreateAgentCase {
       name: nonEmptyString(expectedAgentShape.name) ?? undefined,
       role: nonEmptyString(expectedAgentShape.role) ?? undefined,
       title: expectedAgentShape.title === null ? null : nonEmptyString(expectedAgentShape.title) ?? undefined,
-      reportsTo: expectedAgentShape.reportsTo === null ? null : nonEmptyString(expectedAgentShape.reportsTo) ?? undefined,
-      reportsToFixture: expectedAgentShape.reportsToFixture === null
-        ? null
-        : nonEmptyString(expectedAgentShape.reportsToFixture) ?? undefined,
       agentRuntimeType: nonEmptyString(expectedAgentShape.agentRuntimeType) ?? undefined,
       desiredSkills: toStringArray(expectedAgentShape.desiredSkills),
       sourceIssueRequired: typeof expectedAgentShape.sourceIssueRequired === "boolean"
@@ -246,14 +239,6 @@ export function coerceCreateAgentBenchmarkMetadata(raw: unknown): CreateAgentBen
     evaluationVersion: nonEmptyString(parsed.evaluationVersion) ?? CREATE_AGENT_EVALUATION_VERSION,
     judgeVersion: nonEmptyString(parsed.judgeVersion),
   };
-}
-
-function resolveExpectedReportsTo(testCase: CreateAgentCase, fixtureRefs: Record<string, string | undefined> = {}) {
-  if (testCase.expectedAgentShape.reportsTo !== undefined) return testCase.expectedAgentShape.reportsTo;
-  if (testCase.expectedAgentShape.reportsToFixture !== undefined) {
-    return fixtureRefs[testCase.expectedAgentShape.reportsToFixture ?? ""] ?? null;
-  }
-  return undefined;
 }
 
 function evaluateFieldEquality(actual: string | null | undefined, expected: string | null | undefined) {
@@ -392,7 +377,6 @@ export function evaluateCreateAgentBenchmark(
 ): CreateAgentEvalResult {
   const primaryAgent = findPrimaryAgent(input.createdAgents, input.testCase.expectedPath);
   const primaryApproval = input.createdApprovals[0] ?? null;
-  const expectedReportsTo = resolveExpectedReportsTo(input.testCase, input.fixtureRefs);
   const filesystemFallbackMatches = findFilesystemFallbackMatches(input.runDetail);
   const finalOutputSummary = summarizeFinalOutput(input.runDetail);
   const runSucceeded = input.runDetail.run.status === "succeeded";
@@ -477,15 +461,6 @@ export function evaluateCreateAgentBenchmark(
         comment: "Expected a created agent payload but none was observed.",
       };
 
-  const reportsToCheck: CreateAgentEvalCheck = primaryAgent
-    ? evaluateFieldEquality(primaryAgent.agent.reportsTo, expectedReportsTo)
-    : {
-      value: input.testCase.expectedPath === "reject_or_escalate" ? "not_applicable" : "fail",
-      comment: input.testCase.expectedPath === "reject_or_escalate"
-        ? "Reject/escalate cases do not create an agent."
-        : "No created agent available for reportsTo validation.",
-    };
-
   const runtimeCheck: CreateAgentEvalCheck = primaryAgent
     ? evaluateFieldEquality(primaryAgent.agent.agentRuntimeType, input.testCase.expectedAgentShape.agentRuntimeType)
     : {
@@ -520,7 +495,6 @@ export function evaluateCreateAgentBenchmark(
     requestCompleted,
     pathCorrect,
     payloadValid,
-    reportsToCheck,
     runtimeCheck,
     skillsCheck,
     sourceIssueLinkCheck,
@@ -559,7 +533,6 @@ export function evaluateCreateAgentBenchmark(
       create_agent_request_completed: requestCompleted,
       create_agent_path_correct: pathCorrect,
       create_agent_payload_valid: payloadValid,
-      create_agent_reports_to_valid: reportsToCheck,
       create_agent_runtime_valid: runtimeCheck,
       create_agent_skills_valid: skillsCheck,
       create_agent_source_issue_linked: sourceIssueLinkCheck,

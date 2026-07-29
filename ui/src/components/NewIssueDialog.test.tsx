@@ -370,6 +370,7 @@ describe("NewIssueDialog", () => {
 
     expect(html).toContain('data-slot="agent-menu-label"');
     expect(html).toContain('data-slot="agent-menu-supporting-label"');
+    expect(html).not.toContain('data-slot="agent-menu-avatar-frame"');
     expect(html).toContain("flex-col text-left");
     expect(html).toContain("Chief Technology Officer");
     expect(html).not.toContain("Ella (Chief Technology Officer)");

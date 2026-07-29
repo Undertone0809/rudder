@@ -1,11 +1,11 @@
 ---
-title: "Runtime types"
-description: "Compare Rudder runtime choices, readiness states, managed tools, and adapter boundaries."
+title: "Runtime Types"
+description: "Compare the local programs Rudder can use to execute Agent work."
 icon: "terminal"
 keywords:
   - "Rudder runtime types"
-  - "agent runtime"
   - "Codex Claude Cursor Gemini OpenCode Pi"
+  - "Agent runtime"
 canonical: "https://docs.rudderhq.dev/reference/runtime-types"
 "og:url": "https://docs.rudderhq.dev/reference/runtime-types"
 hreflang_en: "https://docs.rudderhq.dev/reference/runtime-types"
@@ -14,82 +14,61 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/runtime-types"
 
 <a id="definition" />
 
-## Definition
-
-A runtime is the adapter that executes an Agent Run. The Agent is the durable
-team member, the Run is one bounded attempt, and the runtime supplies the local
-or external execution behavior for that attempt.
+A runtime is the program or service that performs one Agent Run. The Agent owns
+the role; the runtime executes; the Run records that attempt.
 
 <a id="states" />
 
-## States
+## Local runtimes in the Agent setup form
 
-The standard Agent configuration UI currently enables these local choices:
-
-| UI choice | Runtime value | Local command |
-| --- | --- | --- |
-| Codex (local) | `codex_local` | `codex` |
-| Claude Code (local) | `claude_local` | `claude` |
-| Cursor (local) | `cursor` | `cursor-agent` |
-| Gemini CLI (local) | `gemini_local` | `gemini` |
-| OpenCode (local) | `opencode_local` | `opencode` |
-| Pi (local) | `pi_local` | `pi` |
-
-Availability is setup guidance:
-
-| Readiness group | Meaning |
+| Choice | Default command |
 | --- | --- |
-| Ready on this machine | The default local command resolved on the server path |
-| Needs setup | Rudder could not find the default command |
-| Other runtimes | Rudder cannot decide readiness through a local command probe |
+| Codex | `codex` |
+| Claude Code | `claude` |
+| Cursor | `cursor-agent` |
+| Gemini CLI | `gemini` |
+| OpenCode | `opencode` |
+| Pi | `pi` |
 
-Always use **Test runtime chain** after configuration. A successful probe is
-stronger evidence than the availability group.
+The setup form groups them as:
+
+- **Ready on this machine:** Rudder found the default command.
+- **Needs setup:** the command was not found.
+- **Other runtimes:** readiness cannot be decided with a local command check.
+
+Always run **Test runtime chain**. A found command can still be signed out or
+misconfigured.
 
 <a id="constraints" />
 
-## Constraints
+## Features differ by runtime
 
-Runtime capabilities differ. Codex, Claude Code, OpenCode, and Pi can receive
-Rudder-managed tools through their supported MCP or native bridge. Cursor and
-Gemini have their own adapter behavior. Remote or unsupported adapters must not
-claim a managed tool path that they do not have.
+Model choices, sessions, Skills, transcripts, cost, Browser tools, Rudder tools,
+and mid-run controls depend on the runtime. Codex, Claude Code, OpenCode, and Pi
+support Rudder-managed control tools. Cursor and Gemini use their own adapter
+behavior.
 
-Model discovery, session reuse, Skill synchronization, transcript parsing,
-cost metadata, and mid-turn controls are adapter-specific. A fallback runtime
-is another explicit attempt, not proof that the primary runtime has the same
-capabilities.
+The interface should show only what the selected runtime supports. Switching to
+a fallback starts another attempt; it does not make two runtimes equivalent.
 
 <a id="boundaries" />
 
-## Boundaries
+## What runtime setup does not grant
 
-Generic `process` and `http` adapters are internal or advanced plumbing and do
-not appear as ordinary runtime picker choices. Registry entries shown as
-unavailable or coming soon are not promises of an executable setup.
+Choosing a runtime does not automatically grant access to every organization,
+Issue, local file, credential, website, or external service. Those permissions
+still come from the current Agent, task, workspace, and connection settings.
 
-Rudder prepares managed runtime state and the selected work context, then the
-runtime performs the work. Runtime configuration does not grant extra Issue,
-organization, filesystem, credential, or Browser authority.
+Generic process and HTTP adapters are advanced plumbing and do not appear as
+ordinary setup choices.
 
 <a id="examples" />
 
-## Examples
+## Quick choices
 
-- A local Codex Agent needs repository access and Rudder tools. Configure
-  `codex_local`, select the model and permissions, then run **Test runtime
-  chain** before assigning work.
-- An OpenCode command exists but its provider login is missing. The command may
-  appear ready while the runtime test reports an authentication failure. Fix
-  the provider setup and test again.
-- A runtime cannot provide native mid-turn steering. Rudder should report its
-  interrupt-and-continue fallback instead of presenting a native Steer result.
-
-<CardGroup cols={2}>
-  <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
-    Configure a runtime and verify the full chain.
-  </Card>
-  <Card title="Permissions and platforms" icon="shield-check" href="/reference/permissions-and-platforms">
-    Check local trust, credential, filesystem, and Browser boundaries.
-  </Card>
-</CardGroup>
+- Already use Codex locally: choose Codex, test the chain, then run one small
+  Chat task.
+- A command is found but the test says authentication failed: sign in through
+  that CLI outside Rudder.
+- Need Browser control: use a supported local runtime in Desktop local-trusted
+  mode and enable Agent Browser access.

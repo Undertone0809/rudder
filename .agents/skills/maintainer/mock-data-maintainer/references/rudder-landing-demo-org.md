@@ -104,7 +104,8 @@ Use this dataset when the user asks for:
 - a user-facing example of how Rudder coordinates agent work
 
 If the user asks for screenshot capture, seed with this dataset and then use
-`landing-proof-shots-maintainer` to capture full-page app-style screenshots.
+the bundled `scripts/capture-landing-proof-shots.ts` workflow to capture
+full-page app-style screenshots.
 Prefer Desktop-shell captures when the screenshot is meant to prove the
 installed local operator experience. Browser captures are acceptable for
 targeted web-route inspection, but they should not replace Desktop-shell
@@ -137,7 +138,7 @@ After the script prints `baseUrl` and the org prefix, useful routes include:
 - `/<org-prefix>/heartbeats`
 - `/<org-prefix>/costs`
 - `/<org-prefix>/calendar`
-- `/<org-prefix>/org`
+- `/<org-prefix>/organization/settings`
 
 Prefer `127.0.0.1` if browser automation has trouble with `localhost`.
 

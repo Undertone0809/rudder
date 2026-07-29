@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("Organization issue key identity", () => {
-  test("creates a numeric issue key and preserves old links after migration", async ({ page }) => {
+  test("keeps the issue key system-managed in settings and preserves old links after API migration", async ({ page }) => {
     const suffix = Date.now().toString().slice(-6);
     const organizationName = `R6 E2E ${suffix}`;
+    const renamedOrganizationName = `${organizationName} renamed`;
+    const legacyDescription = "Legacy organization description";
     const initialKey = "R6E";
     const originalKey = `R6${suffix}`;
     const nextKey = `N6${suffix}`;
@@ -31,16 +33,25 @@ test.describe("Organization issue key identity", () => {
     await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
 
     await page.goto(`/${createdOrganization.urlKey}/organization/settings`);
-    const initialIssueKeyInput = page.getByRole("textbox", { name: "Issue key" });
-    await expect(initialIssueKeyInput).toHaveValue(initialKey);
-    await initialIssueKeyInput.fill(originalKey);
-    const initialUpdateResponse = page.waitForResponse((response) =>
+    await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Description" })).toHaveCount(0);
+
+    const initialUpdateResponse = await page.request.patch(`/api/orgs/${createdOrganization.id}`, {
+      data: {
+        issuePrefix: originalKey,
+        description: legacyDescription,
+      },
+    });
+    expect(initialUpdateResponse.ok()).toBe(true);
+
+    await page.getByRole("textbox", { name: "Organization name" }).fill(renamedOrganizationName);
+    const generalSaveResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/orgs/${createdOrganization.id}`)
       && response.ok(),
     );
     await page.getByRole("button", { name: "Save changes" }).click();
-    await initialUpdateResponse;
+    await generalSaveResponse;
 
     const organizationsResponse = await page.request.get("/api/orgs");
     const organizations = await organizationsResponse.json() as Array<{
@@ -48,10 +59,12 @@ test.describe("Organization issue key identity", () => {
       name: string;
       issuePrefix: string;
       urlKey: string;
+      description: string | null;
     }>;
-    const organization = organizations.find((candidate) => candidate.name === organizationName);
+    const organization = organizations.find((candidate) => candidate.name === renamedOrganizationName);
     expect(organization).toBeTruthy();
     expect(organization!.issuePrefix).toBe(originalKey);
+    expect(organization!.description).toBe(legacyDescription);
 
     const routeNamespaceName = `ACME${suffix}`;
     const routeNamespaceResponse = await page.request.post("/api/orgs", {
@@ -80,17 +93,11 @@ test.describe("Organization issue key identity", () => {
     });
 
     await page.goto(`/${organization!.urlKey}/organization/settings`);
-    const issueKeyInput = page.getByRole("textbox", { name: "Issue key" });
-    await expect(issueKeyInput).toHaveValue(originalKey);
-    await issueKeyInput.fill(nextKey);
-    const updateResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/orgs/${organization!.id}`)
-      && response.ok(),
-    );
-    await page.getByRole("button", { name: "Save changes" }).click();
-    await updateResponse;
-    await expect(issueKeyInput).toHaveValue(nextKey);
+    await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveCount(0);
+    const updateResponse = await page.request.patch(`/api/orgs/${organization!.id}`, {
+      data: { issuePrefix: nextKey },
+    });
+    expect(updateResponse.ok()).toBe(true);
     await expect(page).toHaveURL(new RegExp(`/${organization!.urlKey}/organization/settings$`));
 
     const currentIssueResponse = await page.request.get(`/api/issues/${nextKey}-${issueNumber}`);

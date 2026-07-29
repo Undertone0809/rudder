@@ -10,7 +10,7 @@ import { normalizeTranscript } from "./RunTranscriptView.normalize";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
+export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptSkillTarget } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -44,7 +44,11 @@ export function RunTranscriptView({
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -169,8 +173,12 @@ export function RunTranscriptView({
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
           onOpenFile={handleOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
+          annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       </div>
     );
@@ -191,6 +199,8 @@ export function RunTranscriptView({
             collapseStdout,
             thinkingClassName,
             onMarkdownLinkClick: handleMarkdownLinkClick,
+            annotationSource,
+            sentAnnotationContext,
           })}
         </div>
       ))}

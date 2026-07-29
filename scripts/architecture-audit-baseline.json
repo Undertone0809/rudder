@@ -170,6 +170,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/lib/main-workbench-state.ts",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "Main workbench restoration, ownership, and promotion state were consolidated while the Messenger workbench contract stabilizes.",
+      "target": "Extract restoration and promotion policies into focused modules and reduce the state coordinator below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "ui/src/pages/Costs.tsx",
       "lines": 1669,
       "owner": "costs-ui",
@@ -231,6 +239,62 @@
       "owner": "runtime-cli",
       "rationale": "Shared runtime CLI assembly still combines environment discovery, command execution, and compatibility adapters in one module.",
       "target": "Extract environment and process adapters behind focused runtime utilities and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "cli/src/runtime/install.ts",
+      "lines": 1501,
+      "owner": "runtime-cli",
+      "rationale": "Runtime installation currently combines cache preparation, shared PostgreSQL payload migration, locking, and cleanup compatibility paths.",
+      "target": "Extract shared payload lifecycle and cleanup policies and reduce the installer below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/chats.stream-routes.ts",
+      "lines": 1501,
+      "owner": "collaboration-server",
+      "rationale": "Chat streaming transport currently coordinates transcript annotations, workbench events, and compatibility responses in one route module.",
+      "target": "Extract annotation and workbench stream handlers and reduce the transport module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/chat-assistant.helpers.ts",
+      "lines": 1501,
+      "owner": "collaboration-server",
+      "rationale": "The extracted Chat assistant helper module still combines prompt assembly, transcript normalization, attachment handling, and result parsing.",
+      "target": "Split prompt, transcript, attachment, and result helpers into focused modules and reduce this compatibility surface below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/mcp/oauth.ts",
+      "lines": 1501,
+      "owner": "integrations-server",
+      "rationale": "Managed MCP OAuth currently combines provider discovery, authorization callbacks, token lifecycle, and compatibility handling while the integration contract stabilizes.",
+      "target": "Extract provider discovery, callback exchange, and token lifecycle services and reduce this coordinator below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "cli/src/agent-v1-mcp-server.ts",
+      "lines": 1501,
+      "owner": "runtime-cli",
+      "rationale": "The agent MCP server currently combines tool schemas, request dispatch, and compatibility responses while the direct-run contract stabilizes.",
+      "target": "Extract tool families behind focused MCP handlers and reduce the server below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/AgentDetail.integrations.tsx",
+      "lines": 1501,
+      "owner": "agents-ui",
+      "rationale": "Agent integration configuration currently combines MCP bindings, custom integrations, and related form state in one route module.",
+      "target": "Extract integration-specific controllers and views and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/OrganizationMcpSettings.tsx",
+      "lines": 1501,
+      "owner": "integrations-ui",
+      "rationale": "Organization MCP settings currently combine connection lifecycle, OAuth state, bindings, and tool inspection in one route.",
+      "target": "Extract connection and binding controllers and reduce the route below 1500 lines.",
       "expiry": "2027-03-31"
     }
   ]

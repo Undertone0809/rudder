@@ -200,21 +200,32 @@ separate transitions.
   authorizes implementation and verification only. The default stopping point
   is Review Ready: validated changes committed and pushed on the current branch,
   a PR when appropriate, review evidence, and a release-risk summary.
+- An explicit imperative to release or publish, including `release`, `publish`,
+  `ship this version`, `发版`, or `发布`, authorizes the complete standard release
+  lifecycle. This includes committing and pushing the reviewed source directly
+  to `main`, running CI and the release dry-run, publishing npm/GitHub/Desktop/
+  production-docs surfaces, verifying them, cleaning obsolete canary
+  Releases/tags, and completing the direct next-version handoff. Do not create a
+  release PR or ask for another authorization during this lifecycle.
+- If the release request omits a version, infer the single consistent target
+  from the current release context and repository release scripts, lock its
+  source SHA, and state both in a progress update. Ask only when the channel,
+  version, source, or target is genuinely ambiguous.
 - Automatic branch previews are review surfaces only. Do not promote them or
-  assign shared aliases without explicit authorization.
-- Production docs, stable npm/GitHub/Desktop releases, and any other production
-  publish require a fresh, target-specific confirmation at the deployment gate.
-  A plan that mentions deployment, a request to start, or staging approval does
-  not satisfy that gate.
-- Never choose `dry_run: false`, enter `confirm_domain` or `confirm_stable`,
-  supply a production tag, invoke a deployment hook, or run an equivalent
-  production command on the user's behalf unless the user explicitly approved
-  that exact release. Workflow inputs are safeguards, not substitutes for human
-  authorization.
-- Before asking for production approval, report the exact commit/tag and target,
-  completed checks, unresolved or unrelated failing checks, migration or data
-  impact, and rollback point. After approval, release only that reviewed source
-  and verify the public surface.
+  assign shared aliases unless they are part of an explicit release/publish
+  request.
+- Machine validation remains mandatory: the exact `main` source must pass CI,
+  stable preflight, immutable-version checks, and public-surface verification.
+  Stop only when credentials or permissions are unavailable or a material
+  target decision is genuinely ambiguous.
+- Destructive or nonstandard operations still require separate authority:
+  unpublishing npm versions, force-pushing or retargeting published tags,
+  deleting the active canary line, or expanding beyond the requested
+  product/environment.
+- Before the real publish, report the exact commit/tag and target, completed
+  checks, unresolved failures, migration or data impact, and rollback point as
+  a status update—not as another approval request. Release only that locked,
+  reviewed source and verify every public surface.
 
 ## 6. Database Change Workflow
 

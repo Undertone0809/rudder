@@ -457,7 +457,6 @@ describe("organization service", () => {
       name: "CEO",
       role: "ceo",
       status: "idle",
-      reportsTo: null,
       capabilities: null,
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: {
@@ -495,7 +494,6 @@ describe("organization service", () => {
       role: "ceo",
       title: "Chief Executive Officer",
       status: "idle",
-      reportsTo: null,
       capabilities: null,
       agentRuntimeType: "process",
       agentRuntimeConfig: {},
@@ -511,7 +509,6 @@ describe("organization service", () => {
       role: "engineer",
       title: "Software Engineer",
       status: "idle",
-      reportsTo: ceo.id,
       capabilities: null,
       agentRuntimeType: "process",
       agentRuntimeConfig: {},

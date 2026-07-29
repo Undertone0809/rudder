@@ -2609,6 +2609,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           escapeBackWhenEmpty
           fixedComposer
           fixedComposerTimelineScroll={false}
+          timelineScrollElementRef={issueFindRootRef}
           onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
           }}

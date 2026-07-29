@@ -43,6 +43,7 @@
     "test:docs-search": "playwright test --config tests/docs-search/playwright.config.ts",
     "perf:workflows": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/workflow-baseline.ts",
     "perf:thread-pressure": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/run-isolated-workflow.ts --scale thread-heavy --iterations 20 --warmups 3 --explain",
+    "perf:scroll-eval:compare": "node scripts/perf/compare-scroll-evals.mjs",
     "docs:dev": "cd docs && npx -y mint@4.2.637 dev",
     "docs:validate": "cd docs && PUPPETEER_SKIP_DOWNLOAD=1 npx -y mint@4.2.637 validate",
     "docs:metadata:generate": "node scripts/docs-content-map.mjs generate",

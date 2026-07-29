@@ -1,5 +1,7 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
+import { mcpConnections } from "./mcp_connections.js";
 import { organizationSecrets } from "./organization_secrets.js";
 import { organizations } from "./organizations.js";
 
@@ -35,19 +37,45 @@ export const customIntegrationTools = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    integrationId: uuid("integration_id").notNull().references(() => customIntegrations.id, { onDelete: "cascade" }),
+    integrationId: uuid("integration_id").references(() => customIntegrations.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => mcpConnections.id, { onDelete: "cascade" }),
     externalToolName: text("external_tool_name").notNull(),
     rudderToolName: text("rudder_tool_name").notNull(),
     description: text("description"),
+    rawInputSchema: jsonb("raw_input_schema").$type<Record<string, unknown>>(),
     inputSchema: jsonb("input_schema").$type<Record<string, unknown>>().notNull().default({}),
+    rawOutputSchema: jsonb("raw_output_schema").$type<Record<string, unknown>>(),
+    outputSchema: jsonb("output_schema").$type<Record<string, unknown>>(),
+    capabilityClass: text("capability_class").notNull().default("unknown"),
+    policyRevision: integer("policy_revision").notNull().default(1),
+    catalogRevision: integer("catalog_revision").notNull().default(1),
     config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
     status: text("status").notNull().default("active"),
+    enabled: boolean("enabled").notNull().default(true),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     orgIntegrationIdx: index("custom_integration_tools_org_integration_idx").on(table.orgId, table.integrationId),
+    orgConnectionIdx: index("custom_integration_tools_org_connection_idx").on(table.orgId, table.connectionId),
+    connectionExternalNameUq: uniqueIndex("custom_integration_tools_connection_external_name_uq")
+      .on(table.connectionId, table.externalToolName)
+      .where(sql`${table.connectionId} is not null`),
     orgToolNameUq: uniqueIndex("custom_integration_tools_org_tool_name_uq").on(table.orgId, table.rudderToolName),
+    ownerCheck: check(
+      "custom_integration_tools_owner_check",
+      sql`${table.integrationId} is not null or ${table.connectionId} is not null`,
+    ),
+    positivePolicyRevisionsCheck: check(
+      "custom_integration_tools_positive_policy_revisions_check",
+      sql`${table.policyRevision} > 0 and ${table.catalogRevision} > 0`,
+    ),
+    capabilityClassCheck: check(
+      "custom_integration_tools_capability_class_check",
+      sql`${table.capabilityClass} in ('read', 'normal_write', 'destructive', 'admin_or_billing', 'unknown')`,
+    ),
   }),
 );
 
@@ -57,8 +85,11 @@ export const agentCustomIntegrationBindings = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
-    integrationId: uuid("integration_id").notNull().references(() => customIntegrations.id, { onDelete: "cascade" }),
+    integrationId: uuid("integration_id").references(() => customIntegrations.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => mcpConnections.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("active"),
+    accessMode: text("access_mode").notNull().default("none"),
+    policyRevision: integer("policy_revision").notNull().default(1),
     enabledToolIds: jsonb("enabled_tool_ids").$type<string[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -67,10 +98,26 @@ export const agentCustomIntegrationBindings = pgTable(
   (table) => ({
     orgAgentIdx: index("agent_custom_integration_bindings_org_agent_idx").on(table.orgId, table.agentId),
     orgIntegrationIdx: index("agent_custom_integration_bindings_org_integration_idx").on(table.orgId, table.integrationId),
+    orgConnectionIdx: index("agent_custom_integration_bindings_org_connection_idx").on(table.orgId, table.connectionId),
     agentIntegrationUq: uniqueIndex("agent_custom_integration_bindings_agent_integration_uq").on(
       table.orgId,
       table.agentId,
       table.integrationId,
+    ),
+    agentConnectionUq: uniqueIndex("agent_custom_integration_bindings_agent_connection_uq")
+      .on(table.orgId, table.agentId, table.connectionId)
+      .where(sql`${table.connectionId} is not null`),
+    ownerCheck: check(
+      "agent_custom_integration_bindings_owner_check",
+      sql`${table.integrationId} is not null or ${table.connectionId} is not null`,
+    ),
+    positivePolicyRevisionCheck: check(
+      "agent_custom_integration_bindings_positive_policy_revision_check",
+      sql`${table.policyRevision} > 0`,
+    ),
+    accessModeCheck: check(
+      "agent_custom_integration_bindings_access_mode_check",
+      sql`${table.accessMode} in ('none', 'read_only', 'read_write', 'provider_granted', 'full')`,
     ),
   }),
 );
@@ -80,7 +127,8 @@ export const customIntegrationToolCalls = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    integrationId: uuid("integration_id").notNull().references(() => customIntegrations.id, { onDelete: "cascade" }),
+    integrationId: uuid("integration_id").references(() => customIntegrations.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => mcpConnections.id, { onDelete: "cascade" }),
     toolId: uuid("tool_id").notNull().references(() => customIntegrationTools.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
     runId: uuid("run_id"),
@@ -89,6 +137,7 @@ export const customIntegrationToolCalls = pgTable(
     status: text("status").notNull(),
     sanitizedInput: jsonb("sanitized_input").$type<Record<string, unknown>>().notNull().default({}),
     sanitizedResult: jsonb("sanitized_result").$type<Record<string, unknown>>(),
+    redactedDispatchOutcome: jsonb("redacted_dispatch_outcome").$type<Record<string, unknown>>(),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
@@ -98,5 +147,14 @@ export const customIntegrationToolCalls = pgTable(
   (table) => ({
     orgAgentStartedIdx: index("custom_integration_tool_calls_org_agent_started_idx").on(table.orgId, table.agentId, table.startedAt),
     orgIntegrationStartedIdx: index("custom_integration_tool_calls_org_integration_started_idx").on(table.orgId, table.integrationId, table.startedAt),
+    orgConnectionStartedIdx: index("custom_integration_tool_calls_org_connection_started_idx").on(
+      table.orgId,
+      table.connectionId,
+      table.startedAt,
+    ),
+    ownerCheck: check(
+      "custom_integration_tool_calls_owner_check",
+      sql`${table.integrationId} is not null or ${table.connectionId} is not null`,
+    ),
   }),
 );

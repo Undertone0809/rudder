@@ -1,73 +1,71 @@
 ---
-title: "Review Agent work"
-description: "Inspect one Agent output and its Run evidence, record a structured decision, and route the next action."
+title: "Review Agent Work"
+description: "Open the real result, compare it with the request, and record a decision the next person can understand."
 icon: "message-square-check"
 keywords:
   - "review Agent work"
-  - "Rudder reviewer decision"
-  - "Agent Run evidence"
+  - "Rudder review"
+  - "request changes"
 canonical: "https://docs.rudderhq.dev/how-to/review-agent-work"
 "og:url": "https://docs.rudderhq.dev/how-to/review-agent-work"
 hreflang_en: "https://docs.rudderhq.dev/how-to/review-agent-work"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
 ---
 
+Review answers one question: does the actual result meet the request? It is
+different from Approval, which gives permission for an action to happen.
+
 <a id="completed-state" />
 
-## Completed state
+## What a useful review leaves behind
 
-At the end of this guide, the launch-announcement Issue contains its output,
-Agent Run evidence, a structured reviewer decision with a comment, and a clear
-next owner. Accepted work is closed; work needing changes or input remains open
-and routed.
+A useful review shows what was checked, what decision was made, why, and who
+owns the next step.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-The Issue must be in a reviewable state with a named reviewer. The assignee
-should attach or link the output, validation notes, known risks, and the relevant
-Agent Run. Review judges whether the output meets the request. Approval is a
-separate decision that authorizes a governed action.
+The Issue should have:
+
+- a named reviewer
+- a result that can actually be opened
+- clear acceptance criteria
+- links to relevant Runs, checks, and known risks
 
 <a id="case-backed-steps" />
 
-## Review the launch announcement
+## Review the result
 
-1. Open the Issue and restate the acceptance criteria: correct setup command,
-   supported claims, named audience, and a Markdown deliverable.
-2. Open the announcement itself. Do not judge quality from the Run summary
-   alone.
-3. Inspect the Agent Run result, runtime and model, cost when available,
-   transcript, raw evidence, validation, and terminal status. Use raw logs only
-   where the readable evidence leaves a question.
-4. Check that the output is connected to this Issue and Run, and that any source
-   links are references rather than mislabeled produced output.
-5. Record one structured reviewer decision with a specific comment. Accept when
-   the criteria are met; request changes when the assignee should revise;
-   choose blocked when required evidence or access is missing.
-6. If the review identifies separate work, create or link a follow-up instead of
-   hiding it in a vague acceptance comment.
+1. Open the Issue and read the original request and acceptance criteria.
+2. Open the produced file, preview, report, screenshot, or link. Do not approve
+   work from a summary alone.
+3. Check the important facts and tests. Open the Agent Run when you need to see
+   which runtime ran, whether it finished, what it changed, or why it failed.
+4. Compare the result with each acceptance criterion.
+5. Record one decision with a specific comment:
+   - **Accept** when the result meets the request.
+   - **Request changes** when the assignee should revise it.
+   - **Blocked** when a required input, permission, or result is missing.
+6. Create a follow-up Issue for separate work instead of hiding it in a vague
+   acceptance comment.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the review
 
-A later reader can see what was reviewed, which evidence supported the decision,
-why the reviewer chose it, and who owns the next action. Acceptance completes
-the Issue only through the structured path. Requested changes return to the
-assignee with the review comment preserved.
+A later reader should be able to see the result, the reason for the decision,
+and the next owner without opening a private chat or reconstructing the Run.
+Accepted work closes through the review action; requested changes keep the
+review comment and return the task to its assignee.
 
 <a id="recovery" />
 
-## Recovery
+## If you cannot decide
 
-If the output or evidence is missing, do not accept the work. Request the exact file,
-source, test, screenshot, or Run detail needed for judgment. If the reviewer
-Run ends without a structured decision and the Issue remains `in_review`,
-Rudder may schedule bounded reviewer follow-up; the free-form response does not
-become acceptance.
+Do not accept a task with a missing result or missing proof. Ask for the exact
+file, source, test, screenshot, or Run detail you need.
 
-If review reveals a reusable lesson, preserve the feedback with its evidence.
-Do not edit a Skill, Agent instruction, workflow, or decision silently. Propose
-the target, scope, evaluation, approval path, and rollback before promoting it.
+If the review reveals a lesson that should affect future work, save the
+feedback first. Propose a Skill or instruction change separately, with the
+examples it is based on and a way to test or undo it.

@@ -42,7 +42,6 @@ const [engineer] = await db
     role: "engineer",
     title: "Software Engineer",
     status: "idle",
-    reportsTo: ceo!.id,
     agentRuntimeType: "process",
     agentRuntimeConfig: { command: "echo", args: ["hello from engineer"] },
     budgetMonthlyCents: 10000,

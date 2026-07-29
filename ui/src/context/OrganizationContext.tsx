@@ -153,3 +153,7 @@ export function useOrganization() {
   }
   return ctx;
 }
+
+export function useOptionalOrganization() {
+  return useContext(OrganizationContext);
+}

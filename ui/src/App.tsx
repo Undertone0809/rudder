@@ -20,7 +20,10 @@ import { ToastViewport } from "./components/ToastViewport";
 import { BreadcrumbProvider } from "./context/BreadcrumbContext";
 import { useDialog } from "./context/DialogContext";
 import { useI18n } from "./context/I18nContext";
+import { LiveSurfaceRuntimeLayer, LiveSurfaceRuntimeProvider } from "./context/LiveSurfaceRuntimeContext";
+import { MainWorkbenchProvider } from "./context/MainWorkbenchContext";
 import { useOrganization } from "./context/OrganizationContext";
+import { SavedViewPromotionProvider } from "./context/SavedViewPromotionContext";
 import { SidePanelProvider } from "./context/SidePanelContext";
 import { useViewedOrganization } from "./hooks/useViewedOrganization";
 import {
@@ -72,7 +75,6 @@ import { OrganizationImport } from "./pages/OrganizationImport";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
-import { OrgChart } from "./pages/OrgChart";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginPage } from "./pages/PluginPage";
 import { PluginSettings } from "./pages/PluginSettings";
@@ -155,8 +157,8 @@ function pickAgentsEntryTarget(agents: Agent[]): Agent | null {
   if (visibleAgents.length === 0) return null;
 
   return [...visibleAgents].sort((left, right) => {
-    const leftPriority = left.reportsTo === null ? 0 : left.role === "ceo" ? 1 : 2;
-    const rightPriority = right.reportsTo === null ? 0 : right.role === "ceo" ? 1 : 2;
+    const leftPriority = left.role === "ceo" ? 0 : 1;
+    const rightPriority = right.role === "ceo" ? 0 : 1;
     if (leftPriority !== rightPriority) return leftPriority - rightPriority;
     return left.name.localeCompare(right.name);
   })[0] ?? null;
@@ -213,7 +215,7 @@ function boardRoutes() {
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
-      <Route path="org" element={<OrgChart />} />
+      <Route path="org" element={<Navigate to="../organization/settings" replace />} />
       <Route path="agents" element={<AgentsEntryRedirect />} />
       <Route path="agents/all" element={<Navigate to="/agents" replace />} />
       <Route path="agents/active" element={<Navigate to="/agents" replace />} />
@@ -553,9 +555,12 @@ export function App() {
 
   return (
     <>
+      <LiveSurfaceRuntimeProvider>
+      <MainWorkbenchProvider>
       <SidePanelProvider>
-      <DesktopBrowserLinkBridge />
-      <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
+      <SavedViewPromotionProvider>
+        <DesktopBrowserLinkBridge />
+        <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
@@ -630,8 +635,12 @@ export function App() {
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
-      </Routes>
+        </Routes>
+      </SavedViewPromotionProvider>
       </SidePanelProvider>
+      <LiveSurfaceRuntimeLayer />
+      </MainWorkbenchProvider>
+      </LiveSurfaceRuntimeProvider>
       {showDesktopSettingsOverlay ? (
         <Routes>
           <Route element={<CloudAccessGate />}>

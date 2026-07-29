@@ -73,6 +73,23 @@ describe("TranscriptLocalFilePreview", () => {
     expect(previewLocalFile).not.toHaveBeenCalled();
   });
 
+  it("explains that a missing historical target may have lost its command working directory", async () => {
+    readDesktopShell.mockReturnValue({ openPath, previewLocalFile });
+    previewLocalFile.mockRejectedValue(
+      new Error("ENOENT: no such file or directory, realpath '/wrong/workspace/evidence.md'"),
+    );
+
+    const container = await renderPreview();
+
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "Could not resolve the file location recorded by this run.",
+    );
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "older transcript may not include the command's original working directory",
+    );
+    expect(container.textContent).not.toContain("/wrong/workspace");
+  });
+
   it("surfaces an operating-system open failure instead of leaving an unhandled rejection", async () => {
     readDesktopShell.mockReturnValue({ openPath, previewLocalFile });
     previewLocalFile.mockResolvedValue({

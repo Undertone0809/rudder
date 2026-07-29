@@ -26,7 +26,10 @@ function readReceiverThreadIds(record: Record<string, unknown>): string[] {
     : Array.isArray(record.receiverThreadIds)
       ? record.receiverThreadIds
       : [];
-  return values.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const receiverThreadIds = values.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (receiverThreadIds.length > 0) return receiverThreadIds;
+  const activityThreadId = readString(record, ["agent_thread_id", "agentThreadId"]);
+  return activityThreadId ? [activityThreadId] : [];
 }
 
 function readTranscriptEntries(value: unknown): TranscriptEntry[] {
@@ -96,7 +99,8 @@ export function collectTranscriptAgentInspections(
 
   const inspections = new Map<string, TranscriptAgentInspection>();
   for (const tool of tools) {
-    if (normalizedToolName(tool.name) !== "spawn_agent") continue;
+    const toolName = normalizedToolName(tool.name);
+    if (toolName !== "spawn_agent" && toolName !== "subagent_activity") continue;
     const record = asRecord(tool.input);
     if (!record) continue;
     const directSnapshots = readAgentSnapshots(record);
@@ -109,7 +113,9 @@ export function collectTranscriptAgentInspections(
     const callId = tool.toolUseId
       ?? readString(record, ["id", "tool_use_id", "toolUseId"])
       ?? threadId;
-    const prompt = readString(record, ["message", "prompt", "task", "instructions"]) ?? "Delegated task";
+    const agentPath = readString(record, ["agent_path", "agentPath"]);
+    const prompt = readString(record, ["message", "prompt", "task", "instructions"])
+      ?? (agentPath ? `Delegated task to ${agentPath}` : "Delegated task");
     const inspection: TranscriptAgentInspection = {
       callId,
       threadId,
@@ -131,7 +137,8 @@ export function transcriptAgentInspectionForTool(
   tool: TranscriptToolCardEntry,
   inspections: Map<string, TranscriptAgentInspection>,
 ): TranscriptAgentInspection | null {
-  if (normalizedToolName(tool.name) !== "spawn_agent") return null;
+  const toolName = normalizedToolName(tool.name);
+  if (toolName !== "spawn_agent" && toolName !== "subagent_activity") return null;
   const record = asRecord(tool.input);
   const callId = tool.toolUseId
     ?? (record ? readString(record, ["id", "tool_use_id", "toolUseId"]) : null);

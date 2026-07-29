@@ -3,7 +3,11 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveDevScriptEnvironment, resolveHomeDir } from "./dev-local-env.mjs";
+import {
+  isolateDevShellFromParentRuntime,
+  resolveDevScriptEnvironment,
+  resolveHomeDir,
+} from "./dev-local-env.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -121,7 +125,7 @@ async function shutdown(exitCode = 0) {
 async function main() {
   const { env } = resolveDevScriptEnvironment({
     repoRoot,
-    baseEnv: process.env,
+    baseEnv: isolateDevShellFromParentRuntime(process.env),
   });
   const desktopEnv = {
     ...env,

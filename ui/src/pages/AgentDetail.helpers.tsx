@@ -37,7 +37,7 @@ import {
 } from "react";
 import { agentRunsApi } from "../api/agent-runs";
 import { type DashboardDatePreset } from "../components/DashboardDateRangeControl";
-import { heartbeatRunEventText } from "../lib/run-detail-events";
+import { heartbeatRunEventText, operatorVisibleInvocationRunEvents } from "../lib/run-detail-events";
 import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
 export const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
@@ -86,6 +86,7 @@ export function getDayKeysBetween(from: string, to: string): string[] {
 }
 
 export function formatRangeLabel(preset: DashboardDatePreset, customFrom: string, customTo: string): string {
+  if (preset === "1d") return "Today";
   if (preset === "7d") return "Last 7 days";
   if (preset === "15d") return "Last 15 days";
   if (preset === "30d") return "Last 30 days";
@@ -642,7 +643,8 @@ export function RunEventsList({
   events: HeartbeatRunEvent[];
   censorUsernameInLogs: boolean;
 }) {
-  if (events.length === 0) return null;
+  const visibleEvents = operatorVisibleInvocationRunEvents(events);
+  if (visibleEvents.length === 0) return null;
 
   const levelColors: Record<string, string> = {
     info: "text-foreground",
@@ -658,9 +660,9 @@ export function RunEventsList({
 
   return (
     <div>
-      <div className="mb-2 text-xs font-medium text-muted-foreground">Events ({events.length})</div>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">Events ({visibleEvents.length})</div>
       <div className="rounded-lg bg-neutral-100 p-3 font-mono text-xs space-y-0.5 dark:bg-neutral-950">
-        {events.map((evt) => {
+        {visibleEvents.map((evt) => {
           const color = evt.color
             ?? (evt.level ? levelColors[evt.level] : null)
             ?? (evt.stream ? streamColors[evt.stream] : null)

@@ -10,6 +10,7 @@ type AssigneeLabelKind = "agent" | "user" | "unassigned";
 interface AssigneeLabelProps {
   kind: AssigneeLabelKind;
   label: string;
+  agentAvatarStyle?: "framed" | "bare";
   badgeLabel?: string | null;
   agentIcon?: string | null;
   agentRole?: AgentRole | null;
@@ -45,6 +46,7 @@ export function AgentTitleBadge({
 export function AssigneeLabel({
   kind,
   label,
+  agentAvatarStyle = "framed",
   badgeLabel,
   agentIcon,
   agentRole,
@@ -59,12 +61,20 @@ export function AssigneeLabel({
       data-slot="assignee-label"
       data-kind={kind}
       data-layout={layout}
+      data-agent-avatar-style={kind === "agent" ? agentAvatarStyle : undefined}
       className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5", stacked && "w-full", className)}
     >
       {kind === "agent" ? (
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-          <AgentIcon icon={agentIcon} role={agentRole} className="h-3.5 w-3.5" />
-        </span>
+        agentAvatarStyle === "bare" ? (
+          <AgentIcon icon={agentIcon} role={agentRole} className="h-6 w-6 shrink-0 text-muted-foreground" />
+        ) : (
+          <span
+            data-slot="assignee-agent-avatar-frame"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground"
+          >
+            <AgentIcon icon={agentIcon} role={agentRole} className="h-3.5 w-3.5" />
+          </span>
+        )
       ) : (
         <Avatar size="sm">
           <AvatarFallback
@@ -93,14 +103,27 @@ export function AssigneeLabel({
   );
 }
 
-export function AgentMenuLabel({ agent }: { agent: Pick<Agent, "name" | "role" | "title" | "icon"> }) {
+export function AgentMenuLabel({
+  agent,
+  agentAvatarStyle = "framed",
+}: {
+  agent: Pick<Agent, "name" | "role" | "title" | "icon">;
+  agentAvatarStyle?: "framed" | "bare";
+}) {
   const supportingLabel = agentTitleBadgeLabel(agent);
 
   return (
     <span data-slot="agent-menu-label" className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-        <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
-      </span>
+      {agentAvatarStyle === "bare" ? (
+        <AgentIcon icon={agent.icon} role={agent.role} className="h-6 w-6 shrink-0 text-muted-foreground" />
+      ) : (
+        <span
+          data-slot="agent-menu-avatar-frame"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground"
+        >
+          <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
+        </span>
+      )}
       <span className="flex min-w-0 flex-1 flex-col text-left">
         <span className="truncate text-xs font-medium leading-4 text-foreground">{agent.name}</span>
         {supportingLabel ? (

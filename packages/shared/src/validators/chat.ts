@@ -251,6 +251,7 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
       let totalTextLength = 0;
       let attachmentReferenceCount = 0;
       const annotationIds = new Set<string>();
+      const sourceRanges = new Set<string>();
       const attachmentIds = new Set<string>();
       const attachmentFileIndexes = new Set<number>();
 
@@ -266,6 +267,25 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
           });
         }
         annotationIds.add(annotation.id);
+        const sourceRangeKey = JSON.stringify([
+          annotation.sourceConversationId,
+          annotation.sourceMessageId,
+          annotation.surface,
+          annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
+          annotation.surface === "process_transcript" ? annotation.generationId : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqStart : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqEnd : null,
+          annotation.start,
+          annotation.end,
+        ]);
+        if (sourceRanges.has(sourceRangeKey)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Annotation source ranges must be unique across the message",
+            path: [annotationIndex, "start"],
+          });
+        }
+        sourceRanges.add(sourceRangeKey);
         annotation.attachmentIds.forEach((attachmentId: string, attachmentIndex: number) => {
           if (attachmentIds.has(attachmentId)) {
             ctx.addIssue({
@@ -320,10 +340,15 @@ export const createChatContextLinkSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
+export const chatModelOverrideSchema = z.string().trim().min(1).max(120).nullable();
+export const chatEffortOverrideSchema = z.string().trim().min(1).max(120).nullable();
+
 export const chatDraftSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().max(5000).optional().nullable(),
   preferredAgentId: z.string().uuid().optional().nullable(),
+  modelOverride: chatModelOverrideSchema.optional(),
+  effortOverride: chatEffortOverrideSchema.optional(),
   issueCreationMode: chatIssueCreationModeSchema.optional(),
   planMode: z.boolean().optional(),
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),
@@ -360,15 +385,18 @@ export const forkChatConversationSchema = z.object({
 export const createSideChatSchema = z.object({
   sourceMessageId: z.string().uuid(),
   clientMutationId: z.string().trim().min(1).max(120),
+  preferredAgentId: z.string().uuid().optional(),
+  modelOverride: chatModelOverrideSchema.optional(),
+  effortOverride: chatEffortOverrideSchema.optional(),
 });
 
 export const addChatMessageSchema = z.object({
   body: z.string().trim().max(20000).default(""),
-  inlineAnnotations: chatInlineAnnotationsInputSchema.optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
   editUserMessageId: z.string().uuid().optional().nullable(),
   queuedMessageId: z.string().uuid().optional().nullable(),
 }).superRefine((value, ctx) => {
-  if (value.body.length === 0 && value.inlineAnnotations.length === 0) {
+  if (value.body.length === 0 && (value.inlineAnnotations?.length ?? 0) === 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Chat message body or at least one inline annotation is required",
@@ -384,6 +412,7 @@ export const chatQueuedMessagePayloadSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
   accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
   model: z.string().trim().min(1).max(120).optional().nullable(),
   effort: z.string().trim().min(1).max(120).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
@@ -403,9 +432,34 @@ export const createChatQueuedMessageSchema = z.object({
   payload: chatQueuedMessagePayloadSchema,
 });
 
+const chatQueuedMessageUpdatePayloadSchema = z.object({
+  body: z.string().trim().max(20000).default(""),
+  attachmentIds: z.array(z.string().uuid()).optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
+  projectId: z.string().uuid().optional().nullable(),
+  skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
+  accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
+  model: z.string().trim().min(1).max(120).optional().nullable(),
+  effort: z.string().trim().min(1).max(120).optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (
+    value.body.length === 0
+    && value.inlineAnnotations !== undefined
+    && value.inlineAnnotations.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Queued message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
+});
+
 export const updateChatQueuedMessageSchema = z.object({
   version: z.number().int().positive(),
-  payload: chatQueuedMessagePayloadSchema,
+  payload: chatQueuedMessageUpdatePayloadSchema,
 });
 
 export const cancelChatQueuedMessageSchema = z.object({
@@ -740,12 +794,21 @@ const messengerItemKeysSchema = z.array(messengerItemKeySchema).min(1).max(50);
 export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({
   itemKeys: messengerItemKeysSchema.optional(),
   threadKeys: messengerItemKeysSchema.optional(),
+  anchorItemKey: messengerItemKeySchema.optional(),
   autoGenerateName: z.boolean().optional(),
 }).superRefine((value, ctx) => {
   if (!value.itemKeys && !value.threadKeys) {
     ctx.addIssue({ code: "custom", message: "itemKeys or threadKeys is required", path: ["itemKeys"] });
   } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
     ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
+  }
+  const itemKeys = value.itemKeys ?? value.threadKeys;
+  if (value.anchorItemKey && itemKeys && !itemKeys.includes(value.anchorItemKey)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "anchorItemKey must be included in itemKeys",
+      path: ["anchorItemKey"],
+    });
   }
 }).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 

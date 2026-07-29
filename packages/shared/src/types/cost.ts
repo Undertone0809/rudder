@@ -37,10 +37,14 @@ export interface CostSummary {
   totalTokens: number;
   eventCount: number;
   tokenEventCount: number;
+  /** Cumulative agent-runtime time overlapping the selected range. */
+  activeDurationMs: number;
 }
 
+export type CostTrendGranularity = "hour" | "day";
+
 export interface CostTrendPoint {
-  /** UTC day bucket formatted as YYYY-MM-DD. */
+  /** UTC day (YYYY-MM-DD) or hour (ISO timestamp) bucket. */
   date: string;
   costCents: number;
   inputTokens: number;

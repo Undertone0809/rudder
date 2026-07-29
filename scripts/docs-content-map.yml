@@ -6,16 +6,16 @@
     "groups": 5,
     "concepts": [
       "overview",
-      "goals-projects-issues",
-      "agents",
-      "built-in-browser",
-      "issues",
       "chat-messenger",
-      "calendar",
+      "issues",
+      "agents",
+      "goals-projects-issues",
+      "reviews-feedback-learning",
       "workspaces",
+      "built-in-browser",
       "skills",
       "automations",
-      "reviews-feedback-learning",
+      "calendar",
       "plugins"
     ]
   },
@@ -37,7 +37,7 @@
       "status": "active",
       "files": {"en": "docs/index.mdx", "zh": "docs/zh.mdx"},
       "urls": {"en": "/", "zh": "/zh"},
-      "anchors": {"en": ["example-release-work"], "zh": ["example-release-work"]},
+      "anchors": {"en": ["start-here"], "zh": ["start-here"]},
       "composes": ["overview", "installation"],
       "source_docs": ["doc/product/GOAL.md", "doc/product/PRODUCT.md"],
       "llms": true,
@@ -129,7 +129,7 @@
       "pairing_exception": null,
       "aliases": [],
       "example_ids": ["launch-announcement"],
-      "contracts": {"primary": ["RUN.INTELLIGENCE.001", "RUN.RESULT.001"], "supporting": ["AGENT.IDENTITY.CONFIG.001", "AGENT.RUNTIME.ADAPTERS.001", "DOCUMENT.WORKPRODUCT.001"]},
+      "contracts": {"primary": ["RUN.INTELLIGENCE.001", "RUN.RESULT.001"], "supporting": ["AGENT.IDENTITY.CONFIG.001", "AGENT.RUNTIME.ADAPTERS.001", "DOCUMENT.WORKPRODUCT.001", "ROUTING.COMMENT.WAKE.001"]},
       "metadata_enforcement": "strict"
     },
     {
@@ -180,7 +180,7 @@
       "pairing_exception": null,
       "aliases": ["messenger-approvals", "zh-messenger-approvals", "retire-chat", "retire-messenger", "zh-retire-chat", "zh-retire-messenger"],
       "example_ids": ["launch-announcement"],
-      "contracts": {"primary": ["INBOX.ATTENTION.001", "MESSENGER.ATTENTION.001"], "supporting": []},
+      "contracts": {"primary": ["INBOX.ATTENTION.001", "MESSENGER.ATTENTION.001", "CHAT.RESPONSE.ANNOTATION.001"], "supporting": []},
       "metadata_enforcement": "strict"
     },
     {
@@ -603,11 +603,12 @@
     {"id": "CALENDAR.SOURCE.001", "visibility": "public", "primary_page": "calendar", "supporting_pages": ["approvals-budgets-activity-reference"]},
     {"id": "INBOX.ATTENTION.001", "visibility": "public", "primary_page": "chat-messenger", "supporting_pages": ["approvals-budgets-activity-reference"]},
     {"id": "MESSENGER.ATTENTION.001", "visibility": "public", "primary_page": "chat-messenger", "supporting_pages": []},
+    {"id": "CHAT.RESPONSE.ANNOTATION.001", "visibility": "public", "primary_page": "chat-messenger", "supporting_pages": []},
     {"id": "AGENT.CONTROL.TOOLS.001", "visibility": "public", "primary_page": "configure-agent-runtime", "supporting_pages": ["runtime-types"]},
     {"id": "REVIEW.DECISION.001", "visibility": "public", "primary_page": "reviews-feedback-learning", "supporting_pages": ["first-organization", "issue-lifecycle", "issue-statuses", "review-agent-work"]},
     {"id": "REVIEW.CLOSEOUT.001", "visibility": "public", "primary_page": "reviews-feedback-learning", "supporting_pages": ["first-organization", "issue-lifecycle", "issue-statuses", "review-agent-work"]},
     {"id": "ISSUE.COMMENTS.001", "visibility": "public", "primary_page": "issues", "supporting_pages": ["issue-lifecycle"]},
-    {"id": "ROUTING.COMMENT.WAKE.001", "visibility": "public", "primary_page": "issues", "supporting_pages": ["issue-lifecycle"]},
+    {"id": "ROUTING.COMMENT.WAKE.001", "visibility": "public", "primary_page": "issues", "supporting_pages": ["agents", "issue-lifecycle"]},
     {"id": "DESKTOP.STARTUP.RECOVERY.001", "visibility": "public", "primary_page": "installation", "supporting_pages": []},
     {"id": "ORG.GOAL.001", "visibility": "public", "primary_page": "goals-projects-issues", "supporting_pages": []},
     {"id": "ORG.PROJECT.001", "visibility": "public", "primary_page": "goals-projects-issues", "supporting_pages": []},

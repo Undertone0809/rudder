@@ -2,6 +2,10 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+} from "./postgres-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 
@@ -25,7 +29,10 @@ vi.mock("electron", () => ({
   },
 }));
 
-const { createDesktopUpdateFlow } = await import("./desktop-update-flow.js");
+const {
+  createDesktopUpdateFlow,
+  resolveDesktopUpdateChildLaunch,
+} = await import("./desktop-update-flow.js");
 
 class MockReadableStream extends EventEmitter {
   setEncoding = vi.fn();
@@ -105,6 +112,42 @@ describe("desktop update flow", () => {
     fs.rmSync("/tmp/rudder-desktop-test/post-update-reload.json", { force: true });
   });
 
+  it("uses the Node-mode CLI runner for macOS update children", () => {
+    const launch = resolveDesktopUpdateChildLaunch({
+      cliArgs: ["start", "--target-version", "0.6.2"],
+      childEnv: { RUDDER_HOME: "/tmp/rudder-home" },
+      execPath: "/Applications/Rudder.app/Contents/MacOS/Rudder",
+      resourcesPath: "/Applications/Rudder.app/Contents/Resources",
+      platform: "darwin",
+    });
+
+    expect(launch.command).toBe("/Applications/Rudder.app/Contents/MacOS/Rudder");
+    expect(launch.args).toEqual([
+      "/Applications/Rudder.app/Contents/Resources/server-package/desktop-cli-runner.js",
+      "start",
+      "--target-version",
+      "0.6.2",
+    ]);
+    expect(launch.env.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
+
+  it("keeps the desktop CLI flag for non-macOS update children", () => {
+    const launch = resolveDesktopUpdateChildLaunch({
+      cliArgs: ["start", "--target-version", "0.6.2"],
+      childEnv: {},
+      execPath: "/opt/Rudder/rudder",
+      platform: "linux",
+    });
+
+    expect(launch.args).toEqual([
+      "--desktop-cli",
+      "start",
+      "--target-version",
+      "0.6.2",
+    ]);
+    expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+  });
+
   it("waits for child close before publishing final failed update diagnostics", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
@@ -162,6 +205,36 @@ describe("desktop update flow", () => {
       message: "Rudder Desktop launched.",
       percent: 100,
     });
+  });
+
+  it("does not pass an incomplete Desktop-managed PostgreSQL path to the update child", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const previousPostgresBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+    const previousManagedPostgresBinDir = process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+    const managedBinDir = path.join("/tmp/previous-rudder-resources", "postgres-18.4", "darwin-arm64", "bin");
+    process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = managedBinDir;
+    process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = managedBinDir;
+
+    try {
+      const { flow } = createFlow();
+      await flow.installUpdate("0.3.4");
+
+      const spawnOptions = spawnMock.mock.calls[0]?.[2];
+      expect(spawnOptions.env[RUDDER_POSTGRES_BIN_DIR_ENV]).toBeUndefined();
+      expect(spawnOptions.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV]).toBeUndefined();
+    } finally {
+      if (previousPostgresBinDir === undefined) {
+        delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+      } else {
+        process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousPostgresBinDir;
+      }
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+      } else {
+        process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = previousManagedPostgresBinDir;
+      }
+    }
   });
 
   it("clears the post-update reload marker when an applied update child exits successfully", async () => {

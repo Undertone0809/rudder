@@ -54,6 +54,7 @@ describe("agent-v1 registry", () => {
       "agent.skills.enable",
       "agent.skills.sync",
       "issue.get",
+      "issue.list",
       "issue.search",
       "issue.context",
       "issue.checkout",

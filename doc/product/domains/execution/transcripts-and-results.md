@@ -13,18 +13,36 @@ related_code:
   - server/src/services/heartbeat-run-reference.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/chat-generation-protocol.ts
+  - server/src/services/chats.ts
+  - server/src/services/chats.helpers.ts
+  - server/src/services/postgres-json.ts
+  - server/src/services/run-events.ts
+  - server/src/services/chat-inline-annotations.ts
+  - packages/shared/src/chat-transcript-provenance.ts
   - ui/src/components/transcript/RunTranscriptView.common.tsx
   - ui/src/components/transcript/RunTranscriptView.normalize.tsx
   - ui/src/components/transcript/RunTranscriptView.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
+  - ui/src/components/transcript/RunTranscriptView.semantic.tsx
+  - ui/src/lib/transcript-skill-targets.ts
+  - ui/src/lib/side-panel-targets.ts
+  - ui/src/pages/Chat.side-panel.tsx
+  - ui/src/pages/Chat.tsx
 related_tests:
   - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
   - server/src/__tests__/heartbeat-run-summary.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/services/chat-generation-protocol.test.ts
+  - server/src/services/postgres-json.test.ts
+  - server/src/services/chat-inline-annotations.test.ts
+  - packages/shared/src/chat-transcript-provenance.test.ts
   - tests/e2e/run-transcript-detail.spec.ts
   - tests/e2e/chat-concurrent-streaming.spec.ts
+  - tests/e2e/chat-streaming.spec.ts
   - ui/src/components/transcript/RunTranscriptView.test.tsx
+  - ui/src/lib/transcript-skill-targets.test.ts
+  - ui/src/lib/side-panel-targets.test.ts
+  - ui/src/pages/Chat.side-panel.skill-file.test.tsx
   - tests/e2e/chat-transcript-internal-events.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -40,6 +58,12 @@ Behavior:
 - Stdout and stderr excerpts are persisted on the run.
 - Adapter transcript parsing builds structured transcript entries when the
   adapter supplies a parser.
+- Before transcript-derived structured evidence is persisted as generation
+  events, Agent Run events, or message transcript state, Rudder
+  deterministically replaces NUL characters with visible replacement
+  characters. A provider tool result that contains NUL must not turn an
+  otherwise valid run into a persistence failure, and normalization must retain
+  colliding object fields instead of silently overwriting evidence.
 - When a provider exposes readable summary and raw streams for the same
   reasoning item, the adapter projects at most one representation for that
   item. Streaming fragments retain delta semantics, raw-only reasoning remains
@@ -64,6 +88,12 @@ Behavior:
   such as `reasoning started` / `reasoning completed` or Rudder's internal
   result-envelope delimiters. Those raw entries remain attached to the run for
   diagnostics and audit.
+- Under `CHAT.RESPONSE.ANNOTATION.001`, an operator may deliberately quote
+  already-loaded, visible assistant/thinking prose from a terminal generation.
+  The quote retains its generation id plus inclusive generation-event sequence
+  range. It becomes user-authored message context only through that explicit
+  annotation action; the selected Process text remains Run evidence and is not
+  promoted into assistant body or result summary.
 - Consecutive completed tool activity is summarized as a compact semantic digest
   such as skills used, files read or edited, searches performed, and commands
   run. Expanding the digest reveals the individual structured actions and keeps
@@ -73,6 +103,12 @@ Behavior:
   absolute `workdir` / `cwd`, is directly openable from the activity row. A
   relative target without that trusted execution root remains readable but is
   not treated as an openable file.
+- Skill-use actions retain structured skill identities and trusted `SKILL.md`
+  targets from the same provider evidence. When the identity resolves uniquely
+  to the current organization Skill Library, the operator can open its
+  `SKILL.md` read-only in the current Chat Side Panel; an exact trusted local
+  path may use the Desktop local-file preview. Ambiguous or unresolved skill
+  identities remain readable but are not guessed into an action.
 - Hidden lifecycle entries still delimit adjacent streamed text groups in the
   readable projection. The projection preserves readable boundaries between a
   completed message and a later delta group, and its display limit counts
@@ -85,6 +121,10 @@ Invariant:
 - The operator must be able to inspect a run outcome without reading raw
   process logs only.
 - Usage/session metadata must stay connected to the run that produced it.
+- NUL characters in structured transcript evidence must not break run
+  completion or detach transcript evidence. The normalized generation ledger,
+  Agent Run event, and message transcript must remain attributable to the same
+  run and conversation.
 - Transcript evidence and chat-visible assistant content are separate surfaces:
   reasoning/thinking evidence may be inspectable as transcript entries, but it
   must not become assistant message body text or a completed result summary.
@@ -105,6 +145,13 @@ Invariant:
   from the same structured transcript evidence; rendered prose must never be
   reparsed to guess a path. Live and persisted transcripts must project the same
   semantic actions.
+- Skill Side Panel actions must be derived from structured skill identity or
+  trusted path evidence, never from reparsing the rendered `Use … skill` label,
+  and inspection must not grant edit authority or change skill selection.
+- A Process annotation may address only one visible prose block. It cannot use
+  transcript-array index or timestamp as identity, cross hidden/tool/lifecycle
+  evidence, or make otherwise hidden reasoning visible. Provenance survives
+  normalization by merging only compatible contiguous generation-event ranges.
 
 Rationale:
 
@@ -118,11 +165,21 @@ Related code:
 - `server/src/services/heartbeat-run-reference.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.ts`
+- `server/src/services/chats.helpers.ts`
+- `server/src/services/postgres-json.ts`
+- `server/src/services/run-events.ts`
+- `server/src/services/chat-inline-annotations.ts`
+- `packages/shared/src/chat-transcript-provenance.ts`
 - `ui/src/components/transcript/RunTranscriptView.common.tsx`
 - `ui/src/components/transcript/RunTranscriptView.normalize.tsx`
 - `ui/src/components/transcript/RunTranscriptView.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
 - `ui/src/components/transcript/RunTranscriptView.semantic.tsx`
+- `ui/src/lib/transcript-skill-targets.ts`
+- `ui/src/lib/side-panel-targets.ts`
+- `ui/src/pages/Chat.side-panel.tsx`
+- `ui/src/pages/Chat.tsx`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.ts`
 - `packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.ts`
@@ -133,11 +190,19 @@ Related tests:
 - `server/src/__tests__/heartbeat-run-summary.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/services/chat-generation-protocol.test.ts`
+- `server/src/services/postgres-json.test.ts`
+- `server/src/services/chat-inline-annotations.test.ts`
+- `packages/shared/src/chat-transcript-provenance.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.test.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.test.ts`
 - `tests/e2e/run-transcript-detail.spec.ts`
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
+- `tests/e2e/chat-streaming.spec.ts`
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/lib/transcript-skill-targets.test.ts`
+- `ui/src/lib/side-panel-targets.test.ts`
+- `ui/src/pages/Chat.side-panel.skill-file.test.tsx`
 - `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`

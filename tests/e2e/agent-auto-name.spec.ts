@@ -32,9 +32,14 @@ test.describe("Agent auto naming", () => {
     await expect(
       newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)")
     ).toHaveValue("Operator Assistant");
+    await expect(newAgentMain.getByRole("button", { name: /Operator Assistant/ })).toHaveCount(0);
+    const formCornerRadius = await newAgentMain.getByTestId("new-agent-form").evaluate(
+      (element) => Number.parseFloat(window.getComputedStyle(element).borderTopLeftRadius),
+    );
+    expect(formCornerRadius).toBeGreaterThan(0);
     await expect(
-      newAgentMain.getByRole("button", { name: /Operator Assistant/ })
-    ).toBeVisible();
+      newAgentMain.getByRole("spinbutton", { name: "Agent run concurrency" })
+    ).toHaveValue("8");
     await newAgentMain.getByRole("button", { name: "Create agent" }).click();
 
     await expect(page).toHaveURL(/\/agents\/(?!new(?:\/|$))[^/]+(?:\/dashboard)?$/, { timeout: 15_000 });
@@ -53,11 +58,13 @@ test.describe("Agent auto naming", () => {
         title: string | null;
         role: string;
         icon: string | null;
+        runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number } };
       };
       expect(agent.title).toBe("Operator Assistant");
       expect(agent.role).toBe("ceo");
       expect(agent.name).toBe(suggestedName);
       expect(agent.icon).toMatch(/^oreo:bloom:rose-milk:/);
+      expect(agent.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(8);
     }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
   });
 
@@ -102,6 +109,7 @@ test.describe("Agent auto naming", () => {
     const suggestedName = (await nameInput.inputValue()).trim();
     expect(suggestedName.length).toBeGreaterThan(0);
 
+    await expect(newAgentMain.getByRole("button", { name: "General", exact: true })).toHaveCount(0);
     await newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)").fill(title);
     await newAgentMain.getByRole("button", { name: "Create agent" }).click();
 

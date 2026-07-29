@@ -77,9 +77,12 @@ export function normalizeRememberedSettingsPath(
   const search = match?.[2] ?? "";
   const hash = match?.[3] ?? "";
 
+  if (pathname === "/org") {
+    return `${ORGANIZATION_SETTINGS_GENERAL_PATH}${search}${hash}`;
+  }
+
   if (
     pathname === ORGANIZATION_SETTINGS_GENERAL_PATH ||
-    pathname === "/org" ||
     pathname === "/heartbeats" ||
     pathname === "/skills" ||
     pathname === "/costs" ||

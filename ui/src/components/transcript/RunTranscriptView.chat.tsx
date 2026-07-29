@@ -1,15 +1,75 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
+import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
+import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
+
+function transcriptFileDisplayName(label: string) {
+  const trimmed = label.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || label;
+}
+
+type TranscriptMcpBrandIcon = {
+  aliases: readonly string[];
+  label: string;
+  src: string;
+  imageClassName?: string;
+};
+
+const TRANSCRIPT_MCP_BRAND_ICONS: readonly TranscriptMcpBrandIcon[] = [
+  {
+    aliases: ["rudder", "rudder-tools", "rudder_tools", "rudder-browser", "rudder_browser"],
+    label: "Rudder",
+    src: "/rudder-logo.png",
+  },
+  {
+    aliases: ["github", "github-tools", "github-mcp", "github-mcp-server"],
+    label: "GitHub",
+    src: "/brands/github-logo.svg",
+    imageClassName: "dark:invert",
+  },
+  {
+    aliases: ["gmail"],
+    label: "Gmail",
+    src: "/brands/gmail-logo.svg",
+  },
+  {
+    aliases: ["google-calendar", "google_calendar"],
+    label: "Google Calendar",
+    src: "/brands/google-calendar-logo.svg",
+  },
+  {
+    aliases: ["google-drive", "google_drive"],
+    label: "Google Drive",
+    src: "/brands/google-drive-logo.svg",
+  },
+  {
+    aliases: ["notion"],
+    label: "Notion",
+    src: "/brands/notion-logo.svg",
+    imageClassName: "dark:invert",
+  },
+  {
+    aliases: ["linear"],
+    label: "Linear",
+    src: "/brands/linear-logo.svg",
+  },
+];
+
+export function getTranscriptMcpBrandIcon(server: string | null | undefined): TranscriptMcpBrandIcon | null {
+  const normalizedServer = server?.trim().toLowerCase();
+  if (!normalizedServer) return null;
+  return TRANSCRIPT_MCP_BRAND_ICONS.find((brand) => brand.aliases.includes(normalizedServer)) ?? null;
+}
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
@@ -96,18 +156,16 @@ function TranscriptChatActionIconCell({
   input?: unknown;
 }) {
   const agentAvatarInfo = toolName ? getTranscriptAgentAvatarInfo(toolName, input) : null;
+  const mcpDetails = category === "mcp" && toolName ? extractMcpToolDetails(toolName, input) : null;
+  const mcpBrandIcon = getTranscriptMcpBrandIcon(mcpDetails?.server);
   if (agentAvatarInfo) {
     return compact ? (
       <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
     ) : (
-      <span className="inline-flex h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
+      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" data-transcript-action-icon-slot="true">
         <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
       </span>
     );
-  }
-
-  if (!compact) {
-    return <TranscriptActionIconSlot category={category} status={status} />;
   }
 
   return (
@@ -115,7 +173,22 @@ function TranscriptChatActionIconCell({
       className="inline-flex h-5 w-5 shrink-0 items-center justify-center"
       data-transcript-action-icon-slot="true"
     >
-      <TranscriptActionIcon category={category} status={status} />
+      {mcpBrandIcon ? (
+        <span
+          className="inline-flex h-4 w-4 items-center justify-center"
+          aria-label={`${mcpBrandIcon.label} MCP tool`}
+          title={mcpBrandIcon.label}
+        >
+          <img
+            src={mcpBrandIcon.src}
+            alt=""
+            aria-hidden="true"
+            className={cn("h-3.5 w-3.5 object-contain", mcpBrandIcon.imageClassName)}
+          />
+        </span>
+      ) : (
+        <TranscriptActionIcon category={category} status={status} />
+      )}
     </span>
   );
 }
@@ -124,7 +197,6 @@ export function TranscriptChatStdoutActionRow({
   block,
   density,
   inline = false,
-  quiet = true,
 }: {
   block: Extract<TranscriptBlock, { type: "stdout" }>;
   density: TranscriptDensity;
@@ -170,9 +242,8 @@ export function TranscriptChatStdoutActionRow({
         </span>
         <span
           className={cn(
-            "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
+            "inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
             chevronOffsetClass,
-            quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
           )}
           data-transcript-action-row-disclosure="true"
         >
@@ -199,6 +270,8 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspection,
   onOpenAgent,
   quiet = true,
@@ -209,27 +282,31 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspection?: TranscriptAgentInspection | null;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
-  const semantic = describeToolSemanticInfo(block.name, block.input);
+  const semantic = describeToolSemanticInfo(block.name, block.input, block.result);
   const displaySummary = formatChatToolActionSummary(block, semantic, density);
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
-  const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
+  const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
       ? formatCommandTerminalOutput(block.result)
       : block.result
-        ? formatToolPayload(block.result)
+        ? formatNiceToolResponse(block.name, block.input, block.result)
         : block.status === "running"
           ? "Waiting for result..."
           : null;
-  const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
+  const canExpand = semantic.category !== "skill"
+    && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
+  const [imageOpen, setImageOpen] = useState(false);
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -250,9 +327,12 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
-  const detailLabel = open
-    ? `Collapse ${isCommand ? "command" : "tool"} details`
-    : `Expand ${isCommand ? "command" : "tool"} details`;
+  const skillTargets = semantic.skillTargets ?? [];
+  const hasInspectableSkillTargets = semantic.category === "skill" && skillTargets.length > 0;
+  const image = block.status === "completed" ? semantic.image : undefined;
+  const detailStateLabelId = useId();
+  const summaryLabelId = useId();
+  const statusLabelId = useId();
   const toggleDetails = () => {
     if (inline || !canExpand) return;
     setOpen((value) => !value);
@@ -267,29 +347,152 @@ export function TranscriptChatToolActionRow({
       className={cn(rowPaddingClass, highlightError && block.status === "error" && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
-      {hasOpenableFileTargets ? (
+      {canExpand && !inline && !inspectAgent ? (
+        <span id={detailStateLabelId} className="sr-only">
+          {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
+        </span>
+      ) : null}
+      {hasInspectableSkillTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-            {semantic.category === "edit" ? "Edited " : "Read "}
-            {fileTargets.map((target, index) => (
-              <span key={`${target.label}-${index}`}>
-                {index > 0 ? ", " : null}
-                {target.path ? (
+          <span
+            id={summaryLabelId}
+            className={cn(
+              "min-w-0 flex-1 break-words text-foreground/84",
+              compact ? "text-xs leading-5" : "text-sm leading-6",
+            )}
+          >
+            {skillTargets.length === 1 ? (() => {
+              const target = skillTargets[0]!;
+              const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
+              return openable ? (
+                <>
+                  <span>Use </span>
                   <button
                     type="button"
-                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    aria-label={`Open file ${target.label}`}
-                    data-transcript-file-target={target.path}
-                    onClick={() => onOpenFile?.(target.path!, target.label)}
+                    className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground focus-visible:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    aria-label={`Open skill ${target.name}`}
+                    data-transcript-skill-target={target.name}
+                    data-transcript-skill-path={target.path ?? undefined}
+                    onClick={() => onOpenSkill?.(target)}
                   >
-                    {target.label}
+                    {target.name}
                   </button>
-                ) : (
-                  <span title="This relative file path has no trusted workspace root.">{target.label}</span>
-                )}
+                  <span> skill</span>
+                </>
+              ) : (
+                <span data-transcript-skill-target={target.name}>{displaySummary}</span>
+              );
+            })() : (
+              <>
+                <span>Use </span>
+                {skillTargets.map((target, index) => {
+                  const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
+                  return (
+                    <Fragment key={`${target.name}-${target.path ?? "unresolved"}-${index}`}>
+                      {index > 0 ? ", " : null}
+                      {openable ? (
+                        <button
+                          type="button"
+                          className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground focus-visible:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                          aria-label={`Open skill ${target.name}`}
+                          data-transcript-skill-target={target.name}
+                          data-transcript-skill-path={target.path ?? undefined}
+                          onClick={() => onOpenSkill?.(target)}
+                        >
+                          {target.name}
+                        </button>
+                      ) : (
+                        <span data-transcript-skill-target={target.name}>{target.name}</span>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                <span> skills</span>
+              </>
+            )}
+          </span>
+          <span
+            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+            data-transcript-action-trailing="true"
+          >
+            {duration ? (
+              <span className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground">
+                {duration}
               </span>
-            ))}
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
+                {statusText}
+              </span>
+            ) : null}
+          </span>
+        </div>
+      ) : image ? (
+        <div>
+          <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+            <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+            <button
+              type="button"
+              id={summaryLabelId}
+              className={cn("min-w-0 flex-1 rounded-sm text-left text-foreground/84 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", compact ? "text-xs leading-5" : "text-sm leading-6")}
+              title={image.path}
+              aria-expanded={imageOpen}
+              aria-label={`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`}
+              data-transcript-image-target={image.path}
+              onClick={() => setImageOpen((value) => !value)}
+            >
+              Viewed an image
+            </button>
+            {duration ? (
+              <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+                {statusText}
+              </span>
+            ) : null}
+          </div>
+          {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
+        </div>
+      ) : hasOpenableFileTargets ? (
+        <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+          <span
+            id={summaryLabelId}
+            className={cn(
+              "flex min-w-0 flex-1 items-baseline gap-1 text-foreground/84",
+              compact ? "text-xs leading-5" : "text-sm leading-6",
+            )}
+          >
+            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}</span>
+            <span className="min-w-0 flex-1">
+              {fileTargets.map((target, index) => {
+                const displayName = transcriptFileDisplayName(target.label);
+                return (
+                  <span key={`${target.label}-${index}`}>
+                    {index > 0 ? ", " : null}
+                    {target.path ? (
+                      <button
+                        type="button"
+                        className="inline-block max-w-full whitespace-normal break-words rounded-sm text-left align-top underline decoration-border underline-offset-4 transition-colors [overflow-wrap:anywhere] hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        aria-label={`Open file ${displayName}`}
+                        data-transcript-file-target={target.path}
+                        onClick={() => onOpenFile?.(target.path!, displayName)}
+                      >
+                        {displayName}
+                      </button>
+                    ) : (
+                      <span className="[overflow-wrap:anywhere]" title="This relative file path has no trusted workspace root.">
+                        {displayName}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </span>
           </span>
           {duration ? (
             <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
@@ -297,7 +500,7 @@ export function TranscriptChatToolActionRow({
             </span>
           ) : null}
           {statusText ? (
-            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
               {statusText}
             </span>
           ) : null}
@@ -305,13 +508,12 @@ export function TranscriptChatToolActionRow({
             <button
               type="button"
               className={cn(
-                "inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
                 chevronOffsetClass,
-                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
               )}
               onClick={toggleDetails}
               aria-expanded={open}
-              aria-label={detailLabel}
+              aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
               data-transcript-action-row-disclosure="true"
             >
               <DisclosureChevron open={open} className="h-4 w-4" />
@@ -326,37 +528,42 @@ export function TranscriptChatToolActionRow({
           aria-expanded={!inspectAgent && canExpand && !inline ? open : undefined}
           aria-label={inspectAgent
             ? `Inspect agent ${inspectableAgent?.threadId}`
-            : canExpand && !inline
-              ? detailLabel
-              : undefined}
+            : undefined}
+          aria-labelledby={!inspectAgent && canExpand && !inline
+            ? `${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`
+            : undefined}
           data-transcript-agent-inspect={inspectAgent ? inspectableAgent?.threadId : undefined}
         >
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {displaySummary}
           </span>
-          {duration ? (
-            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-              {duration}
-            </span>
-          ) : null}
-          {statusText ? (
-            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-              {statusText}
-            </span>
-          ) : null}
-          {canExpand && !inline && !inspectAgent ? (
-            <span
-              className={cn(
-                "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
-                chevronOffsetClass,
-                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-              )}
-              data-transcript-action-row-disclosure="true"
-            >
-              <DisclosureChevron open={open} className="h-4 w-4" />
-            </span>
-          ) : null}
+          <span
+            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+            data-transcript-action-trailing="true"
+          >
+            {duration ? (
+              <span
+                className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground"
+                data-transcript-action-duration="true"
+              >
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
+                {statusText}
+              </span>
+            ) : null}
+            {canExpand && !inline && !inspectAgent ? (
+              <span
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+                data-transcript-action-row-disclosure="true"
+              >
+                <DisclosureChevron open={open} className="block h-4 w-4" />
+              </span>
+            ) : null}
+          </span>
         </button>
       )}
       {canExpand && open ? (
@@ -404,6 +611,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   quiet = true,
@@ -414,6 +623,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
@@ -430,6 +641,8 @@ export function TranscriptChatActionRow({
       defaultOpenOnError={defaultOpenOnError}
       highlightError={highlightError}
       onOpenFile={onOpenFile}
+      onOpenSkill={onOpenSkill}
+      canOpenSkill={canOpenSkill}
       agentInspection={transcriptAgentInspectionForTool(action.entry, agentInspections)}
       onOpenAgent={onOpenAgent}
       quiet={quiet}
@@ -517,8 +730,11 @@ export function TranscriptChatActionGroup({
   groupIndex,
   groupCount,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
+  annotationSource,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
@@ -526,8 +742,11 @@ export function TranscriptChatActionGroup({
   groupIndex: number;
   groupCount: number;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -575,6 +794,8 @@ export function TranscriptChatActionGroup({
           defaultOpenOnError={false}
           highlightError={!detailVariant}
           onOpenFile={onOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
           quiet={!detailVariant}
@@ -593,7 +814,8 @@ export function TranscriptChatActionGroup({
       <button
         type="button"
         className={cn(
-          "group/activity -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors",
+          "group/activity -mx-2 inline-flex max-w-full items-center rounded-lg px-2 py-1.5 text-left transition-colors",
+          compact ? "gap-1.5" : "gap-2",
           highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
         )}
         onClick={() => setDetailsOpen((value) => !value)}
@@ -623,8 +845,7 @@ export function TranscriptChatActionGroup({
         </span>
         <span
           className={cn(
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground transition-opacity",
-            detailsOpen ? "opacity-100" : "opacity-0 group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
           )}
           data-testid="transcript-action-group-disclosure"
           data-transcript-disclosure-chevron="true"
@@ -641,6 +862,8 @@ export function TranscriptChatActionGroup({
               action={action}
               density={density}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
               quiet={!detailVariant}
@@ -659,8 +882,12 @@ export function TranscriptChatTurn({
   variant = "chat",
   onMarkdownLinkClick,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
@@ -668,39 +895,100 @@ export function TranscriptChatTurn({
   variant?: "chat" | "detail";
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
     <div className={cn(density === "compact" ? "space-y-1" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
-      {segments.map((segment, index) => (
-        segment.type === "block"
-          ? renderTranscriptBlock({
-              block: segment.block,
-              index,
-              density,
-              presentation: detailVariant ? "detail" : "chat",
-              collapseStdout: true,
-              thinkingClassName,
-              onMarkdownLinkClick,
-            })
-          : (
+      {segments.map((segment, index) => {
+        if (detailVariant) {
+          return segment.type === "block" ? (
+            <Fragment key={`${segment.block.type}-${segment.block.ts}-${index}`}>
+              {renderTranscriptBlock({
+                block: segment.block,
+                index,
+                density,
+                presentation: "detail",
+                collapseStdout: true,
+                thinkingClassName,
+                onMarkdownLinkClick,
+                annotationSource,
+                sentAnnotationContext,
+              })}
+            </Fragment>
+          ) : (
             <TranscriptChatActionGroup
               key={segment.key}
               actions={segment.actions}
               density={density}
-              detailVariant={detailVariant}
+              detailVariant
               groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
               groupCount={actionGroupCount}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
             />
+          );
+        }
+
+        return segment.type === "block"
+          ? (
+            <div
+              key={`${segment.block.type}-${segment.block.ts}-${index}`}
+              data-transcript-chat-column={
+                segment.block.type === "message" && segment.block.source === "steer"
+                  ? "full"
+                  : "reading"
+              }
+              className={cn(
+                segment.block.type === "message" && segment.block.source === "steer"
+                  ? "w-full"
+                  : "max-w-3xl px-1",
+              )}
+            >
+              {renderTranscriptBlock({
+                block: segment.block,
+                index,
+                density,
+                presentation: "chat",
+                collapseStdout: true,
+                thinkingClassName,
+                onMarkdownLinkClick,
+                annotationSource,
+                sentAnnotationContext,
+              })}
+            </div>
           )
-      ))}
+          : (
+            <div
+              key={segment.key}
+              data-transcript-chat-column="reading"
+              className="max-w-3xl px-1"
+            >
+              <TranscriptChatActionGroup
+                actions={segment.actions}
+                density={density}
+                detailVariant={detailVariant}
+                groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
+                groupCount={actionGroupCount}
+                onOpenFile={onOpenFile}
+                onOpenSkill={onOpenSkill}
+                canOpenSkill={canOpenSkill}
+                agentInspections={agentInspections}
+                onOpenAgent={onOpenAgent}
+              />
+            </div>
+          );
+      })}
     </div>
   ) : null;
   return content;
@@ -891,8 +1179,12 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -904,8 +1196,12 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const timelineEntries = useMemo(
     () => filterChatAssistantTranscriptEntries(entries, {
@@ -923,15 +1219,28 @@ export function TranscriptChatTimeline({
 
   return (
     <div className="space-y-3">
-      {preludeBlocks.map((block, index) => renderTranscriptBlock({
-        block,
-        index,
-        density,
-        presentation: "chat",
-        collapseStdout,
-        thinkingClassName,
-        onMarkdownLinkClick,
-      }))}
+      {preludeBlocks.map((block, index) => {
+        const fullWidth = block.type === "message" && block.source === "steer";
+        return (
+          <div
+            key={`${block.type}-${block.ts}-${index}`}
+            data-transcript-chat-column={fullWidth ? "full" : "reading"}
+            className={cn(fullWidth ? "w-full" : "max-w-3xl px-1")}
+          >
+            {renderTranscriptBlock({
+              block,
+              index,
+              density,
+              presentation: "chat",
+              collapseStdout,
+              thinkingClassName,
+              onMarkdownLinkClick,
+              annotationSource,
+              sentAnnotationContext,
+            })}
+          </div>
+        );
+      })}
       {turns.map((turn) => (
         <TranscriptChatTurn
           key={turn.key}
@@ -940,8 +1249,12 @@ export function TranscriptChatTimeline({
           thinkingClassName={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
           onOpenFile={onOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
+          annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       ))}
     </div>

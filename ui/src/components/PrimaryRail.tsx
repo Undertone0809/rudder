@@ -1,5 +1,6 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { messengerApi } from "@/api/messenger";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,6 +26,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
+import type { MessengerSavedViewTarget } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -68,6 +70,7 @@ type RailItem = {
   badgeTone?: "default" | "danger";
   badgeTestId?: string;
   active: boolean;
+  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
 };
 
 function isMessengerAttentionRoute(relativePath: string): boolean {
@@ -101,6 +104,7 @@ function RailNavItem({
   active,
   onDoubleClick,
   onContextMenu,
+  localAppIdentity,
 }: {
   to: string;
   label: string;
@@ -112,6 +116,7 @@ function RailNavItem({
   active?: boolean;
   onDoubleClick?: () => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
+  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
 }) {
   return (
     <NavLink
@@ -125,7 +130,9 @@ function RailNavItem({
         cn(
           "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
           (active ?? isActive)
-            ? "text-[#def4eb] dark:text-[#def4eb]"
+            ? localAppIdentity
+              ? "text-[color:var(--sidebar-foreground)] dark:text-[#def4eb]"
+              : "text-white"
             : [
               "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
               "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
@@ -135,8 +142,23 @@ function RailNavItem({
         )
       }
     >
+      {localAppIdentity && active ? (
+        <span
+          className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-full bg-[#6ee7b7]"
+          data-testid="primary-rail-pinned-active-indicator"
+          aria-hidden="true"
+        />
+      ) : null}
       <span className="relative">
-        <Icon className="h-[17px] w-[17px]" />
+        {localAppIdentity ? (
+          <LocalAppIdentityIcon
+            className="h-[17px] w-[17px] rounded-[4px]"
+            identity={localAppIdentity}
+            testId="primary-rail-local-app-icon"
+          />
+        ) : (
+          <Icon className="h-[17px] w-[17px]" />
+        )}
         {badge != null && badge > 0 ? (
           <span
             data-testid={badgeTestId}
@@ -151,7 +173,7 @@ function RailNavItem({
           </span>
         ) : null}
       </span>
-      <span className="max-w-full text-center whitespace-normal">{label}</span>
+      <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
     </NavLink>
   );
 }
@@ -177,6 +199,15 @@ export function PrimaryRail({
     queryKey: queryKeys.instance.notificationSettings,
     queryFn: () => instanceSettingsApi.getNotifications(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
+  const pinnedLocalAppsQuery = useQuery({
+    queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
+    queryFn: () => messengerApi.listSavedViews(selectedOrganizationId!, {
+      visibility: "visible",
+      primaryRailPinned: true,
+      limit: 100,
+    }),
+    enabled: Boolean(selectedOrganizationId),
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -242,6 +273,20 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
+  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
+    .filter((savedView) => savedView.targetPayload.kind === "local_app")
+    .map((savedView) => ({
+      key: `saved-view:${savedView.id}`,
+      to: `/messenger/saved/${encodeURIComponent(savedView.id)}`,
+      label: savedView.title,
+      icon: MessageSquare,
+      localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
+      active: relativePath === `/messenger/saved/${encodeURIComponent(savedView.id)}`,
+    }));
+  if (pinnedLocalAppItems.some((item) => item.active)) {
+    const messengerItem = railItems.find((item) => item.key === "messenger");
+    if (messengerItem) messengerItem.active = false;
+  }
   const activeRailIndex = railItems.findIndex((item) => item.active);
   const activeRailStyle = activeRailIndex >= 0
     ? ({ "--motion-rail-active-index": activeRailIndex } as CSSProperties)
@@ -443,7 +488,7 @@ export function PrimaryRail({
       </div>
 
       <nav
-        className="motion-rail-nav mt-2.5 flex w-full flex-1 flex-col items-center gap-0.5"
+        className="motion-rail-nav scrollbar-auto-hide mt-2.5 flex min-h-0 w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)] flex-1 flex-col items-center gap-0.5 overflow-y-auto"
         style={activeRailStyle}
         data-active-index={activeRailIndex >= 0 ? activeRailIndex : undefined}
         aria-label="Primary navigation"
@@ -468,6 +513,20 @@ export function PrimaryRail({
             active={item.active}
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
             onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
+            localAppIdentity={item.localAppIdentity}
+          />
+        ))}
+        {pinnedLocalAppItems.length > 0 ? (
+          <span className="my-1 h-px w-7 shrink-0 bg-white/10" aria-hidden="true" />
+        ) : null}
+        {pinnedLocalAppItems.map((item) => (
+          <RailNavItem
+            key={item.key}
+            to={item.to}
+            label={item.label}
+            icon={item.icon}
+            active={item.active}
+            localAppIdentity={item.localAppIdentity}
           />
         ))}
       </nav>

@@ -55,6 +55,7 @@ import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
+import { OrganizationMcpSettings } from "./OrganizationMcpSettings";
 
 type AgentSnippetInput = {
   onboardingTextUrl: string;
@@ -62,7 +63,20 @@ type AgentSnippetInput = {
   testResolutionUrl?: string | null;
 };
 
-type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "access";
+type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "integrations" | "access";
+const ORGANIZATION_SETTINGS_VIEWS = new Set<OrganizationSettingsView>([
+  "general",
+  "workspace",
+  "intelligence",
+  "chat",
+  "integrations",
+  "access",
+]);
+
+function settingsViewFromSearch(search: string): OrganizationSettingsView {
+  const candidate = new URLSearchParams(search).get("view") as OrganizationSettingsView | null;
+  return candidate && ORGANIZATION_SETTINGS_VIEWS.has(candidate) ? candidate : "general";
+}
 
 export function OrganizationSettings() {
   const { t } = useI18n();
@@ -85,8 +99,6 @@ export function OrganizationSettings() {
     ?? DEFAULT_ORGANIZATION_HOME_PATH;
   // General settings local state
   const [organizationName, setOrganizationName] = useState("");
-  const [issuePrefix, setIssuePrefix] = useState("");
-  const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -97,14 +109,29 @@ export function OrganizationSettings() {
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#6366f1");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; color: string }>>({});
-  const [activeView, setActiveView] = useState<OrganizationSettingsView>("general");
+  const [activeView, setActiveView] = useState<OrganizationSettingsView>(() =>
+    settingsViewFromSearch(location.search));
+
+  useEffect(() => {
+    setActiveView(settingsViewFromSearch(location.search));
+  }, [location.search]);
+
+  const changeActiveView = (view: OrganizationSettingsView) => {
+    setActiveView(view);
+    const params = new URLSearchParams(location.search);
+    if (view === "general") params.delete("view");
+    else params.set("view", view);
+    const search = params.toString();
+    void navigate(
+      `${location.pathname}${search ? `?${search}` : ""}${location.hash}`,
+      { replace: true, state: overlayState },
+    );
+  };
 
   // Sync local state from the organization currently being viewed in settings.
   useEffect(() => {
     if (!viewedOrganization) return;
     setOrganizationName(viewedOrganization.name);
-    setIssuePrefix(viewedOrganization.issuePrefix);
-    setDescription(viewedOrganization.description ?? "");
     setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
     setDefaultChatIssueCreationMode(viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
@@ -126,8 +153,6 @@ export function OrganizationSettings() {
   const generalDirty =
     !!viewedOrganization &&
     (organizationName !== viewedOrganization.name ||
-      issuePrefix !== viewedOrganization.issuePrefix ||
-      description !== (viewedOrganization.description ?? "") ||
       brandColor !== (viewedOrganization.brandColor ?? ""));
 
   const chatSettingsDirty =
@@ -137,8 +162,6 @@ export function OrganizationSettings() {
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
-      issuePrefix?: string;
-      description: string | null;
       brandColor: string | null;
     }) => organizationsApi.update(viewedOrganizationId!, data),
     onSuccess: async () => {
@@ -416,9 +439,6 @@ export function OrganizationSettings() {
     if (!viewedOrganization) return;
     generalMutation.mutate(buildOrganizationGeneralPatch({
       name: organizationName.trim(),
-      issuePrefix,
-      persistedIssuePrefix: viewedOrganization.issuePrefix,
-      description,
       brandColor,
     }));
   }
@@ -499,6 +519,7 @@ export function OrganizationSettings() {
     { value: "workspace", label: t("organizationSettings.section.workspace") },
     { value: "intelligence", label: t("organizationSettings.view.intelligence") },
     { value: "chat", label: t("organizationSettings.section.chat") },
+    { value: "integrations", label: "Integrations / MCPs" },
     { value: "access", label: t("organizationSettings.view.accessData") },
   ];
 
@@ -512,7 +533,7 @@ export function OrganizationSettings() {
 
       <Tabs
         value={activeView}
-        onValueChange={(value) => setActiveView(value as OrganizationSettingsView)}
+        onValueChange={(value) => changeActiveView(value as OrganizationSettingsView)}
         className="flex min-w-0 flex-col gap-6"
       >
         <div className="scrollbar-auto-hide min-w-0 overflow-x-auto pb-1">
@@ -522,7 +543,7 @@ export function OrganizationSettings() {
             mobileMode="scrollable-tabs"
             items={settingsViews}
             value={activeView}
-            onValueChange={(value) => setActiveView(value as OrganizationSettingsView)}
+            onValueChange={(value) => changeActiveView(value as OrganizationSettingsView)}
           />
         </div>
 
@@ -538,30 +559,6 @@ export function OrganizationSettings() {
                   id="organization-settings-name"
                   value={organizationName}
                   onChange={(event) => setOrganizationName(event.target.value)}
-                />
-              </SettingsField>
-              <SettingsField
-                htmlFor="organization-settings-issue-key"
-                label={t("organizationSettings.general.issueKey.label")}
-                description={t("organizationSettings.general.issueKey.hint")}
-              >
-                <Input
-                  id="organization-settings-issue-key"
-                  className="font-mono uppercase"
-                  value={issuePrefix}
-                  onChange={(event) => setIssuePrefix(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12))}
-                />
-              </SettingsField>
-              <SettingsField
-                htmlFor="organization-settings-description"
-                label={t("organizationSettings.general.description.label")}
-                description={t("organizationSettings.general.description.hint")}
-              >
-                <Input
-                  id="organization-settings-description"
-                  value={description}
-                  placeholder={t("organizationSettings.general.description.placeholder")}
-                  onChange={(event) => setDescription(event.target.value)}
                 />
               </SettingsField>
             </SettingsGroup>
@@ -684,7 +681,7 @@ export function OrganizationSettings() {
                   <Button
                     size="sm"
                     onClick={handleSaveGeneral}
-                    disabled={generalMutation.isPending || !organizationName.trim() || !issuePrefix.trim()}
+                    disabled={generalMutation.isPending || !organizationName.trim()}
                   >
                     {generalMutation.isPending
                       ? t("organizationSettings.save.saving")
@@ -1098,6 +1095,10 @@ export function OrganizationSettings() {
           </SettingsSection>
         </TabsContent>
 
+        <TabsContent value="integrations" className="flex min-w-0 flex-col gap-6">
+          <OrganizationMcpSettings orgId={viewedOrganizationId!} />
+        </TabsContent>
+
         <TabsContent value="access" className="flex min-w-0 flex-col gap-6">
           <SettingsSection
             title={t("organizationSettings.section.invites")}
@@ -1172,18 +1173,7 @@ export function OrganizationSettings() {
             <SettingsGroup>
               <SettingsItem
                 title={t("organizationSettings.section.packages")}
-                description={(
-                  <span>
-                    {t("organizationSettings.packages.description.before")}{" "}
-                    <Link
-                      to={applyOrganizationPrefix("/org", organizationRouteKey)}
-                      className="underline underline-offset-4 hover:text-foreground"
-                    >
-                      {t("organizationSettings.packages.structureLink")}
-                    </Link>{" "}
-                    {t("organizationSettings.packages.description.after")}
-                  </span>
-                )}
+                description={t("organizationSettings.packages.description")}
                 action={(
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" variant="outline" asChild>

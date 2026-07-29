@@ -427,12 +427,6 @@ function generateReadmeFromSelection(
     lines.push(`> ${organizationDescription}`);
     lines.push("");
   }
-  // Org chart image (generated during export as images/org-chart.png)
-  if (agents.length > 0) {
-    lines.push("![Organization Structure](images/org-chart.png)");
-    lines.push("");
-  }
-
   lines.push("## What's Inside");
   lines.push("");
   lines.push("This is an [Agent Organization](https://github.com/Undertone0809/rudder) package.");
@@ -456,12 +450,11 @@ function generateReadmeFromSelection(
   if (agents.length > 0) {
     lines.push("### Agents");
     lines.push("");
-    lines.push("| Agent | Role | Reports To |");
-    lines.push("|-------|------|------------|");
+    lines.push("| Agent | Role |");
+    lines.push("|-------|------|");
     for (const agent of agents) {
       const roleLabel = ROLE_LABELS[agent.role] ?? agent.role;
-      const reportsTo = agent.reportsToSlug ?? "\u2014";
-      lines.push(`| ${agent.name} | ${roleLabel} | ${reportsTo} |`);
+      lines.push(`| ${agent.name} | ${roleLabel} |`);
     }
     lines.push("");
   }
@@ -515,7 +508,7 @@ function ExportPreviewPane({
   const parsed = isMarkdown && textContent ? parseFrontmatter(textContent) : null;
   const imageSrc = isPortableImageFile(selectedFile, content) ? getPortableFileDataUrl(selectedFile, content) : null;
 
-  // Resolve relative image paths within the export package (e.g. images/org-chart.png)
+  // Resolve relative image paths within the export package.
   const resolveImageSrc = isMarkdown
     ? (src: string) => {
         // Skip absolute URLs and data URIs
@@ -807,7 +800,7 @@ export function OrganizationExport() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Organization Structure", href: "/org" },
+      { label: "Organization Settings", href: "/organization/settings" },
       { label: "Export" },
     ]);
   }, [setBreadcrumbs]);

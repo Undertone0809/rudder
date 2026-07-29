@@ -15,17 +15,13 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
-import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
-import { resolveBoardActorLabel } from "@/lib/activity-actors";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
-import { formatDateTime } from "@/lib/utils";
-import type { ApprovalComment } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
+import { CheckCircle2, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AgentIdentity } from "./AgentAvatar";
-import { ApprovalInset, ApprovalPanel } from "./approval-ui";
+import { ApprovalInset } from "./approval-ui";
 import {
   approvalLabel,
   ApprovalPayloadRenderer,
@@ -36,8 +32,6 @@ import {
   defaultTypeIcon,
   typeIcon,
 } from "./ApprovalPayload";
-import { Identity } from "./Identity";
-import { MarkdownBody } from "./MarkdownBody";
 import { StatusBadge } from "./StatusBadge";
 
 interface ApprovalDetailDialogProps {
@@ -57,11 +51,8 @@ export function ApprovalDetailDialog({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [decisionNote, setDecisionNote] = useState("");
-  const [commentBody, setCommentBody] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [showRawPayload, setShowRawPayload] = useState(false);
   const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>([]);
-  const operatorDisplayName = useOperatorDisplayName();
 
   const { data: approval, isLoading } = useQuery({
     queryKey: queryKeys.approvals.detail(approvalId ?? "__none__"),
@@ -69,12 +60,6 @@ export function ApprovalDetailDialog({
     enabled: Boolean(approvalId && open),
   });
   const resolvedOrgId = approval?.orgId ?? selectedOrganizationId;
-
-  const { data: comments } = useQuery({
-    queryKey: queryKeys.approvals.comments(approvalId ?? "__none__"),
-    queryFn: () => approvalsApi.listComments(approvalId!),
-    enabled: Boolean(approvalId && open),
-  });
 
   const { data: linkedIssues } = useQuery({
     queryKey: queryKeys.approvals.issues(approvalId ?? "__none__"),
@@ -122,9 +107,7 @@ export function ApprovalDetailDialog({
 
   useEffect(() => {
     setDecisionNote("");
-    setCommentBody("");
     setError(null);
-    setShowRawPayload(false);
     setSelectedChatIssueLabelIds([]);
   }, [approvalId]);
 
@@ -145,7 +128,6 @@ export function ApprovalDetailDialog({
   const refresh = () => {
     if (!approvalId) return;
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.detail(approvalId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.approvals.comments(approvalId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.issues(approvalId) });
     if (approval?.orgId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(approval.orgId) });
@@ -203,16 +185,6 @@ export function ApprovalDetailDialog({
       refresh();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Resubmit failed"),
-  });
-
-  const addCommentMutation = useMutation({
-    mutationFn: () => approvalsApi.addComment(approvalId!, commentBody.trim()),
-    onSuccess: () => {
-      setCommentBody("");
-      setError(null);
-      refresh();
-    },
-    onError: (err) => setError(err instanceof Error ? err.message : "Comment failed"),
   });
 
   const deleteAgentMutation = useMutation({
@@ -311,7 +283,7 @@ export function ApprovalDetailDialog({
                   </div>
                 ) : null}
 
-                <ApprovalPanel className="space-y-4">
+                <div className="space-y-4" data-testid="approval-detail-content">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
                       <TypeIcon className="h-5 w-5 shrink-0 text-muted-foreground" />
@@ -365,20 +337,6 @@ export function ApprovalDetailDialog({
                           Decision note
                         </div>
                         <p className="mt-2 text-sm leading-6 text-foreground/90">{approval.decisionNote}</p>
-                      </ApprovalInset>
-                    ) : null}
-
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      onClick={() => setShowRawPayload((value) => !value)}
-                    >
-                      <ChevronRight className={`h-3 w-3 transition-transform ${showRawPayload ? "rotate-90" : ""}`} />
-                      See full request
-                    </button>
-                    {showRawPayload ? (
-                      <ApprovalInset as="pre" className="overflow-x-auto p-3 text-xs">
-                        {JSON.stringify(payload, null, 2)}
                       </ApprovalInset>
                     ) : null}
                   </div>
@@ -502,54 +460,8 @@ export function ApprovalDetailDialog({
                       </Button>
                     ) : null}
                   </div>
-                </ApprovalPanel>
+                </div>
 
-                <ApprovalPanel className="space-y-3">
-                  <h3 className="text-sm font-medium">Comments ({comments?.length ?? 0})</h3>
-                  <div className="space-y-2">
-                    {(comments ?? []).map((comment: ApprovalComment) => (
-                      <ApprovalInset key={comment.id} className="p-3">
-                        <div className="mb-1 flex items-center justify-between">
-                          {comment.authorAgentId ? (
-                            <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                              <AgentIdentity
-                                name={agentById.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-                                icon={agentById.get(comment.authorAgentId)?.icon}
-                                role={agentById.get(comment.authorAgentId)?.role}
-                                size="sm"
-                              />
-                            </Link>
-                          ) : (
-                            <Identity
-                              name={resolveBoardActorLabel("user", comment.authorUserId, currentBoardUserId, operatorDisplayName)}
-                              size="sm"
-                            />
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {formatDateTime(comment.createdAt)}
-                          </span>
-                        </div>
-                        <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
-                      </ApprovalInset>
-                    ))}
-                  </div>
-                  <Textarea
-                    value={commentBody}
-                    onChange={(event) => setCommentBody(event.target.value)}
-                    placeholder="Add a comment..."
-                    rows={3}
-                    className="min-h-[132px] rounded-[calc(var(--radius-sm)-1px)] border-border/80 bg-background/70"
-                  />
-                  <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      onClick={() => addCommentMutation.mutate()}
-                      disabled={!commentBody.trim() || addCommentMutation.isPending}
-                    >
-                      {addCommentMutation.isPending ? "Posting…" : "Comment"}
-                    </Button>
-                  </div>
-                </ApprovalPanel>
               </div>
             )}
           </div>

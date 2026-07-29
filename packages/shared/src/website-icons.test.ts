@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { KNOWN_WEBSITE_ICONS, resolveKnownWebsiteIcon } from "./website-icons.js";
+import {
+  KNOWN_WEBSITE_ICONS,
+  MAX_BROWSER_FAVICON_LENGTH,
+  resolveKnownWebsiteIcon,
+} from "./website-icons.js";
 
 describe("resolveKnownWebsiteIcon", () => {
   function expectImageSignature(icon: (typeof KNOWN_WEBSITE_ICONS)[number], bytes: Buffer) {
@@ -54,6 +58,10 @@ describe("resolveKnownWebsiteIcon", () => {
     for (const icon of KNOWN_WEBSITE_ICONS) {
       expect(icon.iconDataUrl).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
       expect(icon.iconDataUrl).not.toMatch(/^data:image\/svg\+xml,/u);
+      expect(
+        icon.iconDataUrl.length,
+        `${icon.siteName} icon must fit the Browser favicon payload bound`,
+      ).toBeLessThanOrEqual(MAX_BROWSER_FAVICON_LENGTH);
 
       const [, base64 = ""] = icon.iconDataUrl.split(",", 2);
       const bytes = Buffer.from(base64, "base64");

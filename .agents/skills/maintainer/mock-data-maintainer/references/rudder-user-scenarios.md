@@ -31,7 +31,7 @@ Data to show:
 
 - one launch goal
 - projects for launch, reliability, onboarding, and enterprise readiness
-- agents with explicit roles and reporting lines
+- agents with explicit roles, capabilities, and runtime configuration
 - issues assigned to agents
 - approvals for risky public-facing changes
 - cost events attached to issue work

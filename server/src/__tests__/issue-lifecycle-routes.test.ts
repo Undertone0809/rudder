@@ -373,7 +373,6 @@ describe("issue lifecycle routes", () => {
       subject: "fix: record commit activity",
       runId: RUN_ID,
     });
-    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issue.id, ASSIGNEE_AGENT_ID, RUN_ID);
     expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1243,6 +1242,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_review" }),
+      expect.objectContaining({
+        agentId: ASSIGNEE_AGENT_ID,
+        relationship: "assignee_or_reviewer",
+        runId: RUN_ID,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1294,6 +1298,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "done" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "assignee_or_reviewer",
+        runId: RUN_ID,
+      }),
     );
     await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
@@ -1470,6 +1479,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_progress" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1528,6 +1542,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_progress" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1573,6 +1592,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "done" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1615,6 +1639,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "blocked" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1662,6 +1691,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.not.objectContaining({ status: expect.anything() }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -1867,6 +1901,52 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("requires a bound run before a collaborator can add an issue comment", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, null)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Unbound collaborator response." });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "Agent run id required" });
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+  });
+
+  it("does not let a bound collaborator reopen a closed issue through a comment", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+      }),
+    );
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: PEER_RUN_ID,
+      orgId: "organization-1",
+      agentId: PEER_AGENT_ID,
+      status: "running",
+      contextSnapshot: {
+        issueId: "11111111-1111-4111-8111-111111111111",
+        wakeSource: "comment.mention",
+        relationship: "collaborator",
+      },
+    });
+
+    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Bound response without lifecycle authority.", reopen: true });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Only the current assignee or reviewer can reopen an issue" });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
   it("allows a board user to edit their own issue comment and records safe activity", async () => {
@@ -2155,6 +2235,11 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_review" }),
+      expect.objectContaining({
+        agentId: ASSIGNEE_AGENT_ID,
+        relationship: "assignee_or_reviewer",
+        runId: RUN_ID,
+      }),
     );
     expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
     expect(mockLogActivity).toHaveBeenCalledWith(
@@ -2179,6 +2264,99 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it.each([
+    { relationship: "assignee", agentId: ASSIGNEE_AGENT_ID },
+    { relationship: "reviewer", agentId: PEER_AGENT_ID },
+  ] as const)(
+    "allows the current $relationship to mutate a done issue through its relationship authority",
+    async ({ relationship, agentId }) => {
+      mockIssueService.getById.mockResolvedValue(
+        makeIssue({
+          assigneeAgentId: ASSIGNEE_AGENT_ID,
+          reviewerAgentId: PEER_AGENT_ID,
+          status: "done",
+          executionRunId: RUN_ID,
+        }),
+      );
+      mockIssueService.update.mockResolvedValue(
+        makeIssue({
+          assigneeAgentId: ASSIGNEE_AGENT_ID,
+          reviewerAgentId: PEER_AGENT_ID,
+          status: "done",
+          executionRunId: RUN_ID,
+          description: `${relationship} verified`,
+        }),
+      );
+      mockHeartbeatService.getRun.mockResolvedValue({
+        id: RUN_ID,
+        orgId: "organization-1",
+        agentId,
+        status: "running",
+        contextSnapshot: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          relationship,
+        },
+      });
+
+      const res = await request(createApp(createAgentActor(agentId, RUN_ID)))
+        .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+        .send({ description: `${relationship} verified` });
+
+      expect(res.status).toBe(200);
+      expect(mockIssueService.update).toHaveBeenCalled();
+    },
+  );
+
+  it("rejects protected mutation from a collaborator run on a done issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: null,
+        status: "done",
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ description: "collaborator should not mutate protected fields" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Agent is not the current assignee or reviewer" });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("does not use a stale execution lease as a status gate for the current assignee", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+        executionRunId: PEER_RUN_ID,
+      }),
+    );
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+    });
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+        executionRunId: PEER_RUN_ID,
+        description: "relationship-authorized update",
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ description: "relationship-authorized update" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalled();
   });
 
   it("logs ownership rejection when an assignee close-out run does not own the issue", async () => {
@@ -2418,6 +2596,7 @@ describe("issue lifecycle routes", () => {
           wakeCommentId: "comment-assignee-mention-1",
           wakeReason: "issue_comment_mentioned",
           wakeSource: "comment.mention",
+          relationship: "assignee",
           issue: expect.objectContaining({
             id: "11111111-1111-4111-8111-111111111111",
             title: "Lifecycle hardening",
@@ -2448,6 +2627,66 @@ describe("issue lifecycle routes", () => {
     expect(renderedPrompt).toContain("You were mentioned in a comment and your attention is needed.");
     expect(renderedPrompt).toContain("Lifecycle hardening");
     expect(renderedPrompt).toContain("please check the retry path");
+    expect(renderedPrompt).toContain("You are the issue's current assignee");
+    expect(renderedPrompt).toContain("do not check out the issue");
+    expect(renderedPrompt).not.toContain("If checkout returns `409`");
+  });
+
+  it("preserves reviewer relationship when a reviewer is explicitly mentioned on a done issue", async () => {
+    const reviewerAgentId = "33333333-3333-4333-8333-333333333333";
+    const mention = buildAgentMentionHref(reviewerAgentId, "review", "wake");
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId,
+        status: "done",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([reviewerAgentId]);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-reviewer-mention-done",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: `[Reviewer](${mention}) please verify the merged result`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: `[Reviewer](${mention}) please verify the merged result` });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      reviewerAgentId,
+      expect.objectContaining({
+        reason: "issue_comment_mentioned",
+        contextSnapshot: expect.objectContaining({
+          relationship: "reviewer",
+          issue: expect.objectContaining({
+            status: "done",
+          }),
+        }),
+      }),
+    );
+
+    const reviewerWakeupCall = mockHeartbeatService.wakeup.mock.calls.find(
+      (call) => call[0] === reviewerAgentId,
+    );
+    const context = reviewerWakeupCall?.[1]?.contextSnapshot as Record<string, unknown>;
+    const renderedPrompt = renderTemplate(selectPromptTemplate(undefined, context), {
+      agent: { id: reviewerAgentId, name: "Reviewer" },
+      context,
+      issue: context.issue,
+      comment: context.comment,
+    });
+    expect(renderedPrompt).toContain("You were mentioned in a comment and your attention is needed.");
+    expect(renderedPrompt).toContain("You are the issue's current reviewer");
+    expect(renderedPrompt).toContain("preserve its current status");
+    expect(renderedPrompt).not.toContain("You have been asked to review an issue.");
   });
 
   it("uses comment wake semantics when a comment reopens a closed issue", async () => {
@@ -2836,7 +3075,7 @@ describe("issue lifecycle routes", () => {
       .send({ status: "done" });
 
     expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: "Only the checked-out assignee or reviewer can complete issue" });
+    expect(res.body).toEqual({ error: "Agent is not the current assignee or reviewer" });
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 

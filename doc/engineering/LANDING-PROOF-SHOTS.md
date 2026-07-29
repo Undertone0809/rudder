@@ -17,7 +17,7 @@ Each screenshot should answer one product claim:
 - humans remain in control at review time
 - agents operate as a team, not as isolated prompts
 - autonomy stays budget-visible
-- work lives inside an organization structure
+- work lives inside an organization with durable agent roles
 
 If a screenshot does not make one of those claims obvious within a few seconds,
 it is not a landing proof shot yet.
@@ -100,7 +100,7 @@ last two as secondary feature shots.
 | `approval-review` | Approval review block | Humans stay in control | feature block |
 | `heartbeats-team-ops` | Heartbeats | Agents operate as a team | feature block |
 | `costs-budget-control` | Costs | Autonomy stays budget-visible | supporting proof |
-| `org-structure` | Org chart | Work belongs to an organization | supporting proof |
+| `agent-team` | Agent roster | Work belongs to an organization | supporting proof |
 
 ## Detailed Shot Briefs
 
@@ -285,17 +285,16 @@ last two as secondary feature shots.
 - Landing caption:
   `Track provider spend, see where the burn is coming from, and keep policy in view.`
 
-### 7. Org Structure
+### 7. Agent Team
 
 - Claim:
-  Work is organized through roles and reporting lines, not one giant prompt.
+  Work is organized through durable specialized agent roles, not one giant prompt.
 - Surface:
-  Org chart
+  Agent roster and agent profiles
 - Primary crop:
-  CEO plus one or two clear reporting branches.
+  Two or three agents with distinct roles and capabilities.
 - Must show:
   - top-level goal context
-  - at least two reporting branches
   - role specialization that matches the work elsewhere in the story
 - Recommended structure:
   - `CEO`
@@ -337,7 +336,7 @@ Capture in this order:
 4. `approval-review`
 5. `heartbeats-team-ops`
 6. `costs-budget-control`
-7. `org-structure`
+7. `agent-team`
 
 This order forces the highest-value proof shots to be designed first.
 

@@ -211,7 +211,7 @@ function project(overrides: Partial<Project> = {}): Project {
 }
 
 describe("IssueProperties", () => {
-  it("allows long assignee labels to shrink inside the properties panel", () => {
+  it("renders selected Agents with bare avatars and single-line names", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -224,37 +224,45 @@ describe("IssueProperties", () => {
     };
 
     act(() => {
-      root.render(<IssueProperties issue={baseIssue} onUpdate={vi.fn()} />);
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, reviewerAgentId: "agent-1" }}
+          onUpdate={vi.fn()}
+        />,
+      );
     });
 
-    const label = container.querySelector('[data-slot="assignee-label"][data-kind="agent"]');
-    const trigger = label?.closest("button");
-    const row = label?.closest('[data-slot="issue-property-row"]');
+    const labels = Array.from(
+      container.querySelectorAll('[data-slot="assignee-label"][data-kind="agent"]'),
+    );
 
-    const labelText = label?.querySelector('[data-slot="assignee-label-text"]');
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      const trigger = label.closest("button");
+      const row = label.closest('[data-slot="issue-property-row"]');
+      const labelText = label.querySelector('[data-slot="assignee-label-text"]');
+      const avatar = label.querySelector("svg, img");
 
-    expect(label?.textContent).toContain(longAgentName);
-    expect(label?.textContent).toContain("Chief Technology Officer");
-    expect(label?.textContent).not.toContain(`${longAgentName} (Chief Technology Officer)`);
-    expect(trigger?.classList.contains("min-w-0")).toBe(true);
-    expect(trigger?.classList.contains("w-full")).toBe(true);
-    expect(trigger?.classList.contains("max-w-full")).toBe(true);
-    expect(trigger?.classList.contains("justify-start")).toBe(true);
-    expect(row?.getAttribute("data-align")).toBe("start");
-    expect(row?.classList.contains("items-start")).toBe(true);
-    expect(label?.getAttribute("data-layout")).toBe("stacked");
-    expect(label?.classList.contains("min-w-0")).toBe(true);
-    expect(label?.classList.contains("w-full")).toBe(true);
-    expect(label?.classList.contains("items-center")).toBe(true);
-    expect(label?.classList.contains("items-start")).toBe(false);
-    expect(labelText?.classList.contains("truncate")).toBe(true);
-    expect(labelText?.classList.contains("max-w-full")).toBe(true);
-    expect(labelText?.getAttribute("title")).toBe(longAgentName);
-    expect(label?.querySelector('[data-slot="agent-title-badge"]')).toBeTruthy();
-    expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("max-w-full")).toBe(true);
-    expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("w-full")).toBe(false);
-    expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(false);
-    expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("break-words")).toBe(true);
+      expect(label.textContent).toBe(longAgentName);
+      expect(label.getAttribute("data-agent-avatar-style")).toBe("bare");
+      expect(label.getAttribute("data-layout")).toBe("inline");
+      expect(label.classList.contains("w-full")).toBe(true);
+      expect(label.querySelector('[data-slot="assignee-agent-avatar-frame"]')).toBeNull();
+      expect(label.querySelector('[data-slot="agent-title-badge"]')).toBeNull();
+      expect(avatar?.classList.contains("h-6")).toBe(true);
+      expect(avatar?.classList.contains("w-6")).toBe(true);
+      expect(trigger?.classList.contains("min-w-0")).toBe(true);
+      expect(trigger?.classList.contains("w-full")).toBe(true);
+      expect(trigger?.classList.contains("max-w-full")).toBe(true);
+      expect(trigger?.classList.contains("justify-start")).toBe(true);
+      expect(trigger?.classList.contains("overflow-hidden")).toBe(true);
+      expect(row?.getAttribute("data-align")).toBe("start");
+      expect(row?.classList.contains("items-start")).toBe(true);
+      expect(label.classList.contains("min-w-0")).toBe(true);
+      expect(labelText?.classList.contains("truncate")).toBe(true);
+      expect(labelText?.classList.contains("max-w-full")).toBe(true);
+      expect(labelText?.getAttribute("title")).toBe(longAgentName);
+    }
   });
 
   it("clears stale run workspace state when selecting a project", () => {

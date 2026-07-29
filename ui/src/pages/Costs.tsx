@@ -7,20 +7,19 @@ import {
   summarizeTokenUsage,
   type BudgetPolicySummary,
   type CostByAgent,
-  type CostByAgentModel,
   type CostByBiller,
   type CostByProject,
   type CostByProviderModel,
+  type CostTrendGranularity,
   type CostTrendPoint,
   type CostWindowSpendRow,
   type QuotaWindow,
 } from "@rudderhq/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Coins, DollarSign, ReceiptText } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Clock, Coins, Database, DollarSign, ReceiptText } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { budgetsApi } from "../api/budgets";
 import { costsApi } from "../api/costs";
-import { AgentIdentity } from "../components/AgentAvatar";
 import { BillerSpendCard } from "../components/BillerSpendCard";
 import { BudgetIncidentCard } from "../components/BudgetIncidentCard";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
@@ -30,14 +29,14 @@ import { FinanceKindCard } from "../components/FinanceKindCard";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
-import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { PRESET_KEYS, PRESET_LABELS, useDateRange } from "../hooks/useDateRange";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { queryKeys } from "../lib/queryKeys";
-import { billingTypeDisplayName, cn, formatCents, formatTokens, providerDisplayName } from "../lib/utils";
+import { cn, formatCents, formatTokens, providerDisplayName } from "../lib/utils";
+import { DistributionPanel, type DistributionDatum } from "./Costs.distribution";
 
 const NO_ORGANIZATION = "__none__";
 
@@ -114,10 +113,13 @@ function MetricTile({
   icon: ComponentType<{ className?: string }>;
 }) {
   return (
-    <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border p-4">
+    <div
+      className="rounded-[calc(var(--radius-sm)-1px)] border border-border p-4"
+      data-testid={`cost-metric-${label.toLowerCase().replace(/\s+/g, "-")}`}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+          <div className="text-xs font-medium text-muted-foreground">{label}</div>
           <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
           <div className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</div>
         </div>
@@ -137,13 +139,31 @@ function utcDayKey(value: string | Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function utcHourKey(value: string | Date): string {
+  const date = new Date(value);
+  date.setUTCMinutes(0, 0, 0);
+  return date.toISOString();
+}
+
 function dayLabel(value: string): string {
   const date = new Date(`${value}T12:00:00Z`);
   return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
 }
 
-function fullDayLabel(value: string): string {
-  return new Date(`${value}T12:00:00Z`).toLocaleDateString("en-US", {
+function hourLabel(value: string): string {
+  return new Date(value).toLocaleTimeString(undefined, {
+    hour: "numeric",
+  });
+}
+
+function fullBucketLabel(value: string, granularity: CostTrendGranularity): string {
+  if (granularity === "hour") {
+    return new Date(value).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+  return new Date(`${value}T12:00:00Z`).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -163,26 +183,39 @@ function emptyTrendPoint(date: string): CostTrendPoint {
   };
 }
 
-function buildTrendSeries(rows: CostTrendPoint[], from?: string, to?: string): CostTrendPoint[] {
+function buildTrendSeries(
+  rows: CostTrendPoint[],
+  from?: string,
+  to?: string,
+  granularity: CostTrendGranularity = "day",
+): CostTrendPoint[] {
   if (!from || !to) return rows;
 
   const start = new Date(from);
   const end = new Date(to);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return rows;
 
-  const startUtc = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
-  const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
-  const dayCount = Math.floor((endUtc - startUtc) / 86_400_000) + 1;
-  if (dayCount <= 0 || dayCount > 62) return rows;
+  const bucketMs = granularity === "hour" ? 3_600_000 : 86_400_000;
+  const startUtc = granularity === "hour"
+    ? Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), start.getUTCHours())
+    : Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const endUtc = granularity === "hour"
+    ? Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), end.getUTCHours())
+    : Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  const bucketCount = Math.floor((endUtc - startUtc) / bucketMs) + 1;
+  if (bucketCount <= 0 || bucketCount > (granularity === "hour" ? 49 : 62)) return rows;
 
   const rowsByDate = new Map(rows.map((row) => [row.date, row]));
-  return Array.from({ length: dayCount }, (_, index) => {
-    const date = utcDayKey(new Date(startUtc + index * 86_400_000));
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const date = granularity === "hour"
+      ? utcHourKey(new Date(startUtc + index * bucketMs))
+      : utcDayKey(new Date(startUtc + index * bucketMs));
     return rowsByDate.get(date) ?? emptyTrendPoint(date);
   });
 }
 
-function shouldShowDayLabel(index: number, count: number): boolean {
+function shouldShowBucketLabel(index: number, count: number, granularity: CostTrendGranularity): boolean {
+  if (granularity === "hour") return index % 4 === 0 || index === count - 1;
   if (count <= 10) return true;
   return index === 0 || index === count - 1 || index === Math.floor((count - 1) / 2);
 }
@@ -196,7 +229,7 @@ export function calculateCostTrendInitialScrollLeft({
   targetDayIndex,
   scrollWidth,
   clientWidth,
-  axisWidth = 32,
+  axisWidth = 48,
   trailingPadding = 12,
 }: {
   dayCount: number;
@@ -250,7 +283,7 @@ function CostTrendScaleLabels({ ticks }: { ticks: CostTrendScaleTick[] }) {
       {ticks.map((tick) => (
         <span
           key={`${tick.value}:${tick.label}`}
-          className="absolute right-0 translate-y-1/2 text-[9px] leading-none text-muted-foreground/50 tabular-nums"
+          className="absolute right-1 translate-y-1/2 text-[11px] font-medium leading-none text-muted-foreground tabular-nums"
           style={{ bottom: `${tick.position * 100}%` }}
         >
           {tick.label}
@@ -298,13 +331,14 @@ function trendAgentLabel(row: CostByAgent): string {
 }
 
 function trendProjectLabel(row: CostByProject): string {
-  return row.projectName ?? row.projectId ?? "Unattributed";
+  return row.projectName ?? row.projectId ?? "No project";
 }
 
 export function CostTrendChart({
   rows,
   from,
   to,
+  granularity = "day",
   agentSeries = [],
   agentOptions = [],
   projectOptions = [],
@@ -317,6 +351,7 @@ export function CostTrendChart({
   rows: CostTrendPoint[];
   from?: string;
   to?: string;
+  granularity?: CostTrendGranularity;
   agentSeries?: AgentTrendSeries[];
   agentOptions?: CostByAgent[];
   projectOptions?: CostByProject[];
@@ -326,10 +361,10 @@ export function CostTrendChart({
   onProjectChange?: (projectId: string) => void;
   isLoading?: boolean;
 }) {
-  const series = buildTrendSeries(rows, from, to);
+  const series = buildTrendSeries(rows, from, to, granularity);
   const comparisonSeries = agentSeries.map((entry) => ({
     ...entry,
-    rows: buildTrendSeries(entry.rows, from, to),
+    rows: buildTrendSeries(entry.rows, from, to, granularity),
   }));
   const comparisonDays = comparisonSeries[0]?.rows.map((row) => row.date) ?? series.map((row) => row.date);
   const comparisonRowsByAgent = new Map(
@@ -404,9 +439,10 @@ export function CostTrendChart({
     color: agentTrendPalette[index % agentTrendPalette.length]!,
     label: trendAgentLabel(entry.agent),
   }));
+  const cadenceLabel = granularity === "hour" ? "Hourly" : "Daily";
   const chartSubtitle = isAgentComparison
-    ? "Daily token usage grouped by agent, with estimated spend in tooltips."
-    : "Daily token volume and estimated spend in the selected period.";
+    ? `${cadenceLabel} token usage grouped by agent, with estimated spend in tooltips.`
+    : `${cadenceLabel} token volume and estimated spend in the selected period.`;
 
   return (
     <div className="space-y-4 rounded-lg border border-border p-4" data-testid="cost-trend-chart">
@@ -477,7 +513,7 @@ export function CostTrendChart({
             <div className="dashboard-chart-motion space-y-3">
               <div ref={setChartScrollElement} className="scrollbar-auto-hide overflow-x-auto pb-1" data-testid="cost-trend-chart-scroll">
                 <div style={{ minWidth: chartMinWidth }}>
-                  <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-1.5">
+                  <div className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2 pt-3">
                     <CostTrendScaleLabels ticks={scaleTicks} />
                     <div className="relative h-44 min-w-0">
                       <CostTrendGridLines ticks={scaleTicks} />
@@ -490,7 +526,7 @@ export function CostTrendChart({
                               });
                               const dayTotalTokens = dayRows.reduce((sum, entry) => sum + entry.row.totalTokens, 0);
                               const dayTotalCost = dayRows.reduce((sum, entry) => sum + entry.row.costCents, 0);
-                              const dateLabel = fullDayLabel(day);
+                              const dateLabel = fullBucketLabel(day, granularity);
                               const accessibleLabel = `${dateLabel}: ${dayRows.map((entry) => `${trendAgentLabel(entry.agent)} ${formatTrendTokenCount(entry.row.totalTokens)} tokens, ${formatCents(entry.row.costCents)}`).join("; ")}`;
                               return (
                                 <Tooltip key={day}>
@@ -554,7 +590,7 @@ export function CostTrendChart({
                           : series.map((row, index) => {
                               const usage = summarizeTokenUsage(row);
                               const tokenHeight = (usage.totalTokens / maxTokens) * 100;
-                              const dateLabel = fullDayLabel(row.date);
+                              const dateLabel = fullBucketLabel(row.date, granularity);
                               const accessibleLabel = `${dateLabel}: ${formatTrendTokenCount(usage.totalTokens)} tokens (${formatTrendTokenCount(usage.uncachedInputTokens)} uncached input, ${formatTrendTokenCount(usage.cachedInputTokens)} cached, ${formatTrendTokenCount(usage.outputTokens)} output), ${formatCents(row.costCents)} estimated spend, ${formatExactCount(row.eventCount)} events`;
                               return (
                                 <Tooltip key={row.date}>
@@ -621,13 +657,15 @@ export function CostTrendChart({
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-1.5">
+                  <div className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2">
                     <div aria-hidden="true" />
                     <div className="mt-1.5 flex gap-[3px]">
                       {(isAgentComparison ? comparisonDays : series.map((row) => row.date)).map((day, index, days) => (
                         <div key={day} className="flex-1 text-center">
-                          {shouldShowDayLabel(index, days.length) ? (
-                            <span className="text-[9px] text-muted-foreground tabular-nums">{dayLabel(day)}</span>
+                          {shouldShowBucketLabel(index, days.length, granularity) ? (
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              {granularity === "hour" ? hourLabel(day) : dayLabel(day)}
+                            </span>
                           ) : null}
                         </div>
                       ))}
@@ -642,6 +680,16 @@ export function CostTrendChart({
       </div>
     </div>
   );
+}
+
+function formatDuration(milliseconds: number): string {
+  const totalMinutes = Math.max(0, Math.round(milliseconds / 60_000));
+  const days = Math.floor(totalMinutes / 1_440);
+  const hours = Math.floor((totalMinutes % 1_440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function FinanceSummaryCard({
@@ -717,6 +765,8 @@ export function Costs() {
     from,
     to,
     customReady,
+    customError,
+    trendGranularity,
   } = useDateRange();
 
   useEffect(() => {
@@ -802,13 +852,12 @@ export function Costs() {
   const { data: spendData, isLoading: spendLoading, error: spendError } = useQuery({
     queryKey: queryKeys.costs(orgId, from || undefined, to || undefined),
     queryFn: async () => {
-      const [summary, byAgent, byProject, byAgentModel] = await Promise.all([
+      const [summary, byAgent, byProject] = await Promise.all([
         costsApi.summary(orgId, from || undefined, to || undefined),
         costsApi.byAgent(orgId, from || undefined, to || undefined),
         costsApi.byProject(orgId, from || undefined, to || undefined),
-        costsApi.byAgentModel(orgId, from || undefined, to || undefined),
       ]);
-      return { summary, byAgent, byProject, byAgentModel };
+      return { summary, byAgent, byProject };
     },
     enabled: !!selectedOrganizationId && customReady,
     placeholderData: keepPreviousData,
@@ -828,36 +877,9 @@ export function Costs() {
       ]);
       return { summary, byBiller, byKind };
     },
-    enabled: !!selectedOrganizationId && customReady,
+    enabled: !!selectedOrganizationId && customReady && mainTab === "finance",
     placeholderData: keepPreviousData,
   });
-
-  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setExpandedAgents(new Set());
-  }, [orgId, from, to]);
-
-  function toggleAgent(agentId: string) {
-    setExpandedAgents((prev) => {
-      const next = new Set(prev);
-      if (next.has(agentId)) next.delete(agentId);
-      else next.add(agentId);
-      return next;
-    });
-  }
-
-  const agentModelRows = useMemo(() => {
-    const map = new Map<string, CostByAgentModel[]>();
-    for (const row of spendData?.byAgentModel ?? []) {
-      const rows = map.get(row.agentId) ?? [];
-      rows.push(row);
-      map.set(row.agentId, rows);
-    }
-    for (const [agentId, rows] of map) {
-      map.set(agentId, rows.slice().sort((a, b) => b.costCents - a.costCents));
-    }
-    return map;
-  }, [spendData?.byAgentModel]);
 
   const trendAgentOptions = useMemo(
     () => (spendData?.byAgent ?? []).filter((row) => hasTokenUsage(row) || row.costCents > 0),
@@ -886,6 +908,7 @@ export function Costs() {
       orgId,
       from || undefined,
       to || undefined,
+      trendGranularity,
       effectiveTrendFilterKind,
       trendFilterId,
     ),
@@ -894,6 +917,7 @@ export function Costs() {
         orgId,
         from || undefined,
         to || undefined,
+        trendGranularity,
         effectiveTrendFilterKind === "project"
             ? { projectId: trendFilterId }
             : undefined,
@@ -909,13 +933,20 @@ export function Costs() {
       orgId,
       from || undefined,
       to || undefined,
+      trendGranularity,
       trendAgentOptions.map((row) => row.agentId).join(","),
     ],
     queryFn: async () => {
       const rows = await Promise.all(
         trendAgentOptions.map(async (agent) => ({
           agent,
-          rows: await costsApi.trend(orgId, from || undefined, to || undefined, { agentId: agent.agentId }),
+          rows: await costsApi.trend(
+            orgId,
+            from || undefined,
+            to || undefined,
+            trendGranularity,
+            { agentId: agent.agentId },
+          ),
         })),
       );
       return rows;
@@ -1048,29 +1079,6 @@ export function Costs() {
     return map;
   }, [quotaData]);
 
-  const deficitNotchByProvider = useMemo(() => {
-    const map = new Map<string, boolean>();
-    if (preset !== "mtd") return map;
-    const budget = spendData?.summary.budgetCents ?? 0;
-    if (budget <= 0) return map;
-    const totalSpend = spendData?.summary.spendCents ?? 0;
-    const now = new Date();
-    const daysElapsed = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    for (const [providerKey, rows] of byProvider) {
-      const providerCostCents = rows.reduce((sum, row) => sum + row.costCents, 0);
-      const providerShare = totalSpend > 0 ? providerCostCents / totalSpend : 0;
-      const providerBudget = budget * providerShare;
-      if (providerBudget <= 0) {
-        map.set(providerKey, false);
-        continue;
-      }
-      const burnRate = providerCostCents / Math.max(daysElapsed, 1);
-      map.set(providerKey, providerCostCents + burnRate * (daysInMonth - daysElapsed) > providerBudget);
-    }
-    return map;
-  }, [preset, spendData, byProvider]);
-
   const providers = useMemo(() => Array.from(byProvider.keys()), [byProvider]);
   const billers = useMemo(() => Array.from(byBiller.keys()), [byBiller]);
 
@@ -1150,11 +1158,24 @@ export function Costs() {
     ];
   }, [byBiller]);
 
-  const inferenceTokenTotal =
-    (spendData?.byAgent ?? []).reduce(
-      (sum, row) => sum + summarizeTokenUsage(row).totalTokens,
-      0,
-    );
+  const agentDistributionRows = useMemo<DistributionDatum[]>(
+    () => (spendData?.byAgent ?? []).map((row) => ({
+      id: row.agentId,
+      label: row.agentName ?? row.agentId,
+      tokens: summarizeTokenUsage(row).totalTokens,
+      costCents: row.costCents,
+    })),
+    [spendData?.byAgent],
+  );
+  const projectDistributionRows = useMemo<DistributionDatum[]>(
+    () => (spendData?.byProject ?? []).map((row) => ({
+      id: row.projectId ?? "no-project",
+      label: row.projectName ?? "No project",
+      tokens: summarizeTokenUsage(row).totalTokens,
+      costCents: row.costCents,
+    })),
+    [spendData?.byProject],
+  );
 
   const budgetPolicies = budgetData?.policies ?? [];
   const activeBudgetIncidents = budgetData?.activeIncidents ?? [];
@@ -1169,8 +1190,8 @@ export function Costs() {
   }
 
   const showCustomPrompt = preset === "custom" && !customReady;
-  const showOverviewLoading = (spendLoading || financeLoading) && customReady;
-  const overviewError = spendError ?? financeError ?? (effectiveTrendFilterKind === "agent" ? agentTrendError : trendError);
+  const showOverviewLoading = spendLoading && customReady;
+  const overviewError = spendError ?? (effectiveTrendFilterKind === "agent" ? agentTrendError : trendError);
 
   return (
     <div className="space-y-6">
@@ -1179,7 +1200,7 @@ export function Costs() {
             <div>
                 <h1 className="text-3xl font-semibold tracking-tight">Costs</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Inference spend, platform fees, credits, and live quota windows.
+                  Analyze inference usage, runtime activity, attribution, and spend.
                 </p>
             </div>
 
@@ -1189,6 +1210,7 @@ export function Costs() {
                   key={key}
                   variant={preset === key ? "secondary" : "ghost"}
                   size="sm"
+                  aria-pressed={preset === key}
                   onClick={() => setPreset(key)}
                 >
                   {PRESET_LABELS[key]}
@@ -1198,57 +1220,54 @@ export function Costs() {
           </div>
 
           {preset === "custom" ? (
-            <div className="flex flex-wrap items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] border border-border p-3">
-              <input
-                type="date"
-                value={customFrom}
-                onChange={(event) => setCustomFrom(event.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-              />
-              <span className="text-sm text-muted-foreground">to</span>
-              <input
-                type="date"
-                value={customTo}
-                onChange={(event) => setCustomTo(event.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-              />
+            <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  aria-label="Custom start date"
+                  aria-invalid={customError ? true : undefined}
+                  value={customFrom}
+                  onChange={(event) => setCustomFrom(event.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                />
+                <span className="text-sm text-muted-foreground">to</span>
+                <input
+                  type="date"
+                  aria-label="Custom end date"
+                  aria-invalid={customError ? true : undefined}
+                  value={customTo}
+                  onChange={(event) => setCustomTo(event.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                />
+              </div>
+              {customError ? <p className="mt-2 text-xs text-destructive">{customError}</p> : null}
             </div>
           ) : null}
 
           <div className="grid gap-3 lg:grid-cols-4">
             <MetricTile
-              label="Inference spend"
+              label="Estimated cost"
               value={formatCents(spendData?.summary.spendCents ?? 0)}
-              subtitle={`${formatTokens(inferenceTokenTotal)} tokens across request-scoped events`}
+              subtitle="Inference spend in the selected range"
               icon={DollarSign}
             />
             <MetricTile
-              label="Budget"
-              value={activeBudgetIncidents.length > 0 ? String(activeBudgetIncidents.length) : (
-                spendData?.summary.budgetCents && spendData.summary.budgetCents > 0
-                  ? `${spendData.summary.utilizationPercent}%`
-                  : "Open"
-              )}
-              subtitle={
-                activeBudgetIncidents.length > 0
-                  ? `${budgetData?.pausedAgentCount ?? 0} agents paused · ${budgetData?.pausedProjectCount ?? 0} projects paused`
-                  : spendData?.summary.budgetCents && spendData.summary.budgetCents > 0
-                    ? `${formatCents(spendData.summary.spendCents)} of ${formatCents(spendData.summary.budgetCents)}`
-                    : "No monthly cap configured"
-              }
+              label="Total tokens"
+              value={formatTokens(spendData?.summary.totalTokens ?? 0)}
+              subtitle="Input and output tokens"
               icon={Coins}
             />
             <MetricTile
-              label="Finance net"
-              value={formatCents(financeData?.summary.netCents ?? 0)}
-              subtitle={`${formatCents(financeData?.summary.debitCents ?? 0)} debits · ${formatCents(financeData?.summary.creditCents ?? 0)} credits`}
-              icon={ReceiptText}
+              label="Cached tokens"
+              value={formatTokens(spendData?.summary.cachedInputTokens ?? 0)}
+              subtitle="Cached input tokens"
+              icon={Database}
             />
             <MetricTile
-              label="Finance events"
-              value={String(financeData?.summary.eventCount ?? 0)}
-              subtitle={`${formatCents(financeData?.summary.estimatedDebitCents ?? 0)} estimated in range`}
-              icon={ArrowUpRight}
+              label="Active duration"
+              value={formatDuration(spendData?.summary.activeDurationMs ?? 0)}
+              subtitle="Cumulative agent-runtime time"
+              icon={Clock}
             />
           </div>
       </div>
@@ -1299,6 +1318,7 @@ export function Costs() {
                 rows={trendData ?? []}
                 from={from || undefined}
                 to={to || undefined}
+                granularity={trendGranularity}
                 agentSeries={agentTrendData ?? []}
                 agentOptions={trendAgentOptions}
                 projectOptions={trendProjectOptions}
@@ -1315,106 +1335,18 @@ export function Costs() {
                 isLoading={effectiveTrendFilterKind === "agent" ? agentTrendLoading : trendLoading}
               />
 
-              <FinanceSummaryCard
-                debitCents={financeData?.summary.debitCents ?? 0}
-                creditCents={financeData?.summary.creditCents ?? 0}
-                netCents={financeData?.summary.netCents ?? 0}
-                estimatedDebitCents={financeData?.summary.estimatedDebitCents ?? 0}
-                eventCount={financeData?.summary.eventCount ?? 0}
-              />
-
-              <Card>
-                <CardHeader className="px-5 pt-5 pb-2">
-                  <CardTitle className="text-base">By agent</CardTitle>
-                  <CardDescription>What each agent consumed in the selected period.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2 px-5 pb-5 pt-2">
-                  {(spendData?.byAgent.length ?? 0) === 0 ? (
-                    <p className="text-sm text-muted-foreground">No cost events yet.</p>
-                  ) : (
-                    spendData?.byAgent.map((row) => {
-                      const modelRows = agentModelRows.get(row.agentId) ?? [];
-                      const isExpanded = expandedAgents.has(row.agentId);
-                      const hasBreakdown = modelRows.length > 0;
-                      return (
-                        <div key={row.agentId} className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-4 py-3">
-                          <div
-                            className={cn("flex items-start justify-between gap-3", hasBreakdown ? "cursor-pointer select-none" : "")}
-                            onClick={() => hasBreakdown && toggleAgent(row.agentId)}
-                          >
-                            <div className="flex min-w-0 items-center gap-2">
-                              {hasBreakdown ? (
-                                isExpanded
-                                  ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                  : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              ) : (
-                                <span className="h-3 w-3 shrink-0" />
-                              )}
-                              <AgentIdentity
-                                name={row.agentName ?? row.agentId}
-                                icon={row.agentIcon}
-                                role={row.agentRole}
-                                size="sm"
-                              />
-                              {row.agentStatus === "terminated" ? <StatusBadge status="terminated" /> : null}
-                            </div>
-                            <div className="text-right text-sm tabular-nums">
-                              <div className="font-medium">{formatCents(row.costCents)}</div>
-                              <div className="text-xs text-muted-foreground">
-                                in {formatTokens(summarizeTokenUsage(row).promptTokens)} · out {formatTokens(row.outputTokens)}
-                              </div>
-                              {(row.apiRunCount > 0 || row.subscriptionRunCount > 0) ? (
-                                <div className="text-xs text-muted-foreground">
-                                  {row.apiRunCount > 0 ? `${row.apiRunCount} api` : "0 api"}
-                                  {" · "}
-                                  {row.subscriptionRunCount > 0
-                                    ? `${row.subscriptionRunCount} subscription`
-                                    : "0 subscription"}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          {isExpanded && modelRows.length > 0 ? (
-                            <div className="mt-3 space-y-2 border-l border-border pl-4">
-                              {modelRows.map((modelRow) => {
-                                const sharePct = row.costCents > 0 ? Math.round((modelRow.costCents / row.costCents) * 100) : 0;
-                                const modelTokenSummary = summarizeTokenUsage(modelRow);
-                                return (
-                                  <div
-                                    key={`${modelRow.provider}:${modelRow.model}:${modelRow.billingType}`}
-                                    className="flex items-start justify-between gap-3 text-xs"
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="truncate font-medium text-foreground">
-                                        {providerDisplayName(modelRow.provider)}
-                                        <span className="mx-1 text-border">/</span>
-                                        <span className="font-mono">{modelRow.model}</span>
-                                      </div>
-                                      <div className="truncate text-muted-foreground">
-                                        {providerDisplayName(modelRow.biller)} · {billingTypeDisplayName(modelRow.billingType)}
-                                      </div>
-                                    </div>
-                                    <div className="text-right tabular-nums">
-                                      <div className="font-medium">
-                                        {formatCents(modelRow.costCents)}
-                                        <span className="ml-1 font-normal text-muted-foreground">({sharePct}%)</span>
-                                      </div>
-                                      <div className="text-muted-foreground">
-                                        {formatTokens(modelTokenSummary.totalTokens)} tok
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  )}
-                </CardContent>
-              </Card>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <DistributionPanel
+                  title="Agent distribution"
+                  description="Usage attributed to each agent."
+                  rows={agentDistributionRows}
+                />
+                <DistributionPanel
+                  title="Project distribution"
+                  description="Usage by project, including events with no project."
+                  rows={projectDistributionRows}
+                />
+              </div>
             </>
           )}
         </TabsContent>
@@ -1565,7 +1497,6 @@ export function Costs() {
                           totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
                           weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                           windowRows={windowSpendByProvider.get(provider) ?? []}
-                          showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
                           quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
                           quotaError={quotaErrorsByProvider.get(provider) ?? null}
                           quotaSource={quotaSourcesByProvider.get(provider) ?? null}
@@ -1585,7 +1516,6 @@ export function Costs() {
                       totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
                       weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                       windowRows={windowSpendByProvider.get(provider) ?? []}
-                      showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
                       quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
                       quotaError={quotaErrorsByProvider.get(provider) ?? null}
                       quotaSource={quotaSourcesByProvider.get(provider) ?? null}

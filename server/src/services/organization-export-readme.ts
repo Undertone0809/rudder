@@ -1,6 +1,3 @@
-/**
- * Generates README.md with Mermaid org chart for organization exports.
- */
 import type { OrganizationPortabilityManifest } from "@rudderhq/shared";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -14,46 +11,6 @@ const ROLE_LABELS: Record<string, string> = {
   engineer: "Engineer",
   agent: "Agent",
 };
-
-/**
- * Generate a Mermaid flowchart (TD = top-down) representing the org chart.
- * Returns null if there are no agents.
- */
-export function generateOrgChartMermaid(agents: OrganizationPortabilityManifest["agents"]): string | null {
-  if (agents.length === 0) return null;
-
-  const lines: string[] = [];
-  lines.push("```mermaid");
-  lines.push("graph TD");
-
-  // Node definitions with role labels
-  for (const agent of agents) {
-    const roleLabel = ROLE_LABELS[agent.role] ?? agent.role;
-    const id = mermaidId(agent.slug);
-    lines.push(`    ${id}["${mermaidEscape(agent.name)}<br/><small>${mermaidEscape(roleLabel)}</small>"]`);
-  }
-
-  // Edges from parent to child
-  const slugSet = new Set(agents.map((a) => a.slug));
-  for (const agent of agents) {
-    if (agent.reportsToSlug && slugSet.has(agent.reportsToSlug)) {
-      lines.push(`    ${mermaidId(agent.reportsToSlug)} --> ${mermaidId(agent.slug)}`);
-    }
-  }
-
-  lines.push("```");
-  return lines.join("\n");
-}
-
-/** Sanitize slug for use as a Mermaid node ID (alphanumeric + underscore). */
-function mermaidId(slug: string): string {
-  return slug.replace(/[^a-zA-Z0-9_]/g, "_");
-}
-
-/** Escape text for Mermaid node labels. */
-function mermaidEscape(s: string): string {
-  return s.replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 /** Build a display label for a skill's source, linking to GitHub when available. */
 function skillSourceLabel(skill: OrganizationPortabilityManifest["skills"][number]): string {
@@ -87,12 +44,6 @@ export function generateReadme(
     lines.push("");
   }
 
-  // Org chart image (generated during export as images/org-chart.png)
-  if (manifest.agents.length > 0) {
-    lines.push("![Organization Structure](images/org-chart.png)");
-    lines.push("");
-  }
-
   // What's Inside table
   lines.push("## What's Inside");
   lines.push("");
@@ -118,12 +69,11 @@ export function generateReadme(
   if (manifest.agents.length > 0) {
     lines.push("### Agents");
     lines.push("");
-    lines.push("| Agent | Role | Reports To |");
-    lines.push("|-------|------|------------|");
+    lines.push("| Agent | Role |");
+    lines.push("|-------|------|");
     for (const agent of manifest.agents) {
       const roleLabel = ROLE_LABELS[agent.role] ?? agent.role;
-      const reportsTo = agent.reportsToSlug ?? "\u2014";
-      lines.push(`| ${agent.name} | ${roleLabel} | ${reportsTo} |`);
+      lines.push(`| ${agent.name} | ${roleLabel} |`);
     }
     lines.push("");
   }

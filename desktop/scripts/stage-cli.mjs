@@ -2,6 +2,7 @@ import { build } from "esbuild";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripPackageTypeMetadata } from "./optimize-server-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -58,6 +59,8 @@ async function main() {
   await fs.mkdir(path.dirname(stagedCommanderDir), { recursive: true });
   await fs.rm(stagedCommanderDir, { recursive: true, force: true });
   await fs.cp(sourceCommanderDir, stagedCommanderDir, { recursive: true, dereference: true });
+  await fs.rm(path.join(stagedCommanderDir, "typings"), { recursive: true, force: true });
+  await stripPackageTypeMetadata(path.join(stagedCommanderDir, "package.json"));
   await fs.copyFile(path.join(scriptDir, "desktop-cli-runner.mjs"), stagedCliRunner);
 
   /**

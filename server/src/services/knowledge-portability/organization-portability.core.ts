@@ -14,6 +14,7 @@ import type {
   OrganizationSkill
 } from "@rudderhq/shared";
 import {
+  AGENT_RUN_CONCURRENCY_DEFAULT,
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
   AUTOMATION_TRIGGER_KINDS,
@@ -27,7 +28,6 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
-import { type OrgNode } from "../../routes/org-chart-svg.js";
 import { automationService } from "../automations.js";
 import { validateCron } from "../cron.js";
 
@@ -40,51 +40,6 @@ export interface OrganizationPortabilityExportOptions {
     total: number;
     fileCount?: number | null;
   }) => void;
-}
-
-/** Build OrgNode tree from manifest agent list (slug + reportsToSlug). */
-export function buildOrgTreeFromManifest(agents: OrganizationPortabilityManifest["agents"]): OrgNode[] {
-  const ROLE_LABELS: Record<string, string> = {
-    ceo: "Chief Executive", cto: "Technology", cmo: "Marketing",
-    cfo: "Finance", coo: "Operations", vp: "VP", manager: "Manager",
-    engineer: "Engineer", agent: "Agent",
-  };
-  const bySlug = new Map(agents.map((a) => [a.slug, a]));
-  const childrenOf = new Map<string | null, typeof agents>();
-  for (const a of agents) {
-    const parent = a.reportsToSlug ?? null;
-    const list = childrenOf.get(parent) ?? [];
-    list.push(a);
-    childrenOf.set(parent, list);
-  }
-  const build = (parentSlug: string | null): OrgNode[] => {
-    const members = childrenOf.get(parentSlug) ?? [];
-    return members.map((m) => ({
-      id: m.slug,
-      name: m.name,
-      role: ROLE_LABELS[m.role] ?? m.role,
-      status: "active",
-      reports: build(m.slug),
-    }));
-  };
-  // Find roots: agents whose reportsToSlug is null or points to a non-existent slug
-  const roots = agents.filter((a) => !a.reportsToSlug || !bySlug.has(a.reportsToSlug));
-  const rootSlugs = new Set(roots.map((r) => r.slug));
-  // Start from null parent, but also include orphans
-  const tree = build(null);
-  for (const root of roots) {
-    if (root.reportsToSlug && !bySlug.has(root.reportsToSlug)) {
-      // Orphan root (parent slug doesn't exist)
-      tree.push({
-        id: root.slug,
-        name: root.name,
-        role: ROLE_LABELS[root.role] ?? root.role,
-        status: "active",
-        reports: build(root.slug),
-      });
-    }
-  }
-  return tree;
 }
 
 export const DEFAULT_INCLUDE: OrganizationPortabilityInclude = {
@@ -502,6 +457,7 @@ export const COMPANY_LOGO_CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
 };
 
 export const COMPANY_LOGO_FILE_NAME = "organization-logo";
+const LEGACY_PORTABLE_AGENT_RUN_CONCURRENCY_DEFAULT = 3;
 
 export const RUNTIME_DEFAULT_RULES: Array<{ path: string[]; value: unknown }> = [
   { path: ["heartbeat", "cooldownSec"], value: 10 },
@@ -511,7 +467,6 @@ export const RUNTIME_DEFAULT_RULES: Array<{ path: string[]; value: unknown }> = 
   { path: ["heartbeat", "wakeOnAutomation"], value: true },
   { path: ["heartbeat", "wakeOnDemand"], value: true },
   { path: ["heartbeat", "preflightEnabled"], value: true },
-  { path: ["heartbeat", "maxConcurrentRuns"], value: 3 },
 ];
 
 export const ADAPTER_DEFAULT_RULES_BY_TYPE: Record<string, Array<{ path: string[]; value: unknown }>> = {
@@ -632,6 +587,16 @@ export function clonePortableRecord(value: unknown) {
   return structuredClone(value) as Record<string, unknown>;
 }
 
+export function materializePortableRuntimeConfig(runtimeConfig: unknown) {
+  const next = clonePortableRecord(runtimeConfig) ?? {};
+  const heartbeat = isPlainRecord(next.heartbeat) ? { ...next.heartbeat } : {};
+  if (heartbeat.maxConcurrentRuns === undefined) {
+    heartbeat.maxConcurrentRuns = AGENT_RUN_CONCURRENCY_DEFAULT;
+  }
+  next.heartbeat = heartbeat;
+  return next;
+}
+
 export function isEmptyObject(value: unknown): boolean {
   return isPlainRecord(value) && Object.keys(value).length === 0;
 }
@@ -663,9 +628,17 @@ export function stripEmptyValues(value: unknown, opts?: { preserveEmptyStrings?:
   return value;
 }
 
-export function disableImportedTimerHeartbeat(runtimeConfig: unknown) {
+export function disableImportedTimerHeartbeat(
+  runtimeConfig: unknown,
+  options?: { preserveLegacyMissingConcurrencyDefault?: boolean },
+) {
   const next = clonePortableRecord(runtimeConfig) ?? {};
   const heartbeat = isPlainRecord(next.heartbeat) ? { ...next.heartbeat } : {};
+  if (heartbeat.maxConcurrentRuns === undefined) {
+    heartbeat.maxConcurrentRuns = options?.preserveLegacyMissingConcurrencyDefault
+      ? LEGACY_PORTABLE_AGENT_RUN_CONCURRENCY_DEFAULT
+      : AGENT_RUN_CONCURRENCY_DEFAULT;
+  }
   heartbeat.enabled = false;
   next.heartbeat = heartbeat;
   return next;
