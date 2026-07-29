@@ -73,11 +73,14 @@ export function requestQueryForLogs(req: object, query: unknown): unknown {
 }
 
 export function requestHeadersForLogs(req: object, headers: unknown): unknown {
-  if (!isMcpOAuthCallbackRequest(req) || !headers || typeof headers !== "object") {
+  if (!headers || typeof headers !== "object") {
     return headers;
   }
   const output = { ...(headers as Record<string, unknown>) };
-  for (const name of ["referer", "referrer", "cookie", "authorization"]) {
+  const sensitiveNames = isMcpOAuthCallbackRequest(req)
+    ? ["referer", "referrer", "cookie", "authorization"]
+    : ["cookie", "authorization"];
+  for (const name of sensitiveNames) {
     if (Object.keys(output).some((key) => key.toLowerCase() === name)) {
       for (const key of Object.keys(output)) {
         if (key.toLowerCase() === name) output[key] = REDACTED_REQUEST_QUERY;
@@ -101,6 +104,19 @@ export function serializeHttpRequestForLogs(
     query: requestQueryForLogs(serializedRequest, serializedRequest.query),
     headers: requestHeadersForLogs(serializedRequest, serializedRequest.headers),
   };
+}
+
+export function serializeHttpResponseForLogs(
+  serializedResponse: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!serializedResponse.headers || typeof serializedResponse.headers !== "object") {
+    return serializedResponse;
+  }
+  const headers = { ...(serializedResponse.headers as Record<string, unknown>) };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "set-cookie") headers[key] = REDACTED_REQUEST_QUERY;
+  }
+  return { ...serializedResponse, headers };
 }
 
 export function markHttpRequestBodySensitive(req: object): void {
@@ -219,6 +235,9 @@ export const httpLogger = pinoHttp({
   serializers: {
     req(serializedRequest) {
       return serializeHttpRequestForLogs(serializedRequest);
+    },
+    res(serializedResponse) {
+      return serializeHttpResponseForLogs(serializedResponse);
     },
   },
   customLogLevel(_req, res, err) {

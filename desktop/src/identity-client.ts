@@ -1,10 +1,10 @@
 import type { IdentityCredentialVault, IdentityDeviceCredential } from "./identity-credential-vault.js";
-import type { createDesktopOfflineGrantStore } from "./identity-offline-grant.js";
 import {
   runDesktopDeviceAuthorization,
   signInWithDesktopIdentityFallback,
   type DesktopDeviceAuthorizationPrompt,
 } from "./identity-device-authorization.js";
+import type { createDesktopOfflineGrantStore } from "./identity-offline-grant.js";
 import { createIdentityPkceRequest, openIdentityLoopbackCallback } from "./identity-pkce.js";
 
 const DESKTOP_CLIENT_ID = "rudder-desktop";

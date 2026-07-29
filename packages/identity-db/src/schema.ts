@@ -1,6 +1,6 @@
 import {
-  boolean,
   bigint,
+  boolean,
   index,
   integer,
   jsonb,

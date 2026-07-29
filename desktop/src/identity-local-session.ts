@@ -66,7 +66,10 @@ export async function establishDesktopLocalSession(options: {
 
   const claim = await request(new URL("/api/auth/local-claim", baseUrl), {
     method: "POST",
-    headers: { cookie: `${cookie.name}=${encodeURIComponent(cookie.value)}` },
+    headers: {
+      cookie: `${cookie.name}=${encodeURIComponent(cookie.value)}`,
+      origin: baseUrl,
+    },
   });
   if (!claim.ok) throw new Error(`Local Rudder legacy claim failed (${claim.status})`);
 }
@@ -144,7 +147,10 @@ export async function revokeDesktopLocalSessions(options: {
     new URL("/api/auth/local-signout-all", options.localApiUrl),
     {
       method: "POST",
-      headers: { cookie: cookieHeader },
+      headers: {
+        cookie: cookieHeader,
+        origin,
+      },
     },
   );
   if (!response.ok) {

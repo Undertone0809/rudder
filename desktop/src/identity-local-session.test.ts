@@ -23,11 +23,19 @@ describe("Desktop local account session", () => {
 
   it("revokes every server-side local session before cookie cleanup", async () => {
     let receivedCookie = "";
+    let receivedOrigin = "";
     const server = createServer((req, res) => {
       receivedCookie = req.headers.cookie ?? "";
-      res.writeHead(receivedCookie.includes("better-auth.session_token=token.signature") ? 200 : 401, {
+      receivedOrigin = req.headers.origin ?? "";
+      res.writeHead(
+        receivedCookie.includes("better-auth.session_token=token.signature")
+        && receivedOrigin === `http://127.0.0.1:${address.port}`
+          ? 200
+          : 401,
+        {
         "content-type": "application/json",
-      });
+        },
+      );
       res.end(JSON.stringify({ revokedSessionCount: 2 }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -42,6 +50,7 @@ describe("Desktop local account session", () => {
         ],
       });
       expect(receivedCookie).toBe("better-auth.session_token=token.signature");
+      expect(receivedOrigin).toBe(`http://127.0.0.1:${address.port}`);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -75,7 +84,10 @@ describe("Desktop local account session", () => {
     }));
     expect(fetch.mock.calls[1]?.[1]).toMatchObject({
       method: "POST",
-      headers: { cookie: "better-auth.session_token=token.signature" },
+      headers: {
+        cookie: "better-auth.session_token=token.signature",
+        origin: "http://127.0.0.1:3100",
+      },
     });
   });
 

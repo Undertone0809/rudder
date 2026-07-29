@@ -2,9 +2,9 @@ import { normalizeVerifiedEmail } from "@rudderhq/identity-core";
 import {
   claimVerifiedEmail,
   consumeIdentityEmailRateLimit,
-  type IdentityDb,
   recordSecurityEvent,
   revokeAllIdentityDevices,
+  type IdentityDb,
 } from "@rudderhq/identity-db";
 import { betterAuth } from "better-auth";
 import { createAuthMiddleware } from "better-auth/api";

@@ -1,7 +1,12 @@
 import {
+  hashOpaqueSecret,
+  issueOfflineGrant,
+  opaqueSecretMatches,
+} from "@rudderhq/identity-core";
+import {
   consumeServerExchangeCode,
-  issueDesktopDeviceSession,
   issueDesktopAuthorizationCode,
+  issueDesktopDeviceSession,
   issueServerExchangeCode,
   listIdentityDevices,
   recordSecurityEvent,
@@ -10,13 +15,8 @@ import {
   revokeIdentityDevice,
   rotateDeviceRefreshToken,
 } from "@rudderhq/identity-db";
-import {
-  hashOpaqueSecret,
-  issueOfflineGrant,
-  opaqueSecretMatches,
-} from "@rudderhq/identity-core";
-import { randomUUID } from "node:crypto";
 import { toNodeHandler } from "better-auth/node";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { identityClientScript } from "./client-script.js";
 import {

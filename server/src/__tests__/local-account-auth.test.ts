@@ -27,15 +27,16 @@ import os from "node:os";
 import path from "node:path";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { accountSessionRequired } from "../middleware/account-session-required.js";
+import { actorMiddleware } from "../middleware/auth.js";
+import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
+import { localAccountAuthRoutes } from "../routes/local-account-auth.js";
 import {
   createIdentityServerExchangeVerifier,
   createLocalAccountSessionResolver,
   localAccountAuthService,
   type VerifiedServerExchange,
 } from "../services/local-account-auth.js";
-import { accountSessionRequired } from "../middleware/account-session-required.js";
-import { actorMiddleware } from "../middleware/auth.js";
-import { localAccountAuthRoutes } from "../routes/local-account-auth.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -275,6 +276,7 @@ describe("localAccountAuthService", () => {
       resolveSession: (req) => resolveSession(req.headers),
     }));
     app.use(accountSessionRequired("required"));
+    app.use(boardMutationGuard());
     app.get("/api/browser/session-check", (_req, res) => res.json({ ok: true }));
     app.get("/api/cli/session-check", (_req, res) => res.json({ ok: true }));
     app.use("/api", localAccountAuthRoutes(db, {
@@ -294,7 +296,11 @@ describe("localAccountAuthService", () => {
     expect(cookie).toContain("HttpOnly");
     expect((await request(app)
       .post("/api/auth/local-claim")
-      .set("Cookie", cookie!)).status).toBe(200);
+      .set("Cookie", cookie!)).status).toBe(403);
+    expect((await request(app)
+      .post("/api/auth/local-claim")
+      .set("Cookie", cookie!)
+      .set("Origin", "http://127.0.0.1:3100")).status).toBe(200);
     claims.jti = "exchange-2";
     const secondExchange = await request(app)
       .post("/api/auth/local-exchange")
@@ -306,7 +312,8 @@ describe("localAccountAuthService", () => {
       .set("Cookie", secondCookie!)).status).toBe(200);
     const signedOut = await request(app)
       .post("/api/auth/local-signout-all")
-      .set("Cookie", cookie!);
+      .set("Cookie", cookie!)
+      .set("Origin", "http://127.0.0.1:3100");
     expect(signedOut.status).toBe(200);
     expect(signedOut.body).toEqual({ revokedSessionCount: 2 });
     expect(await db.select().from(authSessions)).toHaveLength(0);

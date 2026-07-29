@@ -9,6 +9,7 @@ import {
   requestQueryForLogs,
   requestUrlForLogs,
   serializeHttpRequestForLogs,
+  serializeHttpResponseForLogs,
 } from "./logger.js";
 
 describe("HTTP request-body logging", () => {
@@ -182,5 +183,37 @@ describe("HTTP request-body logging", () => {
       headers: requestHeadersForLogs(req, req.headers),
       serialized,
     })).not.toMatch(/raw-state|raw-code|private|oauth\.example|referer-state|pkce-secret|cookie-secret|callback-secret/u);
+  });
+
+  it("redacts session credentials from all request and response headers", () => {
+    const requestHeaders = requestHeadersForLogs(
+      { originalUrl: "/api/auth/local-claim" },
+      {
+        cookie: "better-auth.session_token=secret",
+        authorization: "Bearer secret",
+        origin: "http://127.0.0.1:3100",
+      },
+    );
+    const response = serializeHttpResponseForLogs({
+      statusCode: 200,
+      headers: {
+        "set-cookie": "better-auth.session_token=secret; HttpOnly",
+        "content-type": "application/json",
+      },
+    });
+
+    expect(requestHeaders).toEqual({
+      cookie: "[REDACTED]",
+      authorization: "[REDACTED]",
+      origin: "http://127.0.0.1:3100",
+    });
+    expect(response).toEqual({
+      statusCode: 200,
+      headers: {
+        "set-cookie": "[REDACTED]",
+        "content-type": "application/json",
+      },
+    });
+    expect(JSON.stringify({ requestHeaders, response })).not.toContain("secret");
   });
 });

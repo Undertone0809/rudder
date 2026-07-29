@@ -2,7 +2,7 @@
 title: Rudder Account production login
 date: 2026-07-29
 kind: implementation
-status: in_progress
+status: review_ready
 area: security
 entities:
   - rudder_account
@@ -350,8 +350,17 @@ Implemented and independently reviewed:
 - production Google/GitHub OAuth applications, Resend sender, Vercel project,
   hostname, secrets, and Supabase migrations.
 
-The production deployment and final continuous packaged Desktop login smoke
-remain the last implementation steps.
+Production Identity is deployed at `accounts.rudderhq.dev`. The final
+continuous packaged Desktop black-box smoke passed against production:
+the stable package ignored the requested auth bypass, completed account
+authorization and one-time Local exchange, claimed a fresh installation,
+opened the real onboarding Board, exposed exactly one current device, returned
+`200` for the renderer-authenticated Organization request and `401` for the
+same anonymous request, and installed an HttpOnly, SameSite=Lax Local session
+cookie. Independent security review and black-box verification both passed.
+
+The production launch gates listed below remain operator decisions rather than
+implementation gaps.
 
 ## Success Criteria
 
