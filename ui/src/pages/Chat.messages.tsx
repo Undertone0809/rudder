@@ -655,7 +655,7 @@ export function ProposalCard({
 
   const openIssueProposalPanel = useCallback(() => {
     if (proposalPanelActive) {
-      sidePanel?.closeTargetAndHidePanel(proposalPanelKey);
+      sidePanel?.closeTarget(proposalPanelKey);
       return;
     }
     sidePanel?.openTarget(proposalPanelTarget);
@@ -694,7 +694,7 @@ export function ProposalCard({
           aria-expanded={proposalPanelActive}
           aria-label={
             proposalPanelActive
-              ? "Collapse Issue proposal Side Panel and restore card"
+              ? "Close Issue proposal tab and restore card"
               : "Open Issue proposal in Side Panel"
           }
         >
