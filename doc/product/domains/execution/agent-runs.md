@@ -197,7 +197,9 @@ Flow:
    text is explicitly untrusted quoted context rather than system instruction;
    comments retain operator authorship and annotation file metadata preserves
    its quote association. Process selections retain generation-event
-   provenance under `RUN.RESULT.001`.
+   provenance under `RUN.RESULT.001`. Side Panel file selections retain their
+   source path as untrusted user context; this prompt projection does not grant
+   the runtime or server new filesystem authority.
 3. Rudder creates an Agent Run with chat scene and conversation target.
 4. Only one active run should own a conversation turn at a time.
 5. Runtime output must end with the Rudder chat result sentinel. If the primary

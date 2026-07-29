@@ -144,7 +144,6 @@ const chatInlineAnnotationShape = {
   selectedText: chatInlineAnnotationSelectedTextSchema,
   comment: chatInlineAnnotationCommentSchema,
   sourceConversationId: z.string().uuid(),
-  sourceMessageId: z.string().uuid(),
   sourceHash: chatInlineAnnotationSourceHashSchema,
   start: z.number().int().nonnegative(),
   end: z.number().int().nonnegative(),
@@ -155,7 +154,7 @@ const chatInlineAnnotationShape = {
 
 function refineChatInlineAnnotation(
   annotation: {
-    surface: "assistant_body" | "process_transcript";
+    surface: "assistant_body" | "process_transcript" | "workspace_file" | "local_file";
     transcriptKind?: "thinking" | "assistant";
     generationId?: string;
     generationSeqStart?: number;
@@ -215,19 +214,36 @@ function refineChatInlineAnnotation(
 const chatAssistantInlineAnnotationSchema = z.object({
   ...chatInlineAnnotationShape,
   surface: z.literal("assistant_body"),
+  sourceMessageId: z.string().uuid(),
 }).strict();
 const chatProcessInlineAnnotationSchema = z.object({
   ...chatInlineAnnotationShape,
   surface: z.literal("process_transcript"),
+  sourceMessageId: z.string().uuid(),
   transcriptKind: z.enum(["thinking", "assistant"]),
   generationId: z.string().uuid(),
   generationSeqStart: z.number().int().nonnegative(),
   generationSeqEnd: z.number().int().nonnegative(),
 }).strict();
+const chatWorkspaceFileInlineAnnotationSchema = z.object({
+  ...chatInlineAnnotationShape,
+  surface: z.literal("workspace_file"),
+  sourceFilePath: z.string().min(1).max(4_096),
+  sourceLibraryEntryId: z.string().uuid().nullable(),
+  sourceRenderMode: z.enum(["markdown", "text"]),
+}).strict();
+const chatLocalFileInlineAnnotationSchema = z.object({
+  ...chatInlineAnnotationShape,
+  surface: z.literal("local_file"),
+  sourceFilePath: z.string().min(1).max(8_192),
+  sourceRenderMode: z.enum(["markdown", "text"]),
+}).strict();
 
 export const chatInlineAnnotationSchema = z.discriminatedUnion("surface", [
   chatAssistantInlineAnnotationSchema,
   chatProcessInlineAnnotationSchema,
+  chatWorkspaceFileInlineAnnotationSchema,
+  chatLocalFileInlineAnnotationSchema,
 ])
   .superRefine(refineChatInlineAnnotation);
 
@@ -237,10 +253,18 @@ const chatAssistantInlineAnnotationInputSchema = chatAssistantInlineAnnotationSc
 const chatProcessInlineAnnotationInputSchema = chatProcessInlineAnnotationSchema.extend({
   attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
 }).strict();
+const chatWorkspaceFileInlineAnnotationInputSchema = chatWorkspaceFileInlineAnnotationSchema.extend({
+  attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
+}).strict();
+const chatLocalFileInlineAnnotationInputSchema = chatLocalFileInlineAnnotationSchema.extend({
+  attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
+}).strict();
 
 export const chatInlineAnnotationInputSchema = z.discriminatedUnion("surface", [
   chatAssistantInlineAnnotationInputSchema,
   chatProcessInlineAnnotationInputSchema,
+  chatWorkspaceFileInlineAnnotationInputSchema,
+  chatLocalFileInlineAnnotationInputSchema,
 ])
   .superRefine(refineChatInlineAnnotation);
 
@@ -270,6 +294,7 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
         const sourceRangeKey = JSON.stringify([
           annotation.sourceConversationId,
           annotation.sourceMessageId,
+          annotation.sourceFilePath,
           annotation.surface,
           annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
           annotation.surface === "process_transcript" ? annotation.generationId : null,

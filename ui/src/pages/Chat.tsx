@@ -75,6 +75,11 @@ import {
   saveChatComposerDraft,
 } from "@/lib/chat-draft-storage";
 import {
+  CHAT_FILE_ANNOTATION_REQUEST_EVENT,
+  requestChatFileAnnotationLocation,
+  type ChatFileAnnotationRequestDetail,
+} from "@/lib/chat-file-annotation-events";
+import {
   readChatPendingAttachmentsForScope,
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
@@ -89,9 +94,13 @@ import {
   createChatResponseAnnotationNavigationState,
   readChatResponseAnnotationNavigationState,
 } from "@/lib/chat-response-annotation-navigation";
-import { restoreLiveChatAnnotationRange } from "@/lib/chat-response-annotation-selection";
+import {
+  hashChatAnnotationSource,
+  restoreLiveChatAnnotationRange,
+} from "@/lib/chat-response-annotation-selection";
 import {
   canSubmitChatResponseAnnotations,
+  chatResponseAnnotationRangeKey,
   chatResponseAnnotationsForDraft,
   createChatResponseAnnotationState,
   responseAnnotationReducer,
@@ -147,6 +156,7 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { latestSideChatAnchor } from "@/lib/side-chat";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { resolveTranscriptSkillSidePanelTarget } from "@/lib/transcript-skill-targets";
 import { cn } from "@/lib/utils";
 import {
@@ -1749,10 +1759,168 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     resolveCurrentSidePanelChatContextKey,
     selectedConversation,
   ]);
+  useEffect(() => {
+    const handleFileAnnotationRequest = (event: Event) => {
+      const detail = (event as CustomEvent<ChatFileAnnotationRequestDetail>).detail;
+      if (
+        !detail
+        || !selectedConversation
+        || detail.annotation.sourceConversationId !== selectedConversation.id
+      ) return;
+      const existingAnnotation = responseAnnotationState.annotations.find((annotation) => (
+        chatResponseAnnotationRangeKey(annotation)
+        === chatResponseAnnotationRangeKey(detail.annotation)
+      ));
+      if (existingAnnotation && detail.action === "add_to_chat") {
+        setResponseAnnotationsExpanded(false);
+        responseAnnotationEditor.openFromSelection(existingAnnotation.id, {
+          anchorRect: detail.anchorRect,
+          boundaryRect: detail.boundaryRect,
+        });
+        window.getSelection()?.removeAllRanges();
+        return;
+      }
+      const validationError = validateChatResponseAnnotationAdd(
+        responseAnnotationState,
+        detail.annotation,
+      );
+      if (validationError) {
+        pushToast({
+          title: t("chat.annotations.couldNotAdd"),
+          body: validationError,
+          tone: "error",
+        });
+        return;
+      }
+      if (detail.action === "ask_in_side_chat") {
+        const sourceMessage = [...rawMessages].reverse().find((message) => (
+          message.role === "assistant"
+          && message.kind === "message"
+          && message.status === "completed"
+          && !message.supersededAt
+        ));
+        if (!sourceMessage) {
+          pushToast({
+            title: "Side Chat is not available",
+            body: "This chat needs a completed assistant response before a file excerpt can open in Side Chat.",
+            tone: "info",
+          });
+          return;
+        }
+        openSidePanelTargetForContext(
+          resolveCurrentSidePanelChatContextKey(),
+          sideChatTargetFromMessage(selectedConversation, sourceMessage, detail.annotation),
+        );
+        window.getSelection()?.removeAllRanges();
+        return;
+      }
+      dispatchResponseAnnotation({ type: "add", annotation: detail.annotation });
+      setResponseAnnotationsExpanded(false);
+      responseAnnotationEditor.openFromSelection(detail.annotation.id, {
+        anchorRect: detail.anchorRect,
+        boundaryRect: detail.boundaryRect,
+      });
+      setResponseAnnotationAnnouncement(t("chat.annotations.added"));
+      window.getSelection()?.removeAllRanges();
+    };
+    window.addEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, handleFileAnnotationRequest);
+    return () => {
+      window.removeEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, handleFileAnnotationRequest);
+    };
+  }, [
+    openSidePanelTargetForContext,
+    pushToast,
+    rawMessages,
+    resolveCurrentSidePanelChatContextKey,
+    responseAnnotationEditor,
+    responseAnnotationState,
+    selectedConversation,
+    t,
+  ]);
   const handleSelectSentResponseAnnotation = useCallback((
     annotation: ChatInlineAnnotation,
     ordinal: number,
   ) => {
+    if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+      setUnlocatableResponseAnnotationId(null);
+      void (async () => {
+        try {
+          let resolvedPath = annotation.sourceFilePath;
+          let source: string | null = null;
+          if (annotation.surface === "workspace_file") {
+            if (!selectedOrganizationId) throw new Error("No organization selected");
+            if (annotation.sourceLibraryEntryId) {
+              const entry = await organizationsApi.getLibraryEntry(
+                selectedOrganizationId,
+                annotation.sourceLibraryEntryId,
+              );
+              if (entry.status !== "active" || !entry.currentPath) {
+                throw new Error("Library source is unavailable");
+              }
+              resolvedPath = entry.currentPath;
+            }
+            source = (
+              await organizationsApi.readWorkspaceFile(
+                selectedOrganizationId,
+                resolvedPath,
+              )
+            ).content;
+          } else {
+            const desktopShell = readDesktopShell();
+            if (!desktopShell) throw new Error("Desktop file access is unavailable");
+            source = (await desktopShell.previewLocalFile(resolvedPath)).content;
+          }
+          if (
+            source === null
+            || await hashChatAnnotationSource(source) !== annotation.sourceHash
+            || source.slice(
+              Math.max(0, annotation.start - annotation.prefix.length),
+              annotation.start,
+            ) !== annotation.prefix
+            || source.slice(
+              annotation.end,
+              annotation.end + annotation.suffix.length,
+            ) !== annotation.suffix
+          ) {
+            throw new Error("Annotation source changed");
+          }
+          const label = resolvedPath.split(/[\\/]/u).filter(Boolean).at(-1)
+            ?? resolvedPath;
+          requestChatFileAnnotationLocation({
+            surface: annotation.surface,
+            sourceFilePath: resolvedPath,
+            sourceHash: annotation.sourceHash,
+            sourceRenderMode: annotation.sourceRenderMode,
+            start: annotation.start,
+            end: annotation.end,
+          });
+          openSidePanelTargetForContext(
+            resolveCurrentSidePanelChatContextKey(),
+            annotation.surface === "workspace_file"
+              ? {
+                  kind: annotation.sourceLibraryEntryId
+                    ? "library_entry"
+                    : "library_file",
+                  ...(annotation.sourceLibraryEntryId
+                    ? {
+                        entryId: annotation.sourceLibraryEntryId,
+                        path: resolvedPath,
+                      }
+                    : { filePath: resolvedPath }),
+                  label,
+                } as SidePanelTarget
+              : {
+                  kind: "local_file",
+                  filePath: resolvedPath,
+                  label,
+                },
+          );
+        } catch {
+          setUnlocatableResponseAnnotationId(annotation.id);
+        }
+      })();
+      return;
+    }
     if (
       selectedConversation
       && annotation.sourceConversationId !== selectedConversation.id
@@ -1844,8 +2012,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     chatConversationPath,
     location.state,
     navigate,
+    openSidePanelTargetForContext,
     rawMessages,
+    resolveCurrentSidePanelChatContextKey,
     selectedConversation,
+    selectedOrganizationId,
     setProcessOpenForMessage,
   ]);
   const pendingResponseAnnotationSource = useMemo(

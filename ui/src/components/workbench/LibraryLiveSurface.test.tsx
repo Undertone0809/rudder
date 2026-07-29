@@ -10,6 +10,7 @@ import type {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import {
   afterEach,
   beforeEach,
@@ -39,6 +40,11 @@ vi.mock("@/api/orgs", () => ({
   },
 }));
 
+vi.mock("@/lib/router", () => ({
+  useLocation: () => ({ pathname: "/ORG/library" }),
+  useNavigate: () => vi.fn(),
+}));
+
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
     onChange,
@@ -62,7 +68,27 @@ vi.mock("@/components/MarkdownBody", () => ({
 }));
 
 vi.mock("@/components/WorkspaceFilePreview", () => ({
+  isWorkspaceCsvPreviewFile: (candidate: OrganizationWorkspaceFileDetail) =>
+    candidate.filePath.endsWith(".csv"),
+  isWorkspaceHtmlPreviewFile: (candidate: OrganizationWorkspaceFileDetail) =>
+    candidate.filePath.endsWith(".html"),
   WorkspaceFilePreview: () => <div data-testid="mock-file-preview" />,
+}));
+
+vi.mock("@/components/WorkspaceCodeEditor", () => ({
+  WorkspaceCodeEditor: ({
+    onChange,
+    value,
+  }: {
+    onChange?: (value: string) => void;
+    value: string;
+  }) => (
+    <textarea
+      data-testid="mock-code-editor"
+      value={value}
+      onChange={(event) => onChange?.(event.currentTarget.value)}
+    />
+  ),
 }));
 
 let host: HTMLDivElement | null = null;
@@ -120,9 +146,11 @@ afterEach(() => {
 
 function Providers({ children }: { children: ReactNode }) {
   return (
-    <QueryClientProvider client={queryClient!}>
-      <ToastProvider>{children}</ToastProvider>
-    </QueryClientProvider>
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient!}>
+        <ToastProvider>{children}</ToastProvider>
+      </QueryClientProvider>
+    </MemoryRouter>
   );
 }
 
@@ -306,6 +334,23 @@ describe("LibraryLiveSurface", () => {
     );
     expect(host!.textContent).toContain("Keep mine");
     expect(host!.textContent).toContain("Use latest");
+  });
+
+  it("keeps CSV preview-first and exposes an editable Source mode", () => {
+    renderFileHarness({
+      ...file("name,value\nalpha,1\n"),
+      contentType: "text/csv",
+      filePath: "reports/growth.csv",
+    });
+
+    expect(host!.querySelector('[data-testid="mock-file-preview"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="mock-code-editor"]')).toBeNull();
+
+    act(() => {
+      host!.querySelector<HTMLButtonElement>('button[aria-label="Show source"]')!.click();
+    });
+    expect(host!.querySelector('[data-testid="mock-code-editor"]')).not.toBeNull();
+    expect(host!.querySelector<HTMLButtonElement>('button[aria-label="Show table"]')).not.toBeNull();
   });
 
   it("does not let disabled document and entry queries keep a directory permanently pending", () => {

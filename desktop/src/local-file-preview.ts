@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,12 @@ export type DesktopLocalFilePreview = {
   sizeBytes: number;
   modifiedAt: string;
   truncated: boolean;
+  writeCapability?: string | null;
+};
+
+export type DesktopLocalFileUpdateRequest = {
+  content: string;
+  expectedContent: string;
 };
 
 type PreviewClassification = {
@@ -102,6 +109,7 @@ const PLAIN_TEXT_BASENAMES = new Set([
 ]);
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const LOCAL_FILE_UPDATE_QUEUES = new Map<string, Promise<void>>();
 
 const BINARY_SIGNATURE_ERROR: Record<NonNullable<PreviewClassification["binarySignature"]>, string> = {
   bmp: "The selected image does not have a valid BMP signature.",
@@ -294,4 +302,87 @@ export async function previewLocalFile(targetPath: string): Promise<DesktopLocal
     modifiedAt: stats.mtime.toISOString(),
     truncated: textPreview.truncated,
   };
+}
+
+export async function updateLocalFile(
+  targetPath: string,
+  input: DesktopLocalFileUpdateRequest,
+): Promise<DesktopLocalFilePreview> {
+  const resolvedTargetPath = resolveAbsoluteTargetPath(targetPath);
+  const canonicalPath = await fs.realpath(resolvedTargetPath);
+  if (path.resolve(resolvedTargetPath) !== canonicalPath) {
+    throw new Error("Local file editing requires the canonical file path returned by Rudder.");
+  }
+  const previous = LOCAL_FILE_UPDATE_QUEUES.get(canonicalPath) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const tail = previous.then(() => queued);
+  LOCAL_FILE_UPDATE_QUEUES.set(canonicalPath, tail);
+  await previous;
+
+  try {
+    const classification = classifyPreview(canonicalPath);
+    if (!classification || classification.binarySignature) {
+      throw new Error("This file type is not supported for local text editing.");
+    }
+    const contentBytes = Buffer.from(input.content, "utf8");
+    if (contentBytes.byteLength > MAX_TEXT_PREVIEW_BYTES) {
+      throw new Error("Editable local text files are limited to 512 KiB.");
+    }
+    if (input.content.includes("\0")) {
+      throw new Error("Local text files cannot contain binary NUL bytes.");
+    }
+
+    const handle = await fs.open(canonicalPath, fsConstants.O_RDWR | fsConstants.O_NOFOLLOW);
+    try {
+      const openedStats = await handle.stat();
+      const pathStats = await fs.lstat(canonicalPath);
+      if (
+        !openedStats.isFile()
+        || pathStats.isSymbolicLink()
+        || openedStats.dev !== pathStats.dev
+        || openedStats.ino !== pathStats.ino
+      ) {
+        throw new Error("Local file editing only supports the admitted canonical regular file.");
+      }
+      if (openedStats.size > MAX_TEXT_PREVIEW_BYTES) {
+        throw new Error("Truncated local file previews cannot be edited.");
+      }
+      const currentBytes = await handle.readFile();
+      if (currentBytes.includes(0)) {
+        throw new Error("Text previews cannot contain binary NUL bytes.");
+      }
+      let currentContent: string;
+      try {
+        currentContent = UTF8_DECODER.decode(currentBytes);
+      } catch {
+        throw new Error("Text previews must contain valid UTF-8.");
+      }
+      if (currentContent !== input.expectedContent) {
+        throw new Error("This file changed since it was opened.");
+      }
+
+      const latestPathStats = await fs.lstat(canonicalPath);
+      if (
+        latestPathStats.isSymbolicLink()
+        || openedStats.dev !== latestPathStats.dev
+        || openedStats.ino !== latestPathStats.ino
+      ) {
+        throw new Error("This file changed since it was opened.");
+      }
+      await handle.write(contentBytes, 0, contentBytes.byteLength, 0);
+      await handle.truncate(contentBytes.byteLength);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    return await previewLocalFile(canonicalPath);
+  } finally {
+    releaseQueue();
+    if (LOCAL_FILE_UPDATE_QUEUES.get(canonicalPath) === tail) {
+      LOCAL_FILE_UPDATE_QUEUES.delete(canonicalPath);
+    }
+  }
 }

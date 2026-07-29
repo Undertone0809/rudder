@@ -7,6 +7,7 @@ import {
   MAX_BINARY_PREVIEW_BYTES,
   MAX_TEXT_PREVIEW_BYTES,
   previewLocalFile,
+  updateLocalFile,
 } from "./local-file-preview.js";
 
 const temporaryDirectories: string[] = [];
@@ -21,6 +22,83 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directoryPath) =>
     fs.rm(directoryPath, { recursive: true, force: true })
   ));
+});
+
+describe("updateLocalFile", () => {
+  it("conditionally updates an eligible canonical UTF-8 text file", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const targetPath = path.join(directoryPath, "worker.ts");
+    await fs.writeFile(targetPath, "export const value = 1;\n");
+    const canonicalPath = await fs.realpath(targetPath);
+
+    const updated = await updateLocalFile(canonicalPath, {
+      content: "export const value = 2;\n",
+      expectedContent: "export const value = 1;\n",
+    });
+
+    expect(updated.content).toBe("export const value = 2;\n");
+    expect(await fs.readFile(targetPath, "utf8")).toBe("export const value = 2;\n");
+  });
+
+  it("rejects stale expected content without overwriting the file", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const targetPath = path.join(directoryPath, "notes.md");
+    await fs.writeFile(targetPath, "# Current\n");
+
+    await expect(updateLocalFile(await fs.realpath(targetPath), {
+      content: "# Mine\n",
+      expectedContent: "# Stale\n",
+    })).rejects.toThrow("This file changed since it was opened.");
+    expect(await fs.readFile(targetPath, "utf8")).toBe("# Current\n");
+  });
+
+  it("serializes competing compare-and-swap updates so only one writer wins", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const targetPath = path.join(directoryPath, "race.txt");
+    await fs.writeFile(targetPath, "base\n");
+    const canonicalPath = await fs.realpath(targetPath);
+
+    const outcomes = await Promise.allSettled([
+      updateLocalFile(canonicalPath, {
+        content: "first\n",
+        expectedContent: "base\n",
+      }),
+      updateLocalFile(canonicalPath, {
+        content: "second\n",
+        expectedContent: "base\n",
+      }),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect(["first\n", "second\n"]).toContain(await fs.readFile(targetPath, "utf8"));
+  });
+
+  it("rejects aliases, binary files, and oversized text files", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const textPath = path.join(directoryPath, "notes.txt");
+    const aliasPath = path.join(directoryPath, "notes-link.txt");
+    await fs.writeFile(textPath, "notes\n");
+    await fs.symlink(textPath, aliasPath);
+    await expect(updateLocalFile(aliasPath, {
+      content: "changed\n",
+      expectedContent: "notes\n",
+    })).rejects.toThrow("canonical file path");
+
+    const imagePath = path.join(directoryPath, "pixel.png");
+    await fs.writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await expect(updateLocalFile(await fs.realpath(imagePath), {
+      content: "not an image",
+      expectedContent: "",
+    })).rejects.toThrow("not supported for local text editing");
+
+    const largePath = path.join(directoryPath, "large.txt");
+    await fs.writeFile(largePath, "a".repeat(MAX_TEXT_PREVIEW_BYTES + 1));
+    await expect(updateLocalFile(await fs.realpath(largePath), {
+      content: "small",
+      expectedContent: "",
+    })).rejects.toThrow("Truncated local file previews cannot be edited.");
+  });
 });
 
 describe("previewLocalFile", () => {
@@ -255,12 +333,31 @@ describe("desktop local file preview bridge", () => {
     const handlerEnd = mainSource.indexOf("ipcMain.handle(", handlerStart + 1);
     const handlerSource = mainSource.slice(handlerStart, handlerEnd);
 
-    expect(mainSource).toContain('import { previewLocalFile } from "./local-file-preview.js";');
+    expect(mainSource).toContain('import { previewLocalFile, updateLocalFile } from "./local-file-preview.js";');
     expect(handlerStart).toBeGreaterThanOrEqual(0);
     expect(handlerSource).toContain("event.sender !== mainWindow.webContents");
     expect(handlerSource).toContain('throw new Error("Local file preview is only available to the main Rudder window.")');
-    expect(handlerSource).toContain("return await previewLocalFile(targetPath)");
+    expect(handlerSource).toContain("const preview = await previewLocalFile(targetPath)");
+    expect(handlerSource).toContain("localFileWriteAdmissions.set(writeCapability, preview.canonicalPath)");
+    expect(handlerSource).toContain("localFileWriteAdmissions.size > 256");
+    expect(handlerSource).not.toContain("previousCapability");
+    expect(handlerSource).toContain("return { ...preview, writeCapability }");
     expect(handlerSource).not.toContain("shell.openPath");
+  });
+
+  it("registers and exposes the trusted conditional local-file update bridge", async () => {
+    const mainSource = await fs.readFile(path.join(desktopSourceDirectory, "main.ts"), "utf8");
+    const preloadSource = await fs.readFile(path.join(desktopSourceDirectory, "preload.ts"), "utf8");
+    const handlerStart = mainSource.indexOf('ipcMain.handle("desktop:update-local-file"');
+    const handlerEnd = mainSource.indexOf("ipcMain.handle(", handlerStart + 1);
+    const handlerSource = mainSource.slice(handlerStart, handlerEnd);
+
+    expect(handlerStart).toBeGreaterThanOrEqual(0);
+    expect(handlerSource).toContain("event.sender !== mainWindow.webContents");
+    expect(handlerSource).toContain("localFileWriteAdmissions.get(input.writeCapability)");
+    expect(handlerSource).toContain("admittedPath !== targetPath");
+    expect(handlerSource).toContain("const preview = await updateLocalFile(targetPath, input)");
+    expect(preloadSource).toContain('ipcRenderer.invoke("desktop:update-local-file", targetPath, input)');
   });
 
   it("exposes the typed preview method through preload and DesktopShellApi", async () => {

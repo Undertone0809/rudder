@@ -21,6 +21,7 @@ import type { ChatGenerationProtocolTransaction } from "./chat-generation-protoc
 import { renderedMarkdownSelectionText } from "./chat-inline-annotation-rendering.js";
 import { renderedMarkdownSelectionTextWithResolvedLabels } from "./chat-inline-annotation-resolved-labels.js";
 import { chatTranscriptFromPayload } from "./chats.helpers.js";
+import { organizationWorkspaceBrowserService } from "./organization-workspace-browser.js";
 
 const STABLE_ANNOTATION_MESSAGE_STATUSES = new Set(["completed", "stopped", "failed"]);
 const STABLE_ANNOTATION_GENERATION_STATUSES = new Set(["completed", "stopped", "failed"]);
@@ -277,7 +278,6 @@ function annotationSnapshotsAreSemanticallyIdentical(
       || annotation.selectedText !== expected.selectedText
       || (annotation.comment ?? null) !== (expected.comment ?? null)
       || annotation.sourceConversationId !== expected.sourceConversationId
-      || annotation.sourceMessageId !== expected.sourceMessageId
       || annotation.sourceHash !== expected.sourceHash
       || annotation.start !== expected.start
       || annotation.end !== expected.end
@@ -292,13 +292,27 @@ function annotationSnapshotsAreSemanticallyIdentical(
       return false;
     }
     if (annotation.surface === "assistant_body") {
-      return expected.surface === "assistant_body";
+      return expected.surface === "assistant_body"
+        && annotation.sourceMessageId === expected.sourceMessageId;
     }
-    return expected.surface === "process_transcript"
-      && annotation.transcriptKind === expected.transcriptKind
-      && annotation.generationId === expected.generationId
-      && annotation.generationSeqStart === expected.generationSeqStart
-      && annotation.generationSeqEnd === expected.generationSeqEnd;
+    if (annotation.surface === "process_transcript") {
+      return expected.surface === "process_transcript"
+        && annotation.sourceMessageId === expected.sourceMessageId
+        && annotation.transcriptKind === expected.transcriptKind
+        && annotation.generationId === expected.generationId
+        && annotation.generationSeqStart === expected.generationSeqStart
+        && annotation.generationSeqEnd === expected.generationSeqEnd;
+    }
+    return expected.surface === annotation.surface
+      && annotation.sourceFilePath === expected.sourceFilePath
+      && annotation.sourceRenderMode === expected.sourceRenderMode
+      && (
+        annotation.surface !== "workspace_file"
+        || (
+          expected.surface === "workspace_file"
+          && annotation.sourceLibraryEntryId === expected.sourceLibraryEntryId
+        )
+      );
   });
 }
 
@@ -377,7 +391,7 @@ async function validateSourceMessage(
     orgId: string;
     conversationId: string;
     targetConversation: typeof chatConversations.$inferSelect;
-    annotation: ChatInlineAnnotation;
+    annotation: Extract<ChatInlineAnnotation, { surface: "assistant_body" | "process_transcript" }>;
   },
 ) {
   const sameConversation = input.annotation.sourceConversationId === input.conversationId;
@@ -421,6 +435,69 @@ async function validateSourceMessage(
     throw unprocessable("Annotation source must remain visible in the active conversation branch");
   }
   return source;
+}
+
+async function validateWorkspaceFileAnnotation(
+  query: ValidationQuery,
+  input: {
+    orgId: string;
+    annotation: Extract<ChatInlineAnnotation, { surface: "workspace_file" }>;
+  },
+) {
+  const firstPathSegment = input.annotation.sourceFilePath
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter(Boolean)[0]
+    ?.toLowerCase();
+  if (firstPathSegment === "agents" || firstPathSegment === "skills") {
+    throw unprocessable("Protected workspace files cannot be used as Chat annotations");
+  }
+  const detail = await organizationWorkspaceBrowserService(query as unknown as Db)
+    .readFile(input.orgId, input.annotation.sourceFilePath);
+  if (
+    detail.previewKind !== "text"
+    || detail.content === null
+    || detail.truncated
+    || (
+      input.annotation.sourceLibraryEntryId
+      && detail.libraryEntryId !== input.annotation.sourceLibraryEntryId
+    )
+  ) {
+    throw unprocessable("Workspace file annotation source must be an eligible visible text file");
+  }
+  return detail.content;
+}
+
+function validateLocalFileSnapshot(
+  annotation: Extract<ChatInlineAnnotation, { surface: "local_file" }>,
+) {
+  if (
+    !annotation.sourceFilePath.startsWith("/")
+    && !/^[A-Za-z]:[\\/]/u.test(annotation.sourceFilePath)
+  ) {
+    throw unprocessable("Local file annotation source must use an absolute canonical path");
+  }
+  if (
+    annotation.sourceRenderMode === "text"
+    && annotation.end - annotation.start !== annotation.selectedText.length
+  ) {
+    throw unprocessable("Local text file annotation range must match the selected snapshot");
+  }
+}
+
+function validateFileAnnotationConversation(
+  targetConversation: typeof chatConversations.$inferSelect,
+  targetConversationId: string,
+  sourceConversationId: string,
+) {
+  const sameConversation = sourceConversationId === targetConversationId;
+  const sideChatParent = targetConversation.conversationKind === "side_chat"
+    && targetConversation.forkedFromConversationId === sourceConversationId;
+  if (!sameConversation && !sideChatParent) {
+    throw unprocessable(
+      "File annotation source must match the target conversation or its Side Chat parent",
+    );
+  }
 }
 
 async function validateProcessAnnotation(
@@ -580,6 +657,38 @@ export async function validateCanonicalChatInlineAnnotations(
   await validateExistingAttachmentOwnership(query, input, editTarget);
   if (editTarget) return;
   for (const annotation of input.annotations) {
+    if (annotation.surface === "local_file") {
+      validateFileAnnotationConversation(
+        targetConversation,
+        input.conversationId,
+        annotation.sourceConversationId,
+      );
+      validateLocalFileSnapshot(annotation);
+      continue;
+    }
+    if (annotation.surface === "workspace_file") {
+      validateFileAnnotationConversation(
+        targetConversation,
+        input.conversationId,
+        annotation.sourceConversationId,
+      );
+      const anchorSource = await validateWorkspaceFileAnnotation(query, {
+        orgId: input.orgId,
+        annotation,
+      });
+      assertSourceAnchor(annotation, anchorSource);
+      if (annotation.sourceRenderMode === "markdown") {
+        await assertSelectedTextExactlyMatchesRange(
+          query,
+          input.orgId,
+          annotation,
+          anchorSource,
+        );
+      } else if (anchorSource.slice(annotation.start, annotation.end) !== annotation.selectedText) {
+        throw unprocessable("Workspace text file annotation does not match the selected source range");
+      }
+      continue;
+    }
     const source = await validateSourceMessage(query, {
       orgId: input.orgId,
       conversationId: input.conversationId,

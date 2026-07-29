@@ -66,6 +66,8 @@ export async function createChatAnnotationCopySourceResolver(input: {
       chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
     )
     .filter((annotation) =>
+      (annotation.surface === "assistant_body" || annotation.surface === "process_transcript")
+      &&
       annotation.sourceConversationId !== input.sourceConversation.id
     );
 
@@ -157,6 +159,9 @@ export async function createChatAnnotationCopySourceResolver(input: {
   }
 
   return (annotation: ChatInlineAnnotation) => {
+    if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+      return null;
+    }
     if (annotation.sourceConversationId === input.sourceConversation.id) {
       return sourceMessageById.get(annotation.sourceMessageId) ?? null;
     }

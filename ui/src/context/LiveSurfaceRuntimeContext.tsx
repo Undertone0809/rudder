@@ -56,6 +56,7 @@ export type LiveSurfaceRenderer = (
 ) => ReactNode;
 
 export type LiveSurfaceOwnerCallbacks = {
+  annotationConversationId?: string | null;
   canOpenNewTab?: boolean;
   savedViewId?: string | null;
   onCloseTarget?: (target: SidePanelTarget) => void;
@@ -591,6 +592,9 @@ export function LiveSurfaceAnchor({
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   const stableCallbacks = useMemo<LiveSurfaceOwnerCallbacks>(() => ({
+    get annotationConversationId() {
+      return callbacksRef.current.annotationConversationId;
+    },
     get canOpenNewTab() {
       return callbacksRef.current.canOpenNewTab;
     },
@@ -767,6 +771,7 @@ function RuntimeSurface({
     <Suspense fallback={<div className="h-full" />}>
       <LazyLibraryLiveSurface
         active={visible}
+        annotationConversationId={callbacks?.annotationConversationId}
         organizationId={organizationIdFromRuntimeId(record.runtimeId)}
         onOpenTarget={openTarget}
         surface={surface}

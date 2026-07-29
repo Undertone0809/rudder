@@ -147,6 +147,15 @@ export async function copyForkChatMessages(input: {
     const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
       message.structuredPayload,
     ).map((annotation) => {
+      if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+        return {
+          ...annotation,
+          sourceConversationId: input.targetConversationId,
+          attachmentIds: annotation.attachmentIds.map((attachmentId) =>
+            copyAttachment(attachmentId, message.id)
+          ),
+        };
+      }
       const sourceMessage = resolveAnnotationSource(annotation);
       const copiedSourceMessageId = sourceMessage
         ? copiedMessageIdBySourceId.get(sourceMessage.id)

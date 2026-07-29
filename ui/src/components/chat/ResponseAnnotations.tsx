@@ -642,6 +642,11 @@ function AnnotationContent({
       <p className="text-xs font-medium text-muted-foreground">
         {ordinal}. {labels.selectedText}
       </p>
+      {annotation.surface === "workspace_file" || annotation.surface === "local_file" ? (
+        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={annotation.sourceFilePath}>
+          {annotation.sourceFilePath}
+        </p>
+      ) : null}
       <blockquote className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">
         {annotation.selectedText}
       </blockquote>
