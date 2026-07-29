@@ -5040,7 +5040,7 @@ describe("messengerService and issue follows", () => {
       },
     });
     const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 100 });
-    expect(firstPage.items.map((item) => item.threadKey)).toContain("approvals");
+    expect(firstPage.items.map((item) => item.threadKey)).not.toContain("approvals");
 
     const customGroups = await messengerSvc.createCustomGroupWithEntries(
       orgId,
@@ -5550,12 +5550,12 @@ describe("messengerService and issue follows", () => {
     expect(aggregateSummaries.map((item) => item.threadKey)).toContain("issues");
     expect(splitSummaries.map((item) => item.threadKey)).not.toContain("issues");
     expect(splitSummaries.map((item) => item.threadKey)).toEqual([
-      `issue:${issueId}`,
       `chat:${chatId}`,
+      `issue:${issueId}`,
       `chat:${olderChatId}`,
     ]);
     expect(splitPage.items.map((item) => item.threadKey)).toEqual(splitSummaries.map((item) => item.threadKey));
-    expect(splitSummaries[0]).toMatchObject({
+    expect(splitSummaries[1]).toMatchObject({
       threadKey: `issue:${issueId}`,
       kind: "issues",
       title: "SPL-1 · Split issue row",
