@@ -8,6 +8,7 @@ import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { projectColorCssVars } from "@/lib/project-colors";
 import { Link } from "@/lib/router";
 import { sidePanelTargetFromHref, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { resolveSkillReferenceSidePanelTarget } from "@/lib/transcript-skill-targets";
 import { cn, relativeTime } from "@/lib/utils";
 import {
   chatAskUserRequestFromStructuredPayload,
@@ -22,6 +23,7 @@ import {
   type ChatPrimaryIssueSummary,
   type Issue,
   type MessengerThreadSummary,
+  type OrganizationSkillListItem,
   type Project
 } from "@rudderhq/shared";
 import {
@@ -606,12 +608,23 @@ export type ChatSidePanelTarget = Extract<
   | { kind: "library_file" }
   | { kind: "library_directory" }
   | { kind: "library_entry" }
+  | { kind: "organization_skill_file" }
+  | { kind: "local_file" }
 >;
 
 export function chatSidePanelTargetFromHref(
   href: string,
   label?: string | null,
+  organizationSkills?: OrganizationSkillListItem[] | null,
 ): ChatSidePanelTarget | null {
+  const skillTarget = resolveSkillReferenceSidePanelTarget(href, label, organizationSkills);
+  if (
+    skillTarget?.kind === "organization_skill_file"
+    || skillTarget?.kind === "local_file"
+  ) {
+    return skillTarget;
+  }
+
   const target = sidePanelTargetFromHref(href, label);
   if (
     target?.kind === "issue"

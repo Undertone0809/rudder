@@ -2065,6 +2065,36 @@ describe("MarkdownBody", () => {
     expect(html).toContain(" carefully");
   });
 
+  it("passes both the resolved Skill file and original Skill identity to click handlers", () => {
+    const onLinkClick = vi.fn(({ event }) => event.preventDefault());
+    const skillHref = "skill://agent/agent-1/agent%3Ahelper?ref=helper";
+    const openHref = "/workspace/.agents/skills/helper/SKILL.md";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody
+          onLinkClick={onLinkClick}
+          skillReferences={[{
+            href: skillHref,
+            label: "helper",
+            openHref,
+          }]}
+        >
+          {`Use [helper](${skillHref})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    container.querySelector("a")?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }),
+    );
+
+    expect(onLinkClick).toHaveBeenCalledWith(expect.objectContaining({
+      href: openHref,
+      label: "helper",
+      sourceHref: skillHref,
+    }));
+  });
+
   it("keeps historical local skill references actionable without current preview metadata", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

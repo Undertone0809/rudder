@@ -1,6 +1,10 @@
 import type { TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import type { OrganizationSkillListItem } from "@rudderhq/shared";
 import type { SidePanelTarget } from "./side-panel-targets";
+import {
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "./skill-reference";
 
 function normalizePath(value: string | null | undefined) {
   const trimmed = value?.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
@@ -81,4 +85,38 @@ export function resolveTranscriptSkillSidePanelTarget(
   }
 
   return null;
+}
+
+export function resolveSkillReferenceSidePanelTarget(
+  href: string,
+  label: string | null | undefined,
+  organizationSkills: OrganizationSkillListItem[] | null | undefined,
+): SidePanelTarget | null {
+  const reference = parseSkillReference(href, label ?? "");
+  if (!reference) return null;
+
+  try {
+    const parsed = new URL(reference.href);
+    if (parsed.hostname === "org") {
+      const skillId = decodeURIComponent(parsed.pathname.replace(/^\/+/u, "")).trim();
+      if (skillId) {
+        const matchingSkill = (organizationSkills ?? []).find((skill) => skill.id === skillId);
+        return {
+          kind: "organization_skill_file",
+          skillId,
+          filePath: "SKILL.md",
+          label: matchingSkill?.slug || matchingSkill?.name || reference.label,
+        };
+      }
+    }
+    if (parsed.hostname === "agent") return null;
+  } catch {
+    // Legacy short skill references are resolved by their normalized identity below.
+  }
+
+  const targetPath = resolveSkillReferenceOpenHref(reference.href);
+  return resolveTranscriptSkillSidePanelTarget({
+    name: targetPath ? "" : reference.label,
+    path: targetPath,
+  }, organizationSkills);
 }

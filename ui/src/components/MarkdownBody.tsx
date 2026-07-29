@@ -52,6 +52,7 @@ export type MarkdownLinkClickHandler = (input: {
   event: MouseEvent<HTMLAnchorElement>;
   href: string;
   label: string;
+  sourceHref?: string;
 }) => boolean | void;
 
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
@@ -954,8 +955,13 @@ export function MarkdownBody({
     event.clipboardData.setData("text/plain", markdownSource);
     event.preventDefault();
   };
-  const handleMarkdownLinkClick = (event: MouseEvent<HTMLAnchorElement>, href: string, label: string) => {
-    const handled = onLinkClick?.({ event, href, label });
+  const handleMarkdownLinkClick = (
+    event: MouseEvent<HTMLAnchorElement>,
+    href: string,
+    label: string,
+    sourceHref?: string,
+  ) => {
+    const handled = onLinkClick?.({ event, href, label, sourceHref });
     if (handled) {
       event.preventDefault();
       return;
@@ -1150,11 +1156,15 @@ export function MarkdownBody({
           <SkillReferenceToken
             label={skillLabel}
             preview={preview}
-            fallbackOpenHref={resolveSkillReferenceOpenHref(skillReference.href)}
+            fallbackOpenHref={
+              resolveSkillReferenceOpenHref(skillReference.href)
+              ?? preview?.openHref
+              ?? "#"
+            }
             sourceAttributes={sourceAttributesForNode(node)}
             onOpen={onLinkClick
               ? (event, targetHref, targetLabel) => {
-                  handleMarkdownLinkClick(event, targetHref, targetLabel);
+                  handleMarkdownLinkClick(event, targetHref, targetLabel, skillReference.href);
                 }
               : undefined}
           />

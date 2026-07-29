@@ -54,7 +54,7 @@ test.describe("Chat rich references", () => {
       role: "assistant",
       kind: "message",
       status: "completed",
-      body: `Use [${skill.slug}](skill://org/${skill.id}?ref=${skill.slug}) for this review.`,
+      body: `Use [${skill.slug}](skill://${skill.slug}) for this review.`,
       replyingAgentId: agent.id,
       chatTurnId: randomUUID(),
       turnVariant: 0,

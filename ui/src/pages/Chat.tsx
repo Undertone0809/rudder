@@ -302,14 +302,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     checkpointDispatcher.retain(activeCheckpointKeys);
   }, [checkpointDispatcher, streamDrafts]);
   useEffect(() => () => checkpointDispatcher.dispose(), [checkpointDispatcher]);
-  const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); const pathname = chatConversationPath(chatMessageTarget.conversationId); navigate(chatMessageTarget.messageId ? {
+  const {
+    data: organizationSkills,
+    error: organizationSkillsError,
+    isPending: organizationSkillsPending,
+  } = useQuery({
+    queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__"),
+    queryFn: () => organizationSkillsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, });
+  const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label, sourceHref }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const skillReferenceTarget = sourceHref ? chatSidePanelTargetFromHref(sourceHref, label, organizationSkills) : null; if (skillReferenceTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), skillReferenceTarget); return true; } const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); const pathname = chatConversationPath(chatMessageTarget.conversationId); navigate(chatMessageTarget.messageId ? {
         pathname,
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
-      } : pathname); return true; } const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const targetPath = resolveLocalFileTarget(href, label); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+      } : pathname); return true; } const sidePanelTarget = chatSidePanelTargetFromHref(href, label, organizationSkills); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const targetPath = resolveLocalFileTarget(href, label); if (!targetPath) { if (!sourceHref) return; event.preventDefault(); event.stopPropagation(); pushToast({ title: "Skill file is not available", body: `Could not resolve ${label.trim() || "this skill"} in the current organization.`, tone: "info" }); return true; } event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
         kind: "local_file",
         filePath: targetPath,
         label: label.trim() || targetPath.split(/[\\/]/u).at(-1) || targetPath,
-      }); return true; }, [chatConversationPath, navigate, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
+      }); return true; }, [chatConversationPath, navigate, openSidePanelTargetForContext, organizationSkills, pushToast, resolveCurrentSidePanelChatContextKey]); const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
   const openTranscriptFile = useCallback((targetPath: string, label: string) => {
     openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
       kind: "local_file",
@@ -541,13 +548,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     noProjectId: NO_PROJECT_ID,
     contextLinks: draftContextLinks,
   });
-  const {
-    data: organizationSkills,
-    error: organizationSkillsError,
-    isPending: organizationSkillsPending,
-  } = useQuery({
-    queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__"),
-    queryFn: () => organizationSkillsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, });
   const resolveTranscriptSkillTarget = useCallback(
     (target: TranscriptSkillTarget) => (
       resolveTranscriptSkillSidePanelTarget(target, organizationSkills)

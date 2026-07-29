@@ -22,6 +22,7 @@ import {
   type ChatMessage,
   type Issue,
   type MessengerThreadSummary,
+  type OrganizationSkillListItem,
   type Project,
 } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -890,6 +891,30 @@ describe("Chat Side Panel targets", () => {
       kind: "library_directory",
       directoryPath: "docs",
       label: "Docs",
+    });
+    expect(chatSidePanelTargetFromHref(
+      "skill://org/skill-1?ref=visualize",
+      "visualize",
+    )).toEqual({
+      kind: "organization_skill_file",
+      skillId: "skill-1",
+      filePath: "SKILL.md",
+      label: "visualize",
+    });
+    expect(chatSidePanelTargetFromHref(
+      "/workspace/.agents/skills/visualize/SKILL.md",
+      "visualize",
+      [{
+        id: "org-visualize",
+        slug: "visualize",
+        key: "rudder/visualize",
+        name: "Visualize",
+        sourcePath: "/workspace/organization-skills/visualize",
+      } as OrganizationSkillListItem],
+    )).toEqual({
+      kind: "local_file",
+      filePath: "/workspace/.agents/skills/visualize/SKILL.md",
+      label: "visualize",
     });
   });
 
