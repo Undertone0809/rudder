@@ -67,7 +67,7 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 
 Rudder is the coordination layer, not the model provider. Run agents with the local tools and provider accounts you already use—including Codex, Claude Code, Cursor, OpenClaw, Bash, or your own HTTP service. Local runtimes keep their existing installation, login, and credentials; Rudder connects assignment, context, execution, review, budgets, and memory around them.
 
-![Rudder coordinates agent teams across local runtimes and provider environments.](docs/images/rudder-runtime-adapters.png)
+![Rudder coordinates agent teams across local runtimes and provider environments.](docs/images/rudder-runtime-adapters.svg)
 
 [See supported runtimes and configuration options.](https://docs.rudderhq.dev/reference/runtime-types)
 

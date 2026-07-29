@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 920" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder coordinates agent teams across runtimes</title>
+  <desc id="desc">Codex, Claude, Cursor, OpenClaw, Bash, and HTTP connect to Rudder's assignment, context, execution, review, budget, and memory loop.</desc>
+  <defs>
+    <style>
+      .serif { font-family: Georgia, "Times New Roman", serif; fill: #171714; }
+      .sans { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #171714; }
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #73766f; letter-spacing: 1.5px; }
+      .card { fill: #fbf9f3; stroke: #c9cbc4; stroke-width: 2; }
+      .rule { stroke: #d2d3cd; stroke-width: 2; }
+    </style>
+    <linearGradient id="openclaw-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff4d4d"/>
+      <stop offset="1" stop-color="#991b1b"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="2400" height="920" fill="#f7f3ea"/>
+  <rect x="80" y="48" width="86" height="5" rx="2.5" fill="#0b956b"/>
+
+  <text class="serif" x="80" y="145" font-size="72">Rudder coordinates agent teams across runtimes.</text>
+  <text class="sans" x="1740" y="78" font-size="28" fill="#686c66">
+    <tspan x="1740" dy="0">Use the local tools and provider</tspan>
+    <tspan x="1740" dy="42">accounts you already trust.</tspan>
+    <tspan x="1740" dy="42">Rudder connects their work in one loop.</tspan>
+  </text>
+
+  <rect x="80" y="238" width="2240" height="112" fill="#fbf9f3" stroke="#c9cbc4" stroke-width="2"/>
+  <circle cx="120" cy="274" r="18" fill="#0b956b"/>
+  <text class="sans" x="120" y="282" text-anchor="middle" font-size="22" font-weight="700" fill="#fff">R</text>
+  <text class="mono" x="2280" y="282" text-anchor="end" font-size="15" font-weight="700">RUDDER COORDINATION LOOP</text>
+  <line x1="80" y1="305" x2="2320" y2="305" class="rule"/>
+
+  <g class="mono" font-size="14" text-anchor="middle">
+    <text x="267" y="333">ASSIGNMENT</text>
+    <text x="640" y="333">CONTEXT</text>
+    <text x="1013" y="333">EXECUTION</text>
+    <text x="1387" y="333">REVIEW</text>
+    <text x="1760" y="333">BUDGET</text>
+    <text x="2133" y="333">MEMORY</text>
+  </g>
+  <g class="rule">
+    <line x1="453" y1="305" x2="453" y2="350"/>
+    <line x1="827" y1="305" x2="827" y2="350"/>
+    <line x1="1200" y1="305" x2="1200" y2="350"/>
+    <line x1="1573" y1="305" x2="1573" y2="350"/>
+    <line x1="1947" y1="305" x2="1947" y2="350"/>
+  </g>
+
+  <!-- Codex -->
+  <g transform="translate(80 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">CODEX</text>
+    <g transform="translate(145 165)">
+      <circle cx="34" cy="34" r="34" fill="#000"/>
+      <path d="M34 13v42M23 24l11-11 11 11M23 44l11 11 11-11" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL / CLOUD</text>
+  </g>
+
+  <!-- Claude -->
+  <g transform="translate(457 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">CLAUDE</text>
+    <g transform="translate(144 164)" fill="#d97757">
+      <path d="M36 0l7 22L56 3l-4 23L70 11 57 31l23-5-21 12 22 7-24 1 18 16-22-9 10 22-16-18 1 24-8-22-10 22 3-24-18 17 12-21-23 8 20-15-24-2 23-6L3 25l23 4L12 10l20 14z"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL / CLOUD</text>
+  </g>
+
+  <!-- Cursor -->
+  <g transform="translate(834 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">CURSOR</text>
+    <g transform="translate(145 165)">
+      <rect width="68" height="68" rx="16" fill="#14120b"/>
+      <path d="M54 20 35 53V34L16 23h38c2 0 3 2 2 4z" fill="#edecec"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">CLI</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL</text>
+  </g>
+
+  <!-- OpenClaw -->
+  <g transform="translate(1210 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">OPENCLAW</text>
+    <g transform="translate(144 160) scale(.58)">
+      <path d="M60 10C30 10 15 35 15 55s15 40 30 45v10h10v-10c5 2 10 0 10 0v10h10v-10c15-5 30-25 30-45S90 10 60 10Z" fill="url(#openclaw-gradient)"/>
+      <path d="M20 45C5 40 0 50 5 60s15 5 20-5c3-7 0-10-5-10ZM100 45c15-5 20 5 15 15s-15 5-20-5c-3-7 0-10 5-10Z" fill="url(#openclaw-gradient)"/>
+      <circle cx="45" cy="35" r="6" fill="#1a1a2e"/>
+      <circle cx="75" cy="35" r="6" fill="#1a1a2e"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">GATEWAY</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">LOCAL / CLOUD</text>
+  </g>
+
+  <!-- Bash -->
+  <g transform="translate(1587 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">BASH</text>
+    <g transform="translate(145 165)">
+      <rect width="68" height="68" rx="14" fill="#2d2d2d"/>
+      <path d="m19 23 12 11-12 11M37 45h15" fill="none" stroke="#4af626" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">SHELL</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">ANY</text>
+  </g>
+
+  <!-- HTTP -->
+  <g transform="translate(1964 390)">
+    <rect class="card" width="356" height="390"/>
+    <text class="mono" x="24" y="34" font-size="14">ADAPTER PORT</text>
+    <circle cx="330" cy="27" r="6" fill="#0b956b"/>
+    <line x1="0" y1="54" x2="356" y2="54" class="rule"/>
+    <text class="serif" x="24" y="126" font-size="42">HTTP</text>
+    <g transform="translate(145 165)" fill="none" stroke="#3b82f6">
+      <circle cx="34" cy="34" r="31" stroke-width="4"/>
+      <ellipse cx="34" cy="34" rx="14" ry="31" stroke-width="3"/>
+      <path d="M4 34h60M9 19h50M9 49h50" stroke-width="3"/>
+    </g>
+    <line x1="0" y1="316" x2="356" y2="316" class="rule"/>
+    <line x1="178" y1="316" x2="178" y2="390" class="rule"/>
+    <text class="mono" x="18" y="342" font-size="12">TYPE</text>
+    <text class="mono" x="18" y="367" font-size="13" fill="#171714">HTTP</text>
+    <text class="mono" x="196" y="342" font-size="12">ENV</text>
+    <text class="mono" x="196" y="367" font-size="13" fill="#171714">ANY</text>
+  </g>
+
+  <text class="mono" x="80" y="850" font-size="15">YOUR RUNTIMES KEEP THEIR OWN INSTALLATION, LOGIN, AND CREDENTIALS.</text>
+  <text class="sans" x="2320" y="850" text-anchor="end" font-size="21" fill="#686c66">Rudder coordinates the work around them.</text>
+</svg>
