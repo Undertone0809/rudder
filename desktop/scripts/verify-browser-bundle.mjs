@@ -38,12 +38,6 @@ export function packagedCliArgs(platform, args) {
   ];
 }
 
-export function packagedCliRuntimeEnv(platform, env) {
-  const runtimeEnv = { ...env };
-  if (platform === "linux") delete runtimeEnv.DBUS_SESSION_BUS_ADDRESS;
-  return runtimeEnv;
-}
-
 export async function verifyBrowserBundle(options) {
   const serverPackageDir = path.resolve(options.serverPackageDir);
   const cliEntry = path.resolve(options.cliEntry ?? path.join(serverPackageDir, "desktop-cli.js"));
@@ -142,13 +136,13 @@ export async function verifyBrowserBundle(options) {
         command: packagedExecutable,
         args: packagedCliArgs(process.platform, browserCommand.args),
       };
-      const packagedRuntimeEnv = packagedCliRuntimeEnv(process.platform, {
+      const packagedRuntimeEnv = {
         ...process.env,
         HOME: tempRoot,
         PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
         RUDDER_BROWSER_ENABLED: "true",
         RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
-      });
+      };
       const coreResult = await preflightModule.preflightRudderMcpServer({
         command: packagedCommand,
         runtimeEnv: packagedRuntimeEnv,

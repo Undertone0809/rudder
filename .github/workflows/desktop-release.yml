@@ -129,7 +129,9 @@ jobs:
           fi
 
           if [ "$(uname -s)" = "Linux" ]; then
-            xvfb-run --auto-servernum pnpm desktop:dist
+            command -v dbus-run-session
+            command -v xvfb-run
+            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:dist
           else
             pnpm desktop:dist
           fi
