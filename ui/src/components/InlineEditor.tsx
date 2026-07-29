@@ -240,6 +240,7 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
+          activateInlineTokensOnPlainClick={variant === "issue-description"}
           submitShortcut="mod-enter"
           onSubmit={() => {
             clearAutosaveDebounce();

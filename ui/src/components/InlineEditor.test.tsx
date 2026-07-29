@@ -16,6 +16,7 @@ const markdownEditorHarness = vi.hoisted(() => ({
   onChange: null as null | ((value: string) => void),
   onSubmit: null as null | (() => void),
   submitShortcut: null as null | string,
+  activateInlineTokensOnPlainClick: null as null | boolean,
 }));
 
 vi.mock("./MarkdownBody", () => ({
@@ -27,12 +28,20 @@ vi.mock("./MarkdownBody", () => ({
 vi.mock("./MarkdownEditor", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
-    MarkdownEditor: forwardRef(function MarkdownEditorMock({ value, onChange, onSubmit, contentClassName, submitShortcut }: {
+    MarkdownEditor: forwardRef(function MarkdownEditorMock({
+      value,
+      onChange,
+      onSubmit,
+      contentClassName,
+      submitShortcut,
+      activateInlineTokensOnPlainClick,
+    }: {
       value: string;
       onChange: (value: string) => void;
       onSubmit: () => void;
       contentClassName?: string;
       submitShortcut?: string;
+      activateInlineTokensOnPlainClick?: boolean;
     }, ref) {
       markdownEditorHarness.currentMarkdown = value;
       markdownEditorHarness.onChange = (nextValue) => {
@@ -41,6 +50,8 @@ vi.mock("./MarkdownEditor", async () => {
       };
       markdownEditorHarness.onSubmit = onSubmit;
       markdownEditorHarness.submitShortcut = submitShortcut ?? null;
+      markdownEditorHarness.activateInlineTokensOnPlainClick =
+        activateInlineTokensOnPlainClick ?? null;
       useImperativeHandle(ref, () => ({
         focus: () => undefined,
         getMarkdown: () => markdownEditorHarness.currentMarkdown ?? value,
@@ -103,6 +114,21 @@ describe("InlineEditor", () => {
     expect(html).toContain("data-testid=\"markdown-editor\"");
     expect(html).not.toContain("data-testid=\"markdown-body\"");
     expect(html).not.toContain("hover:bg-accent/50");
+  });
+
+  it("activates inline reference links on plain click in issue descriptions", () => {
+    renderToStaticMarkup(
+      <InlineEditor
+        value="Use [brief](library-file://file?p=docs%2Fbrief.md)."
+        onSave={() => undefined}
+        multiline
+        alwaysEdit
+        editorEngine="milkdown"
+        variant="issue-description"
+      />,
+    );
+
+    expect(markdownEditorHarness.activateInlineTokensOnPlainClick).toBe(true);
   });
 
   it("flushes changed always-edit Markdown on blur without leaving edit mode", async () => {

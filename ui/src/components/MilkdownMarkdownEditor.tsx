@@ -2,6 +2,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { getImagePreviewElementDetails, getImagePreviewName } from "@/lib/image-preview";
+import { useNavigate } from "@/lib/router";
 import { commandsCtx, defaultValueCtx, Editor, editorViewCtx, rootCtx } from "@milkdown/kit/core";
 import { history, redoCommand, undoCommand } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
@@ -1069,6 +1070,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   activateInlineTokensOnPlainClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
+  const navigate = useNavigate();
   const editorValue = useMemo(() => normalizeRelaxedMarkdownSyntax(value), [value]);
   const issueMentions = useMemo(() => {
     const optionByKey = mentionOptionMap(mentions ?? []);
@@ -1527,6 +1529,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   return (
     <div
       ref={containerRef}
+      data-inline-token-click-mode={activateInlineTokensOnPlainClick ? "plain" : "modified"}
       className={cn(
         "relative rudder-milkdown-scope",
         bordered ? "rounded-md border border-border bg-transparent" : "bg-transparent",
@@ -1703,7 +1706,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         }
         const navigationPath = rudderTokenNavigationPath(href);
         if (!navigationPath) return;
-        window.location.assign(navigationPath);
+        navigate(navigationPath);
       }}
       onDoubleClickCapture={(event) => {
         const target = event.target;
