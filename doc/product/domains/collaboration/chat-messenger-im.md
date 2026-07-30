@@ -56,6 +56,8 @@ related_code:
   - server/src/services/chat-steer-messages.ts
   - server/src/services/side-chats.ts
   - server/src/services/messenger.ts
+  - server/src/services/legacy-operator-state.ts
+  - server/src/services/local-account-auth.ts
   - server/src/services/organization-intelligence-profiles.ts
   - server/src/routes/integrations.ts
   - server/src/services/integrations/agent-integrations.ts
@@ -91,6 +93,7 @@ related_code:
   - ui/src/lib/chat-stream-state.ts
   - ui/src/pages/ProjectDetail.tsx
   - ui/src/lib/messenger-thread-organization.ts
+  - ui/src/lib/messenger-preferences.ts
   - ui/src/pages/Chat.messages.tsx
   - ui/src/components/MarkdownEditor.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
@@ -115,6 +118,7 @@ related_tests:
   - server/src/__tests__/chat-work-manifest.test.ts
   - server/src/__tests__/chat-assistant.test.ts
   - server/src/__tests__/messenger-service.test.ts
+  - server/src/__tests__/local-account-auth.test.ts
   - server/src/__tests__/product-intelligence.test.ts
   - server/src/__tests__/organization-intelligence-profiles.test.ts
   - ui/src/components/MessengerContextSidebar.actions.test.tsx
@@ -155,6 +159,7 @@ related_tests:
   - packages/shared/src/website-icons.test.ts
   - tests/e2e/markdown-website-link-rendering.spec.ts
   - tests/e2e/messenger-contract.spec.ts
+  - tests/e2e/local-account-upgrade.spec.ts
   - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-streaming.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
@@ -3261,6 +3266,10 @@ Invariants:
 - Messenger must cite or route to owning domain contracts; it must not redefine
   issue, approval, run, or automation state.
 - Unread/attention counts must be organization-scoped and user-scoped.
+- When a local installation changes from the legacy `local-board` principal to
+  an account UUID, its acknowledged read progress must be reconciled under
+  `ORG.LOCAL.ACCOUNT.UPGRADE.001`; identity upgrade must not turn historical
+  acknowledged work into fresh unread attention.
 - Seeded onboarding issue threads must remain read for the seeded operator
   until later issue activity occurs after the seed read marker.
 - A Saved View must not have unread state, unread count, attention state,
@@ -3503,6 +3512,10 @@ Invariants:
   shows a title-generation motion state on the group header.
 - Manual group title regeneration failure must not mutate the existing group
   title.
+- Local account claim and already-claimed repair must preserve custom groups,
+  membership, group pin state, and supported device-local ordering under
+  `ORG.LOCAL.ACCOUNT.UPGRADE.001`. Repeating recovery must not duplicate groups
+  or overwrite newer account-era ordering.
 
 Evidence:
 
@@ -3817,6 +3830,11 @@ Side.
 - Restart, renderer crash, explicit tab close, and Browser reset may create a
   new `webContentsId`. Cold recovery promises only the last eligible URL and
   profile, not history, form state, scroll, POST state, or in-page memory.
+- Local account claim and already-claimed repair must preserve Saved View
+  identity, membership, and placement under `ORG.LOCAL.ACCOUNT.UPGRADE.001`.
+  When a target Saved View already exists, recovery must map legacy receipts to
+  its actual target placement instead of duplicating it or restoring stale
+  placement.
 
 ### Drift Boundaries
 

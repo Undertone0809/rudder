@@ -7,6 +7,7 @@ contract_ids:
   - ORG.IDENTITY.001
   - ORG.SETTINGS.001
   - ORG.ONBOARDING.001
+  - ORG.LOCAL.ACCOUNT.UPGRADE.001
   - ORG.DESKTOP.UPDATE.001
   - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
@@ -18,6 +19,7 @@ related_code:
   - desktop/src/browser-profile.ts
   - desktop/src/desktop-quit-flow.ts
   - desktop/src/desktop-update-flow.ts
+  - desktop/src/identity-local-session.ts
   - desktop/src/main.ts
   - desktop/src/post-update-reload.ts
   - desktop/src/release-notes.ts
@@ -27,6 +29,8 @@ related_code:
   - server/src/routes/instance-settings.ts
   - server/src/routes/onboarding.ts
   - server/src/services/instance-settings.ts
+  - server/src/services/legacy-operator-state.ts
+  - server/src/services/local-account-auth.ts
   - server/src/services/orgs.ts
   - server/src/services/operator-profile.ts
   - server/src/services/organization-intelligence-profiles.ts
@@ -37,6 +41,7 @@ related_code:
   - ui/src/App.tsx
   - ui/src/lib/organization-routes.ts
   - ui/src/lib/organization-page-memory.ts
+  - ui/src/lib/messenger-preferences.ts
   - ui/src/hooks/useOrganizationPageMemory.ts
   - ui/src/components/Layout.tsx
   - ui/src/components/MobileBottomNav.tsx
@@ -73,10 +78,12 @@ related_tests:
   - desktop/src/browser-profile.test.ts
   - desktop/src/desktop-quit-flow.test.ts
   - desktop/src/desktop-update-flow.test.ts
+  - desktop/src/identity-local-session.test.ts
   - desktop/src/release-notes.test.ts
   - desktop/src/post-update-reload.test.ts
   - server/src/__tests__/instance-settings-service.test.ts
   - server/src/__tests__/instance-settings-routes.test.ts
+  - server/src/__tests__/local-account-auth.test.ts
   - server/src/__tests__/operator-profile-service.test.ts
   - server/src/__tests__/orgs-service.test.ts
   - server/src/__tests__/organization-intelligence-profiles.test.ts
@@ -103,6 +110,7 @@ related_tests:
   - ui/src/components/DesktopUpdatePromptBridge.test.tsx
   - ui/src/components/DesktopUpdateStatusCard.test.tsx
   - tests/e2e/desktop-update-prompt.spec.ts
+  - tests/e2e/local-account-upgrade.spec.ts
   - tests/e2e/onboarding.spec.ts
   - tests/e2e/organization-issue-key.spec.ts
   - tests/e2e/settings-appearance.spec.ts
@@ -484,6 +492,225 @@ Evidence:
   instruction text behavior.
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop
   validation, not this product contract alone.
+
+## ORG.LOCAL.ACCOUNT.UPGRADE.001
+
+### Contract Summary
+
+Claiming an existing trusted local Rudder installation into a Rudder Account
+must preserve the operator's scoped work state across the identity change from
+the legacy `local-board` principal to the account user UUID. Recovery runs for
+online and offline Desktop sessions, is safe to repeat, and retains the legacy
+source records so an automatic version rollback can still read them.
+
+### Intent / User Job
+
+- An operator can install a new Desktop or Canary version, sign in or resume
+  offline, and continue from the same Messenger attention state, groups, Saved
+  Views, ordering, issue state, and profile instead of receiving a seemingly
+  fresh account.
+- A repaired installation can run the same claim again without duplicating
+  state or undoing newer account-era changes.
+- If the new build rolls back, the older build can still use the legacy state
+  that existed before the account claim.
+
+### Why / Design Reasoning
+
+- Operator-scoped records use the authenticated user id. Changing the local
+  principal without an explicit compatibility boundary makes durable data
+  appear deleted even though it remains in the same database.
+- Recomputing unread state from content is not recovery: it can turn years of
+  acknowledged messages into `99+` attention and cannot reconstruct manual
+  groups, Saved View placement, or device-local ordering.
+- Moving or deleting the legacy rows would make rollback unsafe. A
+  copy-and-reconcile migration is therefore preferred over destructive
+  ownership transfer.
+- Account-era edits may already exist when a Canary is repaired. Recovery must
+  merge monotonically or choose the newest authoritative state instead of
+  blindly replacing the target namespace.
+
+### Actors / Objects / State
+
+- The Desktop shell establishes either an online server-exchange session or a
+  valid offline-grant session, then invokes the authenticated local-installation
+  claim.
+- The legacy principal is `local-board`; older browser-only preference keys may
+  also use `anonymous`. The target principal is the authenticated account user
+  UUID bound to the installation.
+- Server-owned recovery includes active organization membership scope,
+  Messenger custom groups and entries, Saved Views and mutation receipts,
+  Messenger and Chat read/pin state, issue read state and follows, and the
+  operator profile.
+- Device-local recovery includes project order, Messenger project-group order,
+  Agent/Kind thread-group order, default thread order, and hidden-issue
+  watermarks stored under a user-specific local preference key.
+- `installation.legacy_operator_state_copied` activity records are durable
+  receipts for organization-scoped server recovery.
+
+### Entry Points / Inputs
+
+- First account claim for an installation that still has active
+  `local-board` organization memberships.
+- A repeated claim for an already-bound installation, including a repair after
+  a partially compatible Canary already changed membership ownership.
+- Desktop online session establishment and Desktop offline-grant session
+  establishment.
+- First rendered Messenger preference read under the authenticated account user
+  UUID.
+
+### Product Logic Flow
+
+1. Desktop authenticates the local account session online or offline and then
+   calls the local installation claim before treating identity setup as
+   complete.
+2. The server verifies that the installation binding and authenticated external
+   identity resolve to the same local account user. A different account cannot
+   claim or repair the installation.
+3. In one claim transaction, Rudder scopes recovery to organizations where the
+   legacy or target user has an active membership. First claim transfers the
+   active organization and instance role boundary to the account user; an
+   already-claimed installation still runs reconciliation.
+4. Rudder copies missing legacy groups, entries, Saved Views, mutation receipts,
+   follows, read state, pin state, and profile fields into the target namespace.
+   Stable deterministic ids and conflict-aware mapping make the operation
+   repeatable.
+5. Read progress takes the greatest known read timestamp. A pin/unpin conflict
+   takes the value with the newest update timestamp. Existing target Saved View
+   identity and actual target placement win over a stale legacy receipt.
+   Existing non-empty target profile fields and preference keys are preserved.
+6. The browser preference layer copies each supported, valid legacy
+   `local-board` or `anonymous` key only when the account-specific destination
+   key is absent. Invalid JSON is ignored and unavailable storage does not
+   invalidate successful server recovery.
+7. Rudder retains all legacy source rows and keys. Repeating the claim
+   reconciles any missing compatible state and emits at most one recovery
+   receipt per installation, organization, and target user.
+8. Messenger renders from the recovered target namespace, so acknowledged work,
+   custom grouping, Saved View placement, and manual order survive reload.
+
+### Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| First claim | Active legacy organization belongs to `local-board` and installation is unclaimed | Bind the account and copy scoped operator state transactionally | Present a clean Messenger or delete legacy state | Auth service tests and upgrade E2E |
+| Already claimed repair | Installation already belongs to the same account but legacy state remains | Reconcile the same compatibility copy again, idempotently | Return early before repair or duplicate groups/Saved Views | Auth service tests |
+| Read-state conflict | Legacy and target both have read markers | Keep the greatest read progress | Reset to an older marker and create false unread debt | Auth service tests and upgrade E2E |
+| Pin-state conflict | Legacy and target pin values differ | Keep the value from the newest state update | Re-pin something the account later unpinned | Auth service tests |
+| Saved View identity conflict | Target already has the same mutation, instance, or resource | Reuse target identity and record its actual placement | Duplicate the Saved View or restore a stale legacy group receipt | Auth service tests |
+| Local preference conflict | Valid target key already exists | Preserve target value | Overwrite account-era ordering with legacy order | Messenger preference tests |
+| Invalid or unavailable local storage | Legacy value is invalid JSON or storage rejects access | Skip that device-local key; retain server recovery | Crash Messenger or discard server-owned state | Messenger preference tests |
+| Different account | Installation binding or external identity does not match | Reject the claim without changing ownership or operator state | Copy one operator's state into another account | Auth service tests |
+| Automatic rollback | A newer claim completed and an older build starts | Legacy source rows and keys remain available | Require a destructive reverse migration | Auth service and preference tests |
+
+### Actor-Visible Input
+
+- The operator supplies normal online sign-in or an already-issued offline
+  credential; there is no separate manual data-migration workflow.
+- Messenger continues to expose the same organization and normal thread/group
+  controls after the account session is established.
+
+### Operator-Visible Output
+
+- The Messenger badge reflects genuinely unread work rather than every
+  historical message.
+- Existing Custom Groups, grouped members, Saved Views, loose/group placement,
+  pin state, ordering, hidden issue watermarks, follows, and operator profile
+  remain available after update and reload.
+- A claim failure is surfaced as an identity/setup failure. Rudder must not
+  silently continue into a new-looking empty state and imply that recovery
+  succeeded.
+
+### Persisted Evidence
+
+- Target-user rows preserve recovered operator state in their owning tables.
+- The original `local-board` rows and legacy local preference keys remain
+  intact for downgrade compatibility.
+- One `installation.legacy_operator_state_copied` activity receipt per scoped
+  organization records the installation, target actor, prior principal, and
+  copy-preserving compatibility mode.
+
+### Canonical Scenarios
+
+1. Upgrade a long-lived local Messenger:
+   - Trigger: Claim an already-used installation with 105 historical Chat
+     messages acknowledged and one genuinely unread Chat.
+   - Expected state/action: Copy the legacy read marker and directory state to
+     the account user.
+   - Visible output: Messenger shows one unread item, the original group, and
+     its Saved View before and after reload.
+   - Evidence: `tests/e2e/local-account-upgrade.spec.ts`.
+2. Repair an already-claimed Canary:
+   - Trigger: Reopen an installation whose membership was already moved but
+     whose legacy operator rows were not copied.
+   - Expected state/action: The repeated claim reconciles missing state and
+     leaves a single receipt and stable target records.
+   - Visible output: Restored Messenger state without duplicate groups or
+     Saved Views.
+   - Evidence: `server/src/__tests__/local-account-auth.test.ts`.
+3. Preserve newer account edits:
+   - Trigger: Target read/pin/profile/Saved View or local ordering state
+     conflicts with legacy state.
+   - Expected state/action: Use monotonic read progress, newest pin state,
+     target placement, and existing target preference values.
+   - Visible output: Recovery does not undo the operator's newer organization.
+   - Evidence: auth service and Messenger preference tests.
+4. Resume offline:
+   - Trigger: Desktop creates a valid local session from an offline grant.
+   - Expected state/action: Desktop still invokes the same local claim before
+     completing session setup.
+   - Visible output: Offline startup uses the recovered account namespace.
+   - Evidence: `desktop/src/identity-local-session.test.ts`.
+
+### Invariants / Non-Goals
+
+- Recovery is scoped to active memberships for the legacy or target user and
+  must never cross organization or account boundaries.
+- First claim and already-claimed repair use the same reconciliation behavior.
+  Online and offline Desktop session paths both invoke it.
+- Recovery must be idempotent, source-preserving, and conflict-aware.
+- Read progress cannot move backward. A newer unpin must not be overwritten by
+  an older legacy pin.
+- Existing target Saved View identity and actual target placement must not be
+  replaced by a stale legacy mutation receipt.
+- Valid account-specific local preferences must not be overwritten. Invalid
+  legacy preference payloads must not be copied.
+- This contract does not promise cross-device synchronization for
+  local-storage ordering or hidden-watermark preferences; it preserves them on
+  the upgraded local profile.
+- This contract does not authorize one Rudder Account to adopt another
+  account's installation or data.
+
+### Drift Boundaries
+
+- Changing the local principal namespace, claim ordering, recovered table set,
+  conflict rules, rollback retention, online/offline parity, activity receipt,
+  or device-local preference set requires updating this contract.
+- Deterministic-id hashing, batching, internal helper boundaries, and exact
+  response shapes may change without a contract update when the visible and
+  persisted compatibility behavior remains equivalent.
+
+### Traceability
+
+Related code:
+
+- `desktop/src/identity-local-session.ts`
+- `server/src/services/local-account-auth.ts`
+- `server/src/services/legacy-operator-state.ts`
+- `ui/src/lib/messenger-preferences.ts`
+
+Related tests:
+
+- `desktop/src/identity-local-session.test.ts`
+- `server/src/__tests__/local-account-auth.test.ts`
+- `ui/src/lib/messenger-preferences.test.ts`
+- `tests/e2e/local-account-upgrade.spec.ts`
+- `tests/e2e/messenger-contract.spec.ts`
+
+Related contracts:
+
+- `MESSENGER.ATTENTION.001`
+- `MESSENGER.CUSTOM.GROUPS.001`
+- `MESSENGER.SAVED.VIEWS.001`
 
 ## ORG.DESKTOP.UPDATE.001
 
