@@ -1932,7 +1932,7 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
   );
 }
 
-async function assertFreshDesktopWindowSize(electronApp, context) {
+async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64) {
   const { actual, workArea } = await electronApp.evaluate(({ BrowserWindow, screen }) => ({
     actual: BrowserWindow.getAllWindows()[0]?.getSize(),
     workArea: screen.getPrimaryDisplay().workAreaSize,
@@ -1942,7 +1942,14 @@ async function assertFreshDesktopWindowSize(electronApp, context) {
     const minimum = Math.min(MINIMUM_INITIAL_WINDOW_SIZE[index], available);
     return Math.max(minimum, Math.min(preferred, Math.floor(available * INITIAL_WINDOW_WORK_AREA_RATIO)));
   });
-  assert.deepEqual(actual, expected, `${context} should open at the expected default window size`);
+  assert.ok(actual, `${context} should expose an application window`);
+  assert.equal(actual.length, expected.length);
+  for (const [index, expectedDimension] of expected.entries()) {
+    assert.ok(
+      Math.abs(actual[index] - expectedDimension) <= tolerance,
+      `${context} should open at the expected default window size: expected ${expected.join("x")} ±${tolerance}px, got ${actual.join("x")}`,
+    );
+  }
 }
 
 async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
@@ -2058,6 +2065,9 @@ async function runAccountGateScenario(mode) {
 async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
   const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports, extraEnv);
   const page = await waitForBoardWindow(electronApp, firstPage);
+  // On macOS the Dock can change the reported work area while the boot window
+  // hands off to the application window. The shared tolerance stays strict
+  // enough to reject the former 1440px default.
   await assertFreshDesktopWindowSize(electronApp, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
