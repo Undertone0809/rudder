@@ -1,5 +1,5 @@
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import type { DesktopLocalAppDefinition } from "@/lib/desktop-shell";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import type { AppBuilderApp } from "@rudderhq/shared";
 
 export type ManagedAppEntry = {
