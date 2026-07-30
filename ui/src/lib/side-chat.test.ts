@@ -32,6 +32,17 @@ describe("Side Chat helpers", () => {
     expect(latestSideChatAnchor([older, message({ role: "user" }), streaming])).toBe(older);
   });
 
+  it("does not anchor a default Side Chat to stopped or superseded replies", () => {
+    const eligible = message({ id: "eligible", body: "eligible" });
+    const superseded = message({
+      id: "superseded",
+      supersededAt: new Date("2026-07-30T16:54:30.434Z"),
+    });
+    const stopped = message({ id: "stopped", status: "stopped" });
+
+    expect(latestSideChatAnchor([eligible, superseded, stopped])).toBe(eligible);
+  });
+
   it("shows only messages created after the Side Chat boundary", () => {
     const copied = message({ id: "copied" });
     const boundary = message({

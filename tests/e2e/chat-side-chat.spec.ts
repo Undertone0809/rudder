@@ -343,6 +343,136 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await page.screenshot({ path: testInfo.outputPath("05-side-chat-destroyed.png"), fullPage: true });
 });
 
+test("starts Side Chat from a completed historical turn variant after its replacement was stopped", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("rudder.theme", "dark");
+  });
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Historical-Side-Chat-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Historical Side Chat Agent",
+    command: E2E_CODEX_STUB,
+  }) as { id: string };
+  const conversationId = randomUUID();
+  const turnId = randomUUID();
+  const sourceAssistantId = randomUUID();
+  const supersededAt = new Date("2026-07-30T16:54:30.434Z");
+  await e2eDb.insert(chatConversations).values({
+    id: conversationId,
+    orgId: organization.id,
+    title: "Historical Side Chat source",
+    preferredAgentId: agent.id,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: "local-board",
+    lastMessageAt: new Date("2026-07-30T16:54:35.390Z"),
+  });
+  await e2eDb.insert(chatMessages).values([
+    {
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Original historical Side Chat request",
+      chatTurnId: turnId,
+      turnVariant: 0,
+      supersededAt,
+      createdAt: new Date("2026-07-30T14:47:07.233Z"),
+      updatedAt: supersededAt,
+    },
+    {
+      id: sourceAssistantId,
+      orgId: organization.id,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Completed historical Side Chat answer",
+      replyingAgentId: agent.id,
+      chatTurnId: turnId,
+      turnVariant: 0,
+      supersededAt,
+      createdAt: new Date("2026-07-30T14:55:24.548Z"),
+      updatedAt: supersededAt,
+    },
+    {
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Replacement Side Chat request that was stopped",
+      chatTurnId: turnId,
+      turnVariant: 1,
+      createdAt: new Date("2026-07-30T16:54:30.434Z"),
+      updatedAt: new Date("2026-07-30T16:54:30.434Z"),
+    },
+    {
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "stopped",
+      body: "Chat run stopped before a final reply.",
+      replyingAgentId: agent.id,
+      chatTurnId: turnId,
+      turnVariant: 1,
+      createdAt: new Date("2026-07-30T16:54:35.390Z"),
+      updatedAt: new Date("2026-07-30T16:54:35.390Z"),
+    },
+  ]);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
+  await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Previous branch" }).click();
+  await expect(page.getByText("1/2")).toBeVisible();
+
+  const panel = await openFromAssistantAction(page, sourceAssistantId);
+  const createResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${conversationId}/side-chats`)
+  ));
+  await sideComposerEditor(panel).fill("Use the completed historical answer.");
+  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  await expect(
+    panel.getByTestId("chat-user-message-bubble").filter({
+      hasText: "Use the completed historical answer.",
+    }),
+  ).toBeVisible();
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok(), await createResponse.text()).toBe(true);
+  const sideChat = await createResponse.json() as { id: string };
+  await expect(panel).not.toContainText("Side Chat source must be a completed assistant response");
+  await page.screenshot({
+    path: testInfo.outputPath("historical-variant-side-chat.png"),
+    fullPage: true,
+  });
+
+  const messagesRes = await page.request.get(`/api/chats/${sideChat.id}/messages`);
+  expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
+  const messages = await messagesRes.json() as Array<{ body: string }>;
+  expect(messages.map((message) => message.body)).toEqual(expect.arrayContaining([
+    "Original historical Side Chat request",
+    "Completed historical Side Chat answer",
+    "Use the completed historical answer.",
+  ]));
+  expect(messages.map((message) => message.body)).not.toContain(
+    "Replacement Side Chat request that was stopped",
+  );
+});
+
 test("the /side menu matches composer popovers and can move the same Side Chat to Messenger", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Keep-${Date.now()}`);
   const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();

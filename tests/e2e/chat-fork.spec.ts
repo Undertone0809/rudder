@@ -458,6 +458,114 @@ test("forks from an earlier assistant message while a later reply is streaming",
   expect(forkMessages.some((message) => message.body.includes("Streaming reply for chat."))).toBe(false);
 });
 
+test("forks from a completed historical turn variant after its replacement was stopped", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("rudder.theme", "dark");
+  });
+
+  const organization = await createOrganization(page, `Historical-Fork-${Date.now()}`);
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Historical Fork Agent",
+    command: E2E_CODEX_STUB,
+  }) as { id: string };
+  const conversationId = randomUUID();
+  const turnId = randomUUID();
+  const sourceUserId = randomUUID();
+  const sourceAssistantId = randomUUID();
+  const supersededAt = new Date("2026-07-30T16:54:30.434Z");
+  await e2eDb.insert(chatConversations).values({
+    id: conversationId,
+    orgId: organization.id,
+    title: "Historical fork source",
+    preferredAgentId: agent.id,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: "local-board",
+    lastMessageAt: new Date("2026-07-30T16:54:35.390Z"),
+  });
+  await e2eDb.insert(chatMessages).values([
+    {
+      id: sourceUserId,
+      orgId: organization.id,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Original historical request",
+      chatTurnId: turnId,
+      turnVariant: 0,
+      supersededAt,
+      createdAt: new Date("2026-07-30T14:47:07.233Z"),
+      updatedAt: supersededAt,
+    },
+    {
+      id: sourceAssistantId,
+      orgId: organization.id,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Completed historical answer",
+      replyingAgentId: agent.id,
+      chatTurnId: turnId,
+      turnVariant: 0,
+      supersededAt,
+      createdAt: new Date("2026-07-30T14:55:24.548Z"),
+      updatedAt: supersededAt,
+    },
+    {
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Replacement request that was stopped",
+      chatTurnId: turnId,
+      turnVariant: 1,
+      createdAt: new Date("2026-07-30T16:54:30.434Z"),
+      updatedAt: new Date("2026-07-30T16:54:30.434Z"),
+    },
+    {
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "stopped",
+      body: "Chat run stopped before a final reply.",
+      replyingAgentId: agent.id,
+      chatTurnId: turnId,
+      turnVariant: 1,
+      createdAt: new Date("2026-07-30T16:54:35.390Z"),
+      updatedAt: new Date("2026-07-30T16:54:35.390Z"),
+    },
+  ]);
+
+  await openOrganizationChat(page, organization, conversationId);
+  await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Previous branch" }).click();
+  await expect(page.getByText("1/2")).toBeVisible();
+  await expect(page.getByText("Completed historical answer")).toBeVisible();
+
+  const forked = await forkFromAssistantMessage(page, conversationId, sourceAssistantId);
+  await expect(page.getByText("Completed historical answer")).toBeVisible();
+  await expect(page.getByText("Replacement request that was stopped")).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("historical-variant-fork.png"),
+    fullPage: true,
+  });
+
+  const messagesRes = await page.request.get(`/api/chats/${forked.id}/messages`);
+  expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
+  const messages = await messagesRes.json() as Array<{ body: string }>;
+  expect(messages.map((message) => message.body).slice(0, 2)).toEqual([
+    "Original historical request",
+    "Completed historical answer",
+  ]);
+  expect(messages.map((message) => message.body)).not.toContain("Replacement request that was stopped");
+});
+
 test("keeps a numbered fork title after the first new user message when Fast Intelligence is unavailable", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("rudder.theme", "dark");

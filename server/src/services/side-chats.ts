@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
+import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
 const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
@@ -196,20 +197,30 @@ export function sideChatService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!source) throw notFound("Chat conversation not found");
 
+      const anchor = await tx
+        .select()
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.orgId, input.orgId),
+          eq(chatMessages.conversationId, source.id),
+          eq(chatMessages.id, input.sourceMessageId),
+        ))
+        .then((rows) => rows[0] ?? null);
+      if (!anchor || anchor.role !== "assistant" || anchor.kind !== "message" || anchor.status !== "completed") {
+        throw unprocessable("Side Chat source must be a completed assistant response");
+      }
+
       const sourceMessages = await tx
         .select()
         .from(chatMessages)
         .where(and(
           eq(chatMessages.orgId, input.orgId),
           eq(chatMessages.conversationId, source.id),
-          isNull(chatMessages.supersededAt),
+          selectedChatMessageBranchCondition(anchor),
         ))
         .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
       const anchorIndex = sourceMessages.findIndex((message) => message.id === input.sourceMessageId);
-      const anchor = anchorIndex >= 0 ? sourceMessages[anchorIndex] : null;
-      if (!anchor || anchor.role !== "assistant" || anchor.kind !== "message" || anchor.status !== "completed") {
-        throw unprocessable("Side Chat source must be a completed assistant response");
-      }
+      if (anchorIndex < 0) throw unprocessable("Side Chat source message branch could not be resolved");
 
       const now = new Date();
       const rootConversationId = source.forkRootConversationId ?? source.id;

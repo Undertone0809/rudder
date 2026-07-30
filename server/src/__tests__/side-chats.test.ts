@@ -306,6 +306,72 @@ describe("sideChatService", () => {
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
   });
 
+  it("copies the selected completed historical turn variant instead of the stopped active variant", async () => {
+    const source = await createSource();
+    const turnId = randomUUID();
+    const supersededAt = new Date("2026-07-30T16:54:30.434Z");
+    const sourceMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, source.sourceConversationId))
+      .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
+    const originalUser = sourceMessages.find((message) => message.body === "Original question");
+    expect(originalUser).toBeTruthy();
+
+    await db
+      .update(chatMessages)
+      .set({ chatTurnId: turnId, turnVariant: 0, supersededAt })
+      .where(eq(chatMessages.id, originalUser!.id));
+    await db
+      .update(chatMessages)
+      .set({ chatTurnId: turnId, turnVariant: 0, supersededAt })
+      .where(eq(chatMessages.id, source.anchorMessageId));
+    await db.insert(chatMessages).values([
+      {
+        id: randomUUID(),
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Replacement question",
+        chatTurnId: turnId,
+        turnVariant: 1,
+        createdAt: new Date("2026-07-30T16:54:30.434Z"),
+        updatedAt: new Date("2026-07-30T16:54:30.434Z"),
+      },
+      {
+        id: randomUUID(),
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "stopped",
+        body: "Chat run stopped before a final reply.",
+        chatTurnId: turnId,
+        turnVariant: 1,
+        createdAt: new Date("2026-07-30T16:54:35.390Z"),
+        updatedAt: new Date("2026-07-30T16:54:35.390Z"),
+      },
+    ]);
+
+    const sideChat = await createSideChat(source);
+    const copied = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id))
+      .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
+
+    expect(copied.map((message) => message.body)).toEqual(expect.arrayContaining([
+      "Original question",
+      "Anchored answer",
+    ]));
+    expect(copied.map((message) => message.body)).not.toEqual(expect.arrayContaining([
+      "Replacement question",
+      "Chat run stopped before a final reply.",
+    ]));
+  });
+
   it("persists the provisional runtime override and rejects an idempotent replay with different runtime input", async () => {
     const source = await createSource();
     const input = {

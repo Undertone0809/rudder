@@ -4,8 +4,8 @@ export function latestSideChatAnchor(messages: ChatMessage[]) {
   return [...messages].reverse().find((message) => (
     message.role === "assistant"
     && message.kind === "message"
-    && message.status !== "streaming"
-    && message.status !== "interrupted"
+    && message.status === "completed"
+    && !message.supersededAt
   )) ?? null;
 }
 
