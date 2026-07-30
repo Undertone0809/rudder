@@ -1,8 +1,5 @@
 // @vitest-environment jsdom
 
-import { act, createRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHAT_FILE_ANNOTATION_REQUEST_EVENT,
   requestChatFileAnnotationLocation,
@@ -11,6 +8,9 @@ import {
 import {
   chatAnnotationRenderedTextToSourceSpans,
 } from "@/lib/chat-response-annotation-selection";
+import { act, createRef } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FileAnnotationSelectionToolbar,
   resolveRenderedFileSelectionRange,
