@@ -294,6 +294,7 @@ export function sourceDrivenMarkdownPreview(
 ): SourceDrivenMarkdownPreview {
   const decorations: Range<Decoration>[] = [];
   const websiteLinks: MarkdownWebsiteLink[] = [];
+  const decoratedLineNumbers = new Set<number>();
 
   for (const block of blocks) {
     const active = activeIds.has(block.id) || !block.previewable;
@@ -309,6 +310,7 @@ export function sourceDrivenMarkdownPreview(
       && /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/u.test(block.markdown);
 
     for (let lineNumber = block.startLine; lineNumber <= block.endLine; lineNumber += 1) {
+      decoratedLineNumbers.add(lineNumber);
       const line = state.doc.line(Math.min(lineNumber, state.doc.lines));
       const blockEdge = block.startLine === block.endLine
         ? "single"
@@ -322,10 +324,15 @@ export function sourceDrivenMarkdownPreview(
           attributes: {
             "data-markdown-preview-state": active ? "source" : "preview",
             "data-markdown-source-kind": block.kind,
-            ...(headingLevel && lineNumber === block.startLine
-              ? { "data-markdown-source-heading-level": String(headingLevel) }
-              : {}),
-            ...(thematicBreak ? { "data-markdown-thematic-break": "true" } : {}),
+            // CodeMirror may recycle a line DOM node while its Markdown role
+            // changes during typing. Explicit sentinel values overwrite old
+            // semantic attributes instead of leaving a transient heading or
+            // divider style stuck on the recycled node.
+            "data-markdown-source-heading-level":
+              headingLevel && lineNumber === block.startLine
+                ? String(headingLevel)
+                : "none",
+            "data-markdown-thematic-break": thematicBreak ? "true" : "false",
             ...(block.kind === "fenced-code"
               ? { "data-markdown-source-block-edge": blockEdge }
               : {}),
@@ -337,6 +344,23 @@ export function sourceDrivenMarkdownPreview(
     }
 
     if (active) continue;
+  }
+
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    if (decoratedLineNumbers.has(lineNumber)) continue;
+    const line = state.doc.line(lineNumber);
+    decorations.push(
+      Decoration.line({
+        attributes: {
+          "data-markdown-preview-state": "source",
+          "data-markdown-source-kind": "line",
+          "data-markdown-source-heading-level": "none",
+          "data-markdown-thematic-break": "false",
+          "data-source-line-start": String(lineNumber),
+          "data-source-line-end": String(lineNumber),
+        },
+      }).range(line.from),
+    );
   }
 
   const inactiveBlocks = blocks.filter((block) => (

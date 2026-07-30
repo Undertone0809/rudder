@@ -837,7 +837,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(content.hasAttribute("aria-activedescendant")).toBe(false);
   });
 
-  it("closes mention suggestions on Tab without accepting the active option", async () => {
+  it("accepts the active mention on Tab and preserves Shift+Tab focus navigation", async () => {
     const onChange = vi.fn();
     act(() => {
       root?.render(
@@ -883,17 +883,21 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     await flushReact();
 
     expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeNull();
-    expect(onChange).toHaveBeenCalledTimes(changesBeforeTab);
-    expect(editorView().state.doc.toString()).toBe("@");
-    expect(document.activeElement).toBe(
-      container?.querySelector('[data-testid="after-editor"]'),
+    expect(onChange).toHaveBeenCalledTimes(changesBeforeTab + 1);
+    expect(editorView().state.doc.toString()).toBe(
+      "[Agent One](agent://agent-1) ",
     );
+    expect(document.activeElement).toBe(editorView().contentDOM);
 
     act(() => {
-      editorView().focus();
       editorView().dispatch({
-        changes: { from: 1, insert: "a" },
-        selection: { anchor: 2 },
+        changes: {
+          from: editorView().state.doc.length,
+          insert: "@a",
+        },
+        selection: {
+          anchor: editorView().state.doc.length + 2,
+        },
         userEvent: "input.type",
       });
     });
@@ -913,6 +917,148 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(document.activeElement).toBe(
       container?.querySelector('[data-testid="before-editor"]'),
     );
+  });
+
+  it("indents and outdents Markdown list items with Tab without moving focus", async () => {
+    act(() => {
+      root?.render(
+        <>
+          <button data-testid="before-editor">Before</button>
+          <CodeMirrorMarkdownEditor
+            value={"- first\n- second"}
+            onChange={() => undefined}
+          />
+          <button data-testid="after-editor">After</button>
+        </>,
+      );
+    });
+    await flushReact();
+
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({
+        selection: { anchor: editorView().state.doc.length },
+      });
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.toString()).toBe("- first\n  - second");
+    expect(document.activeElement).toBe(editorView().contentDOM);
+
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+    expect(editorView().state.doc.toString()).toBe("- first\n    - second");
+
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.toString()).toBe("- first\n  - second");
+
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.toString()).toBe("- first\n- second");
+    expect(document.activeElement).toBe(editorView().contentDOM);
+  });
+
+  it("does not indent mixed paragraph and list selections in either direction", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"paragraph\n- item"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    for (const selection of [
+      { anchor: 0, head: editorView().state.doc.length },
+      { anchor: editorView().state.doc.length, head: 0 },
+    ]) {
+      act(() => {
+        editorView().dispatch({ selection });
+        editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flushReact();
+      expect(editorView().state.doc.toString()).toBe("paragraph\n- item");
+    }
+  });
+
+  it("removes transient Setext heading styling as a list marker becomes text", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value=""
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    for (const text of ["keyi", "\n", "-", " asd", "\n", "-", " asd", "\n", "-"]) {
+      act(() => {
+        const end = editorView().state.doc.length;
+        editorView().dispatch({
+          changes: { from: end, insert: text },
+          selection: { anchor: end + text.length },
+          userEvent: "input.type",
+        });
+      });
+      await flushReact();
+    }
+
+    const lines = container?.querySelectorAll<HTMLElement>(".cm-line");
+    expect(lines?.[0]?.dataset.markdownSourceKind).toBe("line");
+    expect(lines?.[0]?.dataset.markdownSourceHeadingLevel).toBe("none");
+    expect(lines?.[1]?.dataset.markdownSourceKind).toBe("list");
+    expect(lines?.[2]?.dataset.markdownSourceKind).toBe("list");
+
+    act(() => {
+      editorView().dispatch({
+        changes: {
+          from: 0,
+          to: editorView().state.doc.length,
+          insert: "",
+        },
+        selection: { anchor: 0 },
+        userEvent: "delete.selection",
+      });
+    });
+    await flushReact();
+
+    const emptyLine = container?.querySelector<HTMLElement>(".cm-line");
+    expect(emptyLine?.dataset.markdownSourceHeadingLevel).toBe("none");
+    expect(emptyLine?.dataset.markdownThematicBreak).toBe("false");
   });
 
   it("keeps listbox semantics when mention suggestions use container placement", async () => {
@@ -1718,6 +1864,24 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     )).toBeTruthy();
 
     act(() => {
+      editorView().dispatch({
+        changes: {
+          from: editorView().state.doc.length,
+          insert: " composed",
+        },
+        selection: { anchor: editorView().state.doc.length + " composed".length },
+      });
+    });
+    await flushReact();
+
+    expect(container?.querySelector(
+      '[data-markdown-preview-state="source"][data-source-line-start="1"]',
+    )).toBeTruthy();
+    expect(container?.querySelector(
+      '[data-markdown-preview-state="preview"][data-source-line-start="2"]',
+    )).toBeTruthy();
+
+    act(() => {
       editorView().contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
     });
     await flushReact();
@@ -1725,7 +1889,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(container?.querySelector(
       '[data-markdown-preview-state="source"][data-source-line-start="3"]',
     )).toBeTruthy();
-    expect(editorView().state.doc.toString()).toBe("first\nsecond\nthird");
+    expect(editorView().state.doc.toString()).toBe("first\nsecond\nthird composed");
   });
 
   it("shows raw HTML as source without creating executable elements", async () => {

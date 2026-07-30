@@ -1,4 +1,4 @@
-import { markdownLanguage } from "@codemirror/lang-markdown";
+import { GFM, parser as markdownParser } from "@lezer/markdown";
 import { resolveKnownWebsiteIcon } from "@rudderhq/shared";
 
 export type MarkdownPreviewBlockKind =
@@ -71,6 +71,7 @@ const HTML_VOID_TAGS = new Set([
 ]);
 const RUDDER_REFERENCE_SCHEME_RE =
   /^(?:agent|automation|chat|issue|library[-_](?:directory|doc|entry|file)|project):\/\//iu;
+const markdownPreviewParser = markdownParser.configure(GFM);
 
 function sourceLines(source: string): SourceLine[] {
   if (!source) return [];
@@ -188,7 +189,7 @@ function markdownSyntaxRanges(source: string) {
   const rawHtml: Array<{ from: number; to: number }> = [];
   const blockquotes: Array<{ from: number; to: number }> = [];
   const listItems: Array<{ from: number; to: number }> = [];
-  markdownLanguage.parser.parse(source).iterate({
+  markdownPreviewParser.parse(source).iterate({
     enter(node) {
       if (
         node.name === "HTMLBlock"
@@ -260,12 +261,6 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
       continue;
     }
 
-    if (nextLine && SETEXT_DELIMITER_RE.test(nextLine.text) && line.text.trim()) {
-      blocks.push(markdownBlock(source, lines, index, index + 1, "setext-heading"));
-      index += 2;
-      continue;
-    }
-
     if (/^(?: {4}|\t)/u.test(line.text)) {
       const endIndex = indentedCodeEndIndex(lines, index);
       blocks.push(markdownBlock(source, lines, index, endIndex, "indented-code"));
@@ -282,6 +277,16 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
         : index;
       blocks.push(markdownBlock(source, lines, index, endIndex, "list"));
       index = endIndex + 1;
+      continue;
+    }
+
+    // Prefer an explicit list item over a following Setext delimiter. During
+    // ordinary list entry, a newly typed bare "-" on the next line is a valid
+    // intermediate state. Treating the previous "- item" as a level-two
+    // heading makes the line jump in size while the user is still typing.
+    if (nextLine && SETEXT_DELIMITER_RE.test(nextLine.text) && line.text.trim()) {
+      blocks.push(markdownBlock(source, lines, index, index + 1, "setext-heading"));
+      index += 2;
       continue;
     }
 
@@ -328,7 +333,7 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
  */
 export function markdownReferenceDefinitions(source: string) {
   const definitions: string[] = [];
-  markdownLanguage.parser.parse(source).iterate({
+  markdownPreviewParser.parse(source).iterate({
     enter(node) {
       if (node.name !== "LinkReference") return;
       definitions.push(source.slice(node.from, node.to));
@@ -465,7 +470,7 @@ function findInlineLinkEnd(source: string, destinationStart: number) {
 export function findAtomicMarkdownReferences(source: string): AtomicMarkdownReference[] {
   const references: AtomicMarkdownReference[] = [];
   const parsedLinkRanges = new Set<string>();
-  markdownLanguage.parser.parse(source).iterate({
+  markdownPreviewParser.parse(source).iterate({
     enter(node) {
       if (node.name === "Link") {
         parsedLinkRanges.add(`${node.from}:${node.to}`);

@@ -59,6 +59,31 @@ describe("getMarkdownPreviewBlocks", () => {
     ]);
   });
 
+  it("keeps a list item stable while the next list marker is still incomplete", () => {
+    const source = "- first\n- second\n-";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "list",
+        startLine: 1,
+        endLine: 1,
+        markdown: "- first",
+      }),
+      expect.objectContaining({
+        kind: "list",
+        startLine: 2,
+        endLine: 2,
+        markdown: "- second",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        startLine: 3,
+        endLine: 3,
+        markdown: "-",
+      }),
+    ]);
+  });
+
   it("activates fenced code and GFM tables as indivisible source blocks", () => {
     const source = [
       "| Name | State |",

@@ -10,8 +10,9 @@ import {
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
   MarkdownEditor,
-  type MarkdownEditorRef,
+  normalizePlainTextComposerMarkdown,
   splitPlainTextMarkdownSourceByAtomicReferences,
+  type MarkdownEditorRef,
 } from "./MarkdownEditor";
 
 const mdxEditorMocks = vi.hoisted(() => ({
@@ -385,6 +386,47 @@ describe("MarkdownEditor", () => {
       .toBe("alpha Please explain.");
     expect(formatComposerCursorInsertion("前后", 1, "请详细解释。").value)
       .toBe("前请详细解释。后");
+  });
+
+  it("removes serializer-only space entities from plain-text composer Markdown", () => {
+    expect(normalizePlainTextComposerMarkdown(
+      "[deep-research](skill://org/skill-1?ref=deep-research)&#x20;",
+      "[deep-research](skill://org/skill-1?ref=deep-research) ",
+    )).toBe(
+      "[deep-research](skill://org/skill-1?ref=deep-research) ",
+    );
+    expect(normalizePlainTextComposerMarkdown(
+      "[deep-research](skill://org/skill-1?ref=deep-research)&amp;#x20;",
+      "[deep-research](skill://org/skill-1?ref=deep-research) ",
+    )).toBe(
+      "[deep-research](skill://org/skill-1?ref=deep-research) ",
+    );
+    expect(normalizePlainTextComposerMarkdown(
+      "[one](skill://one)&#x20;[two](skill://two)&amp;#x20;",
+      "[one](skill://one) [two](skill://two) ",
+    )).toBe(
+      "[one](skill://one) [two](skill://two) ",
+    );
+  });
+
+  it("preserves user-authored space entities outside proven token boundaries", () => {
+    const examples = [
+      "show &#x20; literally",
+      "`&#x20;`",
+      "```\n&amp;#x20;\n```",
+      "https://example.com/?value=&#x20;",
+      "[deep-research](skill://org/skill-1?ref=deep-research)&#x20;",
+    ];
+    for (const example of examples) {
+      expect(normalizePlainTextComposerMarkdown(example, example)).toBe(example);
+    }
+    const authoredAfterBoundary = normalizePlainTextComposerMarkdown(
+      "[deep-research](skill://org/skill-1?ref=deep-research)&amp;#x20;",
+    );
+    expect(normalizePlainTextComposerMarkdown(
+      authoredAfterBoundary,
+      authoredAfterBoundary,
+    )).toBe(authoredAfterBoundary);
   });
 
   it("inserts text at the remembered composer cursor after selection moves outside the editor", () => {

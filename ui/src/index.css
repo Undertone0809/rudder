@@ -4133,7 +4133,7 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   white-space: pre-wrap;
 }
 
-.rudder-codemirror-markdown-content .cm-line[data-markdown-source-heading-level] {
+.rudder-codemirror-markdown-content .cm-line[data-markdown-source-heading-level]:not([data-markdown-source-heading-level="none"]) {
   color: var(--foreground);
   font-weight: 700;
   letter-spacing: -0.01em;

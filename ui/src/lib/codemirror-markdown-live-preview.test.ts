@@ -3,13 +3,13 @@ import { EditorState } from "@codemirror/state";
 import { GFM } from "@lezer/markdown";
 import { describe, expect, it } from "vitest";
 import {
-  findAtomicMarkdownReferences,
-  getMarkdownPreviewBlocks,
-} from "./markdown-live-preview";
-import {
   safeInteractiveMarkdownHref,
   sourceDrivenMarkdownPreview,
 } from "./codemirror-markdown-live-preview";
+import {
+  findAtomicMarkdownReferences,
+  getMarkdownPreviewBlocks,
+} from "./markdown-live-preview";
 
 function preview(source: string, activeIds = new Set<string>()) {
   const state = EditorState.create({
@@ -109,6 +109,20 @@ describe("sourceDrivenMarkdownPreview", () => {
       }),
     }));
     expect(ranges.some((range) => range.source === "***")).toBe(true);
+  });
+
+  it("overwrites recycled line semantics when an incomplete heading becomes a list", () => {
+    const ranges = decoratedRanges("keyi\n- asd\n-");
+    const firstLine = ranges.find((range) => (
+      range.attributes?.["data-source-line-start"] === "1"
+    ));
+    const listLine = ranges.find((range) => (
+      range.attributes?.["data-source-line-start"] === "2"
+    ));
+
+    expect(firstLine?.attributes?.["data-markdown-source-heading-level"]).toBe("none");
+    expect(listLine?.attributes?.["data-markdown-source-heading-level"]).toBe("none");
+    expect(listLine?.attributes?.["data-markdown-source-kind"]).toBe("list");
   });
 
   it("renders nested formatting and website metadata for inline and auto links", () => {

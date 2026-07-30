@@ -2,6 +2,8 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
+  indentLess,
+  indentMore,
   redo,
   redoDepth,
   undo,
@@ -118,6 +120,21 @@ interface PendingImageUpload {
 
 const externalValueSync = Annotation.define<boolean>();
 const titleUpgradeTransaction = Annotation.define<boolean>();
+const markdownListItemLine = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/u;
+
+function selectionIsOnMarkdownListItem(view: EditorView) {
+  return view.state.selection.ranges.every((range) => {
+    const lastPosition = range.empty ? range.to : Math.max(range.from, range.to - 1);
+    let line = view.state.doc.lineAt(range.from);
+    const lastLine = view.state.doc.lineAt(lastPosition).number;
+    while (line.number <= lastLine) {
+      if (!markdownListItemLine.test(line.text)) return false;
+      if (line.number === lastLine) break;
+      line = view.state.doc.line(line.number + 1);
+    }
+    return true;
+  });
+}
 const testEditorViews = new WeakMap<Element, EditorView>();
 
 function sourceLineSeparator(source: string) {
@@ -187,10 +204,14 @@ function markdownPreviewDecorations(
   registry: PortalRegistry,
   propsRef: { current: CodeMirrorMarkdownEditorProps },
   activateBlock: (block: MarkdownPreviewBlock, view: EditorView) => void,
+  activeRangesOverride?: Array<{ from: number; to: number }>,
 ): { decorations: DecorationSet; atomic: DecorationSet } {
   const { blocks, referenceDefinitions } = document;
   const activeIds = focused
-    ? activeMarkdownPreviewBlockIds(blocks, activeSelectionRanges(state))
+    ? activeMarkdownPreviewBlockIds(
+      blocks,
+      activeRangesOverride ?? activeSelectionRanges(state),
+    )
     : new Set<string>();
   const decorations: Range<Decoration>[] = [];
   const atomicDecorations: Range<Decoration>[] = [];
@@ -466,6 +487,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const imageUploadRequestIdRef = useRef(0);
   const titleRequestIdRef = useRef(0);
   const mentionStateRef = useRef<CodeMirrorMentionState | null>(null);
+  const compositionActiveRef = useRef(false);
   const dismissedMentionStateRef = useRef<CodeMirrorMentionState | null>(null);
   const mentionIndexRef = useRef(0);
   const filteredMentionsRef = useRef<MentionOption[]>([]);
@@ -533,6 +555,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, []);
 
   const updateMentionState = useCallback((view: EditorView) => {
+    if (compositionActiveRef.current || view.composing) return;
     const candidateState = view.hasFocus ? mentionStateAtSelection(view) : null;
     const dismissedState = dismissedMentionStateRef.current;
     const nextState = dismissedState && sameMentionState(dismissedState, candidateState)
@@ -766,6 +789,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       document: MarkdownPreviewDocument;
       focused: boolean;
       composing: boolean;
+      compositionRanges: Array<{ from: number; to: number }> | null;
       pointerSelecting: boolean;
     };
     const previewField = StateField.define<PreviewFieldValue>({
@@ -784,12 +808,14 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           document,
           focused: false,
           composing: false,
+          compositionRanges: null,
           pointerSelecting: false,
         };
       },
       update(current, transaction) {
         let focused = current.focused;
         let composing = current.composing;
+        let compositionRanges = current.compositionRanges;
         const wasComposing = current.composing;
         let pointerSelecting = current.pointerSelecting;
         let effectChanged = false;
@@ -800,6 +826,9 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           }
           if (effect.is(setPreviewComposition)) {
             composing = effect.value;
+            compositionRanges = effect.value
+              ? activeSelectionRanges(transaction.startState)
+              : null;
             effectChanged = true;
           }
           if (effect.is(setPreviewPointerSelection)) {
@@ -808,13 +837,44 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           }
         }
 
-        if (composing || pointerSelecting) {
+        if (composing) {
+          const mappedCompositionRanges = (
+            compositionRanges ?? activeSelectionRanges(transaction.startState)
+          ).map((range) => ({
+            from: transaction.changes.mapPos(range.from, -1),
+            to: transaction.changes.mapPos(range.to, 1),
+          }));
+          const document = previewDocumentForTransaction(
+            current.document,
+            transaction,
+          );
+          const result = markdownPreviewDecorations(
+            transaction.state,
+            document,
+            true,
+            registry,
+            propsRef,
+            activateBlock,
+            mappedCompositionRanges,
+          );
+          return {
+            ...result,
+            document,
+            focused,
+            composing,
+            compositionRanges: mappedCompositionRanges,
+            pointerSelecting,
+          };
+        }
+
+        if (pointerSelecting) {
           return {
             decorations: current.decorations.map(transaction.changes),
             atomic: current.atomic.map(transaction.changes),
             document: current.document,
             focused,
             composing,
+            compositionRanges,
             pointerSelecting,
           };
         }
@@ -842,6 +902,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           document,
           focused,
           composing,
+          compositionRanges,
           pointerSelecting,
         };
       },
@@ -1031,6 +1092,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           if (event.key === "Tab") {
             event.preventDefault();
             event.stopPropagation();
+            const option = !event.shiftKey
+              ? filteredMentionsRef.current[mentionIndexRef.current]
+              : undefined;
+            if (option) {
+              selectMentionRef.current(option);
+              return true;
+            }
             dismissedMentionStateRef.current = mentionStateRef.current;
             mentionStateRef.current = null;
             setMentionState(null);
@@ -1121,6 +1189,27 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       })),
       Prec.highest(keymap.of([
         {
+          key: "Tab",
+          run: (view) => {
+            const option = filteredMentionsRef.current[mentionIndexRef.current];
+            if (mentionStateRef.current && option) {
+              selectMentionRef.current(option);
+              return true;
+            }
+            return !mentionStateRef.current
+              && selectionIsOnMarkdownListItem(view)
+              && indentMore(view);
+          },
+        },
+        {
+          key: "Shift-Tab",
+          run: (view) => (
+            !mentionStateRef.current
+            && selectionIsOnMarkdownListItem(view)
+            && indentLess(view)
+          ),
+        },
+        {
           key: "ArrowDown",
           run: () => {
             const options = filteredMentionsRef.current;
@@ -1201,13 +1290,19 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return false;
         },
         compositionstart: (_event, view) => {
+          compositionActiveRef.current = true;
+          mentionStateRef.current = null;
+          dismissedMentionStateRef.current = null;
+          setMentionState(null);
           view.dispatch({ effects: setPreviewComposition.of(true) });
           return false;
         },
         compositionend: (_event, view) => {
+          compositionActiveRef.current = false;
           queueMicrotask(() => {
             if (viewRef.current === view) {
               view.dispatch({ effects: setPreviewComposition.of(false) });
+              updateMentionState(view);
             }
           });
           return false;
