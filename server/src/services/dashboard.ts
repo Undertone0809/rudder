@@ -101,7 +101,6 @@ export function dashboardService(db: Db) {
           activeIncidents: budgetOverview.activeIncidents.length,
           pendingApprovals: budgetOverview.pendingApprovalCount,
           pausedAgents: budgetOverview.pausedAgentCount,
-          pausedProjects: budgetOverview.pausedProjectCount,
         },
       };
     },

@@ -220,7 +220,6 @@ const dashboard: DashboardSummary = {
     activeIncidents: 0,
     pendingApprovals: 0,
     pausedAgents: 0,
-    pausedProjects: 0,
   },
 };
 

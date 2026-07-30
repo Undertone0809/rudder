@@ -546,9 +546,9 @@ const fixtureProject: Project = {
 const fixtureBudgetPolicy: BudgetPolicySummary = {
   policyId: "budget-ui-lab",
   orgId: "org-rudder",
-  scopeType: "project",
-  scopeId: fixtureProject.id,
-  scopeName: fixtureProject.name,
+  scopeType: "agent",
+  scopeId: fixtureAgent.id,
+  scopeName: fixtureAgent.name,
   metric: "billed_cents",
   windowKind: "calendar_month_utc",
   amount: 50000,

@@ -27,7 +27,6 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
-import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import { ProjectIcon } from "./ProjectIdentity";
 import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
 import { sidebarItemVariants } from "./sidebarItemStyles";
@@ -92,7 +91,6 @@ function SortableProjectItem({
             testId={`project-sidebar-color-${project.id}`}
           />
           <span className="flex-1 truncate">{project.name}</span>
-          {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}
         </NavLink>
         {projectSidebarSlots.length > 0 && (
           <div className="ml-5 flex flex-col gap-0.5">

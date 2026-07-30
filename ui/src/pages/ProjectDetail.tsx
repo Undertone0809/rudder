@@ -1,18 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { semanticBadgeToneClasses } from "@/components/ui/semanticTones";
 import { Tabs } from "@/components/ui/tabs";
 import { applyOrganizationPrefix, findOrganizationByPrefix, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { isUuidLike, type BudgetPolicySummary } from "@rudderhq/shared";
+import { isUuidLike } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { budgetsApi } from "../api/budgets";
 import { projectsApi } from "../api/projects";
-import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
@@ -24,11 +21,11 @@ import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import { cn, projectRouteRef } from "../lib/utils";
+import { projectRouteRef } from "../lib/utils";
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "issues" | "resources" | "configuration" | "budget";
+type ProjectBaseTab = "issues" | "resources" | "configuration";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -44,7 +41,6 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (tab === "overview") return "configuration";
   if (tab === "resources") return "resources";
   if (tab === "configuration") return "configuration";
-  if (tab === "budget") return "budget";
   if (tab === "issues") return "issues";
   return null;
 }
@@ -175,14 +171,6 @@ export function ProjectDetail() {
     ));
   };
 
-  const { data: budgetOverview } = useQuery({
-    queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
-    queryFn: () => budgetsApi.overview(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId,
-    refetchInterval: 30_000,
-    staleTime: 5_000,
-  });
-
   useEffect(() => {
     setBreadcrumbs([
       { label: "Projects", href: "/projects" },
@@ -203,10 +191,6 @@ export function ProjectDetail() {
     }
     if (activeTab === "resources") {
       navigate(`/projects/${canonicalProjectRef}/resources`, { replace: true });
-      return;
-    }
-    if (activeTab === "budget") {
-      navigate(`/projects/${canonicalProjectRef}/budget`, { replace: true });
       return;
     }
     if (activeTab === "issues" && projectIssuesPath) {
@@ -264,53 +248,6 @@ export function ProjectDetail() {
     }
   }, [invalidateProject, lookupCompanyId, projectLookupRef, resolvedCompanyId, scheduleFieldReset, setFieldState]);
 
-  const projectBudgetSummary = useMemo(() => {
-    const matched = budgetOverview?.policies.find(
-      (policy) => policy.scopeType === "project" && policy.scopeId === (project?.id ?? routeProjectRef),
-    );
-    if (matched) return matched;
-    return {
-      policyId: "",
-      orgId: resolvedCompanyId ?? "",
-      scopeType: "project",
-      scopeId: project?.id ?? routeProjectRef,
-      scopeName: project?.name ?? "Project",
-      metric: "billed_cents",
-      windowKind: "lifetime",
-      amount: 0,
-      observedAmount: 0,
-      remainingAmount: 0,
-      utilizationPercent: 0,
-      warnPercent: 80,
-      hardStopEnabled: true,
-      notifyEnabled: true,
-      isActive: false,
-      status: "ok",
-      paused: Boolean(project?.pausedAt),
-      pauseReason: project?.pauseReason ?? null,
-      windowStart: new Date(),
-      windowEnd: new Date(),
-    } satisfies BudgetPolicySummary;
-  }, [budgetOverview?.policies, project, resolvedCompanyId, routeProjectRef]);
-
-  const budgetMutation = useMutation({
-    mutationFn: (amount: number) =>
-      budgetsApi.upsertPolicy(resolvedCompanyId!, {
-        scopeType: "project",
-        scopeId: project?.id ?? routeProjectRef,
-        amount,
-        windowKind: "lifetime",
-      }),
-    onSuccess: () => {
-      if (!resolvedCompanyId) return;
-      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(resolvedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(routeProjectRef) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectLookupRef) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(resolvedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
-    },
-  });
-
   if (pluginTabFromSearch && !pluginDetailSlotsLoading && !activePluginTab) {
     return <Navigate to={`/projects/${canonicalProjectRef}/configuration`} replace />;
   }
@@ -326,9 +263,6 @@ export function ProjectDetail() {
     }
     if (cachedTab === "resources") {
       return <Navigate to={`/projects/${canonicalProjectRef}/resources`} replace />;
-    }
-    if (cachedTab === "budget") {
-      return <Navigate to={`/projects/${canonicalProjectRef}/budget`} replace />;
     }
     if ((cachedTab === "issues" || cachedTab === "list") && projectIssuesPath) {
       return <Navigate to={projectIssuesPath} replace />;
@@ -358,8 +292,6 @@ export function ProjectDetail() {
     }
     if (tab === "resources") {
       navigate(`/projects/${canonicalProjectRef}/resources`);
-    } else if (tab === "budget") {
-      navigate(`/projects/${canonicalProjectRef}/budget`);
     } else if (tab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`);
     } else {
@@ -391,24 +323,13 @@ export function ProjectDetail() {
               </PopoverContent>
             </Popover>
           </div>
-          <div className="min-w-0 space-y-2">
+          <div className="min-w-0">
             <InlineEditor
               value={project.name}
               onSave={(name) => updateProject.mutate({ name })}
               as="h2"
               className="text-xl font-bold"
             />
-            {project.pauseReason === "budget" ? (
-              <div
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em]",
-                  semanticBadgeToneClasses.error,
-                )}
-              >
-                <span className="h-2 w-2 rounded-full bg-red-400" />
-                Paused by budget hard stop
-              </div>
-            ) : null}
           </div>
         </div>
         <Button
@@ -458,7 +379,6 @@ export function ProjectDetail() {
           items={[
             { value: "configuration", label: "Configuration" },
             { value: "resources", label: "Context" },
-            { value: "budget", label: "Budget" },
             { value: "issues", label: "Issues" },
             ...pluginTabItems.map((item) => ({
               value: item.value,
@@ -489,17 +409,6 @@ export function ProjectDetail() {
           <ProjectResourcesPanel project={project} />
         </div>
       )}
-
-      {activeTab === "budget" && resolvedCompanyId ? (
-        <div className="max-w-3xl">
-          <BudgetPolicyCard
-            summary={projectBudgetSummary}
-            variant="plain"
-            isSaving={budgetMutation.isPending}
-            onSave={(amount) => budgetMutation.mutate(amount)}
-          />
-        </div>
-      ) : null}
 
       {activePluginTab && (
         <PluginSlotMount

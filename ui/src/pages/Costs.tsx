@@ -1182,7 +1182,6 @@ export function Costs() {
   const budgetPoliciesByScope = useMemo(() => ({
     organization: budgetPolicies.filter((policy) => policy.scopeType === "organization"),
     agent: budgetPolicies.filter((policy) => policy.scopeType === "agent"),
-    project: budgetPolicies.filter((policy) => policy.scopeType === "project"),
   }), [budgetPolicies]);
 
   if (!selectedOrganizationId) {
@@ -1362,10 +1361,10 @@ export function Costs() {
                 <CardHeader className="px-5 pt-5 pb-3">
                   <CardTitle className="text-base">Budget and cost controls</CardTitle>
                   <CardDescription>
-                    Hard-stop spend limits for agents and projects. Provider subscription quota stays separate and appears under Providers.
+                    Hard-stop spend limits for the organization and individual agents. Provider subscription quota stays separate and appears under Providers.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-3 px-5 pb-5 pt-0 md:grid-cols-4">
+                <CardContent className="grid gap-3 px-5 pb-5 pt-0 md:grid-cols-3">
                   <MetricTile
                     label="Active incidents"
                     value={String(activeBudgetIncidents.length)}
@@ -1383,12 +1382,6 @@ export function Costs() {
                     value={String(budgetData?.pausedAgentCount ?? 0)}
                     subtitle="Agent heartbeats blocked by budget"
                     icon={Coins}
-                  />
-                  <MetricTile
-                    label="Paused projects"
-                    value={String(budgetData?.pausedProjectCount ?? 0)}
-                    subtitle="Project execution blocked by budget"
-                    icon={DollarSign}
                   />
                 </CardContent>
               </Card>
@@ -1421,7 +1414,7 @@ export function Costs() {
               ) : null}
 
               <div className="space-y-5">
-                {(["organization", "agent", "project"] as const).map((scopeType) => {
+                {(["organization", "agent"] as const).map((scopeType) => {
                   const rows = budgetPoliciesByScope[scopeType];
                   if (rows.length === 0) return null;
                   return (
@@ -1431,9 +1424,7 @@ export function Costs() {
                         <p className="text-sm text-muted-foreground">
                           {scopeType === "organization"
                             ? "Organization-wide monthly policy."
-                            : scopeType === "agent"
-                              ? "Recurring monthly spend policies for individual agents."
-                              : "Lifetime spend policies for execution-bound projects."}
+                            : "Recurring monthly spend policies for individual agents."}
                         </p>
                       </div>
                       <div className="grid gap-4 xl:grid-cols-2">
@@ -1466,7 +1457,7 @@ export function Costs() {
                 {budgetPolicies.length === 0 ? (
                   <Card>
                     <CardContent className="px-5 py-8 text-sm text-muted-foreground">
-                      No budget policies yet. Set agent and project budgets from their detail pages, or use the existing organization monthly budget control.
+                      No budget policies yet. Set an agent budget from its detail page, or use the existing organization monthly budget control.
                     </CardContent>
                   </Card>
                 ) : null}

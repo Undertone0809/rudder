@@ -65,7 +65,6 @@ const mockBudgetService = vi.hoisted(() => ({
     policies: [],
     activeIncidents: [],
     pausedAgentCount: 0,
-    pausedProjectCount: 0,
     pendingApprovalCount: 0,
   }),
   upsertPolicy: vi.fn(),

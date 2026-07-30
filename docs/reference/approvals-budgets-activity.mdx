@@ -23,7 +23,7 @@ Use this page to find the right place for a decision or operational question.
 | Question | Open |
 | --- | --- |
 | May this sensitive action happen? | Approval |
-| How much has an Agent or project spent? | Budget and cost |
+| How much has an Agent or project spent? | Cost |
 | Who changed this record? | Activity |
 | What happened in one attempt? | Agent Run |
 | What is moving or waiting across the organization? | Dashboard |
@@ -45,8 +45,9 @@ context. Deciding the same request again should not apply the action twice.
 
 ## Budgets and cost
 
-Budgets can limit an organization, project, or Agent. Cost events roll up to
-those scopes. When a hard limit is reached, Rudder pauses the affected Agent
+Budgets can limit an organization or Agent. Cost events can still be attributed
+to projects for reporting, but projects do not have their own budget limits.
+When a hard limit is reached, Rudder pauses the affected Agent or organization
 instead of allowing hidden additional spend.
 
 A failed or cancelled Run can still have cost. Missing provider usage is shown

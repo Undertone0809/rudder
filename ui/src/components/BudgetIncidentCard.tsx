@@ -58,11 +58,7 @@ export function BudgetIncidentCard({
       <CardContent className="space-y-4 px-5 pb-5 pt-0">
         <div className={cn("flex items-start gap-2 rounded-xl border px-3 py-2 text-sm", semanticNoticeToneClasses.error)}>
           <PauseCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            {incident.scopeType === "project"
-              ? "Project execution is paused. New work in this project will not start until you resolve the budget incident."
-              : "This scope is paused. New heartbeats will not start until you resolve the budget incident."}
-          </div>
+          <div>This scope is paused. New heartbeats will not start until you resolve the budget incident.</div>
         </div>
 
         <div className="rounded-xl border border-border/60 bg-background/60 p-3">

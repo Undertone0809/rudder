@@ -232,6 +232,8 @@ describe("budgetService", () => {
         id: "incident-1",
         orgId: "organization-1",
         policyId: "policy-1",
+        scopeType: "organization",
+        scopeId: "organization-1",
         amountObserved: 120,
         approvalId: "approval-1",
       }],
@@ -256,6 +258,58 @@ describe("budgetService", () => {
         "board-user",
       ),
     ).rejects.toThrow("New budget must exceed current observed spend");
+  });
+
+  it("does not expose legacy project budget incidents", async () => {
+    const dbStub = createDbStub([
+      [{
+        id: "incident-1",
+        orgId: "organization-1",
+        policyId: "policy-1",
+        scopeType: "project",
+        scopeId: "project-1",
+      }],
+    ]);
+
+    const service = budgetService(dbStub.db as any);
+
+    await expect(
+      service.resolveIncident(
+        "organization-1",
+        "incident-1",
+        { action: "dismiss" },
+        "board-user",
+      ),
+    ).rejects.toThrow("Budget incident not found");
+  });
+
+  it("does not resolve an incident whose policy belongs to another scope", async () => {
+    const dbStub = createDbStub([
+      [{
+        id: "incident-1",
+        orgId: "organization-1",
+        policyId: "policy-1",
+        scopeType: "agent",
+        scopeId: "agent-1",
+      }],
+      [{
+        id: "policy-1",
+        orgId: "organization-2",
+        scopeType: "agent",
+        scopeId: "agent-1",
+      }],
+    ]);
+
+    const service = budgetService(dbStub.db as any);
+
+    await expect(
+      service.resolveIncident(
+        "organization-1",
+        "incident-1",
+        { action: "dismiss" },
+        "board-user",
+      ),
+    ).rejects.toThrow("Budget incident not found");
   });
 
   it("syncs organization monthly budget when raising and resuming a organization incident", async () => {

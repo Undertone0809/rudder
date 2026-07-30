@@ -23,7 +23,7 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 | 问题 | 打开 |
 | --- | --- |
 | 这项敏感操作是否允许发生？ | 审批 |
-| 一个 Agent 或项目花了多少？ | 预算和费用 |
+| 一个 Agent 或项目花了多少？ | 费用 |
 | 谁修改了这条记录？ | 活动 |
 | 某一次尝试发生了什么？ | Agent 运行 |
 | 整个组织哪些工作在推进或等待？ | Dashboard |
@@ -45,8 +45,8 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 
 ## 预算和费用
 
-预算可以限制组织、项目或 Agent。费用会汇总到这些范围。达到硬限制后，Rudder
-会暂停受影响 Agent，不能继续产生隐藏花费。
+预算可以限制组织或 Agent。费用仍可按项目归因和查看，但项目本身不再设置预算
+限制。达到硬限制后，Rudder 会暂停受影响的 Agent 或组织，不能继续产生隐藏花费。
 
 失败或取消的运行仍可能有费用。服务商没有提供用量时，会显示为不可用，不会用
 错误的零来代替。

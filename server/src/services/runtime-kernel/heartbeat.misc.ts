@@ -180,8 +180,6 @@ export function createHeartbeatMiscHandlers(context: any) {
           ),
         )
         .then((rows) => rows.map((row) => row.id));
-    } else {
-      wakeupIds = await listProjectScopedWakeupIds(scope.orgId, scope.scopeId);
     }
 
     if (wakeupIds.length === 0) return 0;
@@ -279,19 +277,16 @@ export function createHeartbeatMiscHandlers(context: any) {
       return;
     }
 
-    const runIds =
-      scope.scopeType === "organization"
-        ? await db
-          .select({ id: heartbeatRuns.id })
-          .from(heartbeatRuns)
-          .where(
-            and(
-              eq(heartbeatRuns.orgId, scope.orgId),
-              inArray(heartbeatRuns.status, ["queued", "running"]),
-            ),
-          )
-          .then((rows) => rows.map((row) => row.id))
-        : await listProjectScopedRunIds(scope.orgId, scope.scopeId);
+    const runIds = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          eq(heartbeatRuns.orgId, scope.orgId),
+          inArray(heartbeatRuns.status, ["queued", "running"]),
+        ),
+      )
+      .then((rows) => rows.map((row) => row.id));
 
     for (const runId of runIds) {
       await cancelRunInternal(runId, "Cancelled due to budget pause");

@@ -22,6 +22,5 @@ export interface DashboardSummary {
     activeIncidents: number;
     pendingApprovals: number;
     pausedAgents: number;
-    pausedProjects: number;
   };
 }
