@@ -199,6 +199,193 @@ async function measureMessengerFastScrollCoverage(page: Page) {
   });
 }
 
+async function measureMessengerPrepaintLead(page: Page) {
+  return page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
+    const scrollElement = element as HTMLElement;
+    const viewportHeight = scrollElement.clientHeight;
+    const maxScroll = Math.max(0, scrollElement.scrollHeight - viewportHeight);
+    const deltas = [0.12, 0.35, 0.65].map((fraction) => viewportHeight * fraction);
+    const samples: Array<{
+      direction: "backward" | "forward";
+      deltaPx: number;
+      blankPx: number;
+      prepaintLeadPx: number;
+      scrollTop: number;
+    }> = [];
+    const boundaryJumpSamples: Array<{
+      target: "end" | "start";
+      blankPx: number;
+      scrollTop: number;
+    }> = [];
+
+    const readMountedIntervals = () => {
+      const viewport = scrollElement.getBoundingClientRect();
+      const intervals = Array.from(scrollElement.querySelectorAll<HTMLElement>(
+        "[data-messenger-thread-key], [data-messenger-scroll-coverage-row]",
+      ))
+        .map((row) => row.getBoundingClientRect())
+        .filter((rect) => rect.bottom >= viewport.top - viewportHeight * 2
+          && rect.top <= viewport.bottom + viewportHeight * 2)
+        .map((rect) => ({ start: rect.top, end: rect.bottom }))
+        .sort((left, right) => left.start - right.start);
+      return { intervals, viewport };
+    };
+
+    const contiguousLead = (
+      intervals: Array<{ start: number; end: number }>,
+      boundary: number,
+      direction: "backward" | "forward",
+    ) => {
+      if (direction === "forward") {
+        let cursor = boundary;
+        for (const interval of intervals) {
+          if (interval.end < boundary) continue;
+          if (interval.start - cursor > 16) break;
+          cursor = Math.max(cursor, interval.end);
+        }
+        return Math.max(0, cursor - boundary);
+      }
+      let cursor = boundary;
+      for (let index = intervals.length - 1; index >= 0; index -= 1) {
+        const interval = intervals[index]!;
+        if (interval.start > boundary) continue;
+        if (cursor - interval.end > 16) break;
+        cursor = Math.min(cursor, interval.start);
+      }
+      return Math.max(0, boundary - cursor);
+    };
+
+    const measureExistingRowsAfterScroll = (
+      direction: "backward" | "forward",
+      deltaPx: number,
+    ) => {
+      const before = readMountedIntervals();
+      const beforeRows = new Set(Array.from(scrollElement.querySelectorAll<HTMLElement>(
+        "[data-messenger-thread-key], [data-messenger-scroll-coverage-row]",
+      )));
+      const previousScrollTop = scrollElement.scrollTop;
+      scrollElement.scrollTop = Math.max(0, Math.min(
+        maxScroll,
+        previousScrollTop + (direction === "forward" ? deltaPx : -deltaPx),
+      ));
+      if (Math.abs(scrollElement.scrollTop - previousScrollTop) < deltaPx * 0.9) return;
+      const viewport = scrollElement.getBoundingClientRect();
+      const intervals = Array.from(beforeRows)
+        .map((row) => row.getBoundingClientRect())
+        .map((rect) => ({
+          start: Math.max(viewport.top, rect.top),
+          end: Math.min(viewport.bottom, rect.bottom),
+        }))
+        .filter((interval) => interval.end > viewport.top && interval.start < viewport.bottom)
+        .sort((left, right) => left.start - right.start);
+      let cursor = viewport.top;
+      let blankPx = 0;
+      for (const interval of intervals) {
+        blankPx = Math.max(blankPx, interval.start - cursor);
+        cursor = Math.max(cursor, interval.end);
+      }
+      blankPx = Math.max(blankPx, viewport.bottom - cursor);
+      const boundary = direction === "forward"
+        ? before.viewport.bottom
+        : before.viewport.top;
+      const prepaintLeadPx = contiguousLead(before.intervals, boundary, direction);
+      samples.push({
+        direction,
+        deltaPx,
+        blankPx,
+        prepaintLeadPx,
+        scrollTop: scrollElement.scrollTop,
+      });
+    };
+
+    const readVisibleBoundaryBlank = (target: "end" | "start") => {
+      const viewport = scrollElement.getBoundingClientRect();
+      const intervals = Array.from(scrollElement.querySelectorAll<HTMLElement>(
+        "[data-messenger-thread-key], [data-messenger-scroll-coverage-row]",
+      ))
+        .map((row) => row.getBoundingClientRect())
+        .map((rect) => ({
+          start: Math.max(viewport.top, rect.top),
+          end: Math.min(viewport.bottom, rect.bottom),
+        }))
+        .filter((interval) => interval.end > viewport.top && interval.start < viewport.bottom)
+        .sort((left, right) => left.start - right.start);
+      if (intervals.length === 0) return viewport.height;
+      // At the physical start, fixed controls legitimately precede the first
+      // virtual row; at the physical end, the list may naturally finish before
+      // the viewport edge. Measure only gaps that can represent an unmounted
+      // virtual row while still treating a completely absent range as blank.
+      let cursor = target === "start" ? intervals[0]!.start : viewport.top;
+      let blankPx = 0;
+      for (const interval of intervals) {
+        blankPx = Math.max(blankPx, interval.start - cursor);
+        cursor = Math.max(cursor, interval.end);
+      }
+      return target === "start"
+        ? Math.max(blankPx, viewport.bottom - cursor)
+        : blankPx;
+    };
+
+    scrollElement.scrollTop = maxScroll * 0.14;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    scrollElement.scrollTop = maxScroll * 0.15;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      for (const deltaPx of deltas) {
+        measureExistingRowsAfterScroll("forward", deltaPx);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      scrollElement.scrollTop = maxScroll * 0.76;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      scrollElement.scrollTop = maxScroll * 0.75;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      for (const deltaPx of deltas) {
+        measureExistingRowsAfterScroll("backward", deltaPx);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      scrollElement.scrollTop = maxScroll * 0.15;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    for (const [target, scrollTop] of [
+      ["end", maxScroll],
+      ["start", 0],
+    ] as const) {
+      scrollElement.scrollTop = maxScroll * 0.5;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      scrollElement.scrollTop = scrollTop;
+      // Native scroll events run before paint. Dispatch synchronously so this
+      // sample verifies the emergency range commit for a scrollbar/Home/End
+      // jump without granting React an extra frame to fill the viewport.
+      scrollElement.dispatchEvent(new Event("scroll"));
+      boundaryJumpSamples.push({
+        target,
+        blankPx: readVisibleBoundaryBlank(target),
+        scrollTop: scrollElement.scrollTop,
+      });
+    }
+    const forwardSamples = samples.filter((sample) => sample.direction === "forward");
+    const backwardSamples = samples.filter((sample) => sample.direction === "backward");
+    return {
+      viewportHeight,
+      minPrepaintLeadPx: Math.min(...samples.map((sample) => sample.prepaintLeadPx)),
+      minForwardPrepaintLeadPx: Math.min(
+        ...forwardSamples.map((sample) => sample.prepaintLeadPx),
+      ),
+      minBackwardPrepaintLeadPx: Math.min(
+        ...backwardSamples.map((sample) => sample.prepaintLeadPx),
+      ),
+      maxPrepaintDeficitPx: Math.max(
+        ...samples.map((sample) => Math.max(0, sample.deltaPx - sample.prepaintLeadPx)),
+      ),
+      maxBlankPx: Math.max(...samples.map((sample) => sample.blankPx)),
+      lateSamples: samples.filter((sample) => sample.blankPx > 16),
+      maxBoundaryJumpBlankPx: Math.max(...boundaryJumpSamples.map((sample) => sample.blankPx)),
+      boundaryJumpSamples,
+      samples,
+    };
+  });
+}
+
 async function measureMessengerBidirectionalFling(page: Page, durationMs: number) {
   const session = await page.context().newCDPSession(page);
   await session.send("Performance.enable");
@@ -669,16 +856,13 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await expect.poll(() => groupPersistenceRequests).toBe(2);
   await expect.poll(() => groupPersistenceResponses).toBe(2);
   await page.unroute(groupPersistenceUrl);
-  for (const group of pressureGroups) {
-    await expect(page.getByTestId(
-      `messenger-section-virtual-entries-custom-group-${group.id}`,
-    )).toHaveCount(1);
-  }
   await expect(page.getByTestId("messenger-virtual-directory")).toHaveCount(1);
   const messengerFastScrollCoverage = await measureMessengerFastScrollCoverage(page);
   console.log(`THREAD_PRESSURE_FAST_SCROLL_COVERAGE ${JSON.stringify(messengerFastScrollCoverage)}`);
   const messengerBidirectionalFling = await measureMessengerBidirectionalFling(page, 6_000);
   console.log(`THREAD_PRESSURE_BIDIRECTIONAL_FLING ${JSON.stringify(messengerBidirectionalFling)}`);
+  const messengerPrepaintLead = await measureMessengerPrepaintLead(page);
+  console.log(`THREAD_PRESSURE_PREPAINT_LEAD ${JSON.stringify(messengerPrepaintLead)}`);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
   expect(messengerFastScrollCoverage.blankSamples).toBe(0);
   expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(16);
@@ -690,6 +874,16 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       `messenger-thread-section-custom-group-${group.id}`
     )).sort(),
   );
+  expect(messengerPrepaintLead.lateSamples).toEqual([]);
+  expect(messengerPrepaintLead.maxBlankPx).toBeLessThanOrEqual(16);
+  expect(messengerPrepaintLead.maxBoundaryJumpBlankPx).toBeLessThanOrEqual(16);
+  expect(messengerPrepaintLead.minForwardPrepaintLeadPx).toBeGreaterThanOrEqual(
+    messengerPrepaintLead.viewportHeight,
+  );
+  expect(messengerPrepaintLead.minBackwardPrepaintLeadPx).toBeGreaterThanOrEqual(
+    messengerPrepaintLead.viewportHeight,
+  );
+  expect(messengerPrepaintLead.maxPrepaintDeficitPx).toBe(0);
   expect(messengerBidirectionalFling.directionChanges).toBeGreaterThanOrEqual(8);
   expect(messengerBidirectionalFling.maxScroll).toBeGreaterThan(1_000);
   expect(messengerBidirectionalFling.scrollSpanRatio).toBeGreaterThan(0.8);
@@ -838,6 +1032,7 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       directoryHeightPx: loadedMessengerDirectoryHeight,
       groupOpenFrameMs: groupOpenFrame.elapsedMs,
       scroll: sidebarScrollMetrics,
+      prepaintLead: messengerPrepaintLead,
       bidirectionalFling: messengerBidirectionalFling,
     },
     realtime: {

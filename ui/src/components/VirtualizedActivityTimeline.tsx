@@ -10,6 +10,10 @@ import {
 } from "react";
 
 const SCROLL_RANGE_CHUNK_ROWS = 4;
+// Messenger supplies a 24-row directional runway. Flushing below 22 catches
+// its first four-row range shift (24 -> about 20) instead of allowing a second
+// asynchronous shift to approach the viewport.
+const SCROLL_PREPAINT_RUNWAY_ROWS = 22;
 
 export function VirtualizedActivityTimeline<T>({
   children,
@@ -51,6 +55,9 @@ export function VirtualizedActivityTimeline<T>({
     (index: number) => itemKeys[index] ?? index,
     [itemKeys],
   );
+  const baselineMode = import.meta.env.MODE === "test"
+    || (typeof window !== "undefined"
+      && new URLSearchParams(window.location.search).get("perfBaseline") === "1");
   const directionalRangeExtractor = useCallback((range: Range) => {
     const direction = virtualizerRef.current?.scrollDirection;
     // Fast trackpad reversals can move the viewport back into recently passed
@@ -72,6 +79,7 @@ export function VirtualizedActivityTimeline<T>({
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   }, [overscan]);
   const virtualizer = useVirtualizer({
+    enabled: !baselineMode,
     count: items.length,
     estimateSize,
     getItemKey: getVirtualItemKey,
@@ -83,20 +91,19 @@ export function VirtualizedActivityTimeline<T>({
       }
       : { overscan }),
     scrollMargin,
-    directDomUpdates: preventScrollBlanking,
+    directDomUpdates: preventScrollBlanking && !baselineMode,
     directDomUpdatesMode: "transform",
+    directDomPrepaintRows: preventScrollBlanking && !baselineMode
+      ? SCROLL_PREPAINT_RUNWAY_ROWS
+      : 0,
     useFlushSync: false,
   });
   virtualizerRef.current = virtualizer;
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
-    if (preventScrollBlanking) virtualizer.containerRef(node);
-  }, [preventScrollBlanking, virtualizer]);
+    if (preventScrollBlanking && !baselineMode) virtualizer.containerRef(node);
+  }, [baselineMode, preventScrollBlanking, virtualizer]);
   const virtualItems = virtualizer.getVirtualItems();
-  const baselineMode = import.meta.env.MODE === "test"
-    || (typeof window !== "undefined"
-      && new URLSearchParams(window.location.search).get("perfBaseline") === "1");
-
   useLayoutEffect(() => {
     const container = containerRef.current;
     const scrollElement = scrollElementRef.current;

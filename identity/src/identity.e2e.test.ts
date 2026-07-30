@@ -35,6 +35,7 @@ describe("Rudder Identity HTTP journey", () => {
   let httpServer: Server | undefined;
   let tempDirectory: string;
   let baseUrl: string;
+  const backgroundTasks = new Set<Promise<unknown>>();
 
   async function availablePort(): Promise<number> {
     const probe = createServer();
@@ -70,6 +71,7 @@ describe("Rudder Identity HTTP journey", () => {
   }
 
   async function capturedMailbox() {
+    await Promise.all(backgroundTasks);
     return await (await fetch(`${baseUrl}/api/dev/mailbox`, {
       headers: { authorization: `Bearer ${CAPTURE_MAILBOX_SECRET}` },
     })).json() as {
@@ -105,7 +107,13 @@ describe("Rudder Identity HTTP journey", () => {
     await migrationConnection.close();
 
     const server = createServer((req, res) => {
-      void identityHandler(req, res).catch(() => {
+      void identityHandler(req, res, {
+        backgroundTaskHandler: (promise) => {
+          let tracked: Promise<unknown>;
+          tracked = promise.finally(() => backgroundTasks.delete(tracked));
+          backgroundTasks.add(tracked);
+        },
+      }).catch(() => {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: "internal_server_error" }));
       });
@@ -334,6 +342,36 @@ describe("Rudder Identity HTTP journey", () => {
     });
     expect(existingReset.status).toBe(unknownReset.status);
     expect(await existingReset.json()).toEqual(await unknownReset.json());
+  });
+
+  it("keeps password recovery identical when mail delivery is slow and fails", async () => {
+    const runtime = getIdentityRuntime();
+    const originalSend = runtime.mail.send.bind(runtime.mail);
+    runtime.mail.send = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      throw new Error("injected mail transport failure");
+    };
+    try {
+      const startedAt = Date.now();
+      const [existingReset, unknownReset] = await Promise.all([
+        post("/api/auth/email-otp/request-password-reset", {
+          email: "password-e2e@example.com",
+        }),
+        post("/api/auth/email-otp/request-password-reset", {
+          email: `unknown-mail-failure-${randomUUID()}@example.com`,
+        }),
+      ]);
+      const responseTimeMs = Date.now() - startedAt;
+
+      expect(existingReset.status).toBe(200);
+      expect(unknownReset.status).toBe(200);
+      expect(await existingReset.json()).toEqual({ success: true });
+      expect(await unknownReset.json()).toEqual({ success: true });
+      expect(responseTimeMs).toBeLessThan(400);
+      await Promise.all(backgroundTasks);
+    } finally {
+      runtime.mail.send = originalSend;
+    }
   });
 
   it("converges concurrent verified Google and GitHub identities on one account", async () => {

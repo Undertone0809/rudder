@@ -22,7 +22,7 @@ overrides:
 
 patchedDependencies:
   '@tanstack/react-virtual@3.14.8':
-    hash: els2awg2be74q35kkpmr44of3e
+    hash: m5anvdc363isentyrvncjxh3i4
     path: patches/@tanstack__react-virtual@3.14.8.patch
 
 importers:
@@ -148,6 +148,9 @@ importers:
       '@rudderhq/identity-db':
         specifier: workspace:*
         version: link:../packages/identity-db
+      '@vercel/functions':
+        specifier: ^2.2.13
+        version: 2.2.13(@aws-sdk/credential-provider-web-identity@3.972.24)
       better-auth:
         specifier: 1.6.23
         version: 1.6.23(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@electric-sql/pglite@0.3.15)(@opentelemetry/api@1.9.1)(kysely@0.29.3)(pg@8.20.0)(postgres@3.4.8))(pg@8.20.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@3.2.7(@types/debug@4.1.13)(@types/node@24.12.0)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@2.0.1))(lightningcss@1.32.0)(tsx@4.21.0))(vue@3.5.34(typescript@5.9.3))
@@ -880,7 +883,7 @@ importers:
         version: 5.95.2(react@19.2.4)
       '@tanstack/react-virtual':
         specifier: 3.14.8
-        version: 3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 3.14.8(patch_hash=m5anvdc363isentyrvncjxh3i4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -4189,6 +4192,19 @@ packages:
 
   '@upsetjs/venn.js@2.0.0':
     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
+
+  '@vercel/functions@2.2.13':
+    resolution: {integrity: sha512-14ArBSIIcOBx9nrEgaJb4Bw+en1gl6eSoJWh8qjifLl5G3E4dRXCFOT8HP+w66vb9Wqyd1lAQBrmRhRwOj9X9A==}
+    engines: {node: '>= 18'}
+    peerDependencies:
+      '@aws-sdk/credential-provider-web-identity': '*'
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-web-identity':
+        optional: true
+
+  '@vercel/oidc@2.0.2':
+    resolution: {integrity: sha512-59PBFx3T+k5hLTEWa3ggiMpGRz1OVvl9eN8SUai+A43IsqiOuAe7qPBf+cray/Fj6mkgnxm/D7IAtjc8zSHi7g==}
+    engines: {node: '>= 18'}
 
   '@vitejs/plugin-react@4.7.0':
     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
@@ -11416,7 +11432,7 @@ snapshots:
       '@tanstack/query-core': 5.95.2
       react: 19.2.4
 
-  '@tanstack/react-virtual@3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@tanstack/react-virtual@3.14.8(patch_hash=m5anvdc363isentyrvncjxh3i4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@tanstack/virtual-core': 3.17.6
       react: 19.2.4
@@ -11779,6 +11795,17 @@ snapshots:
     optionalDependencies:
       d3-selection: 3.0.0
       d3-transition: 3.0.1(d3-selection@3.0.0)
+
+  '@vercel/functions@2.2.13(@aws-sdk/credential-provider-web-identity@3.972.24)':
+    dependencies:
+      '@vercel/oidc': 2.0.2
+    optionalDependencies:
+      '@aws-sdk/credential-provider-web-identity': 3.972.24
+
+  '@vercel/oidc@2.0.2':
+    dependencies:
+      '@types/ms': 2.1.0
+      ms: 2.1.3
 
   '@vitejs/plugin-react@4.7.0(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))':
     dependencies:
