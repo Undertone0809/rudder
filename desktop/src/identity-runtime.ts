@@ -22,6 +22,7 @@ import {
   createDesktopOfflineGrantStore,
   type DesktopOfflineGrantCredential,
 } from "./identity-offline-grant.js";
+import { resolveDesktopIdentitySafeStorage } from "./identity-safe-storage-policy.js";
 import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
 import { desktopAccountBypassAllowed } from "./identity-startup-policy.js";
 
@@ -95,8 +96,13 @@ export function createDesktopIdentityRuntime(options: {
     isPackaged: app.isPackaged,
     override: process.env.RUDDER_IDENTITY_ORIGIN,
   });
-  const credentialVault = createIdentityCredentialVault({
+  const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+  });
+  const credentialVault = createIdentityCredentialVault({
+    safeStorage,
     platform: process.platform,
     credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
   });
@@ -104,7 +110,7 @@ export function createDesktopIdentityRuntime(options: {
   const vault = createDesktopIdentitySessionStore(credentialVault);
   if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");
   const offlineGrantStore = createDesktopOfflineGrantStore({
-    safeStorage: options.safeStorage,
+    safeStorage,
     platform: process.platform,
     statePath: path.join(app.getPath("userData"), "identity", "offline-grant.bin"),
     issuer: origin,

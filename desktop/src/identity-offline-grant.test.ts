@@ -90,6 +90,7 @@ describe("Desktop Offline Grant store", () => {
 
   it("does not create or persist an Offline Grant on Linux basic_text", () => {
     const statePath = temporaryStatePath();
+    fs.writeFileSync(statePath, "stale encrypted state");
     const store = createDesktopOfflineGrantStore({
       safeStorage: fakeSafeStorage("basic_text"),
       platform: "linux",
@@ -101,5 +102,26 @@ describe("Desktop Offline Grant store", () => {
     expect(store.prepareDeviceKey()).toBeNull();
     store.signOut();
     expect(fs.existsSync(statePath)).toBe(false);
+  });
+
+  it("forgets a pending device key even when secure sign-out persistence fails", () => {
+    const storage = fakeSafeStorage();
+    const store = createDesktopOfflineGrantStore({
+      safeStorage: {
+        ...storage,
+        encryptString: () => {
+          throw new Error("secure store is locked");
+        },
+      },
+      platform: "win32",
+      statePath: temporaryStatePath(),
+      issuer: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+    });
+    const firstKey = store.prepareDeviceKey()!.thumbprint;
+
+    expect(() => store.signOut()).toThrow("secure store is locked");
+
+    expect(store.prepareDeviceKey()!.thumbprint).not.toBe(firstKey);
   });
 });

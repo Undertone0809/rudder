@@ -34,6 +34,38 @@ describe("Desktop Identity client", () => {
     expect(clear).toHaveBeenCalledOnce();
   });
 
+  it("completes local sign-out when stale credential file cleanup fails", async () => {
+    const offlineSignOut = vi.fn(() => {
+      throw new Error("offline file is locked");
+    });
+    const clear = vi.fn(() => {
+      throw new Error("credential file is locked");
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear },
+      offlineGrantStore: {
+        prepareDeviceKey: vi.fn(() => null),
+        acceptGrant: vi.fn(),
+        signOut: offlineSignOut,
+      },
+      openExternal: vi.fn(),
+    });
+
+    await expect(client.signOut()).resolves.toBeUndefined();
+
+    expect(offlineSignOut).toHaveBeenCalledOnce();
+    expect(clear).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      "[rudder-desktop] local account credentials could not be fully removed",
+      expect.objectContaining({ message: "offline file is locked" }),
+      expect.objectContaining({ message: "credential file is locked" }),
+    );
+  });
+
   it("rotates the encrypted refresh credential before listing device sessions", async () => {
     const stored = {
       version: 1 as const,
