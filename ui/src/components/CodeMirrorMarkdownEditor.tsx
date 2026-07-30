@@ -24,10 +24,10 @@ import {
 import {
   Decoration,
   EditorView,
-  WidgetType,
   keymap,
   type DecorationSet,
 } from "@codemirror/view";
+import { GFM } from "@lezer/markdown";
 import { basicSetup } from "codemirror";
 import {
   forwardRef,
@@ -43,6 +43,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { sourceDrivenMarkdownPreview } from "../lib/codemirror-markdown-live-preview";
 import {
   focusAdjacentEditorControl,
   markdownMentionCompletion,
@@ -51,10 +52,20 @@ import {
   type CodeMirrorMentionState,
 } from "../lib/codemirror-markdown-mentions";
 import {
+  emitInlineTokenClick,
+  isPrimaryPlainMouseEvent,
+  markdownPointerPosition,
+  MarkdownPortalWidget,
+  openDecoratedMarkdownLink,
+  sourceReferenceForTarget,
+  type PortalDescriptor,
+  type PortalRegistration,
+  type PortalRegistry,
+} from "../lib/codemirror-markdown-portals";
+import {
   codeMirrorMarkdownEditorTheme,
   codeMirrorMarkdownHighlightStyle,
 } from "../lib/codemirror-markdown-theme";
-import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { alignMarkdownSourceLine } from "../lib/markdown-editor-scroll";
 import {
   activeMarkdownPreviewBlockIds,
@@ -65,27 +76,17 @@ import {
   markdownPreviewSource,
   provisionalWebsiteLabel,
   readSingleHttpUrl,
-  type AtomicMarkdownReference,
   type MarkdownPreviewBlock,
   type MarkdownPreviewDocument,
 } from "../lib/markdown-live-preview";
-import {
-  mentionChipNavigationPath,
-  parseMentionChipHref,
-} from "../lib/mention-chips";
 import { filterMentionOptions } from "../lib/mention-filter";
 import {
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
 } from "../lib/mention-menu-position";
-import {
-  applyOrganizationPrefix,
-  extractOrganizationPrefixFromPath,
-} from "../lib/organization-routes";
-import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { cn } from "../lib/utils";
 import { getWebsiteMetadata } from "../lib/website-metadata-cache";
-import { MarkdownBody } from "./MarkdownBody";
+import { MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
 import type {
   MarkdownEditorProps,
   MarkdownEditorRef,
@@ -95,32 +96,6 @@ import { MarkdownMentionMenu } from "./MarkdownMentionMenu";
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 
 type CodeMirrorMarkdownEditorProps = MarkdownEditorProps;
-
-type PortalDescriptor =
-  | {
-    type: "block";
-    key: string;
-    host: HTMLElement;
-    block: MarkdownPreviewBlock;
-    previewMarkdown: string;
-  }
-  | {
-    type: "atomic";
-    key: string;
-    host: HTMLElement;
-    reference: AtomicMarkdownReference;
-  };
-
-type PortalRegistration = PortalDescriptor extends infer Descriptor
-  ? Descriptor extends { host: HTMLElement }
-    ? Omit<Descriptor, "host">
-    : never
-  : never;
-
-interface PortalRegistry {
-  register: (registration: PortalRegistration, host: HTMLElement) => void;
-  unregister: (key: string, host: HTMLElement) => void;
-}
 
 interface PendingTitleUpgrade {
   requestId: number;
@@ -166,282 +141,43 @@ export function __getCodeMirrorMarkdownViewForTests(root: Element | null): Edito
   return editorRoot ? testEditorViews.get(editorRoot) ?? null : null;
 }
 
-function isPrimaryPlainMouseEvent(event: MouseEvent) {
-  return event.button === 0
-    && !event.altKey
-    && !event.ctrlKey
-    && !event.metaKey
-    && !event.shiftKey;
-}
-
-function tokenKind(reference: AtomicMarkdownReference): AtomicInlineTokenElement["kind"] {
-  return /(?:SKILL\.md|^skill:\/\/)/iu.test(reference.href) || reference.label.trim().startsWith("$")
-    ? "skill"
-    : "mention";
-}
-
-function toInlineToken(
-  reference: AtomicMarkdownReference,
-  element: HTMLElement,
-): AtomicInlineTokenElement {
-  return {
-    element,
-    href: reference.href,
-    kind: tokenKind(reference),
-    label: reference.label.replace(/^[@$]/u, ""),
-  };
-}
-
-function sourceReferenceForTarget(block: MarkdownPreviewBlock, target: HTMLElement) {
-  const sourceElement = target.closest<HTMLElement>(
-    "[data-markdown-source-start][data-markdown-source-end]",
-  );
-  const start = Number(sourceElement?.dataset.markdownSourceStart);
-  const end = Number(sourceElement?.dataset.markdownSourceEnd);
-  const references = findAtomicMarkdownReferences(block.markdown);
-  if (Number.isFinite(start) && Number.isFinite(end)) {
-    const positioned = references.find((reference) => reference.from === start && reference.to === end);
-    if (positioned) return positioned;
-  }
-
-  const label = target.textContent?.trim().replace(/^[@$]/u, "") ?? "";
-  return references.find((reference) => reference.label.trim().replace(/^[@$]/u, "") === label) ?? null;
-}
-
-function emitInlineTokenClick(
-  props: CodeMirrorMarkdownEditorProps,
-  reference: AtomicMarkdownReference,
-  element: HTMLElement,
-  event: MouseEvent | KeyboardEvent,
-) {
-  if (props.onInlineTokenClick) {
-    event.preventDefault();
-    props.onInlineTokenClick(toInlineToken(reference, element), {
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      shiftKey: event.shiftKey,
-    });
-    return true;
-  }
-
-  let target: string | null = null;
-  if (tokenKind(reference) === "mention") {
-    const mention = parseMentionChipHref(reference.href);
-    if (mention) target = mentionChipNavigationPath(mention);
-  } else {
-    target = (props.mentions ?? []).find((option) => (
-      option.kind === "skill"
-      && option.skillMarkdownTarget === reference.href
-      && option.skillDetailsHref
-    ))?.skillDetailsHref ?? null;
-    if (!target && /^skill:\/\/org\//iu.test(reference.href)) {
-      try {
-        const skillUrl = new URL(reference.href);
-        const skillId = decodeURIComponent(
-          skillUrl.pathname.split("/").filter(Boolean)[0] ?? "",
-        );
-        if (skillId) target = buildLibrarySkillHref(skillId);
-      } catch {
-        // A malformed historical token remains inert source data.
-      }
-    }
-  }
-  if (!target || typeof window === "undefined") return false;
-
-  event.preventDefault();
-  const route = applyOrganizationPrefix(
-    target,
-    extractOrganizationPrefixFromPath(window.location.pathname),
-  );
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (route !== current) {
-    window.history.pushState(window.history.state, "", route);
-    window.dispatchEvent(new PopStateEvent("popstate", {
-      state: window.history.state,
-    }));
-  }
-  return true;
-}
-
-class MarkdownPortalWidget extends WidgetType {
-  constructor(
-    readonly registration: PortalRegistration,
-    readonly registry: PortalRegistry,
-    readonly propsRef: { current: CodeMirrorMarkdownEditorProps },
-    readonly activateBlock: (block: MarkdownPreviewBlock, view: EditorView) => void,
-  ) {
-    super();
-  }
-
-  eq(other: MarkdownPortalWidget) {
-    return other.registration.key === this.registration.key;
-  }
-
-  toDOM(view: EditorView) {
-    const host = document.createElement("span");
-    host.className = this.registration.type === "block"
-      ? "rudder-codemirror-markdown-preview"
-      : "rudder-codemirror-markdown-atomic";
-    host.dataset.markdownPreviewState = "preview";
-
-    if (this.registration.type === "block") {
-      const { block } = this.registration;
-      host.dataset.sourceLineStart = String(block.startLine);
-      host.dataset.sourceLineEnd = String(block.endLine);
-      host.tabIndex = -1;
-      host.addEventListener("mousedown", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
-        const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
-        if (
-          tokenElement
-          || target?.closest(".rudder-code-block-copy-button")
-        ) {
-          // CodeMirror's pointer handler may otherwise move the selection and
-          // replace this widget before mouseup, so the browser never delivers
-          // the token's click. Keep the atomic/widget DOM stable for the full
-          // pointer sequence.
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        if (!isPrimaryPlainMouseEvent(event)) return;
-        event.preventDefault();
-        this.activateBlock(block, view);
-      });
-      host.addEventListener("click", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
-        const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
-        if (tokenElement) {
-          const reference = sourceReferenceForTarget(block, tokenElement);
-          if (
-            reference
-            && emitInlineTokenClick(
-              this.propsRef.current,
-              reference,
-              tokenElement,
-              event,
-            )
-          ) {
-            event.stopPropagation();
-          }
-          return;
-        }
-        if (
-          target?.closest("a")
-          && event.detail !== 0
-          && isPrimaryPlainMouseEvent(event)
-        ) {
-          event.preventDefault();
-          this.activateBlock(block, view);
-        }
-      });
-      host.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.metaKey || event.ctrlKey || event.altKey) return;
-        const target = event.target instanceof HTMLElement ? event.target : null;
-        if (
-          target?.closest(
-            "a, [data-mention-kind], [data-skill-token='true'], .rudder-code-block-copy-button",
-          )
-        ) {
-          return;
-        }
-        event.preventDefault();
-        this.activateBlock(block, view);
-      });
-    } else {
-      const { reference } = this.registration;
-      host.dataset.markdownAtomicReference = "true";
-      host.dataset.sourceStart = String(reference.from);
-      host.dataset.sourceEnd = String(reference.to);
-      host.addEventListener("mousedown", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
-        if (
-          event.button === 0
-          && target?.closest<HTMLElement>(
-            "[data-mention-kind], [data-skill-token='true']",
-          )
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      });
-      host.addEventListener("click", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
-        const tokenElement = target?.closest<HTMLElement>(
-          "[data-mention-kind], [data-skill-token='true']",
-        );
-        if (!tokenElement) return;
-        if (
-          emitInlineTokenClick(
-            this.propsRef.current,
-            reference,
-            tokenElement,
-            event,
-          )
-        ) {
-          event.stopPropagation();
-        }
-      });
-    }
-
-    queueMicrotask(() => {
-      if (host.isConnected) this.registry.register(this.registration, host);
-    });
-    return host;
-  }
-
-  destroy(host: HTMLElement) {
-    this.registry.unregister(this.registration.key, host);
-  }
-
-  ignoreEvent() {
-    return true;
-  }
-}
-
-function sourceLineDecorations(
-  block: MarkdownPreviewBlock,
-  state: EditorState,
-) {
-  const decorations: Range<Decoration>[] = [];
-  const headingLevel = block.kind === "line"
-    ? block.markdown.match(/^ {0,3}(#{1,6})(?:[ \t]+|$)/u)?.[1]?.length
-    : undefined;
-  for (let lineNumber = block.startLine; lineNumber <= block.endLine; lineNumber += 1) {
-    const line = state.doc.line(Math.min(lineNumber, state.doc.lines));
-    const blockEdge = block.startLine === block.endLine
-      ? "single"
-      : lineNumber === block.startLine
-        ? "first"
-        : lineNumber === block.endLine
-          ? "last"
-          : "middle";
-    decorations.push(
-      Decoration.line({
-        attributes: {
-          "data-markdown-preview-state": "source",
-          "data-markdown-source-kind": block.kind,
-          ...(headingLevel
-            ? { "data-markdown-source-heading-level": String(headingLevel) }
-            : {}),
-          ...(block.kind === "fenced-code"
-            ? { "data-markdown-source-block-edge": blockEdge }
-            : {}),
-          "data-source-line-start": String(lineNumber),
-          "data-source-line-end": String(block.endLine),
-        },
-      }).range(line.from),
-    );
-  }
-  return decorations;
-}
-
 function activeSelectionRanges(state: EditorState) {
   return state.selection.ranges.map((range) => ({
     from: range.from,
     to: range.to,
   }));
+}
+
+function richPreviewBlockIds(
+  state: EditorState,
+  blocks: readonly MarkdownPreviewBlock[],
+) {
+  const ids = new Set(
+    blocks
+      .filter((block) => block.kind === "table" || block.kind === "indented-code")
+      .map((block) => block.id),
+  );
+  let blockIndex = 0;
+  syntaxTree(state).iterate({
+    enter(node) {
+      const richNode = node.name === "Image"
+        || node.name === "LinkReference"
+        || node.name === "LinkLabel"
+        || (
+          node.name === "CodeInfo"
+          && state.sliceDoc(node.from, node.to).trim().toLowerCase() === "mermaid"
+        );
+      if (!richNode) return;
+      while (blockIndex < blocks.length && blocks[blockIndex].to <= node.from) {
+        blockIndex += 1;
+      }
+      const block = blocks[blockIndex];
+      if (block && block.from <= node.from && block.to >= node.to) {
+        ids.add(block.id);
+      }
+    },
+  });
+  return ids;
 }
 
 function markdownPreviewDecorations(
@@ -458,38 +194,70 @@ function markdownPreviewDecorations(
     : new Set<string>();
   const decorations: Range<Decoration>[] = [];
   const atomicDecorations: Range<Decoration>[] = [];
+  const sourceDrivenBlocks: MarkdownPreviewBlock[] = [];
+  const portalBlocks: MarkdownPreviewBlock[] = [];
+  const richBlockIds = richPreviewBlockIds(state, blocks);
 
   for (const block of blocks) {
-    const isSource = !block.previewable || activeIds.has(block.id);
-    if (isSource) {
-      decorations.push(...sourceLineDecorations(block, state));
-      const references = findAtomicMarkdownReferences(block.markdown);
-      for (const reference of references) {
-        const absoluteReference = {
-          ...reference,
-          from: block.from + reference.from,
-          to: block.from + reference.to,
-        };
-        const key = `atomic:${absoluteReference.from}:${absoluteReference.to}:${absoluteReference.markdown}`;
-        const replacement = Decoration.replace({
-          widget: new MarkdownPortalWidget(
-            {
-              type: "atomic",
-              key,
-              reference: absoluteReference,
-            },
-            registry,
-            propsRef,
-            activateBlock,
-          ),
-          inclusive: false,
-        }).range(absoluteReference.from, absoluteReference.to);
-        decorations.push(replacement);
-        atomicDecorations.push(replacement);
-      }
+    if (
+      block.previewable
+      && !activeIds.has(block.id)
+      && richBlockIds.has(block.id)
+    ) {
+      portalBlocks.push(block);
+    } else {
+      sourceDrivenBlocks.push(block);
+    }
+  }
+
+  const references = document.atomicReferences;
+  const sourceDriven = sourceDrivenMarkdownPreview(
+    state,
+    sourceDrivenBlocks,
+    activeIds,
+    references,
+  );
+  decorations.push(...sourceDriven.decorations);
+
+  for (const reference of references) {
+    if (portalBlocks.some((block) => (
+      block.from <= reference.from && block.to >= reference.to
+    ))) {
       continue;
     }
+    const key = `atomic:${reference.from}:${reference.to}:${reference.markdown}`;
+    const replacement = Decoration.replace({
+      widget: new MarkdownPortalWidget(
+        {
+          type: "atomic",
+          key,
+          reference,
+        },
+        registry,
+        propsRef,
+        activateBlock,
+      ),
+      inclusive: false,
+    }).range(reference.from, reference.to);
+    decorations.push(replacement);
+    atomicDecorations.push(replacement);
+  }
 
+  for (const link of sourceDriven.websiteLinks) {
+    const key = `website:${link.from}:${link.to}:${link.href}`;
+    const widget = Decoration.widget({
+      widget: new MarkdownPortalWidget(
+        { type: "website", key, link },
+        registry,
+        propsRef,
+        activateBlock,
+      ),
+      side: -1,
+    }).range(link.labelFrom);
+    decorations.push(widget);
+  }
+
+  for (const block of portalBlocks) {
     if (block.to <= block.from) continue;
     const previewMarkdown = markdownPreviewSource(block, referenceDefinitions);
     const key = `block:${block.id}:${previewMarkdown}`;
@@ -571,7 +339,9 @@ function adjacentAtomicReference(
   )) ?? null;
 }
 
-function portalLinkClickHandler(descriptor: PortalDescriptor) {
+type MarkdownPortalDescriptor = Exclude<PortalDescriptor, { type: "website" }>;
+
+function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
   return ({ event }: { event: ReactMouseEvent<HTMLAnchorElement> }) => {
     const tokenElement = event.currentTarget.querySelector<HTMLElement>(
       "[data-mention-kind], [data-skill-token='true']",
@@ -594,7 +364,7 @@ function PortalMarkdownBody({
   propsRef,
   skillReferences,
 }: {
-  descriptor: PortalDescriptor;
+  descriptor: MarkdownPortalDescriptor;
   propsRef: { current: CodeMirrorMarkdownEditorProps };
   skillReferences: MarkdownSkillReferencePreview[];
 }) {
@@ -660,6 +430,20 @@ function PortalMarkdownBody({
   );
 }
 
+function PortalWebsiteIcon({
+  descriptor,
+}: {
+  descriptor: Extract<PortalDescriptor, { type: "website" }>;
+}) {
+  let url: URL;
+  try {
+    url = new URL(descriptor.link.href);
+  } catch {
+    return null;
+  }
+  return <WebsiteLinkIcon url={url} />;
+}
+
 const CodeMirrorMarkdownEditorInstance = forwardRef<
   MarkdownEditorRef,
   CodeMirrorMarkdownEditorProps
@@ -682,6 +466,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const imageUploadRequestIdRef = useRef(0);
   const titleRequestIdRef = useRef(0);
   const mentionStateRef = useRef<CodeMirrorMentionState | null>(null);
+  const dismissedMentionStateRef = useRef<CodeMirrorMentionState | null>(null);
   const mentionIndexRef = useRef(0);
   const filteredMentionsRef = useRef<MentionOption[]>([]);
   const selectMentionRef = useRef<(option: MentionOption) => void>(() => undefined);
@@ -748,7 +533,14 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, []);
 
   const updateMentionState = useCallback((view: EditorView) => {
-    const nextState = view.hasFocus ? mentionStateAtSelection(view) : null;
+    const candidateState = view.hasFocus ? mentionStateAtSelection(view) : null;
+    const dismissedState = dismissedMentionStateRef.current;
+    const nextState = dismissedState && sameMentionState(dismissedState, candidateState)
+      ? null
+      : candidateState;
+    if (!sameMentionState(dismissedState, candidateState)) {
+      dismissedMentionStateRef.current = null;
+    }
     if (sameMentionState(mentionStateRef.current, nextState)) return;
     const previous = mentionStateRef.current;
     mentionStateRef.current = nextState;
@@ -953,6 +745,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     };
     const setPreviewFocus = StateEffect.define<boolean>();
     const setPreviewComposition = StateEffect.define<boolean>();
+    const setPreviewPointerSelection = StateEffect.define<boolean>();
     const lineSeparatorCompartment = new Compartment();
     lineSeparatorCompartmentRef.current = lineSeparatorCompartment;
     setPreviewFocusRef.current = (view, focused) => {
@@ -973,6 +766,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       document: MarkdownPreviewDocument;
       focused: boolean;
       composing: boolean;
+      pointerSelecting: boolean;
     };
     const previewField = StateField.define<PreviewFieldValue>({
       create(state) {
@@ -990,11 +784,14 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           document,
           focused: false,
           composing: false,
+          pointerSelecting: false,
         };
       },
       update(current, transaction) {
         let focused = current.focused;
         let composing = current.composing;
+        const wasComposing = current.composing;
+        let pointerSelecting = current.pointerSelecting;
         let effectChanged = false;
         for (const effect of transaction.effects) {
           if (effect.is(setPreviewFocus)) {
@@ -1005,15 +802,20 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
             composing = effect.value;
             effectChanged = true;
           }
+          if (effect.is(setPreviewPointerSelection)) {
+            pointerSelecting = effect.value;
+            effectChanged = true;
+          }
         }
 
-        if (composing) {
+        if (composing || pointerSelecting) {
           return {
             decorations: current.decorations.map(transaction.changes),
             atomic: current.atomic.map(transaction.changes),
             document: current.document,
             focused,
             composing,
+            pointerSelecting,
           };
         }
 
@@ -1021,10 +823,12 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         if (!transaction.docChanged && !selectionChanged && !effectChanged) {
           return current;
         }
-        const document = previewDocumentForTransaction(
-          current.document,
-          transaction,
-        );
+        const document = wasComposing && !composing
+          ? getMarkdownPreviewDocument(transaction.state.doc.toString())
+          : previewDocumentForTransaction(
+            current.document,
+            transaction,
+          );
         const result = markdownPreviewDecorations(
           transaction.state,
           document,
@@ -1038,6 +842,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           document,
           focused,
           composing,
+          pointerSelecting,
         };
       },
       provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
@@ -1185,7 +990,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           transaction.annotation(titleUpgradeTransaction) === true
         ),
       }),
-      markdown(),
+      markdown({ extensions: GFM }),
       codeMirrorMarkdownEditorTheme(),
       syntaxHighlighting(codeMirrorMarkdownHighlightStyle),
       EditorView.lineWrapping,
@@ -1198,10 +1003,27 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       )),
       Prec.highest(EditorView.domEventHandlers({
         keydown: (event, view) => {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const focusedLink = target?.closest<HTMLElement>("[data-markdown-link-href]");
+          const focusedHref = focusedLink?.dataset.markdownLinkHref;
+          if (
+            event.key === "Enter"
+            && !event.altKey
+            && !event.ctrlKey
+            && !event.metaKey
+            && !event.shiftKey
+            && focusedHref
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            openDecoratedMarkdownLink(focusedHref);
+            return true;
+          }
           if (!mentionStateRef.current) return false;
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
+            dismissedMentionStateRef.current = mentionStateRef.current;
             mentionStateRef.current = null;
             setMentionState(null);
             return true;
@@ -1209,6 +1031,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           if (event.key === "Tab") {
             event.preventDefault();
             event.stopPropagation();
+            dismissedMentionStateRef.current = mentionStateRef.current;
             mentionStateRef.current = null;
             setMentionState(null);
             requestAnimationFrame(() => {
@@ -1217,6 +1040,83 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
             return true;
           }
           return false;
+        },
+        mousedown: (event, view) => {
+          const pointerTarget = event.target instanceof HTMLElement ? event.target : null;
+          if (
+            event.button === 0
+            && (event.metaKey || event.ctrlKey)
+            && pointerTarget?.closest("[data-markdown-link-href]")
+          ) {
+            event.preventDefault();
+            return true;
+          }
+          if (!isPrimaryPlainMouseEvent(event)) return false;
+          const target = pointerTarget;
+          if (
+            target?.closest(
+              "[data-markdown-atomic-reference='true'], [data-markdown-website-icon='true']",
+            )
+          ) {
+            return false;
+          }
+          const previewLine = target?.closest<HTMLElement>(
+            ".cm-line[data-markdown-preview-state='preview'][data-source-line-start]",
+          );
+          if (!previewLine) return false;
+
+          const sourceLine = Number(previewLine.dataset.sourceLineStart);
+          const fallbackPosition = Number.isFinite(sourceLine)
+            ? view.state.doc.line(
+              Math.max(1, Math.min(view.state.doc.lines, sourceLine)),
+            ).from
+            : view.state.selection.main.head;
+          const anchor = markdownPointerPosition(view, event) ?? fallbackPosition;
+          event.preventDefault();
+          view.focus();
+          view.dispatch({
+            selection: EditorSelection.cursor(anchor),
+            effects: setPreviewPointerSelection.of(true),
+          });
+
+          const extendPointerSelection = (pointerEvent: MouseEvent) => {
+            if ((pointerEvent.buttons & 1) === 0 || viewRef.current !== view) return;
+            const head = markdownPointerPosition(view, pointerEvent);
+            if (head == null) return;
+            view.dispatch({
+              selection: EditorSelection.range(anchor, head),
+            });
+          };
+          const finishPointerSelection = (pointerEvent: MouseEvent) => {
+            window.removeEventListener("mousemove", extendPointerSelection);
+            if (viewRef.current !== view) return;
+            const head = markdownPointerPosition(view, pointerEvent) ?? anchor;
+            view.dispatch({
+              selection: EditorSelection.range(anchor, head),
+              effects: setPreviewPointerSelection.of(false),
+            });
+          };
+          window.addEventListener("mousemove", extendPointerSelection);
+          window.addEventListener("mouseup", finishPointerSelection, {
+            once: true,
+          });
+          return true;
+        },
+        click: (event) => {
+          if (
+            event.button !== 0
+            || (!event.metaKey && !event.ctrlKey)
+          ) {
+            return false;
+          }
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
+          const href = link?.dataset.markdownLinkHref;
+          if (!href) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          openDecoratedMarkdownLink(href);
+          return true;
         },
       })),
       Prec.highest(keymap.of([
@@ -1296,6 +1196,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           view.dispatch({ effects: setPreviewFocus.of(false) });
           propsRef.current.onBlur?.();
           mentionStateRef.current = null;
+          dismissedMentionStateRef.current = null;
           setMentionState(null);
           return false;
         },
@@ -1445,11 +1346,15 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         className={cn("rudder-codemirror-markdown-content", contentClassName)}
       />
       {portals.map((descriptor) => createPortal(
-        <PortalMarkdownBody
-          descriptor={descriptor}
-          propsRef={propsRef}
-          skillReferences={skillReferences}
-        />,
+        descriptor.type === "website"
+          ? <PortalWebsiteIcon descriptor={descriptor} />
+          : (
+            <PortalMarkdownBody
+              descriptor={descriptor}
+              propsRef={propsRef}
+              skillReferences={skillReferences}
+            />
+          ),
         descriptor.host,
         descriptor.key,
       ))}

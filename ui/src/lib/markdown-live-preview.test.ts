@@ -87,7 +87,7 @@ describe("getMarkdownPreviewBlocks", () => {
     });
   });
 
-  it("keeps compact and loose sibling list items in one stable editing block", () => {
+  it("activates sibling list items independently while retaining nested content", () => {
     const source = [
       "1. first",
       "1. second",
@@ -102,8 +102,20 @@ describe("getMarkdownPreviewBlocks", () => {
       expect.objectContaining({
         kind: "list",
         startLine: 1,
+        endLine: 1,
+        markdown: "1. first",
+      }),
+      expect.objectContaining({
+        kind: "list",
+        startLine: 2,
+        endLine: 3,
+        markdown: "1. second\n   - [ ] nested task",
+      }),
+      expect.objectContaining({
+        kind: "list",
+        startLine: 5,
         endLine: 5,
-        markdown: "1. first\n1. second\n   - [ ] nested task\n\n1. third",
+        markdown: "1. third",
       }),
       expect.objectContaining({
         kind: "line",

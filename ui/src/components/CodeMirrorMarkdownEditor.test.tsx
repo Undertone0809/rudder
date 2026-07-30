@@ -33,6 +33,9 @@ vi.mock("../api/websiteMetadata", () => ({
 }));
 
 vi.mock("./MarkdownBody", () => ({
+  WebsiteLinkIcon: ({ url }: { url: URL }) => (
+    <span data-website-icon="mock" data-website-url={url.href} />
+  ),
   MarkdownBody: ({
     children,
     className,
@@ -255,14 +258,17 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(linkPreview?.querySelector('[data-website-icon="mock"]')).toBeTruthy();
     expect(container?.textContent).not.toContain("# Heading");
 
+    const previewLineCount = container?.querySelectorAll(".cm-line").length;
     act(() => {
-      headingPreview?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 2 } });
     });
     await flushReact();
 
     expect(container?.querySelector(
       '[data-markdown-preview-state="source"][data-source-line-start="1"][data-markdown-source-heading-level="1"]',
     )).toBeTruthy();
+    expect(container?.querySelectorAll(".cm-line")).toHaveLength(previewLineCount ?? 0);
     expect(editorView().state.doc.toString()).toBe("# Heading\nRead [OpenAI](https://openai.com).");
     expect(onChange).not.toHaveBeenCalled();
 
@@ -286,14 +292,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const preview = container?.querySelector<HTMLElement>(
-      '[data-markdown-preview-state="preview"]',
-    );
     act(() => {
-      preview?.dispatchEvent(new MouseEvent("mousedown", {
-        bubbles: true,
-        cancelable: true,
-      }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 1 } });
     });
     await flushReact();
 
@@ -336,11 +337,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const preview = container?.querySelector<HTMLElement>(
-      '[data-markdown-preview-state="preview"]',
-    );
     act(() => {
-      preview?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 6 } });
     });
     await flushReact();
 
@@ -353,7 +352,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(urlSource?.classList.contains(urlClass!)).toBe(true);
   });
 
-  it("uses a plain link click to reveal source while leaving keyboard Enter to the link", async () => {
+  it("keeps ordinary links source-driven and reveals exact syntax on selection", async () => {
     act(() => {
       root?.render(
         <CodeMirrorMarkdownEditor
@@ -364,45 +363,56 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const link = container?.querySelector<HTMLAnchorElement>(
-      '[data-rendered-link="#target"]',
-    );
-    expect(link).toBeTruthy();
+    expect(container?.querySelector(".rudder-cm-markdown-link")?.textContent).toBe("Section");
+    expect(container?.querySelector('[data-rendered-link="#target"]')).toBeNull();
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
 
-    const enterEvent = new KeyboardEvent("keydown", {
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 7 } });
+    });
+    await flushReact();
+    expect(container?.querySelector('[data-markdown-preview-state="source"]')).toBeTruthy();
+    expect(container?.textContent).toContain("[Section](#target)");
+  });
+
+  it("opens an ordinary preview link on a modifier click or keyboard Enter", async () => {
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="Read [OpenAI](https://openai.com)."
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const link = container?.querySelector<HTMLElement>("[data-markdown-link-href]");
+    const click = new MouseEvent("click", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    });
+    act(() => {
+      expect(link?.dispatchEvent(click)).toBe(false);
+    });
+
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    const enter = new KeyboardEvent("keydown", {
       key: "Enter",
       bubbles: true,
       cancelable: true,
     });
     act(() => {
-      expect(link?.dispatchEvent(enterEvent)).toBe(true);
+      link?.focus();
+      expect(link?.dispatchEvent(enter)).toBe(false);
     });
-    await flushReact();
-    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
-
-    const keyboardClickEvent = new MouseEvent("click", {
-      button: 0,
-      bubbles: true,
-      cancelable: true,
-      detail: 0,
-    });
-    act(() => {
-      expect(link?.dispatchEvent(keyboardClickEvent)).toBe(true);
-    });
-    await flushReact();
-    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
-
-    const clickEvent = new MouseEvent("click", {
-      button: 0,
-      bubbles: true,
-      cancelable: true,
-      detail: 1,
-    });
-    act(() => {
-      expect(link?.dispatchEvent(clickEvent)).toBe(false);
-    });
-    await flushReact();
-    expect(container?.querySelector('[data-markdown-preview-state="source"]')).toBeTruthy();
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+    anchorClick.mockRestore();
   });
 
   it("keeps canonical Rudder and skill references atomic inside an active source block", async () => {
@@ -419,9 +429,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const preview = container?.querySelector<HTMLElement>('[data-markdown-preview-state="preview"]');
     act(() => {
-      preview?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 1 } });
     });
     await flushReact();
 
@@ -443,15 +453,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const preview = container?.querySelector<HTMLElement>(
-      '[data-markdown-preview-state="preview"]',
-    );
     act(() => {
-      preview?.dispatchEvent(new MouseEvent("mousedown", {
-        button: 0,
-        bubbles: true,
-        cancelable: true,
-      }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 1 } });
     });
     await flushReact();
 
@@ -557,15 +561,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const preview = container?.querySelector<HTMLElement>(
-      '[data-markdown-preview-state="preview"]',
-    );
     act(() => {
-      preview?.dispatchEvent(new MouseEvent("mousedown", {
-        button: 0,
-        bubbles: true,
-        cancelable: true,
-      }));
+      editorView().focus();
+      editorView().dispatch({ selection: { anchor: 1 } });
     });
     await flushReact();
 
@@ -1703,7 +1701,11 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       ref.current?.focus();
       editorView().contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
       editorView().dispatch({
-        selection: { anchor: editorView().state.doc.line(2).from },
+        changes: {
+          from: editorView().state.doc.length,
+          insert: "\nthird",
+        },
+        selection: { anchor: editorView().state.doc.length + "\nthird".length },
       });
     });
     await flushReact();
@@ -1721,8 +1723,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     await flushReact();
 
     expect(container?.querySelector(
-      '[data-markdown-preview-state="source"][data-source-line-start="2"]',
+      '[data-markdown-preview-state="source"][data-source-line-start="3"]',
     )).toBeTruthy();
+    expect(editorView().state.doc.toString()).toBe("first\nsecond\nthird");
   });
 
   it("shows raw HTML as source without creating executable elements", async () => {

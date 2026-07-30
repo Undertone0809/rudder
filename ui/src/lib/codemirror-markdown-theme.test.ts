@@ -21,14 +21,14 @@ describe("codeMirrorMarkdownThemeSpec", () => {
         "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground"
       ],
     ).toEqual({
-      backgroundColor: "color-mix(in oklab, var(--accent-base) 32%, transparent)",
+      backgroundColor: "color-mix(in oklab, var(--rudder-doc-link) 26%, transparent)",
     });
   });
 
-  it("keeps source list indentation and rendered typography aligned", () => {
+  it("keeps list indentation and source-driven preview typography aligned", () => {
     expect(
       codeMirrorMarkdownThemeSpec[
-        '.cm-line[data-markdown-preview-state="source"][data-markdown-source-kind="list"]'
+        '.cm-line[data-markdown-source-kind="list"]'
       ],
     ).toEqual({
       paddingLeft: "1.35em",
@@ -42,10 +42,10 @@ describe("codeMirrorMarkdownThemeSpec", () => {
       lineHeight: "inherit",
     });
     expect(
-      codeMirrorMarkdownThemeSpec[".rudder-codemirror-markdown-preview"],
-    ).toEqual({
-      display: "inline-block",
-      verticalAlign: "top",
+      codeMirrorMarkdownThemeSpec['.cm-line[data-markdown-source-heading-level="1"]'],
+    ).toMatchObject({
+      fontSize: "1.75em",
+      fontWeight: "700",
     });
   });
 });

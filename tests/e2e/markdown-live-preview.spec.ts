@@ -155,7 +155,7 @@ test("Library live preview reveals source, creates smart links, renders favicons
   ).toBeVisible();
   expect(metadataPurposes).not.toContain("preview");
 
-  await websitePreview.dispatchEvent("mousedown", { button: 0 });
+  await websitePreview.locator(".rudder-cm-markdown-link").first().click();
   const websiteSource = editor.locator(
     '[data-markdown-preview-state="source"][data-source-line-start="3"]',
   );
@@ -222,7 +222,7 @@ test("Library live preview reveals source, creates smart links, renders favicons
     .getByTestId("org-workspaces-markdown-editor")
     .locator('[data-editor-engine="codemirror-live-preview"]');
   await reloadedEditor.locator(".cm-content").click();
-  await page.keyboard.press("End");
+  await page.keyboard.press(`${modifier}+End`);
   await page.keyboard.insertText("\nQueued before tab switch.");
   await firstSaveStarted;
   await reloadedEditor.getByText("second.md", { exact: true }).click();
@@ -322,6 +322,74 @@ test("Library live preview reveals source, creates smart links, renders favicons
       .locator('[data-markdown-preview-state="preview"]')
       .filter({ hasText: "Concurrent server edit" }),
   ).toBeVisible();
+});
+
+test("Library Main Workbench edits with CodeMirror and round-trips exact Markdown", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const organization = await createOrganization(request, "Markdown-Live-Workbench");
+  const filePath = "workbench-live-preview.md";
+  const initialMarkdown = "# Workbench Library\n\nInitial body.\n";
+  await createWorkspaceFile(
+    request,
+    organization.id,
+    filePath,
+    initialMarkdown,
+  );
+  const groupResponse = await request.post(
+    `${E2E_BASE_URL}/api/orgs/${organization.id}/messenger/groups`,
+    { data: { name: "Workbench review" } },
+  );
+  expect(groupResponse.ok(), await groupResponse.text()).toBe(true);
+  await selectOrganization(page, organization.id);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click({ force: true });
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await expect(
+    sidePanel.getByTestId("chat-side-panel-empty-state"),
+  ).toBeVisible({ timeout: 15_000 });
+  await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
+  const directoryView = activeRuntimeSurface(page, "side").getByTestId(
+    "chat-side-panel-library-directory-view",
+  );
+  await expect(directoryView).toBeVisible();
+  await directoryView.getByRole("button", { name: filePath, exact: true }).click();
+  await expect(
+    activeRuntimeSurface(page, "side").getByTestId(
+      "chat-side-panel-library-file-view",
+    ),
+  ).toBeVisible();
+
+  await sidePanel.getByTestId("chat-side-panel-keep-in-messenger").click();
+  await page.getByRole("menuitem", { name: "Workbench review" }).evaluate(
+    (element) => (element as HTMLElement).click(),
+  );
+  await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+  const workbench = page.getByTestId("messenger-main-workbench");
+  await expect(
+    workbench.getByRole("tab", { name: filePath }),
+  ).toHaveAttribute("aria-selected", "true");
+  const editor = activeRuntimeSurface(page, "main").locator(
+    '[data-editor-engine="codemirror-live-preview"]',
+  );
+  await expect(editor).toBeVisible();
+  await expect(
+    editor.locator('[data-markdown-preview-state="preview"]').filter({
+      hasText: "Workbench Library",
+    }),
+  ).toBeVisible();
+
+  const exactMarkdown = "\n  ## Workbench Exact Source  \n\n- preserved\n";
+  await replaceCodeMirrorDocument(page, editor, exactMarkdown);
+  await blurCodeMirror(editor);
+  await expect.poll(async () => (
+    await readWorkspaceFile(request, organization.id, filePath)
+  ).content).toBe(exactMarkdown);
 });
 
 test("Issue description switches between preview and source and round-trips exact Markdown", async ({

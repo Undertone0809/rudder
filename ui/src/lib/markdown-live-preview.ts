@@ -155,46 +155,6 @@ function indentedCodeEndIndex(lines: SourceLine[], startIndex: number) {
   return index - 1;
 }
 
-function listEndIndex(lines: SourceLine[], startIndex: number) {
-  const startIndent = lines[startIndex]!.text.match(/^[ \t]*/u)?.[0]
-    .replace(/\t/gu, "    ").length ?? 0;
-  let index = startIndex + 1;
-  while (index < lines.length) {
-    const text = lines[index]!.text;
-    if (!text.trim()) {
-      let nextIndex = index + 1;
-      while (nextIndex < lines.length && !lines[nextIndex]!.text.trim()) {
-        nextIndex += 1;
-      }
-      if (nextIndex >= lines.length) break;
-
-      const nextText = lines[nextIndex]!.text;
-      const nextIndent = nextText.match(/^[ \t]*/u)?.[0]
-        .replace(/\t/gu, "    ").length ?? 0;
-      if (!LIST_ITEM_RE.test(nextText) && nextIndent <= startIndent) break;
-      index = nextIndex;
-      continue;
-    }
-
-    const itemIndent = text.match(/^[ \t]*/u)?.[0]
-      .replace(/\t/gu, "    ").length ?? 0;
-    if (
-      itemIndent <= startIndent
-      && (
-        fenceOpener(text) !== null
-        || ATX_HEADING_RE.test(text)
-        || BLOCKQUOTE_RE.test(text)
-        || RAW_HTML_LINE_RE.test(text)
-        || THEMATIC_BREAK_RE.test(text)
-      )
-    ) {
-      break;
-    }
-    index += 1;
-  }
-  return index - 1;
-}
-
 function htmlEndIndex(lines: SourceLine[], startIndex: number) {
   const firstLine = lines[startIndex]!.text;
   if (/^\s*<!--/u.test(firstLine)) {
@@ -227,6 +187,7 @@ function htmlEndIndex(lines: SourceLine[], startIndex: number) {
 function markdownSyntaxRanges(source: string) {
   const rawHtml: Array<{ from: number; to: number }> = [];
   const blockquotes: Array<{ from: number; to: number }> = [];
+  const listItems: Array<{ from: number; to: number }> = [];
   markdownLanguage.parser.parse(source).iterate({
     enter(node) {
       if (
@@ -239,9 +200,12 @@ function markdownSyntaxRanges(source: string) {
       if (node.name === "Blockquote") {
         blockquotes.push({ from: node.from, to: node.to });
       }
+      if (node.name === "ListItem") {
+        listItems.push({ from: node.from, to: node.to });
+      }
     },
   });
-  return { rawHtml, blockquotes };
+  return { rawHtml, blockquotes, listItems };
 }
 
 function sourceLineEndIndex(
@@ -310,7 +274,12 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
     }
 
     if (LIST_ITEM_RE.test(line.text)) {
-      const endIndex = listEndIndex(lines, index);
+      const syntaxRange = syntaxRanges.listItems.find((range) => (
+        range.from >= line.from && range.from <= line.to
+      ));
+      const endIndex = syntaxRange
+        ? sourceLineEndIndex(lines, index, syntaxRange.to)
+        : index;
       blocks.push(markdownBlock(source, lines, index, endIndex, "list"));
       index = endIndex + 1;
       continue;
@@ -372,6 +341,7 @@ export interface MarkdownPreviewDocument {
   source: string;
   blocks: MarkdownPreviewBlock[];
   referenceDefinitions: string[];
+  atomicReferences: AtomicMarkdownReference[];
 }
 
 export function getMarkdownPreviewDocument(
@@ -383,6 +353,7 @@ export function getMarkdownPreviewDocument(
     source,
     blocks: getMarkdownPreviewBlocks(source),
     referenceDefinitions: markdownReferenceDefinitions(source),
+    atomicReferences: findAtomicMarkdownReferences(source),
   };
 }
 
@@ -462,7 +433,7 @@ function isAtomicReference(label: string, href: string) {
   return label.trim().startsWith("$") && /\.md(?:[#?].*)?$/iu.test(normalizedHref);
 }
 
-function unescapeMarkdownPunctuation(value: string) {
+export function unescapeMarkdownPunctuation(value: string) {
   return value.replace(/\\([!-/:-@\[-`{-~])/gu, "$1");
 }
 
