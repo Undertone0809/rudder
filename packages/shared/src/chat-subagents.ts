@@ -14,6 +14,7 @@ export interface CollectChatSubagentContext {
   sourceMessageId: string;
   runId: string | null;
   sourceActive: boolean;
+  sourceTerminalStatus?: Extract<ChatWorkManifestSubagentStatus, "completed" | "stopped"> | null;
   senderLabel?: string | null;
 }
 
@@ -59,6 +60,7 @@ function normalizedToolName(value: string | null | undefined) {
 function normalizeStatus(
   rawStatus: string | null,
   sourceActive: boolean,
+  sourceTerminalStatus: CollectChatSubagentContext["sourceTerminalStatus"],
   isError: boolean,
 ): { state: ChatWorkManifestSubagentState; status: ChatWorkManifestSubagentStatus } {
   const value = rawStatus
@@ -83,6 +85,9 @@ function normalizeStatus(
     || value === "started"
     || value === "active"
   ) {
+    if (sourceTerminalStatus) {
+      return { state: "done", status: sourceTerminalStatus };
+    }
     return { state: "active", status: "running" };
   }
   return sourceActive
@@ -161,7 +166,12 @@ function inspectionForThread(
     ?? (normalizedToolName(toolName) === "subagent_activity"
       ? readString(record, ["activity_kind", "activityKind", "status"])
       : null);
-  const normalized = normalizeStatus(rawStatus, context.sourceActive, isError);
+  const normalized = normalizeStatus(
+    rawStatus,
+    context.sourceActive,
+    context.sourceTerminalStatus,
+    isError,
+  );
   const label = humanizeAgentPath(agentPath)
     ?? promptLabel(prompt)
     ?? fallbackThreadLabel(threadId);
