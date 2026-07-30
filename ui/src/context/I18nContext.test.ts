@@ -66,7 +66,6 @@ describe("translateMessage", () => {
     ).toBe("暂无财务事件。计费方发票或抵扣入账后，可添加账户级费用。");
     expect(translateLegacyString("zh-CN", "in 268.2M · out 362.0k")).toBe("输入 268.2M · 输出 362.0k");
     expect(translateLegacyString("zh-CN", "0 api · 33 subscription")).toBe("0 API · 33 订阅");
-    expect(translateLegacyString("zh-CN", "Threads sorted by latest activity")).toBe("话题按最近活动排序");
     expect(translateLegacyString("zh-CN", "Create new chat")).toBe("创建新聊天");
     expect(translateLegacyString("zh-CN", "View agent runs")).toBe("查看智能体运行记录");
     expect(translateLegacyString("zh-CN", "Loading agent runs...")).toBe("正在加载智能体运行记录...");

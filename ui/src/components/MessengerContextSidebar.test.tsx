@@ -509,6 +509,7 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).not.toContain(">Pinned</");
     expect(html).not.toContain("Default");
+    expect(html).not.toContain("Threads sorted by latest activity");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all", "preview", 80],
       enabled: false,
