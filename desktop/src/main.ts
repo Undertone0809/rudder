@@ -1,5 +1,5 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, screen, session, shell, systemPreferences, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -463,6 +463,9 @@ const TRANSPARENT_DESKTOP_WINDOW_BACKGROUND: Record<DesktopAppearance, string> =
   light: "rgba(246, 244, 241, 0.18)",
   dark: "rgba(18, 20, 24, 0.28)",
 };
+const PREFERRED_DESKTOP_WINDOW_SIZE = { width: 1620, height: 1020 };
+const MINIMUM_DESKTOP_WINDOW_SIZE = { width: 1080, height: 720 };
+const DESKTOP_WINDOW_WORK_AREA_RATIO = 0.9;
 const desktopUserDataOverride = process.env.RUDDER_DESKTOP_USER_DATA_DIR?.trim();
 if (desktopUserDataOverride) {
   app.setPath("userData", path.resolve(desktopUserDataOverride));
@@ -1443,6 +1446,29 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
+function resolveInitialDesktopWindowSize(): {
+  width: number;
+  height: number;
+  minWidth: number;
+  minHeight: number;
+} {
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const minWidth = Math.min(MINIMUM_DESKTOP_WINDOW_SIZE.width, workArea.width);
+  const minHeight = Math.min(MINIMUM_DESKTOP_WINDOW_SIZE.height, workArea.height);
+  return {
+    width: Math.max(
+      minWidth,
+      Math.min(PREFERRED_DESKTOP_WINDOW_SIZE.width, Math.floor(workArea.width * DESKTOP_WINDOW_WORK_AREA_RATIO)),
+    ),
+    height: Math.max(
+      minHeight,
+      Math.min(PREFERRED_DESKTOP_WINDOW_SIZE.height, Math.floor(workArea.height * DESKTOP_WINDOW_WORK_AREA_RATIO)),
+    ),
+    minWidth,
+    minHeight,
+  };
+}
+
 async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const macWindowEffects = process.platform === "darwin"
@@ -1450,11 +1476,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     : {
         backgroundColor: resolveDesktopWindowBackgroundColor(),
       };
+  const initialWindowSize = resolveInitialDesktopWindowSize();
   const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 1080,
-    minHeight: 720,
+    ...initialWindowSize,
     title: APP_NAME,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
