@@ -18,6 +18,7 @@ related_code:
   - desktop/src/app-builder-data.ts
   - desktop/src/local-apps-runtime.ts
   - ui/src/pages/Apps.tsx
+  - ui/src/components/AppsContextSidebar.tsx
   - ui/src/pages/InstanceExperimentalSettings.tsx
   - ui/src/components/PrimaryRail.tsx
 related_tests:
@@ -80,17 +81,19 @@ cross-device synchronization.
 A fixed scaffold removes infrastructure questions from the default workflow
 while keeping the result inspectable and independently editable. Chat remains
 the requirements and coding surface. Apps supplies durable discovery and
-runtime controls without forcing users to create a Project.
+direct application access without forcing users to create a Project.
 
 The Server cannot safely own machine commands, absolute paths, ports, PIDs,
 live URLs, or App business rows. Desktop therefore owns local execution and
-attestation. A Server record, Skill availability, route hydration, or passive
-tab selection never becomes process authority.
+attestation. A click on a registered App inside the Apps workspace is direct
+operator intent to open its reviewed revision; a Server record, Skill
+availability, background route hydration, or Messenger Saved View remains
+non-authoritative.
 
 ### Actors / Objects / State
 
-- **Operator**: enables Sites, describes an App, approves local execution, and
-  explicitly starts, stops, opens, copies, or recovers it.
+- **Operator**: enables Sites, describes an App, approves its local definition,
+  opens it directly, and uses its More menu for infrequent management actions.
 - **App Builder Skill**: creates and iterates on source from the business brief.
 - **App record**: organization-scoped identity, optional Chat, normalized
   source root, safe build state, and opaque Desktop binding.
@@ -132,10 +135,12 @@ vault/binding UI, immutable release promotion, or production rollback UI.
    operations.
 2. Enabling Sites exposes Apps and the capability-bundled Skill for all
    organizations on the instance. It does not start a process or create an App.
-3. Apps Home uses Rudder's three-column shell: Home/search/registered Apps on
-   the left, Home or the active App in the center, and contextual guidance or
-   runtime controls on the right. Subtle entry/tab/status motion respects
-   reduced-motion preferences.
+3. Apps uses Rudder's established workspace shell: Home/search/registered Apps
+   in the context sidebar, established Rudder tabs in the header, and Home or
+   the active full-bleed webpage in the main content. App management is
+   progressively disclosed through a hover/focus More menu on each sidebar
+   row; Apps has no persistent right runtime-control column. Subtle
+   entry/tab/status motion respects reduced-motion preferences.
 4. Sending a brief reserves one organization-scoped App record under a unique
    `apps/<slug>` root, starts an ordinary Chat with `$app-builder` and the
    assigned source root in its first message, attaches the acknowledged Chat,
@@ -152,12 +157,17 @@ vault/binding UI, immutable release promotion, or production rollback UI.
    the App become ready and receive an opaque local binding.
 8. Registered managed Apps and manually loaded local Apps appear together in
    the Apps navigation. Opening one creates or focuses a closable Apps header
-   tab. Multiple Apps may remain tabbed while the active webpage renders in the
-   center through its isolated Desktop webview.
-9. Opening Apps, selecting a tab, hydrating a route, or opening Chat never
-   passively starts an App. Explicit Start reuses the reviewed definition;
-   explicit Stop and Desktop shutdown stop the owned process tree.
-10. While an App is running, **Copy App link** copies its current attested
+   tab and directly opens its reviewed revision. Rudder reuses a running
+   generation or automatically starts one, attests its listener, and renders
+   the active webpage full-bleed through its isolated Desktop webview.
+   Multiple Apps may remain tabbed and running.
+9. Closing or switching an Apps tab closes or parks only the view. It does not
+   stop the App. The process remains available in the background until Desktop
+   shutdown, Sites is disabled, a bounded failure occurs, or the operator uses
+   **Stop App** in the sidebar row's More menu. Background route hydration and
+   Messenger Saved View navigation remain unable to start it.
+10. The sidebar More menu contains settings and infrequent lifecycle actions.
+    While an App is running, **Copy App link** copies its current attested
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
     to the system browser. It works only on the same computer while that
     generation remains available.
@@ -208,7 +218,9 @@ ownership-unverified failure handling.
 | Operator confirms Register & preview | Run only the maintained typed lifecycle | Accept Agent-provided shell/cwd/port/env authority |
 | Checks or readiness fail | Fail, clean up owned processes, preserve source/data | Mark ready or open an unattested target |
 | Foreign listener owns the port | Fail closed without killing it | Guess ownership |
-| User selects an App tab | Render/focus state only | Start its process |
+| User clicks a registered App in Apps | Reuse or auto-start its reviewed generation and render the attested webpage | Require a separate Start step or open an unattested target |
+| Apps tab closes or switches | Close/park the view and keep the generation resident | Stop or restart the App |
+| Background hydration or Messenger Saved View opens | Restore navigation state only | Start the App |
 | User copies or externally opens the link | Use current attested loopback URL | Describe it as public, stable, or cross-device |
 | Sites is disabled with Apps running | Stop owned Apps and preserve durable material | Delete App source or business data |
 | User requests a public URL | Explain that V1 has no publication path | Create a tunnel or cloud deployment |
@@ -219,15 +231,17 @@ ownership-unverified failure handling.
 - App name/brief through Apps Home.
 - Selected organization and available Agent.
 - Fixed local-execution disclosure.
-- App registration, Start, Stop, Open, Copy, Chat, source, and data actions.
+- App registration and direct-open actions; settings, Stop, Copy, browser,
+  Chat, source, and data management through the sidebar More menu.
 - Material data/integration choices raised by the Skill.
 
 ### Operator-Visible Output
 
-- Conditional Apps Primary Rail entry and three-column Apps workspace.
+- Conditional Apps Primary Rail entry and Rudder workspace layout without a
+  persistent right runtime-control column.
 - Searchable registered App list, Home composer, and multiple closable tabs.
 - Normal Chat containing the explicit `$app-builder` request.
-- Embedded webpage, local runtime/address state, and same-computer browser link.
+- Full-bleed embedded webpage and same-computer browser link.
 - Causal failed/unavailable state with Continue in Chat/Open source recovery.
 - Honest status when the current Desktop lacks the matching binding or runtime.
 
@@ -265,9 +279,11 @@ development recovery does not claim to back up arbitrary external services.
 
 #### Same-computer browser
 
-The operator starts a registered App, views it inside Rudder, copies the
-attested link, and opens the same page in a regular browser on that computer.
-Stopping or restarting the App may invalidate the copied address.
+The operator clicks a registered App and Rudder automatically reuses or starts
+its reviewed generation before showing the webpage. The operator uses the row
+More menu to copy the attested link and open the same page in a regular browser
+on that computer. Stopping or restarting the App may invalidate the copied
+address.
 
 #### Disable Sites
 
@@ -281,7 +297,8 @@ discovery of the preserved records and definitions; nothing passively restarts.
 - Source is a normalized organization-workspace-relative `apps/<slug>` path.
 - The first managed start is limited to the maintained template revision and
   Rudder-owned runner; it is not arbitrary Agent command authority.
-- Manual Local Apps retain their explicit review and start semantics.
+- Manual Local Apps retain explicit first-review semantics. Once registered,
+  opening them from Apps directly starts the reviewed revision.
 - App links stay loopback-only and same-computer.
 - Availability follows the user's supported Desktop platform rather than a
   macOS-only product rule; process ownership must still fail closed.

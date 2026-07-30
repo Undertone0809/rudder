@@ -20,6 +20,8 @@ related_code:
   - server/src/services/messenger-saved-views.ts
   - ui/src/components/side-panel/LocalAppsPanel.tsx
   - ui/src/components/side-panel/LocalAppPanelView.tsx
+  - ui/src/components/AppsContextSidebar.tsx
+  - ui/src/pages/Apps.tsx
   - ui/src/context/LiveSurfaceRuntimeContext.tsx
   - ui/src/components/workbench/MessengerMainWorkbench.tsx
 related_tests:
@@ -57,7 +59,8 @@ to Main Workbench without restarting either the process or guest.
 
 - Let an operator use a project service, such as the Rudder MKT dashboard,
   inside the same workbench as Chat, Issue, Browser, Library, and Automation.
-- Make starting a local command an explicit, reviewed Desktop action.
+- Make starting a local command a direct action against a reviewed definition;
+  Apps treats clicking a registered App as that direct action.
 - Keep the service alive while its view moves, closes, or is removed from
   Messenger. Stop it through an explicit lifecycle action or Desktop shutdown,
   with bounded safety cleanup when startup, readiness, or runtime ownership
@@ -69,10 +72,12 @@ to Main Workbench without restarting either the process or guest.
 
 A Saved View is a durable directory entry, a Main tab is a session working
 instance, and a Local App process plus Browser guest is a physical runtime.
-Conflating those lifecycles would make navigation capable of running commands,
-make removing a row capable of killing work, or make a transfer lose runtime
-state. Keeping them separate preserves operator intent, process safety, and
-exact-instance continuity.
+Conflating those lifecycles would make background hydration or Messenger
+navigation capable of running commands, make removing a row capable of killing
+work, or make a transfer lose runtime state. Apps is the deliberate launcher
+exception: clicking a registered App is direct operator intent. Keeping the
+remaining lifecycles separate preserves process safety and exact-instance
+continuity.
 
 Server storage cannot safely own local paths, commands, environment variables,
 ports, PIDs, or live URLs. Those values are device-specific and potentially
@@ -82,8 +87,9 @@ Saved View identity and group placement.
 
 ### Actors / Objects / State
 
-- **Operator**: reviews a discovered definition, explicitly starts or stops it,
-  and moves or saves its view.
+- **Operator**: reviews a discovered definition, opens a registered App
+  directly, uses explicit lifecycle controls when needed, and moves or saves
+  its view.
 - **Local App definition**: installation-local executable, arguments, working
   directory, readiness check, open path, and reviewed revision.
 - **Runtime generation**: one process tree, attested loopback listener, PID,
@@ -98,6 +104,7 @@ Saved View identity and group placement.
 ### Entry Points / Inputs
 
 - Desktop Local Apps catalog and reviewed-definition flow.
+- Apps workspace registered-App rows, tabs, and row More menus.
 - Explicit `Start & open`, `Stop`, retry, and review actions.
 - Main Workbench Local App tab hover/focus More menu and its `Project settings`
   action.
@@ -142,8 +149,10 @@ Saved View identity and group placement.
    succeeds.
    The managed action cannot accept Agent-provided executable, shell text,
    absolute cwd, port, or environment values. A changed launch definition
-   requires review. Navigation, hydration, and ordinary Agents remain unable to
-   start it.
+   requires review. After that first review, a direct click on its registered
+   row in the Apps workspace may reuse or start the reviewed revision.
+   Background hydration, Messenger Saved Views, and ordinary Agents remain
+   unable to start it.
 10. If listener ownership cannot be proven, the runtime enters a bounded
    unavailable or orphaned-unverified state. Rudder never guesses a PID to kill
    and ordinary Local Apps never run install, build, migration, or recovery
@@ -159,6 +168,13 @@ Saved View identity and group placement.
     rejects new operations, drains admitted operations, stops every
     running/transitioning owned definition, and preserves definitions and data.
     Re-enabling never passively restarts a definition.
+13. The Apps workspace is an application launcher, not a passive Saved View.
+    Clicking a registered App is direct operator intent to open its reviewed
+    revision. Rudder automatically reuses or starts its one generation,
+    attests the target, and renders the webpage in the main content. Closing or
+    switching its tab never stops the generation. Infrequent settings, link,
+    browser, and Stop actions live in the registered row's hover/focus More
+    menu rather than a persistent runtime sidebar.
 
 ### Decision Table
 
@@ -171,6 +187,8 @@ Saved View identity and group placement.
 | Definition already has a running generation | Reuse that generation for another view | Run a second command |
 | Exact Side tab moves to Messenger Main | Transfer the same guest and host lease | Reload, duplicate guest, or restart service |
 | Saved row opens while service is stopped | Show stopped/unavailable state with explicit action | Auto-start |
+| Registered App row opens in Apps after review | Reuse or auto-start the reviewed revision and render its attested guest | Require a second Start action or expose an unattested origin |
+| Apps tab closes or switches | Keep the owned generation resident | Stop or restart it |
 | Saved row opens on Web, another Desktop, or without local binding | Keep row and explain unavailability | Delete row or fabricate a runtime |
 | Remove from Messenger | Remove durable binding; keep open Main tab session-only | Close tab or stop process |
 | Close Main tab | Dispose that view; keep Saved row and running process | Remove row or stop process |
@@ -189,11 +207,16 @@ Saved View identity and group placement.
 - Explicit Start, Retry & open, Stop, Move, Remove, Close, and review actions.
 - Hover/focus More menu on a Main Local App tab, with `Project settings` and an
   explicit `Stop & edit` transition when the runtime is active.
+- Hover/focus More menu on each Apps sidebar row for App settings, source,
+  current attested link/browser actions, managed development data, and
+  explicit Stop.
 - Local runtime status and unavailable reason.
 
 ### Operator-Visible Output
 
 - A Local App tab in Side Panel or full-bleed Main Workbench.
+- A registered App opened full-bleed in the Apps main content, without a
+  persistent right runtime-control column.
 - A Main-tab project settings dialog that shows the reviewed configuration,
   prevents active-runtime edits, and updates the tab label after a successful
   reviewed save.
@@ -237,18 +260,20 @@ attempt to start anything.
 
 ### Invariants / Non-Goals
 
-- Start is always a direct operator action against a reviewed definition except
-  for the exact maintained definition covered by an explicit App Builder
-  `Register & preview` session under `APP.BUILDER.001`.
+- Start is always a direct operator action against a reviewed definition.
+  `Start & open`, an explicit App Builder `Register & preview`, and clicking a
+  registered row in the Apps workspace are direct actions; background
+  hydration and Messenger Saved View navigation are not.
 - Review approval is revision-specific. The operator is not required to expand
   Advanced before approval, but the complete structured definition must remain
   available there and any later definition change requires renewed review.
 - Opening or dismissing project settings never stops a Local App; changing an
   active definition requires the operator to choose `Stop & edit` explicitly.
-- Hydration, navigation, reload, restore, Move, Remove, Close, and passive
-  status/log retry do not execute commands. Explicit `Start & open` and
-  `Retry & open` may execute the reviewed command; an explicit, valid managed
-  App Builder session may execute only its Rudder-owned template command.
+- Background hydration, Messenger navigation, reload, restore, Move, Remove,
+  Close, and passive status/log retry do not execute commands. Explicit
+  `Start & open`, `Retry & open`, or a registered-App click inside Apps may
+  execute the reviewed command; an explicit, valid managed App Builder session
+  may execute only its Rudder-owned template command.
 - Definitions and process authority are installation-local; the Server stores
   opaque identity only.
 - Local App commands are structured executable invocations, never shell text.

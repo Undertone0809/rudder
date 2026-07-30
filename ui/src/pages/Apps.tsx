@@ -2,7 +2,6 @@ import { agentsApi } from "@/api/agents";
 import { appBuilderApi } from "@/api/app-builder";
 import { chatsApi } from "@/api/chats";
 import { healthApi } from "@/api/health";
-import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,10 +21,12 @@ import {
   appBuilderSourceRoot,
 } from "@/lib/app-builder";
 import {
+  acknowledgeAppDirectOpen,
   activeKeyFromPath,
-  appBuildStatusLabel,
   appRoute,
   localBindingKey,
+  readAppDirectOpenIntent,
+  subscribeAppDirectOpen,
   type AppEntry,
   type ManagedAppEntry,
 } from "@/lib/apps-workspace";
@@ -41,7 +42,6 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import type {
   Agent,
-  AppBuilderApp,
   ChatConversation,
   ChatStreamEvent,
 } from "@rudderhq/shared";
@@ -49,17 +49,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   ArrowUp,
-  Copy,
-  Download,
-  ExternalLink,
   Home,
   Loader2,
   MessageSquare,
   Play,
   Plus,
   Settings,
-  Square,
-  Upload
 } from "lucide-react";
 import {
   createElement,
@@ -67,6 +62,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
@@ -75,12 +71,6 @@ type WorkspaceTab = {
   key: string;
   title: string;
 };
-
-function runtimeLabel(status: string | null | undefined) {
-  if (!status) return "Checking";
-  if (status === "orphaned_unverified") return "Needs attention";
-  return status.charAt(0).toUpperCase() + status.slice(1).replaceAll("_", " ");
-}
 
 function chooseBuilderAgent(agents: Agent[]) {
   const available = agents.filter((agent) => agent.status !== "terminated");
@@ -91,12 +81,10 @@ function chooseBuilderAgent(agents: Agent[]) {
 }
 
 function AppsHome({
-  appCount,
   createError,
   createPending,
   onCreate,
 }: {
-  appCount: number;
   createError: unknown;
   createPending: boolean;
   onCreate: (idea: string) => void;
@@ -206,11 +194,6 @@ function AppsHome({
             ))}
           </div>
 
-          <div className="mt-auto pt-10 text-xs text-muted-foreground">
-            {appCount === 0
-              ? "Your registered Apps will appear in the left sidebar."
-              : `${appCount} registered ${appCount === 1 ? "App" : "Apps"} on this device.`}
-          </div>
         </div>
       </main>
     </div>
@@ -218,20 +201,25 @@ function AppsHome({
 }
 
 function LocalRuntimePane({
+  appKey,
   definition,
   managedApp,
+  openIntentVersion,
+  organizationId,
 }: {
+  appKey: string;
   definition: DesktopLocalAppDefinition;
-  managedApp?: AppBuilderApp | null;
+  managedApp?: ManagedAppEntry["app"] | null;
+  openIntentVersion: number;
+  organizationId: string;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToast();
   const desktopShell = readDesktopShell();
   const localApps = desktopShell?.localApps;
-  const desktopAppBuilder = desktopShell?.appBuilder;
-  const [lastSnapshotId, setLastSnapshotId] = useState<string | null>(null);
-  const [dataMessage, setDataMessage] = useState<string | null>(null);
+  const handledOpenIntent = useRef(0);
+  const [pendingOpenIntent, setPendingOpenIntent] = useState(0);
   const runtimeQuery = useQuery({
     queryKey: queryKeys.localApps.status(definition.localBindingId),
     queryFn: () => localApps!.status(definition.id),
@@ -255,11 +243,7 @@ function LocalRuntimePane({
     retry: false,
   });
   const runtimeMutation = useMutation({
-    mutationFn: (action: "start" | "stop") => (
-      action === "start"
-        ? localApps!.start(definition.id)
-        : localApps!.stop(definition.id)
-    ),
+    mutationFn: () => localApps!.start(definition.id),
     onSuccess: (next) => {
       queryClient.setQueryData(
         queryKeys.localApps.status(definition.localBindingId),
@@ -269,57 +253,47 @@ function LocalRuntimePane({
         queryKey: queryKeys.localApps.status(definition.localBindingId),
       });
     },
-  });
-  const dataMutation = useMutation({
-    mutationFn: async (action: "backup" | "import" | "restore") => {
-      if (!managedApp || !desktopAppBuilder) {
-        throw new Error("App data controls are unavailable on this device.");
-      }
-      const location = {
-        projectId: managedApp.orgId,
-        appDirectory: managedApp.sourceRoot,
-        binding: {
-          desktopInstallationId: definition.desktopInstallationId,
-          definitionId: definition.id,
-          appPublicId: definition.appPublicId,
-          localBindingId: definition.localBindingId,
-        },
-      };
-      if (action === "backup") {
-        const snapshot = await desktopAppBuilder.snapshot(location);
-        const exported = await desktopAppBuilder.exportSnapshot({
-          ...location,
-          snapshotId: snapshot.id,
-        });
-        if (!exported.canceled) {
-          setLastSnapshotId(snapshot.id);
-          setDataMessage("Backup exported.");
-        }
-        return;
-      }
-      if (action === "import") {
-        const imported = await desktopAppBuilder.importData(location);
-        if (!imported.canceled) {
-          setLastSnapshotId(imported.rollbackSnapshot.id);
-          setDataMessage("Data imported. The previous data is available as a restore point.");
-        }
-        return;
-      }
-      if (!lastSnapshotId) throw new Error("Create a backup or import data first.");
-      const restored = await desktopAppBuilder.restoreSnapshot({
-        ...location,
-        snapshotId: lastSnapshotId,
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.localApps.status(definition.localBindingId),
       });
-      setLastSnapshotId(restored.safetySnapshot.id);
-      setDataMessage("Data restored. A safety snapshot was kept.");
     },
   });
+  useEffect(() => {
+    if (openIntentVersion <= handledOpenIntent.current) return;
+    handledOpenIntent.current = openIntentVersion;
+    acknowledgeAppDirectOpen(organizationId, appKey, openIntentVersion);
+    setPendingOpenIntent(openIntentVersion);
+  }, [appKey, openIntentVersion, organizationId]);
+  useEffect(() => {
+    if (
+      pendingOpenIntent === 0
+      || !localApps?.supported
+      || !runtimeQuery.isSuccess
+    ) {
+      return;
+    }
+    setPendingOpenIntent(0);
+    if (runtime?.status === "stopped") {
+      runtimeMutation.mutate();
+    }
+  }, [
+    localApps?.supported,
+    pendingOpenIntent,
+    runtime?.status,
+    runtimeMutation,
+    runtimeQuery.isSuccess,
+  ]);
   const running = runtime?.status === "running";
-  const pending = runtimeMutation.isPending
+  const pending = runtimeQuery.isPending
+    || runtimeMutation.isPending
     || runtime?.status === "starting"
     || runtime?.status === "stopping";
-  const localLink = targetQuery.data?.src ?? null;
   const error = runtimeQuery.error ?? targetQuery.error ?? runtimeMutation.error;
+  const failed = runtime?.status === "failed" || Boolean(error);
+  const readyToOpen = runtime?.status === "stopped"
+    && !runtimeMutation.isPending
+    && openIntentVersion === 0;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -353,29 +327,70 @@ function LocalRuntimePane({
                   : <AppWindow className="h-6 w-6" aria-hidden />}
               </div>
               <h1 className="mt-5 text-xl font-semibold tracking-[-0.02em] text-foreground">
-                {pending
-                  ? `${runtimeLabel(runtime?.status)}…`
-                  : runtime?.status === "failed"
-                    ? "The App stopped after an error"
-                    : "Ready to open"}
+                {failed
+                  ? "The App could not open"
+                  : readyToOpen
+                    ? definition.title
+                  : `Opening ${definition.title}…`}
               </h1>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                {pending
-                  ? "Rudder is preparing the reviewed local runtime."
-                  : "Starting runs this App on your device and opens it inside Rudder."}
+                {failed
+                  ? "Rudder stopped the failed process safely. Try opening it again."
+                  : readyToOpen
+                    ? "Open this App when you are ready."
+                  : "Rudder is preparing the App on this device."}
               </p>
               {runtime?.error ? (
                 <p className="mt-3 text-sm text-destructive">{runtime.error}</p>
               ) : null}
-              {!pending ? (
+              {failed && !runtimeMutation.isPending ? (
+                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      if (running) void targetQuery.refetch();
+                      else runtimeMutation.mutate();
+                    }}
+                    data-testid="apps-retry-app"
+                  >
+                    <Play className="h-3.5 w-3.5" aria-hidden />
+                    Try again
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void desktopShell?.openPath(definition.cwd).catch((openError) => {
+                        pushToast({
+                          title: "Could not open App source",
+                          body: openError instanceof Error ? openError.message : undefined,
+                          tone: "error",
+                        });
+                      });
+                    }}
+                  >
+                    Open source
+                  </Button>
+                  {managedApp?.conversationId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate(`/messenger/chat/${managedApp.conversationId}`)}
+                    >
+                      Continue in Chat
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+              {readyToOpen ? (
                 <Button
                   type="button"
                   className="mt-6"
-                  onClick={() => runtimeMutation.mutate("start")}
-                  data-testid="apps-start-app"
+                  onClick={() => runtimeMutation.mutate()}
+                  data-testid="apps-open-app"
                 >
                   <Play className="h-3.5 w-3.5" aria-hidden />
-                  {runtime?.status === "failed" ? "Retry & open" : "Start & open"}
+                  Open App
                 </Button>
               ) : null}
               {error ? (
@@ -387,153 +402,6 @@ function LocalRuntimePane({
           </div>
         )}
       </main>
-      <aside className="hidden w-[280px] shrink-0 border-l border-[color:var(--border-soft)] bg-[color:var(--surface-shell)] p-5 xl:block">
-        <div className="flex items-center gap-3">
-          <LocalAppIdentityIcon
-            className="h-9 w-9 rounded-[var(--radius-md)]"
-            iconDataUrl={definition.iconDataUrl}
-          />
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">
-              {definition.title}
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {runtimeLabel(runtime?.status)}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 space-y-3 border-t border-[color:var(--border-soft)] pt-4 text-xs">
-          <div>
-            <p className="font-medium text-muted-foreground">Source</p>
-            <p
-              className="mt-1 truncate font-mono text-[11px] text-foreground"
-              title={managedApp?.sourceRoot ?? definition.cwd}
-            >
-              {managedApp?.sourceRoot ?? definition.cwd}
-            </p>
-          </div>
-          <div>
-            <p className="font-medium text-muted-foreground">Address</p>
-            <p className="mt-1 truncate font-mono text-[11px] text-foreground" title={localLink ?? "Starts on demand"}>
-              {localLink ?? "Starts on demand"}
-            </p>
-          </div>
-          {managedApp ? (
-            <div>
-              <p className="font-medium text-muted-foreground">Build</p>
-              <p className="mt-1 text-foreground">{appBuildStatusLabel(managedApp.buildStatus)}</p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-5 grid gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={pending}
-            onClick={() => runtimeMutation.mutate(running ? "stop" : "start")}
-          >
-            {running
-              ? <Square className="h-3.5 w-3.5" aria-hidden />
-              : <Play className="h-3.5 w-3.5" aria-hidden />}
-            {running ? "Stop App" : "Start App"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!localLink}
-            onClick={() => {
-              if (!localLink) return;
-              void desktopShell?.copyText(localLink).then(() => {
-                pushToast({ title: "App link copied", tone: "success" });
-              });
-            }}
-            data-testid="apps-copy-link"
-          >
-            <Copy className="h-3.5 w-3.5" aria-hidden />
-            Copy App link
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!localLink}
-            onClick={() => {
-              if (!localLink) return;
-              const open = desktopShell?.forceOpenExternal ?? desktopShell?.openExternal;
-              void open?.(localLink);
-            }}
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-            Open in browser
-          </Button>
-          {managedApp?.conversationId ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => navigate(`/messenger/chat/${managedApp.conversationId}`)}
-            >
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-              Continue in Chat
-            </Button>
-          ) : null}
-        </div>
-
-        {managedApp ? (
-          <div className="mt-5 border-t border-[color:var(--border-soft)] pt-4">
-            <h3 className="text-xs font-semibold text-foreground">Development data</h3>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={dataMutation.isPending}
-                onClick={() => dataMutation.mutate("backup")}
-              >
-                <Download className="h-3.5 w-3.5" aria-hidden />
-                Backup
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={dataMutation.isPending}
-                onClick={() => dataMutation.mutate("import")}
-              >
-                <Upload className="h-3.5 w-3.5" aria-hidden />
-                Import
-              </Button>
-              {lastSnapshotId ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="col-span-2"
-                  disabled={dataMutation.isPending}
-                  onClick={() => dataMutation.mutate("restore")}
-                >
-                  Restore previous data
-                </Button>
-              ) : null}
-            </div>
-            {dataMessage ? (
-              <p className="mt-2 text-[11px] leading-4 text-muted-foreground" role="status">
-                {dataMessage}
-              </p>
-            ) : null}
-            {dataMutation.error ? (
-              <p className="mt-2 text-[11px] leading-4 text-destructive" role="alert">
-                {dataMutation.error instanceof Error
-                  ? dataMutation.error.message
-                  : "The data operation failed."}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-      </aside>
     </div>
   );
 }
@@ -677,6 +545,15 @@ function ManagedSetupPane({
                 Continue in Chat
               </Button>
             ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate(
+                `/library?directory=${encodeURIComponent(entry.app.sourceRoot)}`,
+              )}
+            >
+              Open source
+            </Button>
           </div>
           {registerMutation.error ? (
             <p className="mt-4 text-sm leading-6 text-destructive" role="alert">
@@ -687,26 +564,6 @@ function ManagedSetupPane({
           ) : null}
         </div>
       </main>
-      <aside className="hidden w-[280px] shrink-0 border-l border-[color:var(--border-soft)] bg-[color:var(--surface-shell)] p-5 xl:block">
-        <h2 className="text-sm font-semibold text-foreground">App details</h2>
-        <dl className="mt-4 space-y-4 text-xs">
-          <div>
-            <dt className="font-medium text-muted-foreground">Build status</dt>
-            <dd className="mt-1 text-foreground">{appBuildStatusLabel(entry.app.buildStatus)}</dd>
-          </div>
-          <div>
-            <dt className="font-medium text-muted-foreground">Source</dt>
-            <dd className="mt-1 break-all font-mono text-[11px] text-foreground">
-              {entry.app.sourceRoot}
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium text-muted-foreground">Runtime</dt>
-            <dd className="mt-1 text-foreground">Not registered on this device</dd>
-          </div>
-        </dl>
-      </aside>
-
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-lg">
           <DialogHeader>
@@ -737,18 +594,37 @@ function ManagedSetupPane({
   );
 }
 
-function ActiveAppPane({ entry }: { entry: AppEntry }) {
+function ActiveAppPane({
+  entry,
+  openIntentVersion,
+  organizationId,
+}: {
+  entry: AppEntry;
+  openIntentVersion: number;
+  organizationId: string;
+}) {
   if (entry.kind === "managed") {
     if (!entry.definition) return <ManagedSetupPane entry={entry} />;
     return (
       <LocalRuntimePane
         key={entry.definition.id}
+        appKey={entry.key}
         definition={entry.definition}
         managedApp={entry.app}
+        openIntentVersion={openIntentVersion}
+        organizationId={organizationId}
       />
     );
   }
-  return <LocalRuntimePane key={entry.definition.id} definition={entry.definition} />;
+  return (
+    <LocalRuntimePane
+      key={entry.definition.id}
+      appKey={entry.key}
+      definition={entry.definition}
+      openIntentVersion={openIntentVersion}
+      organizationId={organizationId}
+    />
+  );
 }
 
 export function Apps() {
@@ -770,7 +646,10 @@ export function Apps() {
     queryFn: () => healthApi.get(),
   });
   const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
-  const { appsQuery, definitionsQuery, entries } = useAppRegistry(sitesEnabled);
+  const {
+    entries,
+    registryReady,
+  } = useAppRegistry(sitesEnabled);
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
@@ -784,6 +663,11 @@ export function Apps() {
     [entries],
   );
   const activeEntry = entryByKey.get(activeKey) ?? null;
+  const openIntentVersion = useSyncExternalStore(
+    subscribeAppDirectOpen,
+    () => readAppDirectOpenIntent(selectedOrganizationId ?? "", activeKey),
+    () => 0,
+  );
 
   useEffect(() => {
     if (previousOrganizationId.current === selectedOrganizationId) return;
@@ -806,15 +690,14 @@ export function Apps() {
   }, [activeEntry, activeKey]);
 
   useEffect(() => {
-    if (activeKey !== "home" && !activeEntry && !appsQuery.isLoading && !definitionsQuery.isLoading) {
+    if (activeKey !== "home" && !activeEntry && registryReady) {
       navigate("/apps", { replace: true });
     }
   }, [
     activeEntry,
     activeKey,
-    appsQuery.isLoading,
-    definitionsQuery.isLoading,
     navigate,
+    registryReady,
   ]);
 
   const createAppMutation = useMutation({
@@ -1035,13 +918,22 @@ export function Apps() {
       >
         {activeKey === "home" || !activeEntry ? (
           <AppsHome
-            appCount={entries.length}
             createError={createAppMutation.error}
             createPending={createAppMutation.isPending}
             onCreate={(idea) => createAppMutation.mutate(idea)}
           />
+        ) : selectedOrganizationId ? (
+          <ActiveAppPane
+            entry={activeEntry}
+            openIntentVersion={openIntentVersion}
+            organizationId={selectedOrganizationId}
+          />
         ) : (
-          <ActiveAppPane entry={activeEntry} />
+          <AppsHome
+            createError={createAppMutation.error}
+            createPending={createAppMutation.isPending}
+            onCreate={(idea) => createAppMutation.mutate(idea)}
+          />
         )}
       </div>
     </section>

@@ -54,6 +54,9 @@ test.describe("Apps workspace", () => {
     await expect(page.getByRole("heading", {
       name: "Turn ideas into applications",
     })).toBeVisible();
+    await expect(page.getByText("Registered on this device")).toHaveCount(0);
+    await expect(page.getByText("Your registered Apps will appear in the left sidebar."))
+      .toHaveCount(0);
     await expect(page.getByText("How creation works")).toHaveCount(0);
     await expect(page.locator('[data-testid="apps-home"] svg.lucide-sparkles')).toHaveCount(0);
     await expect(page.getByTestId("primary-rail").getByText("Apps", { exact: true }))
@@ -157,7 +160,9 @@ test.describe("Apps workspace", () => {
             (window as typeof window & { __copiedText?: string }).__copiedText = text;
           },
           openExternal: async () => undefined,
-          forceOpenExternal: async () => undefined,
+          forceOpenExternal: async (target: string) => {
+            (window as typeof window & { __openedExternal?: string }).__openedExternal = target;
+          },
           localApps: {
             supported: true,
             list: async () => definitions,
@@ -166,6 +171,8 @@ test.describe("Apps workspace", () => {
             update: async (_id: string, definition: unknown) => definition,
             delete: async () => undefined,
             start: async (id: string) => {
+              const testWindow = window as typeof window & { __startedApps?: string[] };
+              testWindow.__startedApps = [...(testWindow.__startedApps ?? []), id];
               const definition = definitions.find((candidate) => candidate.id === id)!;
               const next = {
                 status: "running",
@@ -178,6 +185,8 @@ test.describe("Apps workspace", () => {
               return next;
             },
             stop: async (id: string) => {
+              const testWindow = window as typeof window & { __stoppedApps?: string[] };
+              testWindow.__stoppedApps = [...(testWindow.__stoppedApps ?? []), id];
               const next = {
                 status: "stopped",
                 generation: null,
@@ -204,14 +213,27 @@ test.describe("Apps workspace", () => {
     });
     await selectOrganization(page, organization.id);
     await page.setViewportSize({ width: 1680, height: 1000 });
+    await page.goto(
+      `${E2E_BASE_URL}/${organization.issuePrefix}/apps/view/local%3Adefinition-alpha`,
+    );
+    await expect(page.getByTestId("apps-open-app")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
+    ))).toEqual([]);
+
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
 
-    const appsNavigation = page.getByRole("navigation", { name: "Apps" });
-    await expect(appsNavigation.getByRole("button", { name: /Alpha CRM/ })).toBeVisible();
-    await expect(appsNavigation.getByRole("button", { name: /Beta Dashboard/ })).toBeVisible();
-    await appsNavigation.getByRole("button", { name: /Alpha CRM/ }).click();
+    const alphaEntry = page.getByTestId("apps-entry-local:definition-alpha");
+    const betaEntry = page.getByTestId("apps-entry-local:definition-beta");
+    await expect(alphaEntry).toBeVisible();
+    await expect(betaEntry).toBeVisible();
+    await alphaEntry.click();
     await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
-    await appsNavigation.getByRole("button", { name: /Beta Dashboard/ }).click();
+    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps
+    ))).toEqual(["definition-alpha"]);
+    await betaEntry.click();
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
     await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
     await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
@@ -231,8 +253,7 @@ test.describe("Apps workspace", () => {
     });
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
 
-    await appsNavigation.getByRole("button", { name: /Alpha CRM/ }).click();
-    await page.getByTestId("apps-start-app").click();
+    await alphaEntry.click();
     await expect(page.getByTestId("apps-local-webview")).toBeAttached();
     const alphaIsolationKey = await page.getByTestId("apps-local-webview")
       .getAttribute("data-webview-isolation-key");
@@ -241,9 +262,11 @@ test.describe("Apps workspace", () => {
         .__appIsolationSentinel = "alpha-guest";
     });
 
-    await appsNavigation.getByRole("button", { name: /Beta Dashboard/ }).click();
-    await page.getByTestId("apps-start-app").click();
+    await betaEntry.click();
     await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps
+    ))).toEqual(["definition-alpha", "definition-beta"]);
     const betaIsolationKey = await page.getByTestId("apps-local-webview")
       .getAttribute("data-webview-isolation-key");
     expect(betaIsolationKey).not.toBe(alphaIsolationKey);
@@ -251,26 +274,122 @@ test.describe("Apps workspace", () => {
       (element as HTMLElement & { __appIsolationSentinel?: string }).__appIsolationSentinel
     ))).toBeUndefined();
 
-    await appsNavigation.getByRole("button", { name: /Alpha CRM/ }).click();
+    await alphaEntry.click();
     await expect(page.getByTestId("apps-local-webview")).toHaveAttribute(
       "data-webview-isolation-key",
       alphaIsolationKey!,
     );
-    await page.getByTestId("apps-copy-link").click();
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await expect(page.getByRole("menuitem", { name: "App settings" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Stop App" })).toBeVisible();
+    await page.waitForTimeout(200);
+    await page.screenshot({
+      path: `/tmp/rudder-apps-e2e-menu-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+    await page.getByTestId("apps-copy-link-local:definition-alpha").click();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __copiedText?: string }).__copiedText
     ))).toBe("http://127.0.0.1:41731/");
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await page.getByRole("menuitem", { name: "Open in browser" }).click({
+      force: true,
+    });
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __openedExternal?: string }).__openedExternal
+    ))).toBe("http://127.0.0.1:41731/");
+    await expect(page.getByText("Source", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Stop App" })).toHaveCount(0);
 
     await page.getByTestId("apps-tab-local:definition-beta").getByRole("tab").focus();
     await page.keyboard.press("Delete");
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toHaveCount(0);
     await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
       .toBeFocused();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual([]);
 
     await page.screenshot({
       path: `/tmp/rudder-apps-e2e-tabs-${testInfo.workerIndex}.png`,
       fullPage: true,
     });
+
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await page.getByRole("menuitem", { name: "Stop App" }).click({ force: true });
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual(["definition-alpha"]);
+    await page.waitForTimeout(750);
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
+    ))).toEqual(["definition-alpha", "definition-beta"]);
+  });
+
+  test("does not expose a managed local binding in another organization", async ({
+    page,
+  }) => {
+    const firstOrganization = await createOrganization(page.request, "App-Binding-A");
+    const secondOrganization = await createOrganization(page.request, "App-Binding-B");
+    await setSitesEnabled(page.request, true);
+    const createdResponse = await page.request.post(
+      `${E2E_BASE_URL}/api/orgs/${firstOrganization.id}/app-builder`,
+      {
+        data: {
+          name: "Private CRM",
+          sourceRoot: "apps/private-crm",
+          scaffoldVersion: "1",
+        },
+      },
+    );
+    expect(createdResponse.status(), await createdResponse.text()).toBe(201);
+    const created = await createdResponse.json() as { id: string };
+    const bindingResponse = await page.request.put(
+      `${E2E_BASE_URL}/api/app-builder/${created.id}/local-binding?orgId=${firstOrganization.id}`,
+      {
+        data: {
+          desktopInstallationId: "desktop-e2e",
+          appPublicId: "private-crm",
+          localBindingId: "binding-private-crm",
+        },
+      },
+    );
+    expect(bindingResponse.status(), await bindingResponse.text()).toBe(200);
+    await page.addInitScript(() => {
+      const definition = {
+        id: "definition-private-crm",
+        desktopInstallationId: "desktop-e2e",
+        appPublicId: "private-crm",
+        localBindingId: "binding-private-crm",
+        title: "Private CRM",
+        executable: "node",
+        argv: ["server.mjs"],
+        cwd: "/tmp/private-crm",
+        inheritedEnvNames: [],
+        readiness: { path: "/health", timeoutMs: 10_000 },
+        openPath: "/",
+        trustFingerprint: "trust-private",
+        approvedFingerprint: "trust-private",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          localApps: {
+            supported: true,
+            list: async () => [definition],
+            status: async () => ({ status: "stopped", generation: null }),
+          },
+        },
+      });
+    });
+    await selectOrganization(page, secondOrganization.id);
+    await page.goto(`${E2E_BASE_URL}/${secondOrganization.issuePrefix}/apps`);
+    await expect(page.getByText("Private CRM")).toHaveCount(0);
   });
 
   test("keeps App Builder records organization-scoped", async ({ request }) => {
