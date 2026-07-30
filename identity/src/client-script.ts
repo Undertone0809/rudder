@@ -3,6 +3,10 @@ export const identityClientScript = String.raw`
   const status = document.querySelector("#auth-status");
   const otpForm = document.querySelector("#otp-form");
   const verifyForm = document.querySelector("#otp-verify-form");
+  const otpEmailTarget = document.querySelector("#otp-email");
+  const changeEmailButton = document.querySelector("#change-email");
+  const passwordModeToggle = document.querySelector("#password-mode-toggle");
+  const passwordPanel = document.querySelector("#password-panel");
   let otpEmail = "";
   let otpPurpose = "sign-in";
   const next = new URLSearchParams(location.search).get("next");
@@ -20,7 +24,14 @@ export const identityClientScript = String.raw`
 
   const message = (text, error = false) => {
     status.textContent = text;
-    status.style.color = error ? "#fca5a5" : "#a7f3d0";
+    if (status.dataset) status.dataset.state = error ? "error" : "success";
+    status.style.color = "";
+  };
+  const setBusy = (button, busy) => {
+    if (!button) return;
+    button.dataset.loading = busy ? "true" : "false";
+    button.setAttribute?.("aria-busy", busy ? "true" : "false");
+    button.disabled = busy;
   };
   const request = async (path, body) => {
     const response = await fetch(path, {
@@ -35,6 +46,8 @@ export const identityClientScript = String.raw`
 
   document.querySelectorAll("[data-social]").forEach((button) => {
     button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      setBusy(button, true);
       try {
         message("Opening secure sign in…");
         const result = await request("/api/auth/sign-in/social", {
@@ -45,12 +58,17 @@ export const identityClientScript = String.raw`
         location.assign(result.url);
       } catch (error) {
         message(error.message || "Unable to sign in", true);
+        setBusy(button, false);
       }
     });
   });
 
   otpForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = otpForm.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
+    setBusy(passwordModeToggle, true);
     otpEmail = new FormData(otpForm).get("email").toString();
     otpPurpose = "sign-in";
     try {
@@ -58,15 +76,48 @@ export const identityClientScript = String.raw`
         email: otpEmail,
         type: "sign-in",
       });
-    } finally {
+      otpForm.hidden = true;
       verifyForm.hidden = false;
+      if (otpEmailTarget) otpEmailTarget.textContent = otpEmail;
       message("If this email can receive a code, it is on the way.");
       verifyForm.querySelector("input").focus();
+    } catch (error) {
+      message(error.message || "Unable to send a verification code.", true);
+    } finally {
+      setBusy(submit, false);
+      setBusy(passwordModeToggle, false);
     }
+  });
+
+  changeEmailButton?.addEventListener("click", () => {
+    verifyForm.hidden = true;
+    otpForm.hidden = false;
+    otpForm.querySelector('input[name="email"]').focus();
+    message("");
+  });
+
+  passwordModeToggle?.addEventListener("click", () => {
+    const passwordMode = passwordPanel.hidden;
+    passwordPanel.hidden = !passwordMode;
+    passwordModeToggle.setAttribute("aria-expanded", passwordMode ? "true" : "false");
+    otpForm.hidden = passwordMode;
+    verifyForm.hidden = true;
+    passwordModeToggle.textContent = passwordMode
+      ? "Use email code instead"
+      : "Use password instead";
+    if (passwordMode) {
+      passwordPanel.querySelector('input[name="email"]').focus();
+    } else {
+      otpForm.querySelector('input[name="email"]').focus();
+    }
+    message("");
   });
 
   verifyForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = verifyForm.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
     try {
       await request(
         otpPurpose === "email-verification"
@@ -80,11 +131,15 @@ export const identityClientScript = String.raw`
       location.assign(safeNext);
     } catch (error) {
       message(error.message || "The code is invalid or expired", true);
+      setBusy(submit, false);
     }
   });
 
   document.querySelector("#password-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = event.currentTarget.querySelector?.('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
     const data = new FormData(event.currentTarget);
     try {
       await request("/api/auth/sign-in/email", {
@@ -94,11 +149,15 @@ export const identityClientScript = String.raw`
       location.assign(safeNext);
     } catch {
       message("The email or password is incorrect.", true);
+      setBusy(submit, false);
     }
   });
 
   document.querySelector("#password-signup-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = event.currentTarget.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
     const data = new FormData(event.currentTarget);
     try {
       await request("/api/auth/sign-up/email", {
@@ -108,10 +167,18 @@ export const identityClientScript = String.raw`
       });
       otpEmail = data.get("email").toString();
       otpPurpose = "email-verification";
+      otpForm.hidden = true;
+      passwordPanel.hidden = true;
+      passwordModeToggle.setAttribute("aria-expanded", "false");
+      passwordModeToggle.textContent = "Use password instead";
       verifyForm.hidden = false;
+      if (otpEmailTarget) otpEmailTarget.textContent = otpEmail;
       message("Check your email to verify this account.");
+      verifyForm.querySelector("input").focus();
     } catch {
       message("Check your email to continue. If the account exists, sign in instead.");
+    } finally {
+      setBusy(submit, false);
     }
   });
 
@@ -120,16 +187,26 @@ export const identityClientScript = String.raw`
   let resetEmail = "";
   forgotForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = forgotForm.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
     resetEmail = new FormData(forgotForm).get("email").toString();
     try {
       await request("/api/auth/email-otp/request-password-reset", { email: resetEmail });
+    } catch {
+      // Password recovery must not reveal whether an account or mailbox exists.
     } finally {
       resetForm.hidden = false;
       message("If this account exists, a reset code is on the way.");
+      resetForm.querySelector("input").focus();
+      setBusy(submit, false);
     }
   });
   resetForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submit = resetForm.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
     const data = new FormData(resetForm);
     try {
       await request("/api/auth/email-otp/reset-password", {
@@ -140,6 +217,8 @@ export const identityClientScript = String.raw`
       message("Password updated. You can sign in with it now.");
     } catch {
       message("The reset code is invalid or expired.", true);
+    } finally {
+      setBusy(submit, false);
     }
   });
 

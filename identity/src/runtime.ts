@@ -24,7 +24,9 @@ export type IdentityRuntime = {
 
 let singleton: IdentityRuntime | undefined;
 
-export function getIdentityRuntime(): IdentityRuntime {
+export function getIdentityRuntime(options?: {
+  backgroundTaskHandler?: (promise: Promise<unknown>) => void;
+}): IdentityRuntime {
   if (singleton) return singleton;
   const config = readIdentityConfig();
   const connection = createIdentityDb(config.databaseUrl);
@@ -57,7 +59,12 @@ export function getIdentityRuntime(): IdentityRuntime {
     mail,
     capturedMail,
     offlineGrantSigning,
-    auth: createIdentityAuth({ db: connection.db, config, mail }),
+    auth: createIdentityAuth({
+      db: connection.db,
+      config,
+      mail,
+      backgroundTaskHandler: options?.backgroundTaskHandler,
+    }),
   };
   return singleton;
 }

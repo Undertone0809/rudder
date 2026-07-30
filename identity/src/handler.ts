@@ -161,7 +161,11 @@ function nonNegativeSafeInteger(body: Record<string, unknown>, key: string): num
   return Number(value);
 }
 
-export async function identityHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function identityHandler(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options?: { backgroundTaskHandler?: (promise: Promise<unknown>) => void },
+): Promise<void> {
   const publicBaseUrl = process.env.IDENTITY_BASE_URL ?? "http://127.0.0.1";
   const url = new URL(req.url ?? "/", publicBaseUrl);
 
@@ -191,7 +195,7 @@ export async function identityHandler(req: IncomingMessage, res: ServerResponse)
 
   // Static legal and bootstrap pages above intentionally remain deployable
   // before production OAuth and database credentials exist.
-  const runtime = getIdentityRuntime();
+  const runtime = getIdentityRuntime(options);
 
   if (req.method === "GET" && url.pathname === "/account") {
     const session = await runtime.auth.api.getSession({ headers: nodeHeaders(req) });
