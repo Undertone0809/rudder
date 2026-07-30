@@ -388,31 +388,24 @@ function OnboardingRoutePage() {
       })
     : null;
 
-  const title = matchedOrganization
-    ? t("app.addAnotherAgentToOrganization", { name: matchedOrganization.name })
-    : organizations.length > 0
-      ? t("app.createAnotherOrganization")
-      : t("app.createFirstOrganization");
-  const description = matchedOrganization
-    ? t("app.onboarding.addAgentDescription")
-    : organizations.length > 0
-      ? t("app.onboarding.createAnotherDescription")
-      : t("app.onboarding.createFirstDescription");
+  if (!matchedOrganization) return null;
 
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+        <h1 className="text-xl font-semibold">
+          {t("app.addAnotherAgentToOrganization", { name: matchedOrganization.name })}
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("app.onboarding.addAgentDescription")}
+        </p>
         <div className="mt-4">
           <Button
             onClick={() =>
-              matchedOrganization
-                ? openOnboarding({ initialStep: 2, orgId: matchedOrganization.id })
-                : openOnboarding()
+              openOnboarding({ initialStep: 2, orgId: matchedOrganization.id })
             }
           >
-            {matchedOrganization ? t("app.addAgent") : t("app.startOnboarding")}
+            {t("app.addAgent")}
           </Button>
         </div>
       </div>
