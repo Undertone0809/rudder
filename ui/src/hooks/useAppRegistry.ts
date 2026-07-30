@@ -8,16 +8,25 @@ import {
 } from "@/lib/apps-workspace";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 export function useAppRegistry(enabled: boolean) {
-  const { selectedOrganizationId } = useOrganization();
+  const { organizations, selectedOrganizationId } = useOrganization();
   const localApps = readDesktopShell()?.localApps;
   const appsQuery = useQuery({
     queryKey: queryKeys.appBuilder.organization(selectedOrganizationId ?? "__none__"),
     queryFn: () => appBuilderApi.list(selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId && enabled),
+  });
+  const otherAppsQueries = useQueries({
+    queries: organizations
+      .filter((organization) => organization.id !== selectedOrganizationId)
+      .map((organization) => ({
+        queryKey: queryKeys.appBuilder.organization(organization.id),
+        queryFn: () => appBuilderApi.list(organization.id),
+        enabled,
+      })),
   });
   const definitionsQuery = useQuery({
     queryKey: queryKeys.localApps.definitions,
@@ -51,27 +60,55 @@ export function useAppRegistry(enabled: boolean) {
         : null,
     }))
   ), [appsQuery.data, definitionByBinding]);
-  const managedBindingIds = useMemo(
+  const reservedManagedBindings = useMemo(
     () => new Set(
-      managedEntries
-        .map((entry) => entry.definition?.id)
-        .filter((id): id is string => Boolean(id)),
+      [
+        ...(appsQuery.data ?? []),
+        ...otherAppsQueries.flatMap((query) => query.data ?? []),
+      ].flatMap((app) => (
+        app.desktopInstallationId && app.appPublicId && app.localBindingId
+          ? [localBindingKey(
+              app.desktopInstallationId,
+              app.appPublicId,
+              app.localBindingId,
+            )]
+          : []
+      )),
     ),
-    [managedEntries],
+    [appsQuery.data, otherAppsQueries],
+  );
+  const managedCatalogComplete = Boolean(
+    enabled
+    && appsQuery.isSuccess
+    && !appsQuery.isFetching
+    && otherAppsQueries.every((query) => query.isSuccess && !query.isFetching),
+  );
+  const registryReady = Boolean(
+    managedCatalogComplete
+    && (
+      !localApps?.supported
+      || (definitionsQuery.isSuccess && !definitionsQuery.isFetching)
+    ),
   );
   const localEntries = useMemo<LocalAppEntry[]>(() => (
-    (definitionsQuery.data ?? [])
-      .filter((definition) => !managedBindingIds.has(definition.id))
-      .map((definition) => ({
-        kind: "local",
-        key: `local:${definition.id}`,
-        definition,
-      }))
-  ), [definitionsQuery.data, managedBindingIds]);
+    managedCatalogComplete
+      ? (definitionsQuery.data ?? [])
+        .filter((definition) => !reservedManagedBindings.has(localBindingKey(
+          definition.desktopInstallationId,
+          definition.appPublicId,
+          definition.localBindingId,
+        )))
+        .map((definition) => ({
+          kind: "local",
+          key: `local:${definition.id}`,
+          definition,
+        }))
+      : []
+  ), [definitionsQuery.data, managedCatalogComplete, reservedManagedBindings]);
   const entries = useMemo<AppEntry[]>(
     () => [...managedEntries, ...localEntries],
     [localEntries, managedEntries],
   );
 
-  return { appsQuery, definitionsQuery, entries, localApps };
+  return { appsQuery, definitionsQuery, entries, localApps, registryReady };
 }
