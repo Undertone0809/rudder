@@ -67,7 +67,7 @@ import {
 } from "./identity-runtime.js";
 import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
-import { previewLocalFile, updateLocalFile } from "./local-file-preview.js";
+import { registerLocalFileIpcHandlers } from "./local-file-ipc.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
   canOpenBlockedNavigationExternally,
@@ -2155,7 +2155,6 @@ async function openDesktopBugReport(): Promise<void> {
 }
 
 function registerIpc(): void {
-  const localFileWriteAdmissions = new Map<string, string>();
   const profileController = requireBrowserProfileController();
   registerBrowserIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
@@ -2275,37 +2274,8 @@ function registerIpc(): void {
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });
-  ipcMain.handle("desktop:preview-local-file", async (event, targetPath: string) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      throw new Error("Local file preview is only available to the main Rudder window.");
-    }
-    const preview = await previewLocalFile(targetPath);
-    const writeCapability = preview.content !== null && !preview.truncated
-      ? randomUUID()
-      : null;
-    if (writeCapability) {
-      localFileWriteAdmissions.set(writeCapability, preview.canonicalPath);
-      if (localFileWriteAdmissions.size > 256) {
-        const oldestCapability = localFileWriteAdmissions.keys().next().value;
-        if (oldestCapability) localFileWriteAdmissions.delete(oldestCapability);
-      }
-    }
-    return { ...preview, writeCapability };
-  });
-  ipcMain.handle("desktop:update-local-file", async (
-    event,
-    targetPath: string,
-    input: { content: string; expectedContent: string; writeCapability: string },
-  ) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      throw new Error("Local file editing is only available to the main Rudder window.");
-    }
-    const admittedPath = localFileWriteAdmissions.get(input.writeCapability);
-    if (!admittedPath || admittedPath !== targetPath) {
-      throw new Error("Local file editing requires a valid preview admission.");
-    }
-    const preview = await updateLocalFile(targetPath, input);
-    return { ...preview, writeCapability: input.writeCapability };
+  registerLocalFileIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
   });
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
