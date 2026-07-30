@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Beaker,
   BookOpen,
   Clock3,
   ExternalLink,
@@ -140,6 +141,12 @@ export function InstanceSidebar() {
               to="/instance/settings/appearance"
               label={t("general.appearance.title")}
               icon={Palette}
+              end
+            />
+            <SettingsNavLink
+              to="/instance/settings/experimental"
+              label={t("common.experimental")}
+              icon={Beaker}
               end
             />
             <SettingsNavLink

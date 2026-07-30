@@ -63,7 +63,11 @@ function noArguments(args: unknown[], label: string): void {
 
 export function registerLocalAppsIpcHandlers(
   ipcMain: IpcMainLike,
-  options: { getMainRenderer: () => Renderer | null; controller: LocalAppsController },
+  options: {
+    getMainRenderer: () => Renderer | null;
+    controller: LocalAppsController;
+    assertEnabled?: () => Promise<void>;
+  },
 ): void {
   const register = (
     channel: string,
@@ -80,23 +84,35 @@ export function registerLocalAppsIpcHandlers(
     noArguments(args, "Local App list");
     return options.controller.listDefinitions();
   });
-  register(LOCAL_APPS_IPC_CHANNELS.discover, (_event, ...args) => {
+  register(LOCAL_APPS_IPC_CHANNELS.discover, async (_event, ...args) => {
     noArguments(args, "Local App discovery");
+    await options.assertEnabled?.();
     return options.controller.pickAndDiscover();
   });
-  register(LOCAL_APPS_IPC_CHANNELS.create, (_event, payload) => {
+  register(LOCAL_APPS_IPC_CHANNELS.create, async (_event, payload) => {
+    await options.assertEnabled?.();
     const object = exactObject(payload, ["definition"], "Local App create");
     return options.controller.createDefinition(object.definition);
   });
-  register(LOCAL_APPS_IPC_CHANNELS.update, (_event, payload) => {
+  register(LOCAL_APPS_IPC_CHANNELS.update, async (_event, payload) => {
+    await options.assertEnabled?.();
     const object = exactObject(payload, ["id", "definition"], "Local App update");
     const id = opaqueIdPayload({ id: object.id });
     return options.controller.updateDefinition(id, object.definition);
   });
-  register(LOCAL_APPS_IPC_CHANNELS.delete, (_event, payload) => options.controller.deleteDefinition(opaqueIdPayload(payload)));
-  register(LOCAL_APPS_IPC_CHANNELS.start, (_event, payload) => options.controller.start(opaqueIdPayload(payload)));
+  register(LOCAL_APPS_IPC_CHANNELS.delete, async (_event, payload) => {
+    await options.assertEnabled?.();
+    return options.controller.deleteDefinition(opaqueIdPayload(payload));
+  });
+  register(LOCAL_APPS_IPC_CHANNELS.start, async (_event, payload) => {
+    await options.assertEnabled?.();
+    return options.controller.start(opaqueIdPayload(payload));
+  });
   register(LOCAL_APPS_IPC_CHANNELS.stop, (_event, payload) => options.controller.stop(opaqueIdPayload(payload)));
   register(LOCAL_APPS_IPC_CHANNELS.status, (_event, payload) => options.controller.status(opaqueIdPayload(payload)));
   register(LOCAL_APPS_IPC_CHANNELS.logs, (_event, payload) => options.controller.logs(opaqueIdPayload(payload)));
-  register(LOCAL_APPS_IPC_CHANNELS.attestedTarget, (_event, payload) => options.controller.attestedTarget(opaqueIdPayload(payload)));
+  register(LOCAL_APPS_IPC_CHANNELS.attestedTarget, async (_event, payload) => {
+    await options.assertEnabled?.();
+    return options.controller.attestedTarget(opaqueIdPayload(payload));
+  });
 }

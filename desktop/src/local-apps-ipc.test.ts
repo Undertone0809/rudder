@@ -2,6 +2,39 @@ import { describe, expect, it, vi } from "vitest";
 import { LOCAL_APPS_IPC_CHANNELS, registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 
 describe("Desktop Local Apps IPC", () => {
+  it("checks the feature gate for launch operations while leaving stop available", async () => {
+    const handlers = new Map<string, (event: any, ...args: unknown[]) => unknown>();
+    const ipcMain = { handle: (channel: string, handler: any) => handlers.set(channel, handler) };
+    const renderer = { mainFrame: {} };
+    const controller = {
+      listDefinitions: vi.fn(async () => []),
+      pickAndDiscover: vi.fn(),
+      createDefinition: vi.fn(),
+      updateDefinition: vi.fn(),
+      deleteDefinition: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(async () => ({ status: "stopped" })),
+      status: vi.fn(),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+    };
+    const assertEnabled = vi.fn(async () => {
+      throw new Error("Sites is disabled");
+    });
+    registerLocalAppsIpcHandlers(ipcMain, {
+      getMainRenderer: () => renderer,
+      controller,
+      assertEnabled,
+    });
+    const event = { sender: renderer, senderFrame: renderer.mainFrame };
+
+    await expect(handlers.get(LOCAL_APPS_IPC_CHANNELS.start)?.(event, { id: "definition-1" }))
+      .rejects.toThrow("Sites is disabled");
+    expect(controller.start).not.toHaveBeenCalled();
+    await expect(handlers.get(LOCAL_APPS_IPC_CHANNELS.stop)?.(event, { id: "definition-1" }))
+      .resolves.toEqual({ status: "stopped" });
+  });
+
   it("accepts only the current renderer main frame and exposes narrow opaque-id runtime commands", async () => {
     const handlers = new Map<string, (event: any, ...args: unknown[]) => unknown>();
     const ipcMain = { handle: vi.fn((channel, handler) => handlers.set(channel, handler)) };

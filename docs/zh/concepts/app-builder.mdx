@@ -1,0 +1,69 @@
+---
+title: "App Builder"
+description: "把业务描述变成由 Rudder 构建、验证并在用户设备上运行的全栈 App。"
+icon: "blocks"
+keywords:
+  - "Rudder App Builder"
+  - "构建应用"
+  - "全栈应用"
+canonical: "https://docs.rudderhq.dev/zh/concepts/app-builder"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/app-builder"
+hreflang_en: "https://docs.rudderhq.dev/concepts/app-builder"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/app-builder"
+---
+
+## 描述业务，不用选择技术栈
+
+App Builder 可以把“做一个 cold email 管理系统”或“基于这些客户数据做一个
+CRM”变成运行在用户设备上的 App。用户不需要选择框架、数据库、包管理器或进程
+结构。
+
+Rudder 使用一套维护好的全栈脚手架，在组织工作区里生成普通源码，执行检查与构建，
+并在发起需求的 Chat 旁打开经过验证的预览。技术用户仍可用 IDE 或终端继续编辑。
+
+App 本身就是普通网页。点击 **Open** 会在 Rudder 内置浏览器中打开；App 运行时，
+点击 **Copy App link** 可以复制当前回环地址，在同一台电脑的其他浏览器中打开。
+
+## 启用 Sites，然后从 Apps 开始
+
+打开 **设置 → 实验性功能**，开启 **Enable Sites**。Rudder 会在主导航中显示
+**Apps**，并启用 App Builder Skill。
+
+Apps 使用 Rudder 的三列式工作区。左列包含 Home、搜索和所有已注册的 App。
+在 Home 的 **Turn ideas into applications** 下输入需求并发送后，Rudder 会打开
+一个已经带上 App Builder 的普通 Chat，因此需求、实现与审查过程仍然完整可见。
+
+Chat 生成 App 源码后，**Register & preview** 会先说明将要执行的依赖安装和生命周期
+脚本。用户继续后，Rudder 执行 typecheck、测试、生产构建和真实回环就绪检查，
+全部通过才会把 App 标为 Ready。缺少需求源码时，不会拿通用模板冒充成品。
+
+打开已注册 App 时，网页会显示在 Apps 的主内容区域。顶部支持同时保留、切换和
+关闭多个 App Tab，右列提供运行状态、启动停止和本地链接操作。
+
+## App 自己管理数据
+
+生成的 App 可以使用 SQLite、迁移、导入、后台任务和外部集成。CRM 联系人、邮件
+正文或营销数据不会被复制进 Rudder 自己的数据库。
+
+新 App 默认使用合成开发数据。用户已有真实数据时，可以在 Chat 中选择副本、
+脱敏数据或直接访问。保存业务记录的 App 提供 JSON 导入导出约定。
+
+## 开发数据恢复
+
+官方脚手架把开发数据放在 `data/development/`，并预留
+`data/production/` 给正式数据。Apps 右侧信息区可以在 App 停止后备份、导出、导入
+和恢复开发数据，不会替换预留的正式数据目录。
+
+集成、业务副作用和后台行为由生成的 App 自己管理。当前版本不提供不可变版本升级、
+正式数据迁移/回滚、Rudder 任务调度器或 Secret 绑定 UI。真实数据与外部副作用
+决策由 Chat 和 App 自己的控制界面处理。
+
+## 在用户设备运行，不提供云端版本
+
+App Builder 不包含云构建、托管、公共 URL、隧道、自定义域名、托管远程数据库或
+跨设备同步。模型提供商、依赖下载和外部集成仍可能访问网络。
+
+复制出的 App 链接不是公网分享链接，只能在当前 App 进程运行期间由同一台电脑
+访问；停止或重启 App 后，地址可能失效或变化。
+
+技术用户需要不同技术栈或启动方式时，仍可使用普通编码流程与手工 Local Apps。

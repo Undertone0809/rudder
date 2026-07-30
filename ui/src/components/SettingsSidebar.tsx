@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Beaker,
   BookOpen,
   Check,
   Clock3,
@@ -220,6 +221,14 @@ export function SettingsSidebar({
                 state={overlayState}
                 label={t("general.appearance.title")}
                 icon={Palette}
+                end
+                variant={modalVariant ? "compact" : "default"}
+              />
+              <SidebarNavItem
+                to="/instance/settings/experimental"
+                state={overlayState}
+                label={t("common.experimental")}
+                icon={Beaker}
                 end
                 variant={modalVariant ? "compact" : "default"}
               />

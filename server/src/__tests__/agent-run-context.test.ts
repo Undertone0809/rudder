@@ -37,6 +37,7 @@ const mockListRealizedSkillEntriesForAgent = vi.fn();
 const mockListRuntimeToolsForAgent = vi.fn();
 const mockListManagedRuntimeBindings = vi.fn();
 const mockGetBrowserSettings = vi.fn();
+const mockGetGeneralSettings = vi.fn();
 
 vi.mock("../services/secrets.js", () => ({
   secretService: () => ({
@@ -54,6 +55,7 @@ vi.mock("../services/organization-skills.js", () => ({
 vi.mock("../services/instance-settings.js", () => ({
   instanceSettingsService: () => ({
     getBrowser: mockGetBrowserSettings,
+    getGeneral: mockGetGeneralSettings,
   }),
 }));
 
@@ -129,6 +131,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
 
   beforeEach(() => {
     mockGetBrowserSettings.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
+    mockGetGeneralSettings.mockResolvedValue({ experimentalSitesEnabled: false });
     mockListManagedRuntimeBindings.mockResolvedValue([]);
   });
 
@@ -139,6 +142,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     mockListRuntimeToolsForAgent.mockReset();
     mockListManagedRuntimeBindings.mockReset();
     mockGetBrowserSettings.mockReset();
+    mockGetGeneralSettings.mockReset();
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;

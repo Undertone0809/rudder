@@ -8,6 +8,11 @@ drizzle/meta/
 coverage/
 .DS_Store
 data/
+!server/resources/bundled-skills/app-builder/assets/scaffold/app/api/data/
+!server/resources/bundled-skills/app-builder/assets/scaffold/app/api/data/**
+!server/resources/bundled-skills/app-builder/assets/scaffold/data/
+server/resources/bundled-skills/app-builder/assets/scaffold/data/*
+!server/resources/bundled-skills/app-builder/assets/scaffold/data/.gitkeep
 .rudder/
 .pnpm-store/
 tmp-*

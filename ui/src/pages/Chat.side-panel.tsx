@@ -2,6 +2,7 @@ import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
+import { healthApi } from "@/api/health";
 import { issuesApi } from "@/api/issues";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
@@ -1882,7 +1883,14 @@ export function ChatSidePanel({
   }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
-  const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
+  const sitesHealthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+  });
+  const localAppsAvailable = Boolean(
+    readDesktopShell()?.localApps?.supported
+    && sitesHealthQuery.data?.features?.experimentalSitesEnabled,
+  );
   useEffect(() => {
     if (!contextReady
       || !target
@@ -1897,6 +1905,12 @@ export function ChatSidePanel({
       sidePanel.closeTarget(sidePanelTargetKey(browserTarget));
     }
   }, [browserTargets, desktopBrowserAvailable, sidePanel]);
+  useEffect(() => {
+    if (localAppsAvailable) return;
+    for (const localAppTarget of localAppTargets) {
+      sidePanel.closeTarget(sidePanelTargetKey(localAppTarget));
+    }
+  }, [localAppTargets, localAppsAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
     if (!contextReady) return null;
     if (visibleTabs.length === 0) return null;
@@ -2528,7 +2542,7 @@ export function ChatSidePanel({
               </div>
             );
           }) : null}
-          {!liveSurfaceRuntime ? localAppTargets.map((target) => {
+          {!liveSurfaceRuntime && localAppsAvailable ? localAppTargets.map((target) => {
             const targetKey = sidePanelTargetKey(target);
             const active = targetKey === activeTargetKey;
             return (

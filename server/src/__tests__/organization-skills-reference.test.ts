@@ -103,7 +103,7 @@ describe("organization skill references", () => {
     await db.delete(agents);
     await db.delete(organizationSkills);
     await db.delete(organizations);
-    await db.update(instanceSettings).set({ browser: {} });
+    await db.update(instanceSettings).set({ browser: {}, general: {} });
   });
 
   afterAll(async () => {
@@ -189,10 +189,20 @@ describe("organization skill references", () => {
       status: "active",
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(instanceSettings).values({
+      singletonKey: "default",
+      browser: {},
+      general: { experimentalSitesEnabled: true },
+      notifications: {},
+    }).onConflictDoUpdate({
+      target: instanceSettings.singletonKey,
+      set: { general: { experimentalSitesEnabled: true } },
+    });
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 5).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 6).map((skill) => skill.key)).toEqual([
+      "rudder/app-builder",
       "rudder/para-memory-files",
       "rudder/rudder-docs",
       "rudder/skill-creator",
@@ -201,6 +211,7 @@ describe("organization skill references", () => {
     ]);
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
+      "rudder/app-builder",
       "rudder/rudder-docs",
       "rudder/skill-creator",
       "rudder/visualize",
@@ -539,6 +550,7 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
     expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
+    expect(skills.map((skill) => skill.key)).not.toContain("rudder/app-builder");
     expect(skills.map((skill) => skill.key)).toContain("rudder/rudder-docs");
   });
 

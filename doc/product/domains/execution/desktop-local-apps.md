@@ -37,6 +37,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-07-23-messenger-work-packages-local-apps.md
   - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
+  - doc/plans/2026-07-29-app-builder-prd.md
 edit_policy: user_confirmed_only
 ---
 
@@ -135,14 +136,29 @@ Saved View identity and group placement.
    tab. Normal Desktop shutdown stops Desktop-owned Local App processes.
    Failed start, readiness failure, or an unexpected watchdog exit also triggers
    bounded cleanup of a process tree whose ownership Rudder can prove.
-9. If listener ownership cannot be proven, the runtime enters a bounded
+9. A valid `APP.BUILDER.001` managed session is the narrow exception to the
+   ordinary direct-Start rule. One explicit `Register & preview` action may
+   register and start the exact Rudder-owned template revision after its build
+   succeeds.
+   The managed action cannot accept Agent-provided executable, shell text,
+   absolute cwd, port, or environment values. A changed launch definition
+   requires review. Navigation, hydration, and ordinary Agents remain unable to
+   start it.
+10. If listener ownership cannot be proven, the runtime enters a bounded
    unavailable or orphaned-unverified state. Rudder never guesses a PID to kill
-   and never runs install, build, migration, or recovery commands automatically.
-10. `Project settings` shows the reviewed Local App definition from the Main
+   and ordinary Local Apps never run install, build, migration, or recovery
+   commands automatically. App Builder setup uses its separate typed,
+   template-scoped contract.
+11. `Project settings` shows the reviewed Local App definition from the Main
     tab. A stopped or failed definition is editable and saved through the same
     native review path as the catalog. A running, starting, or stopping
     definition is read-only until the operator explicitly chooses `Stop &
     edit`; opening or dismissing settings alone never stops the process.
+12. Experimental Sites is the admission gate for both manually loaded Local
+    Apps in the Apps workspace and managed App Builder Apps. Disabling Sites
+    rejects new operations, drains admitted operations, stops every
+    running/transitioning owned definition, and preserves definitions and data.
+    Re-enabling never passively restarts a definition.
 
 ### Decision Table
 
@@ -221,7 +237,9 @@ attempt to start anything.
 
 ### Invariants / Non-Goals
 
-- Start is always a direct operator action against a reviewed definition.
+- Start is always a direct operator action against a reviewed definition except
+  for the exact maintained definition covered by an explicit App Builder
+  `Register & preview` session under `APP.BUILDER.001`.
 - Review approval is revision-specific. The operator is not required to expand
   Advanced before approval, but the complete structured definition must remain
   available there and any later definition change requires renewed review.
@@ -229,7 +247,8 @@ attempt to start anything.
   active definition requires the operator to choose `Stop & edit` explicitly.
 - Hydration, navigation, reload, restore, Move, Remove, Close, and passive
   status/log retry do not execute commands. Explicit `Start & open` and
-  `Retry & open` may execute the reviewed command.
+  `Retry & open` may execute the reviewed command; an explicit, valid managed
+  App Builder session may execute only its Rudder-owned template command.
 - Definitions and process authority are installation-local; the Server stores
   opaque identity only.
 - Local App commands are structured executable invocations, never shell text.
@@ -241,9 +260,10 @@ attempt to start anything.
 - Navigation and view-lifecycle actions never stop a generation. Explicit Stop
   and Desktop shutdown do; failed start, readiness failure, or watchdog failure
   may also terminate a provably owned process tree as bounded safety cleanup.
-- Rudder does not automatically install dependencies, build projects, run
-  migrations, repair services, expose non-loopback listeners, or guess process
-  ownership.
+- Ordinary Local Apps do not automatically install dependencies, build
+  projects, run migrations, repair services, expose non-loopback listeners, or
+  guess process ownership. App Builder's separately confirmed fixed runner is
+  the only managed setup/check exception.
 
 ### Drift Boundaries
 

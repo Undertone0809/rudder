@@ -17,6 +17,7 @@ export const en = {
   "common.profile": "Profile",
   "common.shortcuts": "Shortcuts",
   "common.general": "General",
+  "common.experimental": "Experimental",
   "common.browser": "Browser",
   "common.systemPermissions": "Permissions",
   "common.notifications": "Notifications",
@@ -102,6 +103,19 @@ export const en = {
   "browser.import.result.skippedReasonCount": "{{count}} reason",
   "browser.import.result.skippedReasonsCount": "{{count}} reasons",
   "browser.import.result.failures": "Failures",
+  "experimental.title": "Experimental",
+  "experimental.description": "Try early Rudder features on this device.",
+  "experimental.sites.section": "Sites",
+  "experimental.sites.title": "Enable Sites",
+  "experimental.sites.enabledDescription":
+    "Adds Apps to the Primary Rail, enables the App Builder skill, and lets this device load and run registered Apps.",
+  "experimental.sites.disabledDescription":
+    "Stops running Apps, hides the workspace, and disables new App Builder work. Existing App source and data stay on this device.",
+  "experimental.sites.toggle": "Enable Sites",
+  "experimental.sites.notice":
+    "Sites is experimental. Apps run project code on this device and are reachable only from this computer unless you configure networking yourself.",
+  "experimental.loadFailed": "Failed to load experimental settings.",
+  "experimental.updateFailed": "Failed to save experimental settings.",
   "chat.emptyState.heading": "What can I help with?",
   "chat.emptyState.headingNamed": "What can I help with, {{name}}?",
   "chat.emptyState.headingProject": "What should we build in {{project}}?",

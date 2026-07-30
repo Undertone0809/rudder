@@ -74,6 +74,20 @@ export {
   type PluginLauncherBounds, type PluginLauncherPlacementZone, type PluginLauncherRenderEnvironment,
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
+export type {
+  AppBuilderApp,
+  AppBuilderBuildStatus,
+  AppBuilderOpaqueBinding
+} from "./types/app-builder.js";
+export {
+  APP_BUILDER_SOURCE_ROOT_PATTERN, appBuilderBuildStatusSchema,
+  appBuilderOpaqueBindingSchema,
+  appBuilderRunKindSchema,
+  appBuilderSourceRootSchema, attachAppBuilderConversationSchema, createAppBuilderAppSchema,
+  updateAppBuilderBuildSchema, type AppBuilderRunKind, type AttachAppBuilderConversation, type BindAppBuilderLocalRuntime,
+  type CreateAppBuilderApp,
+  type UpdateAppBuilderBuild
+} from "./validators/app-builder.js";
 
 export {
   MCP_AGENT_ACCESS_MODES,

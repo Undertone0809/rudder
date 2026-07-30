@@ -76,6 +76,12 @@ Product model:
   improving, evaluating, benchmarking, and packaging skills. Its bundled
   scripts, references, agents, assets, and review viewer remain part of the
   runtime skill package rather than depending on another bundled skill.
+- `app-builder` is a capability-bundled, intent-triggered workflow for creating
+  and iterating on organization-scoped Apps. It is projected only while the
+  instance-level Experimental Sites capability is enabled. Enabling it lets a
+  runtime recognize App-building intent; native build, data, and process
+  authority remains separately operator-gated under `APP.BUILDER.001` and is
+  not granted merely because the Skill is loaded.
 - In Rudder, skill ownership determines installation: current-agent skills live
   under `AGENT_HOME/skills` and require explicit enablement, while shared skills
   live under `RUDDER_ORG_SKILLS_DIR`, require an authorized organization Skill
@@ -120,6 +126,10 @@ Product model:
   `pi_local`, and is removed when the deployment, setting, or runtime becomes
   ineligible, without writing a durable organization or agent assignment per
   capability change.
+- `app-builder` follows the same capability-bundled distinction but is
+  controlled by Experimental Sites rather than Browser settings. Disabling
+  Sites removes it from later run projection without creating or mutating
+  durable per-agent skill assignments.
 - Skill state distinguishes discovered, installed, desired, enabled,
   materialized, native, prompt-injected, and unavailable entries.
 - Desired skills are scoped by organization, agent, runtime type, and runtime
@@ -162,6 +172,8 @@ Flow:
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- App Builder Skill availability is not general shell, live-data, or process
+  authority.
 - Non-bundled organization skills are editable after installation. Ordinary
   reads and runs must preserve local edits; only an explicit update operation
   may replace the installed copy from its recorded upstream source.

@@ -49,6 +49,7 @@ describe("instanceGeneralSettingsSchema", () => {
     expect(instanceGeneralSettingsSchema.parse({})).toEqual({
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
       locale: "en",
     });
   });

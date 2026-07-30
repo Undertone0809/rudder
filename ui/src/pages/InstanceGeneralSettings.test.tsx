@@ -17,6 +17,7 @@ vi.mock("@tanstack/react-query", () => ({
     data: {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
       locale: "en",
     },
     isLoading: false,

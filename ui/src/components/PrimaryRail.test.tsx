@@ -19,6 +19,9 @@ const mockState = vi.hoisted(() => ({
     desktopInboxNotifications: true,
     desktopDockBadge: false,
   },
+  generalSettings: {
+    experimentalSitesEnabled: false,
+  },
   inboxBadge: {
     inbox: 4,
     isReady: true,
@@ -60,7 +63,11 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => ({
     data: options.queryKey?.includes("primary-rail-pins")
       ? { items: mockState.pinnedLocalApps }
-      : mockState.notificationSettings,
+      : options.queryKey?.includes("health")
+        ? { features: mockState.generalSettings }
+      : options.queryKey?.includes("general-settings")
+        ? mockState.generalSettings
+        : mockState.notificationSettings,
     isLoading: false,
   }),
 }));
@@ -81,6 +88,7 @@ vi.mock("@/lib/desktop-notification-permission", () => ({
 vi.mock("@/api/instanceSettings", () => ({
   instanceSettingsApi: {
     getNotifications: vi.fn(),
+    getGeneral: vi.fn(),
   },
 }));
 
@@ -190,6 +198,9 @@ beforeEach(() => {
   mockState.notificationSettings = {
     desktopInboxNotifications: true,
     desktopDockBadge: false,
+  };
+  mockState.generalSettings = {
+    experimentalSitesEnabled: false,
   };
   mockState.inboxBadge = {
     inbox: 4,
@@ -514,7 +525,23 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
+  it("shows Apps only after Sites is enabled", async () => {
+    const view = await renderPrimaryRail();
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Apps"))).toBeUndefined();
+
+    mockState.generalSettings = { experimentalSitesEnabled: true };
+    mockState.pathname = "/apps";
+    await view.rerender();
+
+    const appsLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Apps"));
+    expect(appsLink?.getAttribute("href")).toBe("/apps");
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
+  });
+
   it("shows pinned Local App Saved Views after the fixed destinations", async () => {
+    mockState.generalSettings = { experimentalSitesEnabled: true };
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
       title: "MKT dashboard with a very long project name",
@@ -540,6 +567,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("gives an exact pinned Saved View the only Messenger-route active treatment", async () => {
+    mockState.generalSettings = { experimentalSitesEnabled: true };
     mockState.pathname = "/messenger/saved/saved-local-a";
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",

@@ -1,9 +1,17 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildDesktopApiRequestUrl } from "./api-url.js";
+import { AppBuilderDataManager } from "./app-builder-data.js";
+import {
+  AppBuilderController,
+  registerAppBuilderIpcHandlers,
+} from "./app-builder-ipc.js";
+import { AppBuilderPreviewController } from "./app-builder-preview.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, type BootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
@@ -44,6 +52,22 @@ import {
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
+import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
+import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
+import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
+import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
+import {
+  createDesktopRecoveryDiagnostic,
+  createDesktopStartupFailureView,
+  type DesktopStartupFailureView,
+} from "./desktop-startup-failure.js";
+import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
+import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
+import {
+  toWorkspaceLaunchTargetPayload,
+  type DesktopWorkspaceLaunchTargetPayload,
+} from "./desktop-workspace-launch-payload.js";
 import {
   listAvailableIdeTargets,
   listWorkspaceLaunchTargets,
@@ -92,6 +116,7 @@ import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
+import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 import {
   isDesktopSystemPermissionId,
   resolveDesktopSystemPermissions,
@@ -104,28 +129,9 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
-import {
-  type DesktopUpdateChannel
-} from "./update-check.js";
-
-import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
-import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
-import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
-import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
-import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
-import {
-  createDesktopRecoveryDiagnostic,
-  createDesktopStartupFailureView,
-  type DesktopStartupFailureView,
-} from "./desktop-startup-failure.js";
-import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
-import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
-import {
-  toWorkspaceLaunchTargetPayload,
-  type DesktopWorkspaceLaunchTargetPayload,
-} from "./desktop-workspace-launch-payload.js";
-import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
+import { type DesktopUpdateChannel } from "./update-check.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const APP_BUILDER_RUNNER_PATH = path.join(MODULE_DIR, "app-builder-runner.mjs");
 type BootState = {
   stage: string;
   message: string;
@@ -461,6 +467,8 @@ let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController
 let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
 let localAppsController: LocalAppsController | null = null;
 let localAppsRuntime: LocalAppRuntimeManager | null = null;
+let localAppsFeatureGateTimer: NodeJS.Timeout | null = null;
+let appBuilderController: AppBuilderController | null = null;
 let browserCookieImporter: {
   listBrowserImportSources(): Promise<BrowserImportSource[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
@@ -728,6 +736,54 @@ function requireLocalAppsController(): LocalAppsController {
   return localAppsController;
 }
 
+function requireAppBuilderController(): AppBuilderController {
+  if (!appBuilderController) throw new Error("Desktop App Builder has not been initialized.");
+  return appBuilderController;
+}
+
+async function readSitesFeatureEnabled(): Promise<boolean> {
+  if (!serverHandle?.apiUrl) return false;
+  const response = await fetch(new URL("/api/health", serverHandle.apiUrl), {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Unable to read Sites feature state (${response.status})`);
+  }
+  const payload = await response.json() as {
+    features?: { experimentalSitesEnabled?: unknown };
+  };
+  return payload.features?.experimentalSitesEnabled === true;
+}
+
+async function refreshLocalAppsFeatureGate(): Promise<boolean> {
+  const enabled = await readSitesFeatureEnabled();
+  await requireLocalAppsController().setFeatureEnabled(enabled);
+  return enabled;
+}
+
+async function assertSitesFeatureEnabled(): Promise<void> {
+  if (!await refreshLocalAppsFeatureGate()) {
+    throw new Error("Sites is disabled in Experimental settings");
+  }
+}
+
+function stopLocalAppsFeatureGateWatcher(): void {
+  if (!localAppsFeatureGateTimer) return;
+  clearInterval(localAppsFeatureGateTimer);
+  localAppsFeatureGateTimer = null;
+}
+
+async function startLocalAppsFeatureGateWatcher(): Promise<void> {
+  stopLocalAppsFeatureGateWatcher();
+  await refreshLocalAppsFeatureGate();
+  localAppsFeatureGateTimer = setInterval(() => {
+    void refreshLocalAppsFeatureGate().catch((error) => {
+      console.warn("[rudder-desktop] Sites feature reconciliation failed", error);
+    });
+  }, 1_000);
+  localAppsFeatureGateTimer.unref();
+}
+
 function formatLocalAppConfirmationDetail(definition: PreparedLocalAppDefinition): string {
   const argumentsDetail = definition.argv.length > 0
     ? definition.argv.map((argument) => JSON.stringify(argument)).join(" ")
@@ -760,6 +816,7 @@ function initializeLocalApps(desktopInstallationId: string): void {
   localAppsController = new LocalAppsController({
     registry,
     runtime,
+    featureEnabled: false,
     selectFolder: async () => {
       const options: OpenDialogOptions = {
         title: "Choose a local app folder",
@@ -792,6 +849,126 @@ function initializeLocalApps(desktopInstallationId: string): void {
         : await dialog.showMessageBox(options);
       return result.response === 0;
     },
+  });
+
+  const templateRoot = app.isPackaged
+    ? path.join(
+        process.resourcesPath,
+        "server-package",
+        "resources",
+        "bundled-skills",
+        "app-builder",
+        "assets",
+        "scaffold",
+      )
+    : path.resolve(
+        MODULE_DIR,
+        "..",
+        "..",
+        "server",
+        "resources",
+        "bundled-skills",
+        "app-builder",
+        "assets",
+        "scaffold",
+      );
+  const preview = new AppBuilderPreviewController({
+    registry,
+    localApps: localAppsController,
+    runnerExecutable: process.execPath,
+    buildRunnerArgv: ({ appRoot }) => [APP_BUILDER_RUNNER_PATH, appRoot, "preview"],
+    inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
+  });
+  appBuilderController = new AppBuilderController({
+    templateRoot,
+    preview,
+    data: new AppBuilderDataManager(path.join(userDataPath, "app-builder")),
+    resolveProjectRoot: async (organizationId) => {
+      if (!serverHandle?.apiUrl) {
+        throw new Error("Rudder must finish starting before App Builder can resolve its workspace.");
+      }
+      const response = await fetch(
+        buildDesktopApiRequestUrl(
+          serverHandle.apiUrl,
+          `/orgs/${encodeURIComponent(organizationId)}/workspace/files`,
+        ),
+      );
+      if (!response.ok) {
+        throw new Error(`Unable to resolve the App Builder workspace (${response.status})`);
+      }
+      const workspace = await response.json() as {
+        rootPath?: unknown;
+      };
+      const root = workspace.rootPath;
+      if (typeof root !== "string" || !path.isAbsolute(root)) {
+        throw new Error("The organization workspace is not available on this device.");
+      }
+      return root;
+    },
+    selectExportDirectory: async ({ appId, snapshotId }) => {
+      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const options = {
+        title: "Export App data",
+        buttonLabel: "Export",
+        defaultPath: `${appId}-${snapshotId}`,
+      };
+      const result = owner
+        ? await dialog.showSaveDialog(owner, options)
+        : await dialog.showSaveDialog(options);
+      return result.canceled ? null : result.filePath ?? null;
+    },
+    selectImportPackage: async ({ appId }) => {
+      const options: OpenDialogOptions = {
+        title: `Import data for ${appId}`,
+        buttonLabel: "Import",
+        properties: ["openDirectory"],
+      };
+      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const result = owner
+        ? await dialog.showOpenDialog(owner, options)
+        : await dialog.showOpenDialog(options);
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+    migrateRelease: ({ releaseRoot, stagedDataRoot }) => new Promise((resolve, reject) => {
+      const migrationEnvironment: NodeJS.ProcessEnv = {
+        PATH: process.env.PATH,
+        ELECTRON_RUN_AS_NODE: "1",
+      };
+      if (process.platform === "win32") {
+        const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+        migrationEnvironment.SystemRoot = systemRoot;
+        migrationEnvironment.WINDIR = process.env.WINDIR ?? systemRoot;
+        migrationEnvironment.TEMP =
+          process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
+        migrationEnvironment.TMP = process.env.TMP ?? migrationEnvironment.TEMP;
+      } else {
+        migrationEnvironment.TMPDIR = process.env.TMPDIR ?? "/tmp";
+      }
+      const child = spawn(
+        process.execPath,
+        [APP_BUILDER_RUNNER_PATH, releaseRoot, "migrate", stagedDataRoot],
+        {
+          cwd: releaseRoot,
+          env: migrationEnvironment,
+          shell: false,
+          stdio: "pipe",
+          windowsHide: true,
+        },
+      );
+      let diagnostics = "";
+      child.stdout?.on("data", (chunk) => { diagnostics += String(chunk); });
+      child.stderr?.on("data", (chunk) => { diagnostics += String(chunk); });
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (code === 0 && !signal) {
+          resolve();
+          return;
+        }
+        reject(new Error(
+          `App migration rehearsal failed${signal ? ` (${signal})` : ` (${code ?? 1})`}: ${diagnostics.slice(-4_000)}`,
+        ));
+      });
+    }),
   });
 }
 
@@ -1771,6 +1948,7 @@ async function startLocalRudder(): Promise<void> {
           );
         }
       }
+      await startLocalAppsFeatureGateWatcher();
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
       } catch (error) {
@@ -1900,6 +2078,10 @@ async function importCliModule(): Promise<CliModule> {
 async function stopLocalRudder(): Promise<void> {
   const browserLifecycle = browserRuntimeLifecycle;
   const handle = serverHandle;
+  stopLocalAppsFeatureGateWatcher();
+  await localAppsController?.setFeatureEnabled(false).catch((error) => {
+    console.warn("[rudder-desktop] failed to stop Local Apps while the runtime was stopping", error);
+  });
   serverHandle = null;
   await stopDesktopRuntime({
     browserDisconnect: browserLifecycle
@@ -1995,6 +2177,12 @@ function registerIpc(): void {
   registerLocalAppsIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireLocalAppsController(),
+    assertEnabled: assertSitesFeatureEnabled,
+  });
+  registerAppBuilderIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: requireAppBuilderController(),
+    assertEnabled: assertSitesFeatureEnabled,
   });
   ipcMain.handle("desktop:get-boot-state", async (event) => {
     assertCurrentMainFrame(event, "Desktop boot state");

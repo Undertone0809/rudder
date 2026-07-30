@@ -14,7 +14,7 @@ import {
   type PatchInstanceGeneralSettings,
   type PatchInstanceNotificationSettings,
 } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const DEFAULT_SINGLETON_KEY = "default";
 
@@ -36,12 +36,14 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
+      experimentalSitesEnabled: parsed.data.experimentalSitesEnabled ?? false,
       locale: parsed.data.locale ?? "en",
     };
   }
   return {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
+    experimentalSitesEnabled: false,
     locale: "en",
   };
 }
@@ -114,15 +116,11 @@ export function instanceSettingsService(db: Db) {
 
   async function updateGeneralJson(patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> {
     const current = await getOrCreateRow();
-    const nextGeneral = normalizeGeneralSettings({
-      ...normalizeGeneralSettings(current.general),
-      ...patch,
-    });
     const now = new Date();
     const [updated] = await db
       .update(instanceSettings)
       .set({
-        general: { ...nextGeneral },
+        general: sql`${instanceSettings.general} || ${JSON.stringify(patch)}::jsonb`,
         updatedAt: now,
       })
       .where(eq(instanceSettings.id, current.id))

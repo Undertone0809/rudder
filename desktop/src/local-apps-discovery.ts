@@ -74,7 +74,7 @@ function optionalRoute(value: unknown, fallback: string): string {
 }
 
 function optionalTimeout(value: unknown): number {
-  return Number.isInteger(value) && Number(value) >= 250 && Number(value) <= 120_000
+  return Number.isInteger(value) && Number(value) >= 250 && Number(value) <= 600_000
     ? Number(value)
     : 30_000;
 }

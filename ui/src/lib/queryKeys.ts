@@ -134,6 +134,10 @@ export const queryKeys = {
     status: (localBindingId: string) => ["local-apps", "status", localBindingId] as const,
     logs: (localBindingId: string) => ["local-apps", "logs", localBindingId] as const,
   },
+  appBuilder: {
+    organization: (orgId: string) => ["app-builder", "organization", orgId] as const,
+    project: (projectId: string) => ["app-builder", "project", projectId] as const,
+  },
   automations: {
     list: (orgId: string) => ["automations", orgId] as const,
     detail: (id: string) => ["automations", "detail", id] as const,

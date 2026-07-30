@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "app": {
+    "name": "Rudder App",
+    "slug": "rudder-app"
+  },
+  "template": {
+    "id": "rudder-next-sqlite",
+    "revision": 1
+  },
+  "runtime": {
+    "engine": "managed-node-22",
+    "packageManager": "managed-pnpm",
+    "openPath": "/",
+    "readinessPath": "/api/__rudder/health",
+    "readinessTimeoutMs": 300000
+  },
+  "data": {
+    "provider": "sqlite",
+    "productionPath": "data/production/app.sqlite",
+    "developmentPath": "data/development/dev.sqlite",
+    "migrationsDir": "migrations",
+    "backupBeforeMigrate": true,
+    "exportFormat": "rudder-app-data/v1"
+  },
+  "jobs": {
+    "mode": "in_process",
+    "lifecycle": "with_rudder",
+    "defaultCatchUpPolicy": "prompt"
+  },
+  "secrets": []
+}

@@ -2,6 +2,7 @@ export const INSTANCE_SETTINGS_PROFILE_PATH = "/instance/settings/profile";
 export const INSTANCE_SETTINGS_SHORTCUTS_PATH = "/instance/settings/shortcuts";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 export const INSTANCE_SETTINGS_APPEARANCE_PATH = "/instance/settings/appearance";
+export const INSTANCE_SETTINGS_EXPERIMENTAL_PATH = "/instance/settings/experimental";
 export const INSTANCE_SETTINGS_BROWSER_PATH = "/instance/settings/browser";
 export const INSTANCE_SETTINGS_NOTIFICATIONS_PATH = "/instance/settings/notifications";
 export const INSTANCE_SETTINGS_ABOUT_PATH = "/instance/settings/about";
@@ -49,6 +50,7 @@ export function normalizeRememberedInstanceSettingsPath(
     (
       pathname === INSTANCE_SETTINGS_GENERAL_PATH ||
       pathname === INSTANCE_SETTINGS_APPEARANCE_PATH ||
+      pathname === INSTANCE_SETTINGS_EXPERIMENTAL_PATH ||
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
       pathname === "/instance/settings/heartbeats" ||
@@ -104,6 +106,7 @@ export function normalizeRememberedSettingsPath(
     (
       pathname === INSTANCE_SETTINGS_GENERAL_PATH ||
       pathname === INSTANCE_SETTINGS_APPEARANCE_PATH ||
+      pathname === INSTANCE_SETTINGS_EXPERIMENTAL_PATH ||
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
       pathname === "/instance/settings/heartbeats" ||

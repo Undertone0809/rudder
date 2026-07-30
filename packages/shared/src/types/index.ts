@@ -34,6 +34,11 @@ export type {
   AgentAccessState,
   AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
 } from "./agent.js";
+export type {
+  AppBuilderApp,
+  AppBuilderBuildStatus,
+  AppBuilderOpaqueBinding
+} from "./app-builder.js";
 export type { Approval, ApprovalComment, IssueLinkedApproval } from "./approval.js";
 export type { AssetImage } from "./asset.js";
 export type {

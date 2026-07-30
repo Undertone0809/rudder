@@ -6,9 +6,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { createLocalAppProcessPlatform } from "./local-app-process-platform.js";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 import {
   LocalAppRuntimeManager,
+  buildChildEnvironment,
   installControlPipeEofCleanup,
   localAppPartitionId,
   parseLsofListenerProcessRecords,
@@ -117,6 +119,26 @@ function watchdogEmittingAfter(message: unknown, milliseconds: number) {
 }
 
 describe("Desktop Local App runtime", () => {
+  it("injects Electron Node mode for the managed host executable even when the parent env omits it", async () => {
+    const { registry, definition } = await approvedFixture({
+      inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
+    });
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    delete process.env.ELECTRON_RUN_AS_NODE;
+    try {
+      const environment = await buildChildEnvironment(
+        definition,
+        43_123,
+        definition.executable,
+        createLocalAppProcessPlatform({ platform: process.platform }),
+      );
+      expect(environment.ELECTRON_RUN_AS_NODE).toBe("1");
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+      await registry.recordRuntimeDescriptor(definition.id, null);
+    }
+  });
   it("parses every process and listener address from structured lsof output", () => {
     expect(parseLsofListenerProcessRecords([
       "p42",

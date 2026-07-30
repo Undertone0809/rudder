@@ -763,6 +763,7 @@ contracts:
       - server/src/services/runtime-kernel/model-fallback.ts
       - server/src/services/knowledge-portability/organization-skills.catalog.ts
       - packages/shared/src/organization-skill-reference.ts
+      - server/resources/bundled-skills/app-builder/SKILL.md
       - ui/src/pages/AgentDetail.skills.tsx
     related_tests:
       - server/src/__tests__/agent-run-context.test.ts
@@ -1761,6 +1762,43 @@ contracts:
       - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
       - doc/plans/2026-07-01-global-side-panel-workbench.md
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
+  APP.BUILDER.001:
+    owner: product
+    domain: execution
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/execution/app-builder.md
+    related_code:
+      - packages/db/src/schema/app_builder_apps.ts
+      - packages/shared/src/types/app-builder.ts
+      - packages/shared/src/validators/app-builder.ts
+      - server/src/services/app-builder.ts
+      - server/src/routes/app-builder.ts
+      - server/resources/bundled-skills/app-builder/SKILL.md
+      - desktop/src/app-builder-ipc.ts
+      - desktop/src/app-builder-manifest.ts
+      - desktop/src/app-builder-data.ts
+      - desktop/src/local-apps-runtime.ts
+      - ui/src/pages/Apps.tsx
+      - ui/src/pages/InstanceExperimentalSettings.tsx
+      - ui/src/components/PrimaryRail.tsx
+    related_tests:
+      - packages/shared/src/validators/app-builder.test.ts
+      - server/src/__tests__/app-builder-service.test.ts
+      - server/src/__tests__/app-builder-routes.test.ts
+      - desktop/src/app-builder-controller.test.ts
+      - desktop/src/app-builder-manifest.test.ts
+      - desktop/src/app-builder-data.test.ts
+      - desktop/src/app-builder-runner.test.ts
+      - desktop/src/app-builder-ipc.test.ts
+      - ui/src/pages/InstanceExperimentalSettings.test.tsx
+      - ui/src/components/PrimaryRail.test.tsx
+      - tests/e2e/app-builder.spec.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-29-app-builder-prd.md
+      - doc/plans/2026-07-29-app-builder-implementation.md
   IM.FEISHU.001:
     owner: product
     domain: collaboration

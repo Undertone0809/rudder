@@ -32,6 +32,49 @@ function nextTurn(): Promise<void> {
 }
 
 describe("Desktop Local Apps native controller", () => {
+  it("blocks new launches while Sites is disabled and stops a running App when disabled", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-feature-gate-"));
+    const registry = new LocalAppRegistry({
+      registryPath: path.join(root, "registry.json"),
+      installationId: "install-a",
+    });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+    let status = "stopped" as "stopped" | "running";
+    const runtime = {
+      start: vi.fn(async () => {
+        status = "running";
+        return { status: "running" as const };
+      }),
+      stop: vi.fn(async () => {
+        status = "stopped";
+        return { status: "stopped" as const };
+      }),
+      status: vi.fn(async () => ({ status })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(),
+    };
+    const controller = new LocalAppsController({
+      registry,
+      runtime,
+      featureEnabled: false,
+      selectFolder: vi.fn(async () => null),
+      confirmDefinition: vi.fn(async () => true),
+    });
+
+    await expect(controller.start(created.id)).rejects.toThrow("Sites is disabled");
+    expect(runtime.start).not.toHaveBeenCalled();
+
+    await controller.setFeatureEnabled(true);
+    await expect(controller.start(created.id)).resolves.toMatchObject({ status: "running" });
+    await controller.setFeatureEnabled(false);
+
+    expect(runtime.stop).toHaveBeenCalledWith(created.id);
+    await expect(controller.start(created.id)).rejects.toThrow("Sites is disabled");
+  });
+
   it("does not let start overtake an in-flight stop for the same binding", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-stop-start-"));
     const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });

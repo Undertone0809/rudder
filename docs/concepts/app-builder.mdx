@@ -1,0 +1,85 @@
+---
+title: "App Builder"
+description: "Turn a request into a full-stack App that Rudder builds, verifies, and runs on your machine."
+icon: "blocks"
+keywords:
+  - "Rudder App Builder"
+  - "Build an app"
+  - "Full-stack app"
+canonical: "https://docs.rudderhq.dev/concepts/app-builder"
+"og:url": "https://docs.rudderhq.dev/concepts/app-builder"
+hreflang_en: "https://docs.rudderhq.dev/concepts/app-builder"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/app-builder"
+---
+
+## Describe the workflow, not the stack
+
+App Builder turns a request such as “build a cold-email manager” or “make a CRM
+for this customer data” into an App on your device. You do not need to choose a
+framework, database, package manager, or process layout.
+
+Rudder uses one maintained full-stack scaffold, writes the application in your
+organization workspace, runs its checks, and opens a verified preview beside
+the Chat that produced it. The source stays conventional, so you can also open
+it in an IDE or terminal.
+
+The App is a normal webpage. **Open** shows it inside Rudder's browser. While
+the App is running, **Copy App link** gives you its current loopback address so
+you can open the same page in another browser on this computer.
+
+## Enable Sites, then start from Apps
+
+Open **Settings → Experimental** and turn on **Enable Sites**. Rudder adds
+**Apps** to the Primary Rail and enables the App Builder Skill.
+
+Apps uses Rudder's three-column workspace. The left column contains Home,
+search, and every registered App. On Home, enter your request under **Turn
+ideas into applications**. Sending opens a normal Chat with App Builder already
+attached, so requirements, implementation, and review remain visible.
+
+After Chat has created the App source, **Register & preview** discloses the package
+installation and lifecycle scripts it will run. If you continue, Rudder runs
+typecheck, tests, a production build, and a real loopback readiness check before
+marking the App ready. It does not substitute the generic scaffold when the
+requested source is missing.
+
+Opening a registered App displays it in the Apps main content. The header keeps
+multiple closable App tabs, and the right column provides runtime and link
+actions.
+
+## The App owns its data
+
+Generated Apps can use SQLite, migrations, imports, background jobs, and
+external integrations. Rudder does not store your CRM contacts, email bodies,
+or marketing rows in Rudder's own database.
+
+New Apps start with synthetic development data. When you already have real
+data, use Chat to choose whether the App should work with a copy, redacted
+records, or direct access. Record-keeping Apps include JSON export and import
+conventions for portability.
+
+## Development data recovery
+
+The maintained scaffold keeps development data under
+`data/development/` and reserves `data/production/` for formal data. The Apps
+inspector can back up, export, import, and restore the stopped development-data
+directory without replacing the reserved production directory.
+
+The App owns any integrations, business-side effects, and background behavior.
+The current App Builder version does not provide immutable release promotion,
+production migration/rollback, a Rudder job scheduler, or Secret binding UI.
+Use Chat and the generated App's own controls for real-data and side-effect
+decisions.
+
+## Machine-resident, not cloud-hosted
+
+App Builder does not provide cloud builds, hosting, public URLs, tunnels,
+custom domains, managed remote databases, or cross-device sync. Model providers,
+package downloads, and integrations may still use the network.
+
+The copied App link is not a public sharing link. It works only on the same
+computer while that App generation is running, and it may change after a stop
+or restart.
+
+Manual Local Apps and normal coding workflows remain available when a technical
+user wants a different stack or launch definition.

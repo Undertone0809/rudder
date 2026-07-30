@@ -8,6 +8,7 @@ export interface InstanceBrowserSettings {
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   showDeveloperDiagnostics: boolean;
+  experimentalSitesEnabled: boolean;
   locale: InstanceLocale;
 }
 

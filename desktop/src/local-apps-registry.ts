@@ -154,7 +154,7 @@ async function normalizeDefinition(draft: LocalAppDefinitionDraft): Promise<Loca
   }))].sort();
 
   const timeoutMs = draft.readiness?.timeoutMs;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 250 || timeoutMs > 120_000) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 250 || timeoutMs > 600_000) {
     throw new Error("Invalid Local App readiness timeout");
   }
 

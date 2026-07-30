@@ -66,6 +66,7 @@ describe("instance settings routes", () => {
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
       locale: "en",
     });
     mockInstanceSettingsService.getNotifications.mockResolvedValue({
@@ -83,6 +84,7 @@ describe("instance settings routes", () => {
       general: {
         censorUsernameInLogs: true,
         showDeveloperDiagnostics: true,
+        experimentalSitesEnabled: false,
         locale: "zh-CN",
       },
     });
@@ -127,7 +129,12 @@ describe("instance settings routes", () => {
 
     const getRes = await request(app).get("/api/instance/settings/general");
     expect(getRes.status).toBe(200);
-    expect(getRes.body).toEqual({ censorUsernameInLogs: false, showDeveloperDiagnostics: false, locale: "en" });
+    expect(getRes.body).toEqual({
+      censorUsernameInLogs: false,
+      showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
+      locale: "en",
+    });
 
     const patchRes = await request(app)
       .patch("/api/instance/settings/general")

@@ -45,6 +45,7 @@ import { legacySkillRouteToLibraryHref } from "./lib/skill-library-routes";
 import { agentUrl } from "./lib/utils";
 import { Activity } from "./pages/Activity";
 import { AgentDetail } from "./pages/AgentDetail";
+import { Apps } from "./pages/Apps";
 import { AuthPage } from "./pages/Auth";
 import { Automations } from "./pages/Automations";
 import { BoardClaimPage } from "./pages/BoardClaim";
@@ -58,6 +59,7 @@ import { Goals } from "./pages/Goals";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
+import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
 import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
@@ -253,6 +255,7 @@ function boardRoutes() {
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<Automations />} />
+      <Route path="apps/*" element={<Apps />} />
       <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="run-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
@@ -575,6 +578,7 @@ export function App() {
             <Route path="profile" element={<InstanceProfileSettings />} />
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
+            <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="appearance" element={<InstanceAppearanceSettings />} />
             <Route
               path="browser"
@@ -605,6 +609,7 @@ export function App() {
           <Route path="design-guide" element={<UnprefixedBoardRedirect />} />
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
+          <Route path="apps/*" element={<UnprefixedBoardRedirect />} />
           <Route path="calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
           <Route path="heartbeats" element={<UnprefixedBoardRedirect />} />
@@ -649,6 +654,7 @@ export function App() {
               <Route path="profile" element={<InstanceProfileSettings />} />
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
+              <Route path="experimental" element={<InstanceExperimentalSettings />} />
               <Route path="appearance" element={<InstanceAppearanceSettings />} />
               <Route
                 path="browser"

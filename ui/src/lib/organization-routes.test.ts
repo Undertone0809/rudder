@@ -52,6 +52,15 @@ describe("organization-routes", () => {
     );
   });
 
+  it("treats Apps tabs as organization-scoped board routes", () => {
+    expect(applyOrganizationPrefix("/apps/view/local%3Aalpha", "ACM")).toBe(
+      "/ACM/apps/view/local%3Aalpha",
+    );
+    expect(toOrganizationRelativePath("/ACM/apps/view/local%3Aalpha")).toBe(
+      "/apps/view/local%3Aalpha",
+    );
+  });
+
   it("finds organizations by prefix case-insensitively", () => {
     const organizations = [
       { id: "org_1", issuePrefix: "ACM", urlKey: "acme" },

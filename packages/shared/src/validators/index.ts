@@ -11,6 +11,15 @@ export {
 } from "./instance.js";
 
 export {
+  APP_BUILDER_SOURCE_ROOT_PATTERN, appBuilderBuildStatusSchema,
+  appBuilderOpaqueBindingSchema,
+  appBuilderRunKindSchema,
+  appBuilderSourceRootSchema, attachAppBuilderConversationSchema, createAppBuilderAppSchema,
+  updateAppBuilderBuildSchema, type AppBuilderRunKind, type AttachAppBuilderConversation, type BindAppBuilderLocalRuntime,
+  type CreateAppBuilderApp,
+  type UpdateAppBuilderBuild
+} from "./app-builder.js";
+export {
   resolveBudgetIncidentSchema, upsertBudgetPolicySchema, type ResolveBudgetIncident, type UpsertBudgetPolicy
 } from "./budget.js";
 

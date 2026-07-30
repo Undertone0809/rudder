@@ -36,6 +36,7 @@ related_code:
   - ui/src/pages/OrganizationWorkspaces.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - desktop/src/ide-opener.ts
+  - desktop/src/app-builder-ipc.ts
   - ui/src/pages/OrganizationWorkspaceBackups.tsx
   - ui/src/components/NewProjectDialog.tsx
   - ui/src/components/ProjectResourcesPanel.tsx
@@ -205,6 +206,10 @@ Product model:
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
+- App Builder source uses a normalized organization-workspace-relative
+  `apps/<slug>` root. The generated App owns its data and recovery material
+  under `APP.BUILDER.001`; those files do not become Project context merely
+  because the source lives in the organization workspace.
 - Older organization workspace layouts are migrated into the mapped folder when
   Rudder can do so without unsafe overwrite.
 

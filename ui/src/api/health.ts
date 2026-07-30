@@ -26,6 +26,7 @@ export type HealthStatus = {
   uiLocale?: InstanceLocale;
   features?: {
     companyDeletionEnabled?: boolean;
+    experimentalSitesEnabled?: boolean;
   };
   devServer?: DevServerHealthStatus;
 };

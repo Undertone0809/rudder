@@ -272,6 +272,60 @@ export type DesktopLocalAppAttestedTarget = {
   partition: string;
 };
 
+export type DesktopAppBuilderBinding = {
+  desktopInstallationId: string;
+  definitionId: string;
+  appPublicId: string;
+  localBindingId: string;
+};
+
+export type DesktopAppBuilderManifest = {
+  schemaVersion: 1;
+  app: { name: string; slug: string };
+  template: { id: "rudder-next-sqlite"; revision: number };
+  runtime: {
+    engine: "managed-node-22";
+    packageManager: "managed-pnpm";
+    openPath: string;
+    readinessPath: string;
+    readinessTimeoutMs: number;
+  };
+  data: {
+    provider: "sqlite";
+    productionPath: string;
+    developmentPath: string;
+    migrationsDir: string;
+    backupBeforeMigrate: true;
+    exportFormat: "rudder-app-data/v1";
+  };
+  jobs: {
+    mode: "in_process";
+    lifecycle: "with_rudder";
+    defaultCatchUpPolicy: "prompt";
+  };
+  secrets: Array<{ id: string; label: string; required: boolean }>;
+};
+
+export type DesktopAppBuilderLocation = {
+  projectId: string;
+  appDirectory: string;
+};
+
+export type DesktopAppBuilderBoundLocation = DesktopAppBuilderLocation & {
+  binding: DesktopAppBuilderBinding;
+};
+
+export type DesktopAppBuilderSnapshot = {
+  id: string;
+  manifest: {
+    schemaVersion: 1;
+    kind: "rudder-app-data";
+    appId: string;
+    createdAt: string;
+    files: Array<{ path: string; bytes: number; sha256: string }>;
+  };
+};
+
 export type DesktopWebLinkRequest = {
   url: string;
   source: "link" | "browser_popup";
@@ -354,6 +408,52 @@ export type DesktopShellApi = {
     status(id: string): Promise<DesktopLocalAppRuntimeView>;
     logs(id: string): Promise<string[]>;
     attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
+  };
+  appBuilder?: {
+    supported: boolean;
+    inspect(input: DesktopAppBuilderLocation): Promise<{ manifest: DesktopAppBuilderManifest }>;
+    scaffold(input: {
+      projectId: string;
+      targetDirectory: string;
+      appId: string;
+      title: string;
+    }): Promise<{ manifest: DesktopAppBuilderManifest; appDirectory: string }>;
+    ensurePreview(
+      input: DesktopAppBuilderLocation & {
+        binding: DesktopAppBuilderBinding | null;
+        authorizeManagedStart: boolean;
+      },
+    ): Promise<DesktopAppBuilderBinding>;
+    startPreview(
+      input: DesktopAppBuilderBoundLocation,
+    ): Promise<{ runtime: DesktopLocalAppRuntimeView; target: DesktopLocalAppAttestedTarget }>;
+    stopPreview(input: DesktopAppBuilderBoundLocation): Promise<DesktopLocalAppRuntimeView>;
+    previewStatus(input: DesktopAppBuilderBoundLocation): Promise<DesktopLocalAppRuntimeView>;
+    snapshot(input: DesktopAppBuilderBoundLocation): Promise<DesktopAppBuilderSnapshot>;
+    exportSnapshot(
+      input: DesktopAppBuilderBoundLocation & { snapshotId: string },
+    ): Promise<{ canceled: boolean }>;
+    importData(
+      input: DesktopAppBuilderBoundLocation,
+    ): Promise<
+      { canceled: true }
+      | { canceled: false; rollbackSnapshot: DesktopAppBuilderSnapshot }
+    >;
+    promoteRelease(input: DesktopAppBuilderBoundLocation & {
+      releaseId: string;
+      releaseDirectory: string;
+    }): Promise<{ releaseId: string; rollbackSnapshot: DesktopAppBuilderSnapshot }>;
+    restoreSnapshot(input: DesktopAppBuilderBoundLocation & {
+      snapshotId: string;
+    }): Promise<{ restoredSnapshotId: string; safetySnapshot: DesktopAppBuilderSnapshot }>;
+    rollbackRelease(input: DesktopAppBuilderBoundLocation & {
+      snapshotId: string;
+      targetReleaseId: string | null;
+    }): Promise<{
+      targetReleaseId: string | null;
+      restoredSnapshotId: string;
+      safetySnapshot: DesktopAppBuilderSnapshot;
+    }>;
   };
 };
 

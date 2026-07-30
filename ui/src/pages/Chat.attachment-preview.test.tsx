@@ -146,6 +146,7 @@ const mockState = vi.hoisted(() => ({
   savedViewPromotionDiscard: vi.fn(),
   savedViewPromotionEnabled: false,
   savedViewPromotionIsMoving: false,
+  sitesEnabled: false,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -380,6 +381,14 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "auth" && queryKey[1] === "session") {
       return {
         data: { user: { id: "local-board", name: "Me" }, session: { userId: "local-board" } },
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "health") {
+      return {
+        data: { features: { experimentalSitesEnabled: mockState.sitesEnabled } },
         isPending: false,
         isLoading: false,
         error: null,
@@ -1494,6 +1503,7 @@ async function renderPersistedSideChatPanel(conversationId: string) {
 }
 
 beforeEach(() => {
+  mockState.sitesEnabled = false;
   installLocalStorageMock();
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
@@ -4183,6 +4193,7 @@ describe("Chat Side Panel link handling", () => {
   });
 
   it("opens the Desktop Local Apps catalog from the Side Panel empty state", async () => {
+    mockState.sitesEnabled = true;
     const currentShell = (window as typeof window & { desktopShell?: Record<string, unknown> }).desktopShell;
     Object.defineProperty(window, "desktopShell", {
       configurable: true,

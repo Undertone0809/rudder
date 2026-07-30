@@ -505,7 +505,7 @@ export function LocalAppsPanel({
     return (
       <div className="m-auto max-w-sm px-6 py-10 text-center" data-testid="local-app-error">
         <CircleAlert className="mx-auto h-9 w-9 text-muted-foreground" aria-hidden />
-        <h3 className="mt-4 text-base font-semibold text-foreground">Local Apps require Rudder Desktop on macOS</h3>
+        <h3 className="mt-4 text-base font-semibold text-foreground">Local Apps require Rudder Desktop</h3>
       </div>
     );
   }

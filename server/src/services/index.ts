@@ -5,6 +5,7 @@ export { activityService, type ActivityFilters } from "./activity.js";
 export { agentEnabledSkillsService } from "./agent-enabled-skills.js";
 export { agentInstructionsService, syncInstructionsBundleConfigFromFilePath } from "./agent-instructions.js";
 export { agentService, deduplicateAgentName } from "./agents.js";
+export { appBuilderService } from "./app-builder.js";
 export { approvalService } from "./approvals.js";
 export { assetService } from "./assets.js";
 export { automationService } from "./automations.js";

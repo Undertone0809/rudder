@@ -80,7 +80,10 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
-  if (target.startsWith("/instance/settings/general")) {
+  if (
+    target.startsWith("/instance/settings/general")
+    || target.startsWith("/instance/settings/experimental")
+  ) {
     keys.push([...queryKeys.instance.generalSettings]);
     return keys;
   }
@@ -177,7 +180,10 @@ export function prefetchSettingsQueries(
     return Promise.allSettled(jobs);
   }
 
-  if (target.startsWith("/instance/settings/general")) {
+  if (
+    target.startsWith("/instance/settings/general")
+    || target.startsWith("/instance/settings/experimental")
+  ) {
     jobs.push(
       queryClient.prefetchQuery({
         queryKey: queryKeys.instance.generalSettings,

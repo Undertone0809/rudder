@@ -19,6 +19,7 @@ type ControllerOptions = {
   runtime: RuntimeController;
   selectFolder: () => Promise<string | null>;
   confirmDefinition: (definition: PreparedLocalAppDefinition | LocalAppDefinition, action: ConfirmationAction) => Promise<boolean>;
+  featureEnabled?: boolean;
   shutdownDrainTimeoutMs?: number;
 };
 
@@ -72,6 +73,7 @@ export class LocalAppsController {
   private readonly shutdownDrainTimeoutMs: number;
   private readonly bindingOperations = new Map<string, Promise<void>>();
   private readonly activeOperations = new Set<Promise<unknown>>();
+  private featureEnabled: boolean;
   private acceptingOperations = true;
   private shutdownPromise: Promise<void> | null = null;
 
@@ -80,6 +82,7 @@ export class LocalAppsController {
     this.runtime = options.runtime;
     this.selectFolder = options.selectFolder;
     this.confirmDefinition = options.confirmDefinition;
+    this.featureEnabled = options.featureEnabled ?? true;
     this.shutdownDrainTimeoutMs = Math.max(1, options.shutdownDrainTimeoutMs ?? 2_000);
   }
 
@@ -88,6 +91,7 @@ export class LocalAppsController {
   }
 
   async pickAndDiscover(): Promise<{ canceled: true } | { canceled: false; draft: PreparedLocalAppDefinition }> {
+    this.ensureFeatureEnabled();
     const folder = await this.selectFolder();
     if (!folder) return { canceled: true };
     const discovered = await discoverLocalAppDefinition(folder);
@@ -117,6 +121,12 @@ export class LocalAppsController {
 
   private ensureAcceptingOperations(): void {
     if (!this.acceptingOperations) throw new Error("Local Apps are shutting down");
+  }
+
+  private ensureFeatureEnabled(): void {
+    if (!this.featureEnabled) {
+      throw new Error("Sites is disabled in Experimental settings");
+    }
   }
 
   private withAdmittedOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -159,10 +169,13 @@ export class LocalAppsController {
 
   async createDefinition(input: unknown): Promise<LocalAppDefinition> {
     return this.withAdmittedOperation(async () => {
+      this.ensureFeatureEnabled();
       const prepared = await this.registry.prepareDefinition(rendererDraft(input));
       this.ensureAcceptingOperations();
+      this.ensureFeatureEnabled();
       await this.requireNativeConfirmation(prepared, "create");
       this.ensureAcceptingOperations();
+      this.ensureFeatureEnabled();
       const created = await this.registry.createDefinition(prepared);
       return this.withBindingOperation(created.id, () =>
         this.registry.approveDefinition(created.id, prepared.trustFingerprint));
@@ -173,14 +186,17 @@ export class LocalAppsController {
     return this.withAdmittedOperation(() =>
       this.withBindingOperation(id, async () => {
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         ensureInactive((await this.runtime.status(id)).status, "update");
         const prepared = await this.registry.prepareDefinition(rendererDraft(input));
         const previous = await this.registry.getDefinition(id);
         const requiresReview = previous.trustFingerprint !== prepared.trustFingerprint
           || previous.approvedFingerprint !== prepared.trustFingerprint;
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         if (requiresReview) await this.requireNativeConfirmation(prepared, "update");
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         const updated = await this.registry.updateDefinition(id, prepared);
         return requiresReview
           ? this.registry.approveDefinition(updated.id, updated.trustFingerprint)
@@ -192,6 +208,7 @@ export class LocalAppsController {
     await this.withAdmittedOperation(() =>
       this.withBindingOperation(id, async () => {
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         ensureInactive((await this.runtime.status(id)).status, "delete");
         this.ensureAcceptingOperations();
         await this.registry.deleteDefinition(id);
@@ -202,14 +219,17 @@ export class LocalAppsController {
     return this.withAdmittedOperation(() =>
       this.withBindingOperation(id, async () => {
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         const definition = await this.registry.getDefinition(id);
         this.ensureAcceptingOperations();
         if (definition.approvedFingerprint !== definition.trustFingerprint) {
           await this.requireNativeConfirmation(definition, "start");
           this.ensureAcceptingOperations();
+          this.ensureFeatureEnabled();
           await this.registry.approveDefinition(id, definition.trustFingerprint);
         }
         this.ensureAcceptingOperations();
+        this.ensureFeatureEnabled();
         return this.runtime.start(id);
       }));
   }
@@ -231,7 +251,24 @@ export class LocalAppsController {
   }
 
   async attestedTarget(id: string): Promise<{ origin: string; openPath: string; partition: string } | null> {
+    this.ensureFeatureEnabled();
     return this.runtime.attestedTarget(id);
+  }
+
+  async setFeatureEnabled(enabled: boolean): Promise<void> {
+    if (this.featureEnabled === enabled) return;
+    this.featureEnabled = enabled;
+    if (enabled) return;
+
+    await this.drainActiveOperations();
+    const definitions = await this.registry.listDefinitions();
+    await Promise.all(definitions.map((definition) =>
+      this.withBindingOperation(definition.id, async () => {
+        const status = await this.runtime.status(definition.id);
+        if (["starting", "running", "stopping"].includes(status.status)) {
+          await this.runtime.stop(definition.id);
+        }
+      })));
   }
 
   shutdown(): Promise<void> {

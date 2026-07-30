@@ -1,0 +1,14 @@
+interface:
+  display_name: "App Builder"
+  short_description: "Build and verify full-stack apps in Rudder"
+  default_prompt: "Use $app-builder to build this app with Rudder's maintained scaffold and verify it in the Browser."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "rudder-browser"
+      description: "Run-scoped Rudder Browser verification"
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true

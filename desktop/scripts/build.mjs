@@ -38,6 +38,7 @@ async function main() {
   await run(process.execPath, ["scripts/stage-cli.mjs"], desktopRoot);
   await fs.rm(path.join(desktopRoot, "dist"), { recursive: true, force: true });
   await run(tscBin, ["-p", "tsconfig.json"], desktopRoot);
+  await run(process.execPath, ["scripts/stage-app-builder-toolchain.mjs"], desktopRoot);
   await run(process.execPath, ["scripts/stage-app.mjs"], desktopRoot);
 }
 

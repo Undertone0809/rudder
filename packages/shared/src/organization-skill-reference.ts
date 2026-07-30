@@ -47,6 +47,7 @@ function normalizeSkillSlug(value: string | null | undefined) {
 }
 
 export const RUDDER_BUNDLED_SKILL_SLUGS = [
+  "app-builder",
   "para-memory-files",
   "rudder-docs",
   "skill-creator",
@@ -54,8 +55,15 @@ export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "browser",
 ] as const;
 
-export function getActiveRudderBundledSkillSlugs(browserEnabled: boolean): string[] {
-  return RUDDER_BUNDLED_SKILL_SLUGS.filter((slug) => slug !== "browser" || browserEnabled);
+export function getActiveRudderBundledSkillSlugs(
+  browserEnabled: boolean,
+  sitesEnabled = false,
+): string[] {
+  return RUDDER_BUNDLED_SKILL_SLUGS.filter((slug) => {
+    if (slug === "browser") return browserEnabled;
+    if (slug === "app-builder") return sitesEnabled;
+    return true;
+  });
 }
 
 const RUDDER_BUNDLED_SKILL_KEYS = new Set(

@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants as fsConstants } from "node:fs";
@@ -6,15 +6,23 @@ import { access, realpath } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
+import {
+  createLocalAppProcessPlatform,
+  type LocalAppPersistedRuntimeLiveness,
+  type LocalAppProcessPlatform,
+} from "./local-app-process-platform.js";
 import type {
   LocalAppDefinition,
   LocalAppRegistry,
   LocalAppRuntimeDescriptor,
 } from "./local-apps-registry.js";
 
-const execFileAsync = promisify(execFile);
+export {
+  parseLsofListenerProcessRecords,
+  type LsofListenerProcessRecord
+} from "./local-app-process-platform.js";
+
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
 
 export type LocalAppRuntimeStatus =
@@ -80,66 +88,13 @@ type RuntimeManagerOptions = {
   watchdogStartTimeoutMs?: number;
   cleanupTimeoutMs?: number;
   terminationOptions?: Omit<TerminationOptions, "killGroup">;
+  processPlatform?: LocalAppProcessPlatform;
   probePersistedRuntimeLiveness?: (input: {
     pid: number | null;
     pgid: number | null;
     port: number | null;
-  }) => Promise<PersistedRuntimeLiveness>;
+  }) => Promise<LocalAppPersistedRuntimeLiveness>;
 };
-
-type LivenessState = "alive" | "dead" | "unknown";
-
-type PersistedRuntimeLiveness = {
-  pid: LivenessState;
-  processGroup: LivenessState;
-  listener: LivenessState;
-};
-
-export type LsofListenerProcessRecord = {
-  pid: number;
-  addresses: string[];
-};
-
-export function parseLsofListenerProcessRecords(
-  output: string,
-  port: number,
-): LsofListenerProcessRecord[] | null {
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return null;
-  const expectedAddress = `127.0.0.1:${port}`;
-  const records: LsofListenerProcessRecord[] = [];
-  const seenPids = new Set<number>();
-  let current: LsofListenerProcessRecord | null = null;
-  for (const line of output.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    if (/^p\d+$/.test(line)) {
-      if (current) {
-        if (current.addresses.length === 0) return null;
-        records.push(current);
-      }
-      const pid = Number.parseInt(line.slice(1), 10);
-      if (!isSafeLocalAppProcessId(pid) || seenPids.has(pid)) return null;
-      seenPids.add(pid);
-      current = { pid, addresses: [] };
-      continue;
-    }
-    if (/^f.+$/.test(line)) {
-      if (!current) return null;
-      continue;
-    }
-    if (line.startsWith("n")) {
-      const address = line.slice(1);
-      if (!current || address !== expectedAddress) return null;
-      current.addresses.push(address);
-      continue;
-    }
-    return null;
-  }
-  if (current) {
-    if (current.addresses.length === 0) return null;
-    records.push(current);
-  }
-  return records.length > 0 ? records : null;
-}
 
 export function localAppPartitionId(installationId: string, definitionId: string): string {
   const digest = createHash("sha256").update(`${installationId}\0${definitionId}`).digest("hex");
@@ -181,22 +136,12 @@ function defaultIsGroupAlive(pgid: number): boolean {
   }
 }
 
-function probeProcessLiveness(processId: number | null, processGroup = false): LivenessState {
-  if (!isSafeLocalAppProcessId(processId)) return "unknown";
-  try {
-    process.kill(processGroup ? -processId : processId, 0);
-    return "alive";
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown";
-  }
-}
-
-async function probeLoopbackListenerLiveness(port: number | null): Promise<LivenessState> {
+async function probeLoopbackListenerLiveness(port: number | null): Promise<LocalAppPersistedRuntimeLiveness["listener"]> {
   if (!Number.isInteger(port) || port === null || port <= 0 || port > 65_535) return "unknown";
   return new Promise((resolve) => {
     const socket = createConnection({ host: "127.0.0.1", port });
     let settled = false;
-    const finish = (result: LivenessState) => {
+    const finish = (result: LocalAppPersistedRuntimeLiveness["listener"]) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
@@ -211,18 +156,6 @@ async function probeLoopbackListenerLiveness(port: number | null): Promise<Liven
       finish(error.code === "ECONNREFUSED" ? "dead" : "unknown");
     });
   });
-}
-
-async function defaultProbePersistedRuntimeLiveness(input: {
-  pid: number | null;
-  pgid: number | null;
-  port: number | null;
-}): Promise<PersistedRuntimeLiveness> {
-  return {
-    pid: probeProcessLiveness(input.pid),
-    processGroup: probeProcessLiveness(input.pgid, true),
-    listener: await probeLoopbackListenerLiveness(input.port),
-  };
 }
 
 export async function terminateOwnedProcessGroup(
@@ -271,44 +204,6 @@ async function allocateLoopbackPort(): Promise<number> {
   });
 }
 
-async function defaultVerifyListenerOwnership(input: { port: number; pid: number; pgid: number }): Promise<boolean> {
-  try {
-    const processTableResult = await execFileAsync("/bin/ps", ["-axo", "pid=,pgid="], {
-      timeout: 2_000,
-      maxBuffer: 256 * 1024,
-    });
-    const processGroupPids = String(processTableResult.stdout)
-      .split(/\r?\n/)
-      .flatMap((line) => {
-        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-        if (!match || Number.parseInt(match[2]!, 10) !== input.pgid) return [];
-        const pid = Number.parseInt(match[1]!, 10);
-        return isSafeLocalAppProcessId(pid) ? [pid] : [];
-      });
-    if (!processGroupPids.includes(input.pid) || processGroupPids.length === 0) return false;
-    const { stdout } = await execFileAsync("/usr/sbin/lsof", [
-      "-nP",
-      "-a",
-      `-iTCP:${input.port}`,
-      "-sTCP:LISTEN",
-      "-Fpn",
-    ], { timeout: 15_000, maxBuffer: 64 * 1024 });
-    const listeners = parseLsofListenerProcessRecords(String(stdout), input.port);
-    if (!listeners || listeners.some((listener) => !processGroupPids.includes(listener.pid))) return false;
-    for (const listener of listeners) {
-      const result = await execFileAsync("/bin/ps", ["-o", "pgid=", "-p", String(listener.pid)], {
-        timeout: 2_000,
-        maxBuffer: 16 * 1024,
-      });
-      const listenerPgid = Number.parseInt(String(result.stdout).trim(), 10);
-      if (listenerPgid !== input.pgid) return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function trustedNodeBinForExecutable(executable: string): Promise<string | null> {
   const marker = `${path.sep}lib${path.sep}node_modules${path.sep}`;
   const markerIndex = executable.lastIndexOf(marker);
@@ -327,32 +222,52 @@ async function trustedNodeBinForExecutable(executable: string): Promise<string |
 async function trustedExecutablePath(
   definition: LocalAppDefinition,
   hostExecutablePath: string,
+  systemPathEntries: string[],
 ): Promise<string> {
   const trustedNodeBin = await trustedNodeBinForExecutable(definition.executable);
   return [...new Set([
     path.dirname(definition.executable),
     trustedNodeBin,
     path.dirname(hostExecutablePath),
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
+    ...systemPathEntries,
   ].filter((entry): entry is string => Boolean(entry)))].join(path.delimiter);
 }
 
-async function buildChildEnvironment(
+export async function buildChildEnvironment(
   definition: LocalAppDefinition,
   port: number,
   hostExecutablePath: string,
+  processPlatform: LocalAppProcessPlatform,
 ): Promise<NodeJS.ProcessEnv> {
   const environment: NodeJS.ProcessEnv = {
-    PATH: await trustedExecutablePath(definition, hostExecutablePath),
-    TMPDIR: process.env.TMPDIR ?? "/tmp",
+    PATH: await trustedExecutablePath(
+      definition,
+      hostExecutablePath,
+      processPlatform.systemPathEntries,
+    ),
   };
+  if (processPlatform.platform === "win32") {
+    const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+    environment.SystemRoot = systemRoot;
+    environment.WINDIR = process.env.WINDIR ?? systemRoot;
+    environment.TEMP = process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
+    environment.TMP = process.env.TMP ?? environment.TEMP;
+  } else {
+    environment.TMPDIR = process.env.TMPDIR ?? "/tmp";
+  }
+  const reservedEnvironmentNames = processPlatform.platform === "win32"
+    ? new Set(["PATH", "HOST", "PORT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"])
+    : new Set(["PATH", "HOST", "PORT"]);
   for (const name of definition.inheritedEnvNames) {
-    if (name === "PATH") continue;
+    if (reservedEnvironmentNames.has(name.toUpperCase())) continue;
     const value = process.env[name];
     if (typeof value === "string") environment[name] = value;
+  }
+  if (
+    definition.executable === hostExecutablePath
+    && definition.inheritedEnvNames.includes("ELECTRON_RUN_AS_NODE")
+  ) {
+    environment.ELECTRON_RUN_AS_NODE = "1";
   }
   environment.HOST = "127.0.0.1";
   environment.PORT = String(port);
@@ -375,15 +290,13 @@ function publicView(record: RuntimeRecord): LocalAppRuntimeView {
 export class LocalAppRuntimeManager {
   private readonly registry: LocalAppRegistry;
   private readonly hostExecutablePath: string;
-  private readonly platform: NodeJS.Platform;
+  private readonly processPlatform: LocalAppProcessPlatform;
   private readonly maxLogBytes: number;
   private readonly verifyListenerOwnership: (input: { port: number; pid: number; pgid: number }) => Promise<boolean>;
-  private readonly killGroup: (pgid: number, signal: NodeJS.Signals) => void;
   private readonly spawnWatchdog: typeof spawn;
   private readonly watchdogRunnerPath: string;
   private readonly watchdogStartTimeoutMs: number;
   private readonly cleanupTimeoutMs: number;
-  private readonly terminationOptions: Omit<TerminationOptions, "killGroup">;
   private readonly probePersistedRuntimeLiveness: NonNullable<RuntimeManagerOptions["probePersistedRuntimeLiveness"]>;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly recordPromises = new Map<string, Promise<RuntimeRecord>>();
@@ -394,17 +307,32 @@ export class LocalAppRuntimeManager {
   constructor(options: RuntimeManagerOptions) {
     this.registry = options.registry;
     this.hostExecutablePath = options.hostExecutablePath ?? process.execPath;
-    this.platform = options.platform ?? process.platform;
+    if (
+      options.processPlatform
+      && options.platform
+      && options.processPlatform.platform !== options.platform
+    ) {
+      throw new Error("Local App process platform does not match the requested platform");
+    }
+    const platform = options.processPlatform?.platform ?? options.platform ?? process.platform;
+    this.processPlatform = options.processPlatform ?? createLocalAppProcessPlatform({
+      platform,
+      killGroup: options.killGroup,
+      isGroupAlive: options.terminationOptions?.isGroupAlive,
+      delay: options.terminationOptions?.delay,
+      termTimeoutMs: options.terminationOptions?.termTimeoutMs,
+      pollMs: options.terminationOptions?.pollMs,
+      probeLoopbackListener: probeLoopbackListenerLiveness,
+    });
     this.maxLogBytes = Math.max(256, options.maxLogBytes ?? 64 * 1024);
-    this.verifyListenerOwnership = options.verifyListenerOwnership ?? defaultVerifyListenerOwnership;
-    this.killGroup = options.killGroup ?? defaultKillGroup;
+    this.verifyListenerOwnership = options.verifyListenerOwnership
+      ?? this.processPlatform.verifyListenerOwnership;
     this.spawnWatchdog = options.spawnWatchdog ?? spawn;
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
     this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 3_000);
     this.cleanupTimeoutMs = Math.max(1, options.cleanupTimeoutMs ?? 5_000);
-    this.terminationOptions = options.terminationOptions ?? {};
     this.probePersistedRuntimeLiveness = options.probePersistedRuntimeLiveness
-      ?? defaultProbePersistedRuntimeLiveness;
+      ?? this.processPlatform.probePersistedRuntime;
   }
 
   private view(record: RuntimeRecord): LocalAppRuntimeView {
@@ -606,10 +534,7 @@ export class LocalAppRuntimeManager {
     let processGroupProven = record.pgid === null;
     if (record.pgid !== null) {
       try {
-        await terminateOwnedProcessGroup(record.pgid, {
-          ...this.terminationOptions,
-          killGroup: this.killGroup,
-        });
+        await this.processPlatform.terminate(record.pgid);
         processGroupProven = true;
       } catch (error) {
         errors.push(new Error("Local App process-group termination could not be verified", { cause: error }));
@@ -654,12 +579,28 @@ export class LocalAppRuntimeManager {
   }
 
   private async spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
-    const environment = await buildChildEnvironment(record.definition, port, this.hostExecutablePath);
+    const environment = await buildChildEnvironment(
+      record.definition,
+      port,
+      this.hostExecutablePath,
+      this.processPlatform,
+    );
     return new Promise((resolve, reject) => {
+      const watchdogEnvironment: NodeJS.ProcessEnv = {
+        ELECTRON_RUN_AS_NODE: "1",
+      };
+      if (this.processPlatform.platform === "win32") {
+        const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+        watchdogEnvironment.SystemRoot = systemRoot;
+        watchdogEnvironment.WINDIR = process.env.WINDIR ?? systemRoot;
+        watchdogEnvironment.TEMP = process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
+        watchdogEnvironment.TMP = process.env.TMP ?? watchdogEnvironment.TEMP;
+      }
       const helper = this.spawnWatchdog(process.execPath, [this.watchdogRunnerPath], {
-        env: { ELECTRON_RUN_AS_NODE: "1" },
+        env: watchdogEnvironment,
         shell: false,
         detached: false,
+        windowsHide: true,
         stdio: ["pipe", "pipe", "pipe", "ipc"],
       });
       record.helper = helper;
@@ -829,7 +770,6 @@ export class LocalAppRuntimeManager {
   }
 
   private async startInternal(id: string): Promise<LocalAppRuntimeView> {
-    if (this.platform !== "darwin") throw new Error("Local Apps are currently supported only on macOS");
     const existing = await this.getRecord(id);
     if (existing.status === "running") return this.view(existing);
     if (existing.status === "orphaned_unverified") {
@@ -917,10 +857,7 @@ export class LocalAppRuntimeManager {
       throw new Error("Local App runtime generation changed while stopping");
     }
     try {
-      await terminateOwnedProcessGroup(record.pgid, {
-        ...this.terminationOptions,
-        killGroup: this.killGroup,
-      });
+      await this.processPlatform.terminate(record.pgid);
     } catch (error) {
       try {
         record.helper?.stdin?.end();

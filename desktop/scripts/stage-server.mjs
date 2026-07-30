@@ -336,6 +336,31 @@ async function rewriteInternalPackages(targetDir) {
   }
 }
 
+async function stageAppBuilderScaffoldDotfiles() {
+  const sourceRoot = path.join(
+    repoRoot,
+    "server",
+    "resources",
+    "bundled-skills",
+    "app-builder",
+    "assets",
+    "scaffold",
+  );
+  if (!await exists(sourceRoot)) return;
+  const targetRoot = path.join(
+    targetDir,
+    "resources",
+    "bundled-skills",
+    "app-builder",
+    "assets",
+    "scaffold",
+  );
+  await fs.mkdir(targetRoot, { recursive: true });
+  for (const fileName of [".gitignore", ".npmrc"]) {
+    await fs.copyFile(path.join(sourceRoot, fileName), path.join(targetRoot, fileName));
+  }
+}
+
 async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
@@ -360,6 +385,7 @@ async function main() {
     platform: process.platform,
     serverPackageDir: targetDir,
   });
+  await stageAppBuilderScaffoldDotfiles();
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
   await fs.access(deployedEntry);

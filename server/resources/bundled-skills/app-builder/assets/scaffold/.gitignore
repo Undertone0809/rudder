@@ -1,0 +1,14 @@
+.next/
+node_modules/
+playwright-report/
+test-results/
+
+data/**/*.sqlite
+data/**/*.sqlite-*
+data/exports/
+data/snapshots/
+data/uploads/
+
+.env
+.env.*
+!.env.example

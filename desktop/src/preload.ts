@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { AppBuilderDataSnapshot } from "./app-builder-data.js";
+import type { AppBuilderManifest } from "./app-builder-manifest.js";
+import type { AppBuilderPreviewBinding } from "./app-builder-preview.js";
 import type { BrowserDataImportResult } from "./browser-cookie-import.js";
 import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
@@ -182,6 +185,8 @@ type DesktopLocalAppDiscoveryResult =
   | { canceled: true }
   | { canceled: false; draft: PreparedLocalAppDefinition };
 type DesktopLocalAppAttestedTarget = { origin: string; openPath: string; partition: string };
+type AppBuilderLocation = { projectId: string; appDirectory: string };
+type BoundAppBuilderLocation = AppBuilderLocation & { binding: AppBuilderPreviewBinding };
 
 let desktopCapabilitiesPromise: Promise<DesktopCapabilities> | null = null;
 
@@ -409,7 +414,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     };
   },
   localApps: {
-    supported: process.platform === "darwin",
+    supported: ["darwin", "linux", "win32"].includes(process.platform),
     list: () => ipcRenderer.invoke("desktop:local-apps:list") as Promise<LocalAppDefinition[]>,
     discover: () => ipcRenderer.invoke("desktop:local-apps:discover") as Promise<DesktopLocalAppDiscoveryResult>,
     create: (definition: DesktopLocalAppDraftInput) =>
@@ -423,6 +428,63 @@ contextBridge.exposeInMainWorld("desktopShell", {
     logs: (id: string) => ipcRenderer.invoke("desktop:local-apps:logs", { id }) as Promise<string[]>,
     attestedTarget: (id: string) =>
       ipcRenderer.invoke("desktop:local-apps:attested-target", { id }) as Promise<DesktopLocalAppAttestedTarget | null>,
+  },
+  appBuilder: {
+    supported: ["darwin", "linux", "win32"].includes(process.platform),
+    inspect: (input: AppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:inspect", input) as Promise<{ manifest: AppBuilderManifest }>,
+    scaffold: (input: {
+      projectId: string;
+      targetDirectory: string;
+      appId: string;
+      title: string;
+    }) => ipcRenderer.invoke("desktop:app-builder:scaffold", input) as Promise<{
+      manifest: AppBuilderManifest;
+      appDirectory: string;
+    }>,
+    ensurePreview: (input: AppBuilderLocation & {
+      binding: AppBuilderPreviewBinding | null;
+      authorizeManagedStart: boolean;
+    }) =>
+      ipcRenderer.invoke("desktop:app-builder:ensure-preview", input) as Promise<AppBuilderPreviewBinding>,
+    startPreview: (input: BoundAppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:start-preview", input) as Promise<{
+        runtime: LocalAppRuntimeView;
+        target: DesktopLocalAppAttestedTarget;
+      }>,
+    stopPreview: (input: BoundAppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:stop-preview", input) as Promise<LocalAppRuntimeView>,
+    previewStatus: (input: BoundAppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:preview-status", input) as Promise<LocalAppRuntimeView>,
+    snapshot: (input: BoundAppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:snapshot", input) as Promise<AppBuilderDataSnapshot>,
+    exportSnapshot: (input: BoundAppBuilderLocation & { snapshotId: string }) =>
+      ipcRenderer.invoke("desktop:app-builder:export-snapshot", input) as Promise<{ canceled: boolean }>,
+    importData: (input: BoundAppBuilderLocation) =>
+      ipcRenderer.invoke("desktop:app-builder:import-data", input) as Promise<
+        { canceled: true }
+        | { canceled: false; rollbackSnapshot: AppBuilderDataSnapshot }
+      >,
+    promoteRelease: (input: BoundAppBuilderLocation & {
+      releaseId: string;
+      releaseDirectory: string;
+    }) => ipcRenderer.invoke("desktop:app-builder:promote-release", input) as Promise<{
+      releaseId: string;
+      rollbackSnapshot: AppBuilderDataSnapshot;
+    }>,
+    restoreSnapshot: (input: BoundAppBuilderLocation & { snapshotId: string }) =>
+      ipcRenderer.invoke("desktop:app-builder:restore-snapshot", input) as Promise<{
+        restoredSnapshotId: string;
+        safetySnapshot: AppBuilderDataSnapshot;
+      }>,
+    rollbackRelease: (input: BoundAppBuilderLocation & {
+      snapshotId: string;
+      targetReleaseId: string | null;
+    }) => ipcRenderer.invoke("desktop:app-builder:rollback-release", input) as Promise<{
+      targetReleaseId: string | null;
+      restoredSnapshotId: string;
+      safetySnapshot: AppBuilderDataSnapshot;
+    }>,
   },
 });
 
@@ -504,6 +566,51 @@ declare global {
         status(id: string): Promise<LocalAppRuntimeView>;
         logs(id: string): Promise<string[]>;
         attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
+      };
+      appBuilder: {
+        supported: boolean;
+        inspect(input: AppBuilderLocation): Promise<{ manifest: AppBuilderManifest }>;
+        scaffold(input: {
+          projectId: string;
+          targetDirectory: string;
+          appId: string;
+          title: string;
+        }): Promise<{ manifest: AppBuilderManifest; appDirectory: string }>;
+        ensurePreview(
+          input: AppBuilderLocation & {
+            binding: AppBuilderPreviewBinding | null;
+            authorizeManagedStart: boolean;
+          },
+        ): Promise<AppBuilderPreviewBinding>;
+        startPreview(input: BoundAppBuilderLocation): Promise<{
+          runtime: LocalAppRuntimeView;
+          target: DesktopLocalAppAttestedTarget;
+        }>;
+        stopPreview(input: BoundAppBuilderLocation): Promise<LocalAppRuntimeView>;
+        previewStatus(input: BoundAppBuilderLocation): Promise<LocalAppRuntimeView>;
+        snapshot(input: BoundAppBuilderLocation): Promise<AppBuilderDataSnapshot>;
+        exportSnapshot(
+          input: BoundAppBuilderLocation & { snapshotId: string },
+        ): Promise<{ canceled: boolean }>;
+        importData(input: BoundAppBuilderLocation): Promise<
+          { canceled: true }
+          | { canceled: false; rollbackSnapshot: AppBuilderDataSnapshot }
+        >;
+        promoteRelease(input: BoundAppBuilderLocation & {
+          releaseId: string;
+          releaseDirectory: string;
+        }): Promise<{ releaseId: string; rollbackSnapshot: AppBuilderDataSnapshot }>;
+        restoreSnapshot(input: BoundAppBuilderLocation & {
+          snapshotId: string;
+        }): Promise<{ restoredSnapshotId: string; safetySnapshot: AppBuilderDataSnapshot }>;
+        rollbackRelease(input: BoundAppBuilderLocation & {
+          snapshotId: string;
+          targetReleaseId: string | null;
+        }): Promise<{
+          targetReleaseId: string | null;
+          restoredSnapshotId: string;
+          safetySnapshot: AppBuilderDataSnapshot;
+        }>;
       };
     };
   }

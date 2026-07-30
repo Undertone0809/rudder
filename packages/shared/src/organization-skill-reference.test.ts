@@ -76,12 +76,15 @@ const bundledSkill: OrganizationSkillListItem = {
 };
 
 describe("organization-skill-reference", () => {
-  it("keeps Visualize active while Browser remains capability-gated", () => {
+  it("keeps App Builder and Visualize active while Browser remains capability-gated", () => {
+    expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("app-builder");
     expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("browser");
     expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("visualize");
-    expect(getActiveRudderBundledSkillSlugs(false)).not.toContain("browser");
-    expect(getActiveRudderBundledSkillSlugs(false)).toContain("visualize");
-    expect(getActiveRudderBundledSkillSlugs(true)).toEqual([
+    expect(getActiveRudderBundledSkillSlugs(false, false)).not.toContain("browser");
+    expect(getActiveRudderBundledSkillSlugs(false, false)).not.toContain("app-builder");
+    expect(getActiveRudderBundledSkillSlugs(false, false)).toContain("visualize");
+    expect(getActiveRudderBundledSkillSlugs(true, true)).toEqual([
+      "app-builder",
       "para-memory-files",
       "rudder-docs",
       "skill-creator",

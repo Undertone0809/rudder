@@ -1,0 +1,53 @@
+{
+  "skill_name": "app-builder",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Build me a cold email CRM where I can import contacts, track follow-ups, and see replies. I am not technical.",
+      "expected_output": "Uses the maintained full-stack scaffold without asking the user to choose technical infrastructure, captures only material business questions, keeps the app on-device, and plans Browser verification.",
+      "files": [],
+      "assertions": [
+        "Does not ask the user to choose a framework, database, package manager, or process topology.",
+        "Uses the maintained App Builder scaffold and SQLite persistence.",
+        "Does not ask for or place email credential values in Chat or source.",
+        "Includes the primary contact workflow plus import, persistence, and a production-shaped edge case in verification."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add an overdue status to my existing CRM. It already contains my real contacts and history.",
+      "expected_output": "Recognizes existing real data, asks only for the necessary data-mode choice, snapshots the database, and rehearses the schema migration without claiming Rudder production promotion.",
+      "files": [],
+      "assertions": [
+        "Does not use the user's database as the default development fixture.",
+        "Creates a SQLite backup through the backup API before schema work.",
+        "Rehearses the migration and checks data integrity on a snapshot.",
+        "Does not apply the migration to user data without explicit intent."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Make the customer table easier to scan on mobile. Do not change the data.",
+      "expected_output": "Treats this as a UI change, uses synthetic or snapshot data, leaves user data untouched, and verifies desktop and mobile layouts in Browser.",
+      "files": [],
+      "assertions": [
+        "Does not inspect or mutate real customer records merely to design the table.",
+        "Uses the existing scaffold components and avoids decorative dashboard clutter.",
+        "Verifies the table at desktop width and a 390px viewport.",
+        "Captures rendered screenshot evidence and checks an empty or error state."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Publish this dashboard so my team can use a public link.",
+      "expected_output": "Explains that App Builder has no public hosting boundary, keeps the app local, and offers an in-scope local workflow without inventing a tunnel or cloud deployment.",
+      "files": [],
+      "assertions": [
+        "Does not create a tunnel, public URL, cloud deployment, domain, or hosted database.",
+        "Clearly separates requested cloud sharing from the local App Builder capability.",
+        "Does not describe localhost as private, offline, or shareable.",
+        "Continues with a useful local app option if that still serves the user."
+      ]
+    }
+  ]
+}

@@ -547,13 +547,18 @@ export function organizationSkillService(
   }
 
   async function ensureBundledSkills(orgId: string) {
-    const browserSettings = await instanceSettingsService(db).getBrowser();
+    const settingsService = instanceSettingsService(db);
+    const [browserSettings, generalSettings] = await Promise.all([
+      settingsService.getBrowser(),
+      settingsService.getGeneral(),
+    ]);
     const browserCapability = resolveBrowserCapability({
       deploymentMode,
       browserEnabled: browserSettings.enabled,
     });
     const activeBundledSlugs = getActiveRudderBundledSkillSlugs(
       browserCapability.instanceEligible,
+      generalSettings.experimentalSitesEnabled,
     );
     const activeBundledKeys = activeBundledSlugs.map((slug) => `rudder/${slug}`);
     for (const skillsRoot of resolveBundledSkillsRoot()) {

@@ -1,3 +1,4 @@
+import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { messengerApi } from "@/api/messenger";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
@@ -29,6 +30,7 @@ import { cn } from "@/lib/utils";
 import type { MessengerSavedViewTarget } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AppWindow,
   Bot,
   CircleCheckBig,
   FolderKanban,
@@ -200,6 +202,12 @@ export function PrimaryRail({
     queryFn: () => instanceSettingsApi.getNotifications(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
+  const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
   const pinnedLocalAppsQuery = useQuery({
     queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listSavedViews(selectedOrganizationId!, {
@@ -207,7 +215,10 @@ export function PrimaryRail({
       primaryRailPinned: true,
       limit: 100,
     }),
-    enabled: Boolean(selectedOrganizationId),
+    enabled: Boolean(
+      selectedOrganizationId
+      && sitesEnabled,
+    ),
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -226,6 +237,7 @@ export function PrimaryRail({
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
+  const appsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "apps", "/apps");
   const railItems: RailItem[] = [
     {
       key: "messenger",
@@ -258,6 +270,15 @@ export function PrimaryRail({
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
+    ...(sitesEnabled
+      ? [{
+          key: "apps",
+          to: appsEntryPath,
+          label: "Apps",
+          icon: AppWindow,
+          active: /^\/apps(?:\/|$)/.test(relativePath),
+        }]
+      : []),
     {
       key: "organization",
       to: organizationEntryPath,
@@ -273,7 +294,8 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
+  const pinnedLocalAppItems: RailItem[] = sitesEnabled
+    ? (pinnedLocalAppsQuery.data?.items ?? [])
     .filter((savedView) => savedView.targetPayload.kind === "local_app")
     .map((savedView) => ({
       key: `saved-view:${savedView.id}`,
@@ -282,7 +304,8 @@ export function PrimaryRail({
       icon: MessageSquare,
       localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
       active: relativePath === `/messenger/saved/${encodeURIComponent(savedView.id)}`,
-    }));
+    }))
+    : [];
   if (pinnedLocalAppItems.some((item) => item.active)) {
     const messengerItem = railItems.find((item) => item.key === "messenger");
     if (messengerItem) messengerItem.active = false;

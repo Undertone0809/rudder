@@ -489,7 +489,10 @@ export function agentRunContextService(
         input.agent.orgId,
         baseConfig,
       );
-    const browserSettings = await instanceSettings.getBrowser();
+    const [browserSettings, generalSettings] = await Promise.all([
+      instanceSettings.getBrowser(),
+      instanceSettings.getGeneral(),
+    ]);
     const managedExternalMcpBindings = await managedMcpBindings.listRuntimeBindings(
       input.agent.orgId,
       input.agent.id,
@@ -514,9 +517,14 @@ export function agentRunContextService(
         agentRuntimeConfig: baseConfig,
       },
     );
-    const instanceDesiredSkills = browserCapability.instanceEligible
+    const browserEligibleSkills = browserCapability.instanceEligible
       ? resolvedDesiredSkills
       : resolvedDesiredSkills.filter((key) => !isBrowserSkillSelectionKey(key));
+    const instanceDesiredSkills = generalSettings.experimentalSitesEnabled
+      ? browserEligibleSkills
+      : browserEligibleSkills.filter((key) => (
+          key !== "bundled:rudder/app-builder" && key !== "rudder/app-builder"
+        ));
     const resolvedRuntimeSkillEntries =
       await organizationSkills.listRealizedSkillEntriesForAgent(
         input.agent.orgId,

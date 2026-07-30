@@ -4,6 +4,7 @@ import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { accessRoutes } from "../routes/access.js";
 import { activityRoutes } from "../routes/activity.js";
 import { agentRoutes } from "../routes/agents.js";
+import { appBuilderRoutes } from "../routes/app-builder.js";
 import { approvalRoutes } from "../routes/approvals.js";
 import { assetRoutes } from "../routes/assets.js";
 import { automationRoutes } from "../routes/automations.js";
@@ -63,6 +64,7 @@ export function registerApiRoutes(
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
+  api.use(appBuilderRoutes(db));
   api.use(onboardingRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));

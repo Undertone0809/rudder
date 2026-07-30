@@ -1,4 +1,4 @@
-import { _electron as electron } from "@playwright/test";
+import { chromium, _electron as electron } from "@playwright/test";
 import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -86,6 +86,7 @@ const expectedBrowserToolNames = [
 const desktopShutdownRegistry = createDesktopSmokeShutdownRegistry();
 const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
+  "app-builder",
   "browser",
   "para-memory-files",
   "rudder-docs",
@@ -757,22 +758,35 @@ async function createCompany(baseUrl, issuePrefix = "DES") {
 
 async function verifyBundledSkills(baseUrl, companyId) {
   console.log("[desktop-smoke] verifying bundled organization skills");
-  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/skills`);
+  const [response, healthResponse] = await Promise.all([
+    fetch(`${baseUrl}/api/orgs/${companyId}/skills`),
+    fetch(`${baseUrl}/api/health`),
+  ]);
   if (response.status !== 200) {
     throw new Error(`list organization skills failed (${response.status}): ${await response.text()}`);
   }
+  if (healthResponse.status !== 200) {
+    throw new Error(`read feature capabilities failed (${healthResponse.status}): ${await healthResponse.text()}`);
+  }
   const skills = await response.json();
+  const health = await healthResponse.json();
   assert.ok(Array.isArray(skills), "organization skills response should be an array");
 
   const bundledSlugs = skills
     .filter((skill) => skill?.sourceBadge === "rudder")
     .map((skill) => skill.slug)
     .sort();
+  const expectedSlugs = REQUIRED_BUNDLED_SKILLS
+    .filter((slug) => (
+      slug !== "app-builder"
+      || health.features?.experimentalSitesEnabled === true
+    ))
+    .sort();
 
   assert.deepEqual(
     bundledSlugs,
-    [...REQUIRED_BUNDLED_SKILLS].sort(),
-    `expected bundled Rudder skills for new organization: ${REQUIRED_BUNDLED_SKILLS.join(", ")}`,
+    expectedSlugs,
+    `expected enabled bundled Rudder skills for new organization: ${expectedSlugs.join(", ")}`,
   );
 }
 
@@ -802,6 +816,42 @@ async function createCeo(baseUrl, companyId) {
     throw new Error(`create CEO failed (${response.status}): ${await response.text()}`);
   }
   return await response.json();
+}
+
+async function updateExperimentalSites(baseUrl, enabled) {
+  const response = await fetch(`${baseUrl}/api/instance/settings/general`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ experimentalSitesEnabled: enabled }),
+  });
+  if (response.status !== 200) {
+    throw new Error(`update Experimental Sites failed (${response.status}): ${await response.text()}`);
+  }
+  const settings = await response.json();
+  assert.equal(settings.experimentalSitesEnabled, enabled);
+}
+
+async function createAppBuilderRecord(baseUrl, companyId, name, sourceRoot) {
+  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/app-builder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, sourceRoot, scaffoldVersion: "1" }),
+  });
+  if (response.status !== 201) {
+    throw new Error(`create App Builder record failed (${response.status}): ${await response.text()}`);
+  }
+  return await response.json();
+}
+
+async function readAppBuilderRecord(baseUrl, companyId, appId) {
+  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/app-builder`);
+  if (response.status !== 200) {
+    throw new Error(`read App Builder record failed (${response.status}): ${await response.text()}`);
+  }
+  const apps = await response.json();
+  const app = apps.find((candidate) => candidate.id === appId);
+  if (!app) throw new Error(`App Builder record ${appId} was not returned for organization ${companyId}`);
+  return app;
 }
 
 async function createIssue(baseUrl, companyId, assigneeAgentId) {
@@ -2480,11 +2530,16 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, {
     nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/organization/settings`,
+    nextPath: `/${issuePrefix}/dashboard`,
   });
-  await page.waitForURL(new RegExp(`/${issuePrefix}/organization/settings$`), { timeout: 30_000 });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
 
-  await page.getByRole("link", { name: "Library" }).click();
+  const primaryRail = page.getByTestId("primary-rail");
+  await primaryRail.waitFor({ state: "visible", timeout: 30_000 });
+  await primaryRail
+    .locator('a[href*="/library"], a[href*="/resources"], a[href*="/workspaces"]')
+    .first()
+    .click();
   page = await waitForBoardWindow(electronApp, page, {
     expectedUrlPattern: new RegExp(`/${issuePrefix}/library(?:[?#].*)?$`),
   });
@@ -5054,12 +5109,240 @@ async function runUpgradeScenario(mode) {
   await assertUpgradeRepairLogged(paths.logsDir);
 }
 
+async function runAppBuilderScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "app-builder");
+  const ports = await allocateSmokePorts();
+  const run = await launchDesktop(scenarioRoot, mode, ports);
+  let browser = null;
+  let scenarioError = null;
+  let shutdownError = null;
+  try {
+    const company = await createCompany(run.baseUrl, "APP");
+    const companyRouteKey = company.urlKey ?? company.issuePrefix;
+    await createCeo(run.baseUrl, company.id);
+    await run.page.evaluate((companyId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", companyId);
+    }, company.id);
+    await updateExperimentalSites(run.baseUrl, true);
+    const health = await fetch(`${run.baseUrl}/api/health`).then((response) => response.json());
+    assert.equal(
+      health.features?.experimentalSitesEnabled,
+      true,
+      "enabling Experimental Sites must update the public feature capability",
+    );
+
+    const appUrl = (appId) => new URL(
+      `/${companyRouteKey}/apps/view/${encodeURIComponent(`managed:${appId}`)}`,
+      run.baseUrl,
+    ).href;
+    const missingApp = await createAppBuilderRecord(
+      run.baseUrl,
+      company.id,
+      "Missing Source App",
+      "apps/missing-source-app",
+    );
+    assert.equal(
+      missingApp.projectId,
+      null,
+      "Apps workspace records must not create a backing Project",
+    );
+    await run.page.goto(appUrl(missingApp.id));
+    await dismissOnboardingIfVisible(run.page);
+    await run.page.getByTestId("apps-register-preview").click();
+    await run.page.getByRole("dialog", { name: "Register and preview this App?" }).waitFor();
+    await run.page.getByTestId("apps-confirm-register-preview").click();
+    await run.page.getByRole("alert").filter({ hasText: "No App source is ready yet" })
+      .waitFor({ timeout: 30_000 });
+    assert.equal(
+      (await readAppBuilderRecord(run.baseUrl, company.id, missingApp.id)).buildStatus,
+      "failed",
+      "missing source must fail instead of becoming Ready",
+    );
+
+    const sourceRoot = "apps/desktop-app-builder-crm";
+    const appRecord = await createAppBuilderRecord(
+      run.baseUrl,
+      company.id,
+      "Desktop App Builder CRM",
+      sourceRoot,
+    );
+    await run.page.evaluate(async (input) => {
+      if (!window.desktopShell?.appBuilder?.supported) {
+        throw new Error("Desktop App Builder is unavailable");
+      }
+      await window.desktopShell.appBuilder.scaffold(input);
+    }, {
+      projectId: company.id,
+      targetDirectory: sourceRoot,
+      appId: "desktop-app-builder-crm",
+      title: "Desktop App Builder CRM",
+    });
+
+    await run.page.goto(appUrl(appRecord.id));
+    await dismissOnboardingIfVisible(run.page);
+    await run.page.getByTestId("apps-register-preview").click();
+    let disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
+    await disclosure.waitFor();
+    await disclosure.getByRole("button", { name: "Cancel" }).click();
+    assert.equal(
+      (await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id)).buildStatus,
+      "preparing",
+      "canceling disclosure must not mutate build state",
+    );
+    assert.equal(
+      (await run.page.evaluate(() => window.desktopShell?.localApps?.list())).length,
+      0,
+      "canceling disclosure must not create a Local App definition",
+    );
+
+    await run.page.getByTestId("apps-register-preview").click();
+    disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
+    await disclosure.waitFor();
+    await disclosure.getByTestId("apps-confirm-register-preview").click();
+    const buildOutcome = await waitForSmokeCondition(
+      "App Builder record to become Ready or report its runner failure",
+      async () => {
+        const record = await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id);
+        if (record.buildStatus === "failed") {
+          const definitions = await run.page.evaluate(
+            () => window.desktopShell?.localApps?.list() ?? [],
+          );
+          const matching = definitions.find(
+            (candidate) => candidate.localBindingId === record.localBindingId,
+          ) ?? definitions[0];
+          const logs = matching
+            ? await run.page.evaluate(
+              (definitionId) => window.desktopShell?.localApps?.logs(definitionId) ?? [],
+              matching.id,
+            )
+            : [];
+          return { failed: true, logs };
+        }
+        return record.buildStatus === "ready" && record.localBindingId
+          ? { failed: false, record }
+          : null;
+      },
+      { timeoutMs: 360_000 },
+    );
+    if (buildOutcome.failed) {
+      throw new Error(
+        `App Builder runner failed before Ready${
+          buildOutcome.logs.length > 0 ? `:\n${buildOutcome.logs.join("\n")}` : ""
+        }`,
+      );
+    }
+    const ready = buildOutcome.record;
+    const definition = await run.page.evaluate(
+      async (localBindingId) => (await window.desktopShell.localApps.list())
+        .find((candidate) => candidate.localBindingId === localBindingId) ?? null,
+      ready.localBindingId,
+    );
+    assert.ok(definition, "Ready App must have a Desktop Local App definition");
+    let target = await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
+      definition.id,
+    );
+    assert.ok(target, "Ready App must expose an attested target");
+    assert.match(target.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+
+    const uniqueEmail = `desktop-${Date.now()}@example.test`;
+    const created = await fetch(new URL("/api/contacts", target.origin), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Desktop UI smoke",
+        email: uniqueEmail,
+        company: "Rudder",
+      }),
+    });
+    assert.equal(created.status, 201, await created.text());
+    await run.page.getByTestId("apps-local-webview").waitFor({ timeout: 30_000 });
+    assert.equal(
+      await run.page.getByTestId("apps-local-webview").getAttribute("src"),
+      new URL(target.openPath, target.origin).href,
+      "Apps main content must embed the attested local App URL",
+    );
+    browser = await chromium.launch({ headless: true });
+    const browserPage = await browser.newPage();
+    await browserPage.goto(new URL(target.openPath, target.origin).href);
+    await browserPage.getByText(uniqueEmail).waitFor({ timeout: 30_000 });
+
+    await run.page.getByRole("button", { name: "Stop App" }).click();
+    await run.page.getByRole("button", { name: "Start App" }).waitFor({ timeout: 30_000 });
+    await run.page.getByRole("button", { name: "Start App" }).click();
+    await run.page.getByRole("button", { name: "Stop App" }).waitFor({ timeout: 360_000 });
+    target = await waitForSmokeCondition(
+      "restarted App to publish its attested target",
+      () => run.page.evaluate(
+        (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
+        definition.id,
+      ),
+      { timeoutMs: 30_000 },
+    );
+    const persisted = await fetch(new URL("/api/contacts", target.origin));
+    assert.equal(persisted.status, 200);
+    assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
+
+    await run.page.getByTestId("apps-copy-link").click();
+    await run.page.getByText("App link copied").waitFor();
+    assert.equal(
+      await run.electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+      new URL(target.openPath, target.origin).href,
+      "Copy App link must copy the current attested loopback URL",
+    );
+    await updateExperimentalSites(run.baseUrl, false);
+    const disabledRuntime = await waitForSmokeCondition(
+      "disabling Sites to stop the running App",
+      async () => {
+        const runtime = await run.page.evaluate(
+          (definitionId) => window.desktopShell.localApps.status(definitionId),
+          definition.id,
+        );
+        return runtime.status === "stopped" ? runtime : null;
+      },
+      { timeoutMs: 30_000 },
+    );
+    assert.equal(
+      disabledRuntime.origin,
+      undefined,
+      "disabling Sites must clear the App runtime origin",
+    );
+    const blockedStart = await run.page.evaluate(async (definitionId) => {
+      try {
+        await window.desktopShell.localApps.start(definitionId);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }, definition.id);
+    assert.match(
+      blockedStart ?? "",
+      /Sites is disabled in Experimental settings/i,
+      "disabling Sites must block direct Desktop start attempts",
+    );
+    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, feature shutdown, and cleanup");
+  } catch (error) {
+    scenarioError = error;
+  }
+  try {
+    await browser?.close();
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    shutdownError = error;
+  }
+  if (scenarioError && shutdownError) {
+    throw new AggregateError([scenarioError, shutdownError], "App Builder scenario and shutdown cleanup failed");
+  }
+  if (scenarioError) throw scenarioError;
+  if (shutdownError) throw shutdownError;
+}
+
 function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
     return mode === "packaged"
-      ? ["startup-recovery", "postgres-runtime-handoff", "clean", ...localApps, "upgrade"]
-      : ["startup-recovery", "clean", ...localApps];
+      ? ["startup-recovery", "postgres-runtime-handoff", "app-builder", "clean", ...localApps, "upgrade"]
+      : ["startup-recovery", "app-builder", "clean", ...localApps];
   }
   if (scenario === "all") {
     return ["startup-recovery", "postgres-runtime-handoff", "clean", "local-apps", "agent-browser", "upgrade"];
@@ -5070,7 +5353,8 @@ function resolveScenarioList(mode, scenario) {
     || scenario === "upgrade"
     || scenario === "browser"
     || scenario === "local-apps"
-    || scenario === "agent-browser") {
+    || scenario === "agent-browser"
+    || scenario === "app-builder") {
     return [scenario];
   }
   throw new Error(`Unknown smoke scenario: ${scenario}`);
@@ -5095,6 +5379,8 @@ try {
       await runLocalAppsScenario(smokeMode);
     } else if (scenario === "agent-browser") {
       await runAgentBrowserScenario(smokeMode);
+    } else if (scenario === "app-builder") {
+      await runAppBuilderScenario(smokeMode);
     } else {
       await runUpgradeScenario(smokeMode);
     }
