@@ -1,4 +1,5 @@
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,8 +19,69 @@ afterEach(() => {
   }
 });
 
-describe("Desktop afterPack server manifest normalization", () => {
-  it("does not restore declarations removed from the production server package", async () => {
+describe("Desktop afterPack internal package manifest normalization", () => {
+  it.each([
+    { electronPlatformName: "darwin", packageScope: "@rudderhq" },
+    { electronPlatformName: "darwin", packageScope: "@rudder" },
+    { electronPlatformName: "linux", packageScope: "@rudderhq" },
+  ])(
+    "uses compiled exports for $electronPlatformName app dependencies in the $packageScope scope",
+    async ({ electronPlatformName, packageScope }) => {
+      const projectDir = mkdtempSync(path.join(tmpdir(), "rudder-after-pack-"));
+      tempRoots.push(projectDir);
+      const appOutDir = path.join(projectDir, "release", "unpacked");
+      const resourcesDir = electronPlatformName === "darwin"
+        ? path.join(appOutDir, "Rudder.app", "Contents", "Resources")
+        : path.join(appOutDir, "resources");
+      const packageDir = path.join(
+        resourcesDir,
+        "app",
+        "node_modules",
+        packageScope,
+        "identity-core",
+      );
+      mkdirSync(path.join(packageDir, "dist"), { recursive: true });
+      writeFileSync(path.join(packageDir, "dist", "index.js"), "export {};\n");
+      const sourceManifestPath = path.join(projectDir, "workspace-package.json");
+      writeFileSync(sourceManifestPath, `${JSON.stringify({
+        name: `${packageScope}/identity-core`,
+        version: "1.0.0",
+        exports: {
+          ".": "./src/index.ts",
+        },
+        publishConfig: {
+          exports: {
+            ".": {
+              types: "./dist/index.d.ts",
+              import: "./dist/index.js",
+            },
+          },
+          main: "./dist/index.js",
+          types: "./dist/index.d.ts",
+        },
+      }, null, 2)}\n`);
+      linkSync(sourceManifestPath, path.join(packageDir, "package.json"));
+
+      await afterPack({
+        appDir: projectDir,
+        electronPlatformName,
+        appOutDir,
+        packager: { projectDir },
+      });
+
+      const manifest = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+      expect(manifest.main).toBe("./dist/index.js");
+      expect(manifest.types).toBe("./dist/index.d.ts");
+      expect(manifest.exports["."].import).toBe("./dist/index.js");
+      expect(manifest.exports["."].default).toBe("./dist/index.js");
+      expect(JSON.parse(readFileSync(sourceManifestPath, "utf8")).exports["."])
+        .toBe("./src/index.ts");
+    },
+  );
+
+  it.each(["@rudderhq", "@rudder"])(
+    "does not restore declarations removed from the production server package in the %s scope",
+    async (packageScope) => {
     const projectDir = mkdtempSync(path.join(tmpdir(), "rudder-after-pack-"));
     tempRoots.push(projectDir);
     const packageDir = path.join(
@@ -27,13 +89,13 @@ describe("Desktop afterPack server manifest normalization", () => {
       ".packaged",
       "server-package",
       "node_modules",
-      "@rudderhq",
+      packageScope,
       "shared",
     );
     mkdirSync(path.join(packageDir, "dist"), { recursive: true });
     writeFileSync(path.join(packageDir, "dist", "index.js"), "export {};\n");
     writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({
-      name: "@rudderhq/shared",
+      name: `${packageScope}/shared`,
       version: "1.0.0",
       publishConfig: {
         exports: {
@@ -63,7 +125,7 @@ describe("Desktop afterPack server manifest normalization", () => {
       "Resources",
       "server-package",
       "node_modules",
-      "@rudderhq",
+      packageScope,
       "shared",
       "package.json",
     ), "utf8"));
@@ -71,5 +133,6 @@ describe("Desktop afterPack server manifest normalization", () => {
     expect(manifest.exports["."].types).toBeUndefined();
     expect(manifest.exports["."].import).toBe("./dist/index.js");
     expect(manifest.exports["."].default).toBe("./dist/index.js");
-  });
+    },
+  );
 });
