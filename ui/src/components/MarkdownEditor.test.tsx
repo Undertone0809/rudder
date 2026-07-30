@@ -5,12 +5,12 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
+import { normalizePlainTextComposerMarkdown } from "../lib/plain-text-composer-markdown";
 import {
   formatComposerCursorInsertion,
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
   MarkdownEditor,
-  normalizePlainTextComposerMarkdown,
   splitPlainTextMarkdownSourceByAtomicReferences,
   type MarkdownEditorRef,
 } from "./MarkdownEditor";
