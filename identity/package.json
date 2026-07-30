@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/identity-db build",
+    "build": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/identity-db build && node scripts/prepare-vercel-workspace.mjs",
     "clean": "rm -rf dist",
     "dev": "tsx src/dev.ts",
     "start": "node dist/src/dev.js",
