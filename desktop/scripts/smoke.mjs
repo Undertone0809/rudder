@@ -93,6 +93,9 @@ const REQUIRED_BUNDLED_SKILLS = [
   "skill-creator",
   "visualize",
 ];
+const PREFERRED_INITIAL_WINDOW_SIZE = [1620, 1020];
+const MINIMUM_INITIAL_WINDOW_SIZE = [1080, 720];
+const INITIAL_WINDOW_WORK_AREA_RATIO = 0.9;
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 
 async function pathExists(targetPath) {
@@ -1929,6 +1932,19 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
   );
 }
 
+async function assertFreshDesktopWindowSize(electronApp, context) {
+  const { actual, workArea } = await electronApp.evaluate(({ BrowserWindow, screen }) => ({
+    actual: BrowserWindow.getAllWindows()[0]?.getSize(),
+    workArea: screen.getPrimaryDisplay().workAreaSize,
+  }));
+  const expected = PREFERRED_INITIAL_WINDOW_SIZE.map((preferred, index) => {
+    const available = index === 0 ? workArea.width : workArea.height;
+    const minimum = Math.min(MINIMUM_INITIAL_WINDOW_SIZE[index], available);
+    return Math.max(minimum, Math.min(preferred, Math.floor(available * INITIAL_WINDOW_WORK_AREA_RATIO)));
+  });
+  assert.deepEqual(actual, expected, `${context} should open at the expected default window size`);
+}
+
 async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
@@ -1966,6 +1982,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
     runtimeDescriptorPath: paths.runtimeDescriptorPath,
   });
   const page = await electronApp.firstWindow();
+  await assertFreshDesktopWindowSize(electronApp, "a fresh Desktop profile");
   return { electronApp, page };
 }
 
@@ -2041,6 +2058,7 @@ async function runAccountGateScenario(mode) {
 async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
   const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports, extraEnv);
   const page = await waitForBoardWindow(electronApp, firstPage);
+  await assertFreshDesktopWindowSize(electronApp, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
   return { electronApp, page, baseUrl };
