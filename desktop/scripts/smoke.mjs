@@ -1972,6 +1972,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
 async function runAccountGateScenario(mode) {
   assert.equal(mode, "packaged", "the release account gate must be verified against a packaged Desktop");
   const scenarioRoot = path.join(tmpRoot, "account-gate");
+  const residentStatusPath = path.join(scenarioRoot, "resident-shell-status.json");
   const ports = await allocateSmokePorts();
   const screenshotPath = browserSmokeScreenshotPath
     ? path.resolve(browserSmokeScreenshotPath)
@@ -1985,6 +1986,7 @@ async function runAccountGateScenario(mode) {
       : {}),
     // A packaged release must ignore this development-only escape hatch.
     RUDDER_DESKTOP_AUTH_BYPASS: "1",
+    RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH: residentStatusPath,
   });
   try {
     await page.waitForFunction(
@@ -2005,6 +2007,30 @@ async function runAccountGateScenario(mode) {
       null,
       "packaged Desktop must not start the Local Workspace server before account sign-in",
     );
+    const residentStatus = await waitForSmokeCondition(
+      "packaged resident shell controls",
+      async () => {
+        if (!(await pathExists(residentStatusPath))) return null;
+        return JSON.parse(await readFile(residentStatusPath, "utf8"));
+      },
+    );
+    assert.equal(residentStatus.enabled, true, "packaged Desktop should enable resident shell controls");
+    assert.equal(
+      residentStatus.controlsAvailable,
+      true,
+      "packaged Desktop should create its resident shell controls",
+    );
+    assert.equal(residentStatus.packaged, true, "resident shell probe should come from a packaged Desktop");
+    assert.equal(residentStatus.platform, process.platform);
+    if (process.platform === "darwin") {
+      assert.equal(residentStatus.iconSource, "trayTemplate.png");
+      assert.equal(residentStatus.iconIsTemplate, true, "macOS menu bar icon must use template rendering");
+      assert.deepEqual(residentStatus.iconSize, { width: 18, height: 18 });
+      assert.ok(
+        residentStatus.iconScaleFactors.includes(1) && residentStatus.iconScaleFactors.includes(2),
+        "macOS menu bar icon must include both standard and Retina representations",
+      );
+    }
     await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`[desktop-smoke] packaged account gate screenshot: ${screenshotPath}`);
   } finally {
