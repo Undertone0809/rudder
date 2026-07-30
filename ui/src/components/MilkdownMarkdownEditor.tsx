@@ -88,7 +88,7 @@ type ProseMirrorTextNode = {
   isText?: boolean;
   nodeSize: number;
   text?: string;
-  marks?: Array<{
+  marks?: ReadonlyArray<{
     type?: { name?: string };
     attrs?: { href?: string | null };
   }>;
@@ -142,7 +142,7 @@ type RudderTokenRange = {
 };
 
 function linkHrefFromTextNode(node: {
-  marks?: Array<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
+  marks?: ReadonlyArray<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
 }) {
   return node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href)?.attrs?.href?.trim() ?? "";
 }
@@ -528,6 +528,14 @@ function findContainingRudderTokenRange(state: ProseMirrorState) {
   return null;
 }
 
+function findRudderTokenRangeBeforeBoundarySpace(state: ProseMirrorState) {
+  if (!state.selection.empty) return null;
+  const { from } = state.selection;
+  if (!isWhitespaceText(textAt(state.doc, from - 1, from))) return null;
+  const range = findRudderTokenRangeAt(state.doc, from - 2);
+  return range?.to === from - 1 ? range : null;
+}
+
 function isPrintableInputKey(event: React.KeyboardEvent) {
   return event.key.length === 1
     && !event.nativeEvent.isComposing
@@ -817,7 +825,8 @@ export function insertTextAfterRudderTokenBoundary(view: ProseMirrorView, text: 
   if (!text || !view.state.selection.empty) return false;
   const containingRange = findContainingRudderTokenRange(view.state);
   const adjacentRange = findAdjacentRudderTokenRange(view.state, "backward");
-  const range = containingRange ?? adjacentRange;
+  const boundarySpaceRange = findRudderTokenRangeBeforeBoundarySpace(view.state);
+  const range = containingRange ?? adjacentRange ?? boundarySpaceRange;
   if (!range) return false;
 
   const followingText = textAt(view.state.doc, range.to, range.to + 1);
@@ -842,7 +851,8 @@ export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
   if (!view.state.selection.empty) return false;
   const containingRange = findContainingRudderTokenRange(view.state);
   const adjacentRange = findAdjacentRudderTokenRange(view.state, "backward");
-  const range = containingRange ?? adjacentRange;
+  const boundarySpaceRange = findRudderTokenRangeBeforeBoundarySpace(view.state);
+  const range = containingRange ?? adjacentRange ?? boundarySpaceRange;
   if (!range) return false;
 
   const followingText = textAt(view.state.doc, range.to, range.to + 1);
@@ -859,6 +869,12 @@ export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
   tr.setStoredMarks([]);
   view.dispatch(tr);
   return true;
+}
+
+export function stabilizeRudderTokenBoundary(view: ProseMirrorView) {
+  const moved = moveSelectionAfterRudderTokenBoundary(view);
+  view.focus?.();
+  return moved;
 }
 
 function placeSelectionAfterRudderTokenAnchor(view: ProseMirrorView, anchor: HTMLAnchorElement) {
@@ -1522,12 +1538,12 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     requestAnimationFrame(() => {
       const currentEditor = loading ? get() : getInstance();
       currentEditor?.action((ctx) => {
-        if (insertedInEditor) {
-          getMilkdownProseMirrorView(ctx)?.focus?.();
-          return;
-        }
         const view = getMilkdownProseMirrorView(ctx);
         if (!view) return;
+        if (insertedInEditor) {
+          stabilizeRudderTokenBoundary(view);
+          return;
+        }
         focusProseMirrorViewAtEnd(view);
       });
     });
