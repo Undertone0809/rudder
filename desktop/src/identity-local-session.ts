@@ -114,7 +114,16 @@ export async function establishDesktopOfflineLocalSession(options: {
   }
   const setCookie = exchange.headers.get("set-cookie");
   if (!setCookie) throw new Error("Local Rudder server did not issue a session cookie");
-  await options.installCookie(parseSetCookie(setCookie, baseUrl));
+  const cookie = parseSetCookie(setCookie, baseUrl);
+  await options.installCookie(cookie);
+  const claim = await request(new URL("/api/auth/local-claim", baseUrl), {
+    method: "POST",
+    headers: {
+      cookie: `${cookie.name}=${encodeURIComponent(cookie.value)}`,
+      origin: baseUrl,
+    },
+  });
+  if (!claim.ok) throw new Error(`Local Rudder legacy claim failed (${claim.status})`);
   options.updateTrustedTime(Number(value.nextTrustedTimeMs));
 }
 

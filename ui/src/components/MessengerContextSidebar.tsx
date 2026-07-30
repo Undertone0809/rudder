@@ -65,6 +65,7 @@ import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
+  copyLegacyMessengerLocalPreferences,
   DEFAULT_THREAD_ORGANIZATION_RULE,
   getHiddenIssueThreadsStorageKey,
   getMessengerDefaultThreadOrderStorageKey,
@@ -858,6 +859,10 @@ export function MessengerContextSidebar() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  useEffect(() => {
+    if (!model.selectedOrganizationId || !currentUserId) return;
+    copyLegacyMessengerLocalPreferences(model.selectedOrganizationId, currentUserId);
+  }, [currentUserId, model.selectedOrganizationId]);
   const projectOrderStorageKey = useMemo(() => {
     if (!model.selectedOrganizationId) return null;
     return getProjectOrderStorageKey(model.selectedOrganizationId, currentUserId);

@@ -11,6 +11,8 @@ const MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerThreadGroup
 // Legacy key retained so existing local tab layouts survive the Arc-style top-level layout.
 const MESSENGER_DEFAULT_THREAD_ORDER_STORAGE_PREFIX = "rudder.messengerDefaultThreadOrder";
 const HIDDEN_ISSUE_THREADS_STORAGE_PREFIX = "rudder.messengerHiddenIssueThreads";
+const PROJECT_ORDER_STORAGE_PREFIX = "rudder.projectOrder";
+const LEGACY_MESSENGER_USER_IDS = ["local-board", "anonymous"] as const;
 
 export const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 export const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
@@ -140,6 +142,68 @@ function normalizeStringList(value: unknown): string[] {
 function messengerUserStorageId(userId: string | null | undefined) {
   const trimmed = userId?.trim();
   return trimmed || "anonymous";
+}
+
+function isValidStringListJson(raw: string) {
+  try {
+    return Array.isArray(JSON.parse(raw))
+      && (JSON.parse(raw) as unknown[]).every((item) => typeof item === "string");
+  } catch {
+    return false;
+  }
+}
+
+function isValidWatermarkJson(raw: string) {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Boolean(value)
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && Object.values(value as Record<string, unknown>).every((item) => typeof item === "string");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Account sign-in changes the local preference namespace from the trusted
+ * `local-board`/anonymous identity to the account UUID. Copying only when the
+ * destination is absent preserves account-era edits and keeps the legacy keys
+ * available to an older app after an automatic rollback.
+ */
+export function copyLegacyMessengerLocalPreferences(
+  orgId: string,
+  targetUserId: string | null | undefined,
+  storage: Pick<Storage, "getItem" | "setItem"> = window.localStorage,
+) {
+  const targetId = messengerUserStorageId(targetUserId);
+  if (targetId === "anonymous" || targetId === "local-board") return [];
+
+  const copied: string[] = [];
+  const specs = [
+    { prefix: PROJECT_ORDER_STORAGE_PREFIX, suffix: `${orgId}`, valid: isValidStringListJson },
+    { prefix: MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX, suffix: `${orgId}`, valid: isValidStringListJson },
+    { prefix: MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX, suffix: `agent:${orgId}`, valid: isValidStringListJson },
+    { prefix: MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX, suffix: `kind:${orgId}`, valid: isValidStringListJson },
+    { prefix: MESSENGER_DEFAULT_THREAD_ORDER_STORAGE_PREFIX, suffix: `${orgId}`, valid: isValidStringListJson },
+    { prefix: HIDDEN_ISSUE_THREADS_STORAGE_PREFIX, suffix: `${orgId}`, valid: isValidWatermarkJson },
+  ];
+  for (const spec of specs) {
+    const targetKey = `${spec.prefix}:${spec.suffix}:${targetId}`;
+    if (storage.getItem(targetKey) !== null) continue;
+    for (const legacyId of LEGACY_MESSENGER_USER_IDS) {
+      const source = storage.getItem(`${spec.prefix}:${spec.suffix}:${legacyId}`);
+      if (source === null || !spec.valid(source)) continue;
+      try {
+        storage.setItem(targetKey, source);
+        copied.push(targetKey);
+      } catch {
+        // The server-side state recovery remains usable when storage is restricted.
+      }
+      break;
+    }
+  }
+  return copied;
 }
 
 export function getMessengerProjectGroupOrderStorageKey(

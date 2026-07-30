@@ -1,7 +1,9 @@
+import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import {
   clearDesktopLocalSessionCookies,
+  establishDesktopOfflineLocalSession,
   establishDesktopLocalSession,
   revokeDesktopLocalSessions,
 } from "./identity-local-session.js";
@@ -100,5 +102,58 @@ describe("Desktop local account session", () => {
       installCookie,
     })).rejects.toThrow("exchange failed");
     expect(installCookie).not.toHaveBeenCalled();
+  });
+
+  it("repairs legacy state after establishing an Offline Grant session", async () => {
+    const deviceKeys = generateKeyPairSync("ed25519");
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        userId: "user-1",
+        nextTrustedTimeMs: 1_800_000_000_000,
+      }), {
+        status: 200,
+        headers: {
+          "set-cookie": "better-auth.session_token=offline.signature; Path=/; HttpOnly; SameSite=Lax",
+        },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "already_claimed" }), { status: 200 }));
+    const installCookie = vi.fn(async () => undefined);
+    const updateTrustedTime = vi.fn();
+
+    await establishDesktopOfflineLocalSession({
+      localApiUrl: "http://127.0.0.1:3100/api",
+      credential: {
+        version: 1,
+        issuer: "https://accounts.rudderhq.dev",
+        accountId: "account-1",
+        deviceId: "device-1",
+        installationId: "installation-1",
+        grant: "offline-grant",
+        expiresAtMs: 1_900_000_000_000,
+        keyId: "identity-key",
+        identityPublicKeySpki: "identity-public-key",
+        devicePrivateKeyPkcs8: deviceKeys.privateKey
+          .export({ format: "der", type: "pkcs8" }).toString("base64url"),
+        devicePublicKeySpki: deviceKeys.publicKey
+          .export({ format: "der", type: "spki" }).toString("base64url"),
+        trustedTimeMs: 1_700_000_000_000,
+        signOutEpoch: 0,
+      },
+      nowMs: 1_750_000_000_000,
+      fetch,
+      installCookie,
+      updateTrustedTime,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]?.[0]).toEqual(new URL("http://127.0.0.1:3100/api/auth/local-claim"));
+    expect(fetch.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        cookie: "better-auth.session_token=offline.signature",
+        origin: "http://127.0.0.1:3100",
+      },
+    });
+    expect(updateTrustedTime).toHaveBeenCalledWith(1_800_000_000_000);
   });
 });
