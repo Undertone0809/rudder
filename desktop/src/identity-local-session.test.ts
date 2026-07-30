@@ -3,8 +3,8 @@ import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import {
   clearDesktopLocalSessionCookies,
-  establishDesktopOfflineLocalSession,
   establishDesktopLocalSession,
+  establishDesktopOfflineLocalSession,
   revokeDesktopLocalSessions,
 } from "./identity-local-session.js";
 
