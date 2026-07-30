@@ -1,5 +1,4 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsActions,
   SettingsField,
@@ -10,6 +9,7 @@ import {
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
@@ -20,6 +20,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
+import { AccountSettingsSections } from "./InstanceAccountSettings";
 
 const PROFILE_IMPORT_PROMPT = `Export all of my stored memories and any context you've learned about me from past conversations. Preserve my words verbatim where possible, especially for instructions and preferences.
 
@@ -123,20 +124,6 @@ export function InstanceProfileSettings() {
     }
   };
 
-  if (profileQuery.isLoading) {
-    return <SettingsPageSkeleton />;
-  }
-
-  if (profileQuery.error) {
-    return (
-      <div className="text-sm text-destructive">
-        {profileQuery.error instanceof Error
-          ? profileQuery.error.message
-          : t("profile.loadFailed")}
-      </div>
-    );
-  }
-
   return (
     <SettingsPage>
       <SettingsPageHeader
@@ -151,11 +138,35 @@ export function InstanceProfileSettings() {
         </div>
       ) : null}
 
-      <SettingsSection
-        title={t("profile.about.title")}
-        description={t("profile.about.description")}
-      >
-        <SettingsGroup>
+      {profileQuery.isLoading ? (
+        <SettingsSection
+          data-testid="settings-page-skeleton"
+          aria-hidden="true"
+          title={t("profile.about.title")}
+          description={t("profile.about.description")}
+        >
+          <SettingsGroup className="flex flex-col gap-3 p-4">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-32 w-full" />
+          </SettingsGroup>
+        </SettingsSection>
+      ) : profileQuery.error ? (
+        <SettingsSection
+          title={t("profile.about.title")}
+          description={t("profile.about.description")}
+        >
+          <div role="alert" className="text-sm text-destructive">
+            {profileQuery.error instanceof Error
+              ? profileQuery.error.message
+              : t("profile.loadFailed")}
+          </div>
+        </SettingsSection>
+      ) : (
+        <SettingsSection
+          title={t("profile.about.title")}
+          description={t("profile.about.description")}
+        >
+          <SettingsGroup>
           <SettingsField
             htmlFor="profile-nickname"
             icon={IdCard}
@@ -208,8 +219,11 @@ export function InstanceProfileSettings() {
               {saveMutation.isPending ? t("profile.saving") : t("profile.save")}
             </Button>
           </SettingsActions>
-        </SettingsGroup>
-      </SettingsSection>
+          </SettingsGroup>
+        </SettingsSection>
+      )}
+
+      <AccountSettingsSections />
     </SettingsPage>
   );
 }

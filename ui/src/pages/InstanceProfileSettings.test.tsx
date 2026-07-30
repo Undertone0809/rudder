@@ -14,12 +14,16 @@ const profileSettings = vi.hoisted(() => ({
   nickname: "Zee",
   moreAboutYou: "Existing profile context.",
 }));
+const profileQueryState = vi.hoisted(() => ({
+  isLoading: false,
+  error: null as Error | null,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
     data: profileSettings,
-    isLoading: false,
-    error: null,
+    isLoading: profileQueryState.isLoading,
+    error: profileQueryState.error,
   }),
   useMutation: () => ({
     mutate,
@@ -34,41 +38,44 @@ vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
 
+const translate = vi.hoisted(() => {
+  const messages: Record<string, string> = {
+    "common.systemSettings": "System settings",
+    "common.profile": "Profile & account",
+    "profile.title": "Profile & account",
+    "profile.description": "Profile and account description",
+    "profile.loadFailed": "Failed to load profile settings.",
+    "profile.updateFailed": "Failed to update profile settings.",
+    "profile.toastSaved.title": "Profile saved",
+    "profile.toastSaved.body": "Your operator profile has been updated.",
+    "profile.toastSaveFailed.title": "Failed to save profile",
+    "profile.about.title": "About you",
+    "profile.about.description": "About section",
+    "profile.nickname.label": "Your nickname",
+    "profile.nickname.placeholder": "What should Rudder call you?",
+    "profile.nickname.help": "Nickname help",
+    "profile.moreAboutYou.label": "More about you",
+    "profile.moreAboutYou.placeholder": "Share standing context.",
+    "profile.moreAboutYou.help": "More about you help",
+    "profile.import.helper.title": "Import memories from another AI",
+    "profile.import.helper.description": "Copy this prompt into another AI provider, then paste the exported memory below.",
+    "profile.import.copyPrompt": "Copy memory import prompt",
+    "profile.import.copiedButton": "Copied",
+    "profile.import.copied.title": "Prompt copied",
+    "profile.import.copied.body": "Paste the result into More about you, then edit and save.",
+    "profile.import.copyFailed.title": "Prompt was not copied",
+    "profile.import.copyFailed.body": "Select the prompt text and copy it manually.",
+    "profile.save": "Save profile",
+    "profile.saving": "Saving...",
+    "account.desktopOnly.title": "Rudder Account",
+    "account.desktopOnly.status": "Desktop app only",
+    "account.desktopOnly.description": "Open this setting in Rudder Desktop.",
+  };
+  return (key: string) => messages[key] ?? key;
+});
+
 vi.mock("../context/I18nContext", () => ({
-  useI18n: () => ({
-    t: (key: string) => {
-      const messages: Record<string, string> = {
-        "common.systemSettings": "System settings",
-        "common.profile": "Profile",
-        "profile.title": "Profile",
-        "profile.description": "Profile description",
-        "profile.loadFailed": "Failed to load profile settings.",
-        "profile.updateFailed": "Failed to update profile settings.",
-        "profile.toastSaved.title": "Profile saved",
-        "profile.toastSaved.body": "Your operator profile has been updated.",
-        "profile.toastSaveFailed.title": "Failed to save profile",
-        "profile.about.title": "About you",
-        "profile.about.description": "About section",
-        "profile.nickname.label": "Your nickname",
-        "profile.nickname.placeholder": "What should Rudder call you?",
-        "profile.nickname.help": "Nickname help",
-        "profile.moreAboutYou.label": "More about you",
-        "profile.moreAboutYou.placeholder": "Share standing context.",
-        "profile.moreAboutYou.help": "More about you help",
-        "profile.import.helper.title": "Import memories from another AI",
-        "profile.import.helper.description": "Copy this prompt into another AI provider, then paste the exported memory below.",
-        "profile.import.copyPrompt": "Copy memory import prompt",
-        "profile.import.copiedButton": "Copied",
-        "profile.import.copied.title": "Prompt copied",
-        "profile.import.copied.body": "Paste the result into More about you, then edit and save.",
-        "profile.import.copyFailed.title": "Prompt was not copied",
-        "profile.import.copyFailed.body": "Select the prompt text and copy it manually.",
-        "profile.save": "Save profile",
-        "profile.saving": "Saving...",
-      };
-      return messages[key] ?? key;
-    },
-  }),
+  useI18n: () => ({ t: translate }),
 }));
 
 vi.mock("../context/ToastContext", () => ({
@@ -82,6 +89,8 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   mutate.mockReset();
+  profileQueryState.isLoading = false;
+  profileQueryState.error = null;
 });
 
 function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -129,6 +138,8 @@ describe("InstanceProfileSettings", () => {
 
     expect(container.textContent).toContain("Import memories from another AI");
     expect(container.textContent).toContain("paste the exported memory below");
+    expect(container.textContent).toContain("Rudder Account");
+    expect(container.textContent).toContain("Desktop app only");
 
     const copyButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Copy memory import prompt"));
@@ -172,5 +183,15 @@ describe("InstanceProfileSettings", () => {
     });
 
     expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Rudder Account controls available when profile loading fails", () => {
+    profileQueryState.error = new Error("Profile service unavailable");
+
+    const container = renderPage();
+
+    expect(container.textContent).toContain("Profile service unavailable");
+    expect(container.textContent).toContain("Rudder Account");
+    expect(container.textContent).toContain("Desktop app only");
   });
 });

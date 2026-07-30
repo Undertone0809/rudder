@@ -159,7 +159,7 @@ test.describe("Settings layout", () => {
     await expectCompactChoiceCards(modal, 3);
 
     const destinations = [
-      { href: "/instance/settings/profile", heading: "Profile" },
+      { href: "/instance/settings/profile", heading: "Profile & account" },
       { href: "/instance/settings/notifications", heading: "System permissions" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
       { href: "/instance/settings/plugins", heading: "Plugin Manager" },

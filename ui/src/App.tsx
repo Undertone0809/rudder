@@ -57,7 +57,6 @@ import { Dashboard } from "./pages/Dashboard";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Goals } from "./pages/Goals";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
-import { InstanceAccountSettings } from "./pages/InstanceAccountSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
@@ -341,6 +340,17 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
   return <Navigate to={target} replace />;
 }
 
+function LegacyAccountSettingsRedirect() {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`/instance/settings/profile${location.search}${location.hash}`}
+      replace
+      state={location.state}
+    />
+  );
+}
+
 function LegacySettingsRedirect() {
   const location = useLocation();
   return <InstanceSettingsRedirect requestedPath={`/instance${location.pathname}`} />;
@@ -570,7 +580,7 @@ export function App() {
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
             <Route path="profile" element={<InstanceProfileSettings />} />
-            <Route path="account" element={<InstanceAccountSettings />} />
+            <Route path="account" element={<LegacyAccountSettingsRedirect />} />
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
@@ -647,7 +657,7 @@ export function App() {
             <Route path="instance/settings" element={<DesktopSettingsOverlayLayout />}>
               <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
               <Route path="profile" element={<InstanceProfileSettings />} />
-              <Route path="account" element={<InstanceAccountSettings />} />
+              <Route path="account" element={<LegacyAccountSettingsRedirect />} />
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="experimental" element={<InstanceExperimentalSettings />} />

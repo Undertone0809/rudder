@@ -422,7 +422,7 @@ test.describe("Settings sidebar", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
@@ -804,6 +804,54 @@ test.describe("Settings sidebar", () => {
     releaseProfileResponse?.();
 
     await expect(modal.getByRole("button", { name: "Save" })).toBeVisible();
+  });
+
+  test("combines profile and account settings under one Personal destination", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Combined Profile Account ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+
+    const modal = page.getByTestId("settings-modal-shell");
+    const sidebar = modal.getByTestId("workspace-sidebar");
+    const profileLink = sidebar.locator('a[href$="/instance/settings/profile"]');
+
+    await expect(profileLink).toHaveText("Profile & account");
+    await expect(sidebar.locator('a[href$="/instance/settings/account"]')).toHaveCount(0);
+    await profileLink.click();
+
+    await expect(modal.getByRole("heading", { name: "Profile & account", level: 1 })).toBeVisible();
+    await expect(modal.getByText("About you", { exact: true })).toBeVisible();
+    await expect(modal.getByText("Rudder Account", { exact: true })).toBeVisible();
+
+    await page.evaluate(() => {
+      const currentState = window.history.state as {
+        idx?: number;
+        key?: string;
+        usr?: unknown;
+      } | null;
+      const nextState = {
+        ...currentState,
+        idx: (currentState?.idx ?? 0) + 1,
+      };
+      window.history.pushState(nextState, "", "/instance/settings/account?source=legacy#devices");
+      window.dispatchEvent(new PopStateEvent("popstate", { state: nextState }));
+    });
+
+    await expect(page).toHaveURL(/\/instance\/settings\/profile\?source=legacy#devices$/);
+    await expect(modal).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Profile & account", level: 1 })).toBeVisible();
+
+    await modal.getByRole("button", { name: "Close settings" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`, "i"));
+    await expect(modal).toHaveCount(0);
   });
 
   test("returns to the original workspace org after closing settings viewed on another org", async ({ page }) => {

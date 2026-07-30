@@ -41,7 +41,7 @@ vi.mock("@/context/I18nContext", () => ({
     t: (key: string) => ({
       "common.desktopApp": "Desktop app",
       "common.browser": "Browser",
-      "common.account": "Account & security",
+      "common.profile": "Profile & account",
     })[key] ?? key,
   }),
 }));
@@ -168,8 +168,8 @@ describe("SettingsSidebar Browser entry", () => {
     queryState.isInstanceAdmin = false;
     const container = renderSidebar();
 
-    expect(container.querySelector('a[href="/instance/settings/profile"]')).not.toBeNull();
-    expect(container.querySelector('a[href="/instance/settings/account"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/profile"]')?.textContent).toBe("Profile & account");
+    expect(container.querySelector('a[href="/instance/settings/account"]')).toBeNull();
     expect(container.querySelector('a[href="/instance/settings/shortcuts"]')).not.toBeNull();
     expect(container.querySelector('a[href="/instance/settings/general"]')).toBeNull();
     expect(container.querySelector('a[href="/instance/settings/browser"]')).toBeNull();

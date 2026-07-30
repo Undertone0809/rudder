@@ -81,9 +81,8 @@ function DeviceSessionRow({
   );
 }
 
-export function InstanceAccountSettings() {
+export function AccountSettingsSections() {
   const { t } = useI18n();
-  const { setBreadcrumbs } = useBreadcrumbs();
   const [pageState, setPageState] = useState<PageState>(() =>
     readDesktopIdentity() ? { kind: "loading" } : { kind: "desktop-only" },
   );
@@ -93,13 +92,6 @@ export function InstanceAccountSettings() {
   const [actionPending, setActionPending] = useState<"sign-in" | "sign-out" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setBreadcrumbs([
-      { label: t("common.systemSettings") },
-      { label: t("common.account") },
-    ]);
-  }, [setBreadcrumbs, t]);
 
   const loadSessions = useCallback(async () => {
     const identity = readDesktopIdentity();
@@ -211,13 +203,7 @@ export function InstanceAccountSettings() {
   const identityState = pageState.kind === "ready" ? pageState.identity : null;
 
   return (
-    <SettingsPage>
-      <SettingsPageHeader
-        icon={UserRoundCheck}
-        title={t("account.title")}
-        description={t("account.description")}
-      />
-
+    <>
       {pageState.kind === "desktop-only" ? (
         <SettingsSection title={t("account.desktopOnly.title")}>
           <SettingsGroup>
@@ -363,6 +349,29 @@ export function InstanceAccountSettings() {
           ) : null}
         </SettingsSection>
       ) : null}
+    </>
+  );
+}
+
+export function InstanceAccountSettings() {
+  const { t } = useI18n();
+  const { setBreadcrumbs } = useBreadcrumbs();
+
+  useEffect(() => {
+    setBreadcrumbs([
+      { label: t("common.systemSettings") },
+      { label: t("common.profile") },
+    ]);
+  }, [setBreadcrumbs, t]);
+
+  return (
+    <SettingsPage>
+      <SettingsPageHeader
+        icon={UserRoundCheck}
+        title={t("profile.title")}
+        description={t("profile.description")}
+      />
+      <AccountSettingsSections />
     </SettingsPage>
   );
 }

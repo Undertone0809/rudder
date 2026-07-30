@@ -32,7 +32,6 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  UserRoundCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { readDesktopShell } from "../lib/desktop-shell";
@@ -187,14 +186,6 @@ export function SettingsSidebar({
             state={overlayState}
             label={t("common.profile")}
             icon={IdCard}
-            end
-            variant={modalVariant ? "compact" : "default"}
-          />
-          <SidebarNavItem
-            to="/instance/settings/account"
-            state={overlayState}
-            label={t("common.account")}
-            icon={UserRoundCheck}
             end
             variant={modalVariant ? "compact" : "default"}
           />
