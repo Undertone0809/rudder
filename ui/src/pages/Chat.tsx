@@ -77,6 +77,7 @@ import {
 import {
   CHAT_COMPOSER_DRAFT_VERSION,
   clearChatAskUserDraft,
+  clearChatDraft,
   readChatComposerDraft,
   saveChatComposerDraft,
 } from "@/lib/chat-draft-storage";
@@ -231,6 +232,12 @@ export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
+function localAppRecoveryDraftStorageScope(value: string | null): string | null {
+  const id = value?.trim() ?? "";
+  return /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)
+    ? `local-app-recovery:${id}`
+    : null;
+}
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const macDesktopShell = typeof document !== "undefined"
     && document.documentElement.classList.contains("desktop-shell-macos");
@@ -240,7 +247,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setChatSendInFlight,
     setStreamAbortController,
     setStreamDraftForChat,
-    streamDrafts, } = useChatGenerations(); const draftStorageOrgId = selectedOrganizationId!; const draftStorageConversationId = conversationId ?? null; const draftStorageScopeKey = resolveChatPendingAttachmentScopeKey(draftStorageOrgId, draftStorageConversationId); const activeDraftScopeRef = useRef(draftStorageScopeKey);
+    streamDrafts, } = useChatGenerations(); const draftStorageOrgId = selectedOrganizationId!; const draftStorageConversationId = conversationId ?? localAppRecoveryDraftStorageScope(searchParams.get("localAppRecoveryDraft")) ?? null; const draftStorageScopeKey = resolveChatPendingAttachmentScopeKey(draftStorageOrgId, draftStorageConversationId); const activeDraftScopeRef = useRef(draftStorageScopeKey);
   const stopRecoveryImmediateRetryKeysRef = useRef(new Set<string>());
   const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
   const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
@@ -1398,6 +1405,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (usesComposerState) {
                 setBranchPreview(null);
                 setDraft("");
+                if (draftStorageConversationId?.startsWith("local-app-recovery:")) {
+                  clearChatDraft(draftStorageOrgId, draftStorageConversationId);
+                }
                 clearPendingFilesForCurrentScope();
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);

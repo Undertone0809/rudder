@@ -12,15 +12,17 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useOptionalToast } from "@/context/ToastContext";
 import { readDesktopShell, type DesktopLocalAppRuntimeView } from "@/lib/desktop-shell";
 import {
+  localAppFailureHelpPrompt,
   localAppIdentityMatches,
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
 import { queryKeys } from "@/lib/queryKeys";
+import { useNavigate } from "@/lib/router";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AppWindow, CircleAlert, Loader2, MoreHorizontal, Pencil, Pin, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
+import { AppWindow, CircleAlert, Loader2, MessageSquare, MoreHorizontal, Pencil, Pin, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
 import { createElement, useEffect, useState } from "react";
 import { LocalAppDefinitionReviewDialog } from "./LocalAppsPanel";
 
@@ -46,6 +48,7 @@ export function LocalAppPanelView({
   target: LocalAppTarget;
   onTitleChange?: (title: string) => void;
 }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { selectedOrganizationId } = useOrganization();
   const toast = useOptionalToast();
@@ -181,6 +184,14 @@ export function LocalAppPanelView({
   const orphaned = status?.status === "orphaned_unverified";
   const canStart = status?.status === "stopped" || status?.status === "failed";
   const canStop = status?.status === "running" || status?.status === "starting" || status?.status === "stopping";
+  const canAskAiForHelp = Boolean(startMutation.error) || status?.status === "failed";
+  const openAiHelp = () => {
+    const search = new URLSearchParams({
+      prefill: localAppFailureHelpPrompt(definition?.title ?? target.label),
+      localAppRecoveryDraft: crypto.randomUUID(),
+    });
+    navigate(`/messenger/chat?${search.toString()}`);
+  };
   const logsRegion = logsQuery.error ? (
     <div
       className="mt-3 rounded-[var(--radius-md)] border border-destructive/25 bg-destructive/5 p-3 text-left"
@@ -327,29 +338,41 @@ export function LocalAppPanelView({
             {errorMessage(queryError, "The local runtime did not respond.")}
           </p>
           {startMutation.error ? logsRegion : null}
-          <Button
-            type="button"
-            className="mt-5"
-            variant="outline"
-            data-testid={startMutation.error ? "local-app-start" : undefined}
-            onClick={() => {
-              if (startMutation.error) {
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              data-testid={startMutation.error ? "local-app-start" : undefined}
+              onClick={() => {
+                if (startMutation.error) {
+                  startMutation.reset();
+                  startMutation.mutate();
+                  return;
+                }
                 startMutation.reset();
-                startMutation.mutate();
-                return;
-              }
-              startMutation.reset();
-              stopMutation.reset();
-              void definitionsQuery.refetch();
-              if (definition) void statusQuery.refetch();
-              if (status?.status === "running") void attestedQuery.refetch();
-            }}
-          >
-            {startMutation.error
-              ? <Play className="h-3.5 w-3.5" aria-hidden />
-              : <RotateCw className="h-3.5 w-3.5" aria-hidden />}
-            {startMutation.error ? "Retry & open" : "Retry"}
-          </Button>
+                stopMutation.reset();
+                void definitionsQuery.refetch();
+                if (definition) void statusQuery.refetch();
+                if (status?.status === "running") void attestedQuery.refetch();
+              }}
+            >
+              {startMutation.error
+                ? <Play className="h-3.5 w-3.5" aria-hidden />
+                : <RotateCw className="h-3.5 w-3.5" aria-hidden />}
+              {startMutation.error ? "Retry & open" : "Retry"}
+            </Button>
+            {canAskAiForHelp ? (
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="local-app-ask-ai"
+                onClick={openAiHelp}
+              >
+                <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                Ask AI for help
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : status?.status === "running" ? (
         attestedQuery.data ? (
@@ -382,18 +405,30 @@ export function LocalAppPanelView({
             </p>
             {status?.error ? <p className="mt-3 text-sm text-destructive" role="alert">{status.error}</p> : null}
             {canStart ? (
-              <Button
-                type="button"
-                className="mt-5"
-                data-testid="local-app-start"
-                disabled={startMutation.isPending}
-                onClick={() => startMutation.mutate()}
-              >
-                {startMutation.isPending
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  : <Play className="h-3.5 w-3.5" aria-hidden />}
-                {status?.status === "failed" ? "Retry & open" : "Start & open"}
-              </Button>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  data-testid="local-app-start"
+                  disabled={startMutation.isPending}
+                  onClick={() => startMutation.mutate()}
+                >
+                  {startMutation.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    : <Play className="h-3.5 w-3.5" aria-hidden />}
+                  {status?.status === "failed" ? "Retry & open" : "Start & open"}
+                </Button>
+                {canAskAiForHelp ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    data-testid="local-app-ask-ai"
+                    onClick={openAiHelp}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                    Ask AI for help
+                  </Button>
+                ) : null}
+              </div>
             ) : (
               <div className="mt-5 flex items-center text-sm text-muted-foreground">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />

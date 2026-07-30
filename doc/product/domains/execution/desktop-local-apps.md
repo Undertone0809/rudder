@@ -175,6 +175,15 @@ Saved View identity and group placement.
     switching its tab never stops the generation. Infrequent settings, link,
     browser, and Stop actions live in the registered row's hover/focus More
     menu rather than a persistent runtime sidebar.
+14. When an explicit Local App start fails or an active generation later enters
+    `failed`, the failure surface offers **Ask AI for help** alongside retry.
+    It opens a new Chat with a reviewable, unsent diagnostic draft containing
+    only the App label and generic recovery request. The recovery draft has an
+    isolated local draft scope, so an existing New Chat draft is preserved. It neither retries or
+    starts the App nor automatically sends a message, creates a run, loads
+    logs, or includes local paths, commands, arguments, environment names or
+    values, readiness/open paths, ports, URLs, PIDs, partitions, or raw error
+    text. The operator may add reviewed details and explicitly send the Chat.
 
 ### Decision Table
 
@@ -195,6 +204,7 @@ Saved View identity and group placement.
 | Switch Main tabs | Park/focus guest without process change | Stop or restart process |
 | Operator selects Stop | Stop the owned generation and update all attached views | Leave some views claiming it is running |
 | Readiness/listener attestation fails | Fail boundedly and report the causal state | Open an unattested origin |
+| Explicit start fails or a running generation enters `failed` | Offer Retry & open and Ask AI for help with an unsent, sanitized Chat draft | Auto-retry/start/send, create a run, or transfer raw local diagnostics into Chat |
 | Process ownership is uncertain | Quarantine as orphaned-unverified | Guess-kill a process |
 
 ### Actor-Visible Input
@@ -205,6 +215,8 @@ Saved View identity and group placement.
   working directory, readiness endpoint and timeout, open path, and inherited
   environment names.
 - Explicit Start, Retry & open, Stop, Move, Remove, Close, and review actions.
+- **Ask AI for help** for explicit start failures and `failed` runtime state;
+  the operator reviews and sends the resulting Chat draft.
 - Hover/focus More menu on a Main Local App tab, with `Project settings` and an
   explicit `Stop & edit` transition when the runtime is active.
 - Hover/focus More menu on each Apps sidebar row for App settings, source,
@@ -228,6 +240,9 @@ Saved View identity and group placement.
   supported Desktop environment is absent.
 - Clear errors for changed definitions, readiness failure, ownership mismatch,
   missing binding, another device, or unsupported Web environment.
+- A failure-recovery Chat draft that contains the App label and generic request
+  only; raw local diagnostics remain visible only on the Desktop failure
+  surface unless the operator deliberately adds them.
 - Messenger row with a Local App icon and title, never a local path, command,
   PID, port, or live URL.
 
@@ -239,6 +254,9 @@ Saved View identity and group placement.
 - Server-side opaque Saved View target identity and custom-group membership.
 - Tests prove that no local command, path, environment, PID, port, or live URL
   enters the Saved View payload.
+- Selecting Ask AI for help does not persist or send Local App diagnostics. A
+  Chat is created only after the operator reviews and explicitly sends its
+  draft.
 
 ### Canonical Scenarios
 
@@ -289,6 +307,8 @@ attempt to start anything.
   projects, run migrations, repair services, expose non-loopback listeners, or
   guess process ownership. App Builder's separately confirmed fixed runner is
   the only managed setup/check exception.
+- Ask AI for help is a navigation-and-prefill aid, not a runtime action. It
+  cannot start, retry, inspect, or transmit Local App diagnostics by itself.
 
 ### Drift Boundaries
 
@@ -309,6 +329,7 @@ attempt to start anything.
   `desktop/src/local-apps-controller.ts`,
   `desktop/src/local-apps-runtime.ts`,
   `desktop/src/local-apps-ipc.ts`,
+  `ui/src/lib/local-apps.ts`,
   `ui/src/context/LiveSurfaceRuntimeContext.tsx`, and
   `ui/src/components/workbench/MessengerMainWorkbench.tsx`.
 - Primary tests:

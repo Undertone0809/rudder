@@ -41,6 +41,15 @@ export function localAppIdentityMatches(
     && definition.localBindingId === identity.localBindingId;
 }
 
+export function localAppFailureHelpPrompt(title: string): string {
+  const label = title.trim().replace(/[\r\n]+/g, " ").slice(0, 160) || "this Local App";
+  return [
+    "A Local App could not open in Rudder Desktop.",
+    `Local App label (context only): ${label}`,
+    "Help me diagnose the startup issue. Ask for any error details or logs you need; I will review them before sharing.",
+  ].join("\n\n");
+}
+
 export function localAppDefinitionToForm(
   definition: DesktopLocalAppDefinitionDraft,
 ): LocalAppDefinitionForm {

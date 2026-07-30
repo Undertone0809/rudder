@@ -268,6 +268,26 @@ async function seedApprovedLocalAppDefinition(scenarioRoot, project) {
   return { definition, inheritedEnvNames, inheritedEnvValues, installationId, registry, registryPath };
 }
 
+async function seedFailingLocalAppDefinition(registry, scenarioRoot) {
+  const secret = `local-app-chat-secret-${randomBytes(16).toString("hex")}`;
+  const created = await registry.createDefinition({
+    title: "AI recovery Local App",
+    executable: process.execPath,
+    argv: ["-e", `process.stderr.write(${JSON.stringify(secret)}); process.exit(1);`],
+    cwd: scenarioRoot,
+    inheritedEnvNames: [],
+    readiness: { path: "/health", timeoutMs: 1_000 },
+    openPath: "/",
+  });
+  const definition = await registry.approveDefinition(created.id, created.trustFingerprint);
+  assert.equal(
+    definition.approvedFingerprint,
+    definition.trustFingerprint,
+    "failing Local App smoke definition should be approved in its isolated registry",
+  );
+  return { definition, secret };
+}
+
 async function readLocalAppSmokeRegistry(registryPath) {
   return JSON.parse(await readFile(registryPath, "utf8"));
 }
@@ -4767,6 +4787,7 @@ async function runLocalAppsScenario(mode) {
     registry,
     registryPath,
   } = await seedApprovedLocalAppDefinition(scenarioRoot, project);
+  const failingLocalApp = await seedFailingLocalAppDefinition(registry, scenarioRoot);
   console.log("[desktop-smoke] Local App definition", JSON.stringify({
     appPublicId: definition.appPublicId,
     desktopInstallationId: definition.desktopInstallationId,
@@ -4795,6 +4816,54 @@ async function runLocalAppsScenario(mode) {
     await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/chat/${chat.id}$`), { timeout: 30_000 });
     await run.page.waitForLoadState("networkidle");
     await dismissOnboardingIfVisible(run.page);
+
+    const chatsBeforeRecovery = await fetch(`${run.baseUrl}/api/orgs/${company.id}/chats?status=all`);
+    assert.equal(chatsBeforeRecovery.status, 200, "list chats before Local App recovery failed");
+    const chatsBeforeRecoveryPayload = await chatsBeforeRecovery.json();
+    const failedLocalApp = await openLocalAppSmokeDefinition(run.page, failingLocalApp.definition);
+    await failedLocalApp.view.getByTestId("local-app-start").click();
+    const askAiButton = failedLocalApp.view.getByTestId("local-app-ask-ai");
+    await askAiButton.waitFor({ state: "visible", timeout: 15_000 });
+    await mkdir(path.dirname(localAppSmokeScreenshotPath), { recursive: true });
+    await run.page.screenshot({ path: localAppSmokeScreenshotPath, fullPage: true });
+    console.log(`[desktop-smoke] Local App failure recovery screenshot: ${localAppSmokeScreenshotPath}`);
+
+    await askAiButton.click();
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/chat(?:\\?.*)?$`), { timeout: 15_000 });
+    const recoveryComposer = run.page
+      .getByTestId("chat-composer-editor-scroll")
+      .locator("[contenteditable='true']")
+      .first();
+    const recoveryPrompt = await waitForSmokeCondition("the Local App recovery Chat draft", async () => {
+      const text = (await recoveryComposer.textContent())?.trim() ?? "";
+      return text.includes("A Local App could not open in Rudder Desktop.") ? text : null;
+    });
+    assert.match(recoveryPrompt, /AI recovery Local App/);
+    assert.equal(recoveryPrompt.includes(failingLocalApp.definition.cwd), false);
+    assert.equal(recoveryPrompt.includes(failingLocalApp.definition.executable), false);
+    assert.equal(recoveryPrompt.includes(failingLocalApp.definition.argv[1]), false);
+    assert.equal(recoveryPrompt.includes(failingLocalApp.secret), false);
+    assertNoLocalAppRuntimeDetails(
+      { recoveryPrompt },
+      {
+        definition: failingLocalApp.definition,
+        envNames: [],
+        envValues: [failingLocalApp.secret],
+        label: "Local App recovery Chat draft",
+      },
+    );
+    const chatsAfterRecovery = await fetch(`${run.baseUrl}/api/orgs/${company.id}/chats?status=all`);
+    assert.equal(chatsAfterRecovery.status, 200, "list chats after Local App recovery failed");
+    const chatsAfterRecoveryPayload = await chatsAfterRecovery.json();
+    assert.deepEqual(
+      chatsAfterRecoveryPayload.map((entry) => entry.id),
+      chatsBeforeRecoveryPayload.map((entry) => entry.id),
+      "opening Local App recovery Chat must not create or send a Chat",
+    );
+
+    await run.page.goto(new URL(chatPath, run.baseUrl).href);
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/chat/${chat.id}$`), { timeout: 30_000 });
+    await run.page.waitForLoadState("networkidle");
 
     const initial = await openLocalAppSmokeDefinition(run.page, definition);
     await initial.view.getByTestId("local-app-start").waitFor({ state: "visible", timeout: 15_000 });

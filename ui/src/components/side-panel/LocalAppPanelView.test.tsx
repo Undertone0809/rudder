@@ -53,6 +53,11 @@ const stop = vi.fn();
 const update = vi.fn();
 const logs = vi.fn();
 const attestedTarget = vi.fn();
+const navigate = vi.fn();
+
+vi.mock("@/lib/router", () => ({
+  useNavigate: () => navigate,
+}));
 
 beforeAll(() => {
   notifyManager.setNotifyFunction((callback) => act(callback));
@@ -124,6 +129,7 @@ beforeEach(() => {
     openPath: "/outreach",
     partition: "persist:rudder-local-app-a",
   });
+  navigate.mockReset();
   installShell();
 });
 
@@ -148,6 +154,7 @@ describe("LocalAppPanelView", () => {
     expect(start).not.toHaveBeenCalled();
     expect(attestedTarget).not.toHaveBeenCalled();
     expect(host?.textContent).toContain("Stopped");
+    expect(host?.querySelector('[data-testid="local-app-ask-ai"]')).toBeNull();
   });
 
   it("starts only after Start & open and uses the exact attested target and isolated partition", async () => {
@@ -206,6 +213,7 @@ describe("LocalAppPanelView", () => {
     expect(host?.textContent).toContain("Failed");
     expect(host?.textContent).toContain("Process exited unexpectedly");
     expect(host?.querySelector('[data-testid="local-app-start"]')?.textContent).toContain("Retry & open");
+    expect(host?.querySelector('[data-testid="local-app-ask-ai"]')).not.toBeNull();
     expect(host?.querySelector('[data-testid="local-app-webview"]')).toBeNull();
     expect(queryClient?.getQueriesData({
       queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
@@ -234,7 +242,8 @@ describe("LocalAppPanelView", () => {
   });
 
   it("shows safe logs and requires an explicit retry after start fails", async () => {
-    start.mockRejectedValueOnce(new Error("Readiness timed out"))
+    const rawFailure = "Readiness timed out at /Users/private/marketing while using API_KEY=not-for-chat";
+    start.mockRejectedValueOnce(new Error(rawFailure))
       .mockResolvedValueOnce({ status: "running", generation: "generation-b" });
     renderView();
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
@@ -245,6 +254,23 @@ describe("LocalAppPanelView", () => {
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-error"]')?.textContent).toContain("Readiness timed out"));
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-logs"]')?.textContent).toContain("ready on loopback"));
     expect(start).toHaveBeenCalledTimes(1);
+
+    const callsBeforeHelp = { logs: logs.mock.calls.length, start: start.mock.calls.length };
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('[data-testid="local-app-ask-ai"]')?.click();
+    });
+    expect(navigate).toHaveBeenCalledTimes(1);
+    const helpUrl = new URL(String(navigate.mock.calls[0]?.[0]), "https://rudder.test");
+    const prompt = helpUrl.searchParams.get("prefill") ?? "";
+    expect(helpUrl.pathname).toBe("/messenger/chat");
+    expect(helpUrl.searchParams.get("localAppRecoveryDraft")).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(prompt).toContain("Marketing dashboard");
+    expect(prompt).not.toContain(rawFailure);
+    expect(prompt).not.toContain(definition.cwd);
+    expect(prompt).not.toContain(definition.executable);
+    expect(prompt).not.toContain(definition.inheritedEnvNames[0]);
+    expect(logs).toHaveBeenCalledTimes(callsBeforeHelp.logs);
+    expect(start).toHaveBeenCalledTimes(callsBeforeHelp.start);
 
     await act(async () => {
       host?.querySelector<HTMLButtonElement>('[data-testid="local-app-start"]')?.click();
