@@ -323,10 +323,11 @@ test.describe("Apps workspace", () => {
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
     ))).toEqual(["definition-alpha"]);
-    await page.waitForTimeout(750);
+    await alphaEntry.click();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
-    ))).toEqual(["definition-alpha", "definition-beta"]);
+    ))).toEqual(["definition-alpha", "definition-beta", "definition-alpha"]);
+    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
   });
 
   test("does not expose a managed local binding in another organization", async ({

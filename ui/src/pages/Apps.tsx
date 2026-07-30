@@ -270,13 +270,12 @@ function LocalRuntimePane({
       pendingOpenIntent === 0
       || !localApps?.supported
       || !runtimeQuery.isSuccess
+      || runtime?.status !== "stopped"
     ) {
       return;
     }
     setPendingOpenIntent(0);
-    if (runtime?.status === "stopped") {
-      runtimeMutation.mutate();
-    }
+    runtimeMutation.mutate();
   }, [
     localApps?.supported,
     pendingOpenIntent,

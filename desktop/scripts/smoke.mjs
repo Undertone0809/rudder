@@ -5383,23 +5383,35 @@ async function runAppBuilderScenario(mode) {
     await browserPage.goto(new URL(target.openPath, target.origin).href);
     await browserPage.getByText(uniqueEmail).waitFor({ timeout: 30_000 });
 
-    await run.page.getByRole("button", { name: "Stop App" }).click();
-    await run.page.getByRole("button", { name: "Start App" }).waitFor({ timeout: 30_000 });
-    await run.page.getByRole("button", { name: "Start App" }).click();
-    await run.page.getByRole("button", { name: "Stop App" }).waitFor({ timeout: 360_000 });
+    const entryKey = `managed:${appRecord.id}`;
+    const appEntry = run.page.getByTestId(`apps-entry-${entryKey}`);
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    await run.page.getByRole("menuitem", { name: "Stop App" }).click();
+    await waitForSmokeCondition(
+      "stopped App to clear its attested target",
+      async () => (await run.page.evaluate(
+        (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
+        definition.id,
+      )) === null,
+      { timeoutMs: 30_000 },
+    );
+    await appEntry.click();
     target = await waitForSmokeCondition(
       "restarted App to publish its attested target",
       () => run.page.evaluate(
         (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
         definition.id,
       ),
-      { timeoutMs: 30_000 },
+      { timeoutMs: 360_000 },
     );
     const persisted = await fetch(new URL("/api/contacts", target.origin));
     assert.equal(persisted.status, 200);
     assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
 
-    await run.page.getByTestId("apps-copy-link").click();
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    await run.page.getByTestId(`apps-copy-link-${entryKey}`).click();
     await run.page.getByText("App link copied").waitFor();
     assert.equal(
       await run.electronApp.evaluate(({ clipboard }) => clipboard.readText()),
