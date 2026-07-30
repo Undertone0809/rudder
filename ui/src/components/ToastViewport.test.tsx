@@ -88,8 +88,10 @@ describe("ToastViewport", () => {
       .find((button) => button.textContent === "Download update");
     expect(action).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(onAction).toHaveBeenCalledTimes(1);

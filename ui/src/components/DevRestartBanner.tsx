@@ -1,5 +1,7 @@
 import type { ToastInput } from "@/context/ToastContext";
 import { useToast } from "@/context/ToastContext";
+import { ANNOTATION_RUNTIME_RESTART_TOAST_ID } from "@/lib/chat-annotation-runtime";
+import { readDesktopShell } from "@/lib/desktop-shell";
 import { useEffect, useRef } from "react";
 import type { DevServerHealthStatus } from "../api/health";
 
@@ -34,9 +36,13 @@ function describeReason(devServer: DevServerHealthStatus): string {
   return "Backend files changed since this server booted.";
 }
 
-function buildRestartToast(devServer: DevServerHealthStatus): ToastInput {
+function buildRestartToast(
+  devServer: DevServerHealthStatus,
+  pushToast: (input: ToastInput) => string | null,
+): ToastInput {
   const changedAt = formatRelativeTimestamp(devServer.lastChangedAt);
   const details: string[] = [];
+  const desktopShell = readDesktopShell();
 
   if (changedAt) {
     details.push(`Updated ${changedAt}.`);
@@ -57,10 +63,30 @@ function buildRestartToast(devServer: DevServerHealthStatus): ToastInput {
   }
 
   return {
+    id: ANNOTATION_RUNTIME_RESTART_TOAST_ID,
     title: "Restart required",
     body: `${describeReason(devServer)} ${details.join(" ")}`.trim(),
     tone: "warn",
-    ttlMs: 10_000,
+    persistent: true,
+    ...(desktopShell
+      ? {
+        action: {
+          label: "Restart Rudder",
+          onClick: async () => {
+            try {
+              await desktopShell.restart();
+            } catch (error) {
+              pushToast({
+                title: "Could not restart Rudder",
+                body: error instanceof Error ? error.message : "Try restarting Rudder manually.",
+                tone: "error",
+              });
+              throw error;
+            }
+          },
+        },
+      }
+      : {}),
   };
 }
 
@@ -70,32 +96,36 @@ function fingerprintRestartStatus(devServer: DevServerHealthStatus): string {
     lastChangedAt: devServer.lastChangedAt,
     changedPathCount: devServer.changedPathCount,
     changedPathsSample: devServer.changedPathsSample,
+    envFileChanged: devServer.envFileChanged,
     pendingMigrations: devServer.pendingMigrations,
     lastRestartAt: devServer.lastRestartAt,
   });
 }
 
 export function DevRestartBanner({ devServer }: { devServer?: DevServerHealthStatus }) {
-  const { pushToast } = useToast();
-  const lastToastKeyRef = useRef<string | null>(null);
+  const { dismissToast, pushToast } = useToast();
+  const toastIdRef = useRef<string | null>(null);
+  const restartKey = devServer?.enabled && devServer.restartRequired
+    ? fingerprintRestartStatus(devServer)
+    : null;
 
   useEffect(() => {
-    if (!devServer?.enabled || !devServer.restartRequired) {
-      lastToastKeyRef.current = null;
+    if (!devServer || !restartKey) {
+      dismissToast(ANNOTATION_RUNTIME_RESTART_TOAST_ID);
+      toastIdRef.current = null;
       return;
     }
 
-    const nextKey = fingerprintRestartStatus(devServer);
-    if (lastToastKeyRef.current === nextKey) {
-      return;
-    }
-    lastToastKeyRef.current = nextKey;
-
-    pushToast({
-      ...buildRestartToast(devServer),
-      dedupeKey: `dev-restart:${nextKey}`,
+    if (toastIdRef.current) dismissToast(toastIdRef.current);
+    toastIdRef.current = pushToast({
+      ...buildRestartToast(devServer, pushToast),
+      dedupeKey: `dev-restart:${restartKey}`,
     });
-  }, [devServer, pushToast]);
+    return () => {
+      dismissToast(ANNOTATION_RUNTIME_RESTART_TOAST_ID);
+      toastIdRef.current = null;
+    };
+  }, [restartKey, dismissToast, pushToast]);
 
   return null;
 }

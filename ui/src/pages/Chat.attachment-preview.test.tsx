@@ -11,6 +11,7 @@ import {
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
+import { requestChatFileAnnotation } from "@/lib/chat-file-annotation-events";
 import {
   resetChatPendingAttachmentsForTests,
   resolveChatPendingAttachmentScopeKey,
@@ -5817,6 +5818,66 @@ describe("Chat streaming controls", () => {
     expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
+  it("blocks an annotation Queue submission while the observed development runtime requires restart", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+    });
+    mockState.getQueryData.mockImplementation((queryKey: readonly unknown[]) => (
+      queryKey[0] === "health"
+        ? { devServer: { enabled: true, restartRequired: true } }
+        : undefined
+    ));
+
+    const { container } = renderChat();
+    await act(async () => {
+      requestChatFileAnnotation({
+        action: "add_to_chat",
+        annotation: {
+          id: "30000000-0000-4000-8000-000000000010",
+          selectedText: "Queue this excerpt",
+          comment: null,
+          sourceConversationId: "chat-1",
+          surface: "workspace_file",
+          sourceFilePath: "notes/example.txt",
+          sourceLibraryEntryId: null,
+          sourceRenderMode: "text",
+          sourceHash: "a".repeat(64),
+          start: 0,
+          end: 18,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [],
+        },
+        anchorRect: {
+          left: 10,
+          right: 60,
+          top: 20,
+          bottom: 40,
+          width: 50,
+          height: 20,
+        },
+        boundaryRect: null,
+      });
+      await Promise.resolve();
+    });
+    await clickEnabledButton(document.body, "Save");
+    await clickEnabledButtonByAriaLabel(container, "Queue");
+
+    expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      id: "dev-restart-required",
+      title: "Restart Rudder to send annotations",
+    }));
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+  });
+
   it("edits the original turn directly when a stale generation id is already terminal", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({
@@ -5877,6 +5938,38 @@ describe("Chat streaming controls", () => {
         inlineAnnotations: [persistedResponseAnnotation],
       }),
     );
+  });
+
+  it("blocks an annotated historical edit on stale runtime and keeps the inline draft open", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "user-message-annotated",
+        body: "Please draft a plan.",
+        chatTurnId: "turn-annotated",
+        structuredPayload: { inlineAnnotations: [persistedResponseAnnotation] },
+      })],
+    };
+    mockState.getQueryData.mockImplementation((queryKey: readonly unknown[]) => (
+      queryKey[0] === "health"
+        ? { devServer: { enabled: true, restartRequired: true } }
+        : undefined
+    ));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>(
+      "[data-testid='chat-inline-message-editor']",
+    );
+    expect(inlineEditor).not.toBeNull();
+    await clickEnabledButton(inlineEditor!, "Send");
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='chat-inline-message-editor']")).not.toBeNull();
+    expect(inlineEditor?.textContent).toContain("Please draft a plan.");
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      id: "dev-restart-required",
+      title: "Restart Rudder to send annotations",
+    }));
   });
 
   it("allows editing and retrying an annotation-only user turn", async () => {

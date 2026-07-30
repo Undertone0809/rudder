@@ -1265,9 +1265,13 @@ contracts:
       - ui/src/lib/chat-draft-storage.ts
       - ui/src/lib/chat-response-annotation-selection.ts
       - ui/src/lib/chat-response-annotations.ts
+      - ui/src/lib/chat-annotation-runtime.ts
+      - ui/src/components/DevRestartBanner.tsx
+      - ui/src/components/ToastViewport.tsx
       - ui/src/components/chat/ResponseAnnotations.tsx
       - ui/src/components/chat/SelectionAnnotationToolbar.tsx
       - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
+      - ui/src/components/side-panel/SideChatPanelView.tsx
       - ui/src/lib/chat-file-annotation-events.ts
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
@@ -1287,12 +1291,18 @@ contracts:
       - ui/src/components/chat/ResponseAnnotations.test.tsx
       - ui/src/components/chat/SelectionAnnotationToolbar.test.tsx
       - ui/src/components/chat/FileAnnotationSelectionToolbar.test.tsx
+      - ui/src/components/DevRestartBanner.test.tsx
+      - ui/src/components/ToastViewport.test.tsx
+      - ui/src/components/side-panel/SideChatPanelView.test.tsx
       - ui/src/components/MarkdownBody.test.tsx
       - ui/src/components/transcript/RunTranscriptView.test.tsx
       - ui/src/lib/chat-draft-storage.test.ts
       - ui/src/lib/chat-response-annotation-selection.test.ts
       - ui/src/lib/chat-response-annotations.test.ts
+      - ui/src/lib/chat-annotation-runtime.test.ts
+      - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/Chat.messages.test.tsx
+      - tests/e2e/chat-side-panel.spec.ts
     related_plans:
       - doc/plans/2026-07-23-chat-response-annotations.md
       - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md

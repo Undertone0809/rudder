@@ -4,6 +4,7 @@ import { approvalsApi } from "@/api/approvals";
 import { authApi } from "@/api/auth";
 import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import { ApiError } from "@/api/client";
+import type { HealthStatus } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
@@ -64,6 +65,11 @@ import {
   resolveDefaultChatAgentId,
   selectableChatAgents,
 } from "@/lib/chat-agent-selection";
+import {
+  blockStaleAnnotationSubmission,
+  resolveAnnotationDraftPersistence,
+  type AnnotationDraftPersistence,
+} from "@/lib/chat-annotation-runtime";
 import {
   chatClientCheckpointKey,
   createChatClientCheckpointDispatcher,
@@ -1241,6 +1247,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({ title: "Queue does not support new files yet", tone: "error" });
       return false;
     }
+    if (blockStaleAnnotationSubmission({
+      annotations: composerAnnotationSubmission.inlineAnnotations,
+      devServer: queryClient.getQueryData<HealthStatus>(queryKeys.health)?.devServer,
+      draftPersistence: resolveAnnotationDraftPersistence({
+        pendingFileCount: composerAnnotationSubmission.files.length,
+      }),
+      pushToast,
+    })) return false;
     await createQueuedComposerMessage({
       conversation,
       body,
@@ -1264,6 +1278,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
       inlineAnnotationsOverride?: ChatInlineAnnotationInput[];
+      annotationDraftPersistence?: AnnotationDraftPersistence;
       editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
@@ -1288,7 +1303,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       body,
       createChatResponseAnnotationState(serializedAnnotations.inlineAnnotations),
     )) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return; } const filesToUpload = [...regularFilesToUpload, ...serializedAnnotations.files]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
+      return; }
+    if (blockStaleAnnotationSubmission({
+      annotations: serializedAnnotations.inlineAnnotations,
+      devServer: queryClient.getQueryData<HealthStatus>(queryKeys.health)?.devServer,
+      draftPersistence: resolveAnnotationDraftPersistence({
+        explicit: options?.annotationDraftPersistence,
+        pendingFileCount: regularFilesToUpload.length + serializedAnnotations.files.length,
+      }),
+      pushToast,
+    })) return;
+    const filesToUpload = [...regularFilesToUpload, ...serializedAnnotations.files]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
           body,
           files: regularFilesToUpload,
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
@@ -2443,13 +2468,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); }); }, [closeComposerContextMenus]); const cancelInlineEditUserMessage = useCallback(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); }, []); const submitInlineEditUserMessage = useCallback((message: ChatMessage) => { if (!selectedConversation) return; const body = inlineEditDraft.trim();
     const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(message.structuredPayload);
     if (!body && persistedAnnotations.length === 0) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return; } setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null);
+      return; }
     void sendMessage({
       bodyOverride: body,
       filesOverride: [],
       inlineAnnotationsOverride: persistedAnnotations,
+      annotationDraftPersistence: "memory",
       conversationOverride: selectedConversation,
       editUserMessageIdOverride: message.id,
+      onUserMessageAcknowledged: () => {
+        setInlineEditUserMessageId(null);
+        setInlineEditDraft("");
+        setBranchPreview(null);
+      },
     }); }, [inlineEditDraft, pushToast, selectedConversation, sendMessage]); const handleProposalApprovalAction = (
     approvalId: string,
     action: ApprovalAction,
