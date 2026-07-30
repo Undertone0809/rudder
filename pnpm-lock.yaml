@@ -22,7 +22,7 @@ overrides:
 
 patchedDependencies:
   '@tanstack/react-virtual@3.14.8':
-    hash: els2awg2be74q35kkpmr44of3e
+    hash: m5anvdc363isentyrvncjxh3i4
     path: patches/@tanstack__react-virtual@3.14.8.patch
 
 importers:
@@ -880,7 +880,7 @@ importers:
         version: 5.95.2(react@19.2.4)
       '@tanstack/react-virtual':
         specifier: 3.14.8
-        version: 3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 3.14.8(patch_hash=m5anvdc363isentyrvncjxh3i4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -11416,7 +11416,7 @@ snapshots:
       '@tanstack/query-core': 5.95.2
       react: 19.2.4
 
-  '@tanstack/react-virtual@3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@tanstack/react-virtual@3.14.8(patch_hash=m5anvdc363isentyrvncjxh3i4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@tanstack/virtual-core': 3.17.6
       react: 19.2.4

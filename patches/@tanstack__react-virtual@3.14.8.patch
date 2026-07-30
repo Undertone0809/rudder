@@ -1,9 +1,20 @@
 diff --git a/dist/cjs/index.cjs b/dist/cjs/index.cjs
-index 16d960de53f03a5e080410dc6d8eaf53ccbcac00..e9a8cb3d8f2dff2b3661c0d7835a8687ccb715df 100644
+index 16d960de53f03a5e080410dc6d8eaf53ccbcac00..4d260a625b7e3defbd53e7f2d327ad983e45b21f 100644
 --- a/dist/cjs/index.cjs
 +++ b/dist/cjs/index.cjs
-@@ -81,13 +81,15 @@ function useVirtualizerBase({
+@@ -25,6 +25,7 @@ function useVirtualizerBase({
+   useFlushSync = true,
+   directDomUpdates = false,
+   directDomUpdatesMode = "transform",
++  directDomPrepaintRows = 0,
+   ...options
+ }) {
+   const rerender = React__namespace.useReducer((x) => x + 1, 0)[1];
+@@ -79,21 +80,41 @@ function useVirtualizerBase({
+       var _a;
+       const state = directRef.current;
        let shouldRerender = true;
++      let requiresPrepaintFlush = false;
        if (state.enabled) {
          applyDirectStyles(instance2);
 -        const range = instance2.range;
@@ -22,13 +33,66 @@ index 16d960de53f03a5e080410dc6d8eaf53ccbcac00..e9a8cb3d8f2dff2b3661c0d7835a8687
 +            endIndex: renderedEndIndex,
              isScrolling: instance2.isScrolling
            } : null;
++          const visibleRange = instance2.range;
++          const mountedIndexes = renderedItems.flatMap(
++            (item) => instance2.elementsCache.has(item.key) ? [item.index] : []
++          );
++          const mountedStartIndex = mountedIndexes[0];
++          const mountedEndIndex = mountedIndexes[mountedIndexes.length - 1];
++          const mountedBuffer = !visibleRange || mountedStartIndex === void 0 || mountedEndIndex === void 0 ? 0 : instance2.scrollDirection === "backward" ? visibleRange.startIndex - mountedStartIndex : instance2.scrollDirection === "forward" ? mountedEndIndex - visibleRange.endIndex : Math.min(
++            visibleRange.startIndex - mountedStartIndex,
++            mountedEndIndex - visibleRange.endIndex
++          );
++          const availableBuffer = !visibleRange ? 0 : instance2.scrollDirection === "backward" ? visibleRange.startIndex : instance2.scrollDirection === "forward" ? instance2.options.count - 1 - visibleRange.endIndex : 0;
++          const requiredBuffer = Math.min(
++            directDomPrepaintRows,
++            Math.max(0, availableBuffer)
++          );
++          const hasMountedVisibleRange = !!visibleRange && mountedStartIndex !== void 0 && mountedEndIndex !== void 0 && mountedStartIndex <= visibleRange.startIndex && mountedEndIndex >= visibleRange.endIndex;
++          requiresPrepaintFlush = directDomPrepaintRows > 0 && instance2.scrollDirection !== null && (!hasMountedVisibleRange || mountedBuffer < requiredBuffer);
          }
+       }
+       if (shouldRerender) {
+-        if (useFlushSync && sync) {
++        if ((useFlushSync || requiresPrepaintFlush) && sync) {
+           reactDom.flushSync(rerender);
+         } else {
+           rerender();
+diff --git a/dist/esm/index.d.ts b/dist/esm/index.d.ts
+index 0f22bdb642584c32322367dd2312ca91d97ec3b6..70635175da2dcffa4f8bf7addd44589ac360564b 100644
+--- a/dist/esm/index.d.ts
++++ b/dist/esm/index.d.ts
+@@ -44,6 +44,13 @@ export type ReactVirtualizerOptions<TScrollElement extends Element | Window, TIt
+      *   `position: absolute`.
+      */
+     directDomUpdatesMode?: 'position' | 'transform';
++    /**
++     * Minimum mounted row buffer to retain beyond the visible range while
++     * direct DOM updates are active. If concurrent React rendering falls
++     * behind this runway during a scroll, the next range commit is flushed
++     * synchronously before the viewport can expose an unmounted row.
++     */
++    directDomPrepaintRows?: number;
+ };
+ export declare function useVirtualizer<TScrollElement extends Element, TItemElement extends Element>(options: PartialKeys<ReactVirtualizerOptions<TScrollElement, TItemElement>, 'observeElementRect' | 'observeElementOffset' | 'scrollToFn'>): ReactVirtualizer<TScrollElement, TItemElement>;
+ export declare function useWindowVirtualizer<TItemElement extends Element>(options: PartialKeys<ReactVirtualizerOptions<Window, TItemElement>, 'getScrollElement' | 'observeElementRect' | 'observeElementOffset' | 'scrollToFn'>): ReactVirtualizer<Window, TItemElement>;
 diff --git a/dist/esm/index.js b/dist/esm/index.js
-index 6e38185b0340b49e538f9ac3fa2d2db14f740999..e5eba9d5d113b124a0ccb7256fe033de1964a625 100644
+index 6e38185b0340b49e538f9ac3fa2d2db14f740999..4d8d10ed26238a0660e44acccb7d453520dd7331 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
-@@ -63,13 +63,15 @@ function useVirtualizerBase({
+@@ -7,6 +7,7 @@ function useVirtualizerBase({
+   useFlushSync = true,
+   directDomUpdates = false,
+   directDomUpdatesMode = "transform",
++  directDomPrepaintRows = 0,
+   ...options
+ }) {
+   const rerender = React.useReducer((x) => x + 1, 0)[1];
+@@ -61,21 +62,41 @@ function useVirtualizerBase({
+       var _a;
+       const state = directRef.current;
        let shouldRerender = true;
++      let requiresPrepaintFlush = false;
        if (state.enabled) {
          applyDirectStyles(instance2);
 -        const range = instance2.range;
@@ -47,4 +111,28 @@ index 6e38185b0340b49e538f9ac3fa2d2db14f740999..e5eba9d5d113b124a0ccb7256fe033de
 +            endIndex: renderedEndIndex,
              isScrolling: instance2.isScrolling
            } : null;
++          const visibleRange = instance2.range;
++          const mountedIndexes = renderedItems.flatMap(
++            (item) => instance2.elementsCache.has(item.key) ? [item.index] : []
++          );
++          const mountedStartIndex = mountedIndexes[0];
++          const mountedEndIndex = mountedIndexes[mountedIndexes.length - 1];
++          const mountedBuffer = !visibleRange || mountedStartIndex === void 0 || mountedEndIndex === void 0 ? 0 : instance2.scrollDirection === "backward" ? visibleRange.startIndex - mountedStartIndex : instance2.scrollDirection === "forward" ? mountedEndIndex - visibleRange.endIndex : Math.min(
++            visibleRange.startIndex - mountedStartIndex,
++            mountedEndIndex - visibleRange.endIndex
++          );
++          const availableBuffer = !visibleRange ? 0 : instance2.scrollDirection === "backward" ? visibleRange.startIndex : instance2.scrollDirection === "forward" ? instance2.options.count - 1 - visibleRange.endIndex : 0;
++          const requiredBuffer = Math.min(
++            directDomPrepaintRows,
++            Math.max(0, availableBuffer)
++          );
++          const hasMountedVisibleRange = !!visibleRange && mountedStartIndex !== void 0 && mountedEndIndex !== void 0 && mountedStartIndex <= visibleRange.startIndex && mountedEndIndex >= visibleRange.endIndex;
++          requiresPrepaintFlush = directDomPrepaintRows > 0 && instance2.scrollDirection !== null && (!hasMountedVisibleRange || mountedBuffer < requiredBuffer);
          }
+       }
+       if (shouldRerender) {
+-        if (useFlushSync && sync) {
++        if ((useFlushSync || requiresPrepaintFlush) && sync) {
+           flushSync(rerender);
+         } else {
+           rerender();

@@ -352,9 +352,10 @@ function InstantCustomGroupDisclosure({
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
-// Keep roughly one additional sidebar viewport mounted ahead of the current
-// scroll direction. VirtualizedActivityTimeline retains half a viewport behind
-// the current direction and flips the larger buffer when direction changes.
+// Keep at least one continuous sidebar viewport mounted ahead of the current
+// scroll direction after nested group measurement and range-chunk boundaries.
+// The larger raw row runway prevents an async React range commit from becoming
+// visible at the viewport edge while the direct DOM position updates continue.
 const MESSENGER_SCROLL_OVERSCAN_ROWS = 24;
 const MESSENGER_DRAG_OVERSCAN_ROWS = 32;
 const MESSENGER_DIRECTORY_CHUNK_ROWS = 8;
