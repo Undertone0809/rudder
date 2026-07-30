@@ -25,6 +25,7 @@ import {
   readDesktopShell,
   type DesktopLocalAppDefinition,
   type DesktopLocalAppDefinitionDraft,
+  type DesktopLocalAppRuntimeView,
   type DesktopPreparedLocalAppDefinition,
 } from "@/lib/desktop-shell";
 import {
@@ -107,12 +108,25 @@ function AppRowActions({
   });
   const stopMutation = useMutation({
     mutationFn: () => localApps!.stop(definition!.id),
+    onMutate: () => {
+      if (!definition) return;
+      queryClient.setQueryData<DesktopLocalAppRuntimeView | undefined>(
+        queryKeys.localApps.status(definition.localBindingId),
+        (current) => current ? { ...current, status: "stopping" } : current,
+      );
+    },
     onSuccess: (next) => {
       if (!definition) return;
       queryClient.setQueryData(
         queryKeys.localApps.status(definition.localBindingId),
         next,
       );
+    },
+    onError: () => {
+      if (!definition) return;
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.localApps.status(definition.localBindingId),
+      });
     },
   });
   const dataMutation = useMutation({
