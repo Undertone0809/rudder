@@ -26,7 +26,10 @@ async function rewriteInternalPackageManifest(packageDir, { includeTypes = true 
 
   const raw = await fs.readFile(manifestPath, "utf8");
   const manifest = JSON.parse(raw);
-  if (!manifest.name?.startsWith?.("@rudderhq/")) return;
+  if (
+    !manifest.name?.startsWith?.("@rudderhq/")
+    && !manifest.name?.startsWith?.("@rudder/")
+  ) return;
   if (!manifest.publishConfig) return;
 
   const nextManifest = {
@@ -214,7 +217,10 @@ export default async function afterPack(context) {
     ? path.join(context.appOutDir, "Rudder.app", "Contents", "Resources")
     : path.join(context.appOutDir, "resources");
   const appNodeModulesDir = path.join(resourcesDir, "app", "node_modules");
-  const rudderPackagesDir = path.join(appNodeModulesDir, "@rudder");
+  const appRudderPackagesDirs = [
+    path.join(appNodeModulesDir, "@rudderhq"),
+    path.join(appNodeModulesDir, "@rudder"),
+  ];
   const packagedServerRudderPackagesDirs = [
     path.join(resourcesDir, "server-package", "node_modules", "@rudderhq"),
     path.join(resourcesDir, "server-package", "node_modules", "@rudder"),
@@ -237,12 +243,13 @@ export default async function afterPack(context) {
     );
   }
 
-  if (!(await exists(rudderPackagesDir))) return;
-
-  const entries = await fs.readdir(rudderPackagesDir, { withFileTypes: true });
-  await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-      .map((entry) => rewriteInternalPackageManifest(path.join(rudderPackagesDir, entry.name))),
-  );
+  for (const appRudderPackagesDir of appRudderPackagesDirs) {
+    if (!(await exists(appRudderPackagesDir))) continue;
+    const entries = await fs.readdir(appRudderPackagesDir, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+        .map((entry) => rewriteInternalPackageManifest(path.join(appRudderPackagesDir, entry.name))),
+    );
+  }
 }
