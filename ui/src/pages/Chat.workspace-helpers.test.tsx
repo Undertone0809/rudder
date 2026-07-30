@@ -260,19 +260,8 @@ describe("canQueueComposerDraft", () => {
       activeReply: true,
       body: "",
       annotationCount: 1,
-      pendingRegularFileCount: 0,
       newConversationSendInFlight: false,
     })).toBe(true);
-  });
-
-  it("keeps unsupported regular Composer files out of Queue", () => {
-    expect(canQueueComposerDraft({
-      activeReply: true,
-      body: "",
-      annotationCount: 1,
-      pendingRegularFileCount: 1,
-      newConversationSendInFlight: false,
-    })).toBe(false);
   });
 });
 

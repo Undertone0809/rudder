@@ -44,7 +44,7 @@ import {
   MESSENGER_FORK_GROUP_DEFAULT_ICON,
   type MessengerSavedViewTarget,
 } from "@rudderhq/shared";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -854,6 +854,91 @@ describe("messengerService and issue follows", () => {
       .from(chatMessages)
       .where(and(eq(chatMessages.orgId, fixture.orgId), eq(chatMessages.role, "user"))))
       .toHaveLength(1);
+  });
+
+  it("materializes ordinary and annotation-owned queued attachments for Queue and Steer delivery", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "initial fixture" });
+    await chatSvc.cancelQueuedMessage({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      itemId: fixture.queued.id,
+      version: fixture.queued.version,
+    });
+    const ordinaryAttachment = {
+      provider: "local_disk",
+      objectKey: `chat-queue/${fixture.conversationId}/${randomUUID()}`,
+      contentType: "text/plain",
+      byteSize: 14,
+      sha256: "e".repeat(64),
+      originalFilename: "queued-context.txt",
+      createdByAgentId: null,
+      createdByUserId: "messenger-test-user",
+    };
+    const annotationAttachment = {
+      ...ordinaryAttachment,
+      objectKey: `chat-queue/${fixture.conversationId}/${randomUUID()}`,
+      sha256: "d".repeat(64),
+      originalFilename: "annotation-evidence.txt",
+    };
+    const created = await (chatSvc as any).createQueuedMessageWithStagedAttachments({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      clientMutationId: randomUUID(),
+      payload: {
+        body: "Use the attached context",
+        inlineAnnotations: [fixture.annotation],
+      },
+      requestActor: boardQueueRequestActor(fixture.orgId),
+      stagedAttachments: [ordinaryAttachment, annotationAttachment],
+      attachmentFileIndexesByAnnotationId: new Map([[fixture.annotation.id, [1]]]),
+    });
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "ordinary-attachment-worker",
+      leaseMs: 30_000,
+    });
+    const messageAttachments = await db
+      .select()
+      .from(chatAttachments)
+      .where(and(
+        eq(chatAttachments.orgId, fixture.orgId),
+        eq(chatAttachments.messageId, claim!.userMessageId),
+      ));
+    const message = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, claim!.userMessageId))
+      .then((rows) => rows[0]!);
+    const materializedAssets = await db
+      .select()
+      .from(assets)
+      .where(inArray(assets.id, messageAttachments.map((attachment) => attachment.assetId)));
+
+    expect(created.item.payload).not.toHaveProperty("__rudderQueueAnnotationAssets");
+    expect(claim?.item.id).toBe(created.item.id);
+    expect(messageAttachments).toHaveLength(2);
+    expect(materializedAssets).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        originalFilename: "queued-context.txt",
+        objectKey: ordinaryAttachment.objectKey,
+      }),
+      expect.objectContaining({
+        originalFilename: "annotation-evidence.txt",
+        objectKey: annotationAttachment.objectKey,
+      }),
+    ]));
+    const [canonicalAnnotation] = chatInlineAnnotationsFromStructuredPayload(message.structuredPayload);
+    expect(canonicalAnnotation).toMatchObject({
+      id: fixture.annotation.id,
+      attachmentIds: [expect.any(String)],
+    });
+    expect(canonicalAnnotation!.attachmentIds[0]).toBe(
+      messageAttachments.find(
+        (attachment) => attachment.assetId === materializedAssets.find(
+          (asset) => asset.originalFilename === "annotation-evidence.txt",
+        )?.id,
+      )?.id,
+    );
   });
 
   it("replaces and cancels queued annotation files with explicit orphan cleanup", async () => {

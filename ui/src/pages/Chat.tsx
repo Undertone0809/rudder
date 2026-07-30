@@ -1247,13 +1247,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         inlineAnnotations: options.inlineAnnotations,
         files: options.annotationFiles ?? [],
       }
-      : serializeChatResponseAnnotations(responseAnnotationState);
+      : serializeChatResponseAnnotations(responseAnnotationState, {
+        fileIndexOffset: regularFiles.length,
+      });
     if (!body && composerAnnotationSubmission.inlineAnnotations.length === 0) { pushToast({ title: "Message cannot be empty", tone: "error" });
       return false; }
-    if (regularFiles.length > 0) {
-      pushToast({ title: "Queue does not support new files yet", tone: "error" });
-      return false;
-    }
     if (blockStaleAnnotationSubmission({
       annotations: composerAnnotationSubmission.inlineAnnotations,
       devServer: queryClient.getQueryData<HealthStatus>(queryKeys.health)?.devServer,
@@ -1266,7 +1264,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       conversation,
       body,
       inlineAnnotations: composerAnnotationSubmission.inlineAnnotations,
-      files: composerAnnotationSubmission.files,
+      files: [...regularFiles, ...composerAnnotationSubmission.files],
       orgId: selectedOrganizationId,
       projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
       serverActiveGenerationId,
@@ -2680,7 +2678,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeReply: selectedConversationHasActiveReply,
     body: draft,
     annotationCount: responseAnnotationState.annotations.length,
-    pendingRegularFileCount: pendingFiles.length,
     newConversationSendInFlight,
   });
   const activeStreamStopState = activeStream?.state === "stopping" || activeStream?.state === "stopped";

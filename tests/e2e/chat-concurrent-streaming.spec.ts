@@ -152,6 +152,19 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   const chatId = currentChatId(page.url());
 
   await composer.fill("This should be queued, not sent concurrently");
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: "queued-context.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Queue and Steer must preserve this attachment."),
+  });
+  await expect(page.getByTestId("chat-pending-attachment")).toContainText("queued-context.txt");
+  await expect(page.getByRole("button", { name: "Queue", exact: true })).toBeVisible();
+  if (process.env.RUDDER_QUEUE_ATTACHMENT_SCREENSHOT) {
+    await page.screenshot({
+      path: process.env.RUDDER_QUEUE_ATTACHMENT_SCREENSHOT,
+      animations: "disabled",
+    });
+  }
   await composer.press("Enter");
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("Queued");
@@ -162,6 +175,7 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   const queue = await queueRes.json();
   expect(queue.items).toHaveLength(1);
   expect(queue.items[0].payload.body).toBe("This should be queued, not sent concurrently");
+  expect(JSON.stringify(queue)).not.toMatch(/queued-context\.txt|assetId|objectKey/i);
 
   await page.getByTestId("chat-running-queue-item").first().getByRole("button", { name: "Edit queued message" }).click();
   await page.getByTestId("chat-running-queue-edit").fill("This Queue message was edited in place");
@@ -185,9 +199,18 @@ test("adds a composer message to Queue while the current chat is streaming", asy
     return snapshot.items[0]?.status ?? "delivered";
   }, { timeout: 30_000 }).toMatch(/continuation_pending|running_next|delivered/);
 
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This Queue message was edited in place" })).toBeVisible({
+  const steeredUserMessage = page.getByTestId("chat-user-message-bubble")
+    .filter({ hasText: "This Queue message was edited in place" });
+  await expect(steeredUserMessage).toBeVisible({
     timeout: 30_000,
   });
+  await expect(steeredUserMessage).toContainText("queued-context.txt");
+  if (process.env.RUDDER_STEER_ATTACHMENT_SCREENSHOT) {
+    await page.screenshot({
+      path: process.env.RUDDER_STEER_ATTACHMENT_SCREENSHOT,
+      animations: "disabled",
+    });
+  }
   await expect(page.getByTestId("chat-running-queue")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toHaveCount(1, {
     timeout: 30_000,

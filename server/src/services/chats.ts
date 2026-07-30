@@ -1922,6 +1922,7 @@ export function chatService(db: Db) {
       const currentPrivateState = queuedAnnotationAssetState(current.payload);
       const currentAttachmentFileIndexesByAnnotationId = new Map<string, number[]>();
       for (const attachment of currentPrivateState?.attachments ?? []) {
+        if (attachment.annotationId === null) continue;
         const indexes = currentAttachmentFileIndexesByAnnotationId.get(attachment.annotationId);
         if (indexes) indexes.push(attachment.fileIndex);
         else currentAttachmentFileIndexesByAnnotationId.set(attachment.annotationId, [attachment.fileIndex]);

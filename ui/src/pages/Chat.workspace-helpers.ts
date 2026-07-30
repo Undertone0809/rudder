@@ -363,13 +363,11 @@ export function canQueueComposerDraft(input: {
   activeReply: boolean;
   body: string;
   annotationCount: number;
-  pendingRegularFileCount: number;
   newConversationSendInFlight: boolean;
 }) {
   return Boolean(
     input.activeReply
     && !input.newConversationSendInFlight
-    && input.pendingRegularFileCount === 0
     && (input.body.trim().length > 0 || input.annotationCount > 0),
   );
 }

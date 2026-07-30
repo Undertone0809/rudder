@@ -40,7 +40,7 @@ type QueuedAnnotationAssetState = {
   fingerprint: string;
   attachments: Array<{
     assetId: string;
-    annotationId: string;
+    annotationId: string | null;
     fileIndex: number;
   }>;
 };
@@ -97,7 +97,7 @@ export function queuedAnnotationAssetState(
     const ref = entry as Record<string, unknown>;
     if (
       typeof ref.assetId !== "string"
-      || typeof ref.annotationId !== "string"
+      || (ref.annotationId !== null && typeof ref.annotationId !== "string")
       || typeof ref.fileIndex !== "number"
       || !Number.isInteger(ref.fileIndex)
       || ref.fileIndex < 0
@@ -117,21 +117,22 @@ function fileAnnotationBindings(
   stagedAttachments: readonly StagedQueuedAnnotationAttachment[],
   attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>,
 ) {
-  const annotationIdByFileIndex = new Map<number, string>();
+  const annotationIdByFileIndex = new Map<number, string | null>(
+    stagedAttachments.map((_, fileIndex) => [fileIndex, null]),
+  );
+  const claimedFileIndexes = new Set<number>();
   for (const [annotationId, indexes] of attachmentFileIndexesByAnnotationId) {
     for (const fileIndex of indexes) {
       if (
         fileIndex < 0
         || fileIndex >= stagedAttachments.length
-        || annotationIdByFileIndex.has(fileIndex)
+        || claimedFileIndexes.has(fileIndex)
       ) {
         throw unprocessable("Each queued annotation file must have one valid annotation owner");
       }
       annotationIdByFileIndex.set(fileIndex, annotationId);
+      claimedFileIndexes.add(fileIndex);
     }
-  }
-  if (annotationIdByFileIndex.size !== stagedAttachments.length) {
-    throw unprocessable("Every queued file must belong to exactly one annotation");
   }
   return annotationIdByFileIndex;
 }
@@ -303,6 +304,7 @@ export async function materializeQueuedUserMessage(
   }
   const attachmentFileIndexesByAnnotationId = new Map<string, number[]>();
   for (const ref of assetRefs) {
+    if (ref.annotationId === null) continue;
     const indexes = attachmentFileIndexesByAnnotationId.get(ref.annotationId);
     if (indexes) indexes.push(ref.fileIndex);
     else attachmentFileIndexesByAnnotationId.set(ref.annotationId, [ref.fileIndex]);
@@ -339,6 +341,10 @@ export async function materializeQueuedUserMessage(
   if (!message) throw new Error("Failed to persist queued user message");
 
   const attachmentIdsByAnnotationId = new Map<string, string[]>();
+  const materializedAttachments: Array<{
+    attachmentId: string;
+    annotationId: string | null;
+  }> = [];
   for (const ref of assetRefs) {
     const attachmentId = randomUUID();
     await tx.insert(chatAttachments).values({
@@ -350,6 +356,8 @@ export async function materializeQueuedUserMessage(
       createdAt: input.now,
       updatedAt: input.now,
     });
+    materializedAttachments.push({ attachmentId, annotationId: ref.annotationId });
+    if (ref.annotationId === null) continue;
     const ids = attachmentIdsByAnnotationId.get(ref.annotationId);
     if (ids) ids.push(attachmentId);
     else attachmentIdsByAnnotationId.set(ref.annotationId, [attachmentId]);
@@ -430,27 +438,25 @@ export async function materializeQueuedUserMessage(
       idempotencyKey: `chat-queue-message:${message.id}`,
     })
     .onConflictDoNothing();
-  for (const [annotationId, attachmentIds] of attachmentIdsByAnnotationId) {
-    for (const attachmentId of attachmentIds) {
-      await tx
-        .insert(activityLog)
-        .values({
-          orgId: input.orgId,
-          actorType: actor.actorType,
-          actorId: actor.actorId,
-          agentId: actor.agentId ?? null,
-          action: "chat.attachment_added",
-          entityType: "chat",
-          entityId: input.conversationId,
-          details: {
-            messageId: message.id,
-            attachmentId,
-            annotationId,
-          },
-          idempotencyKey: `chat-queue-attachment:${attachmentId}`,
-        })
-        .onConflictDoNothing();
-    }
+  for (const attachment of materializedAttachments) {
+    await tx
+      .insert(activityLog)
+      .values({
+        orgId: input.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId ?? null,
+        action: "chat.attachment_added",
+        entityType: "chat",
+        entityId: input.conversationId,
+        details: {
+          messageId: message.id,
+          attachmentId: attachment.attachmentId,
+          ...(attachment.annotationId ? { annotationId: attachment.annotationId } : {}),
+        },
+        idempotencyKey: `chat-queue-attachment:${attachment.attachmentId}`,
+      })
+      .onConflictDoNothing();
   }
 
   return {
