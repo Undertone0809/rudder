@@ -90,6 +90,7 @@ describe("Desktop Offline Grant store", () => {
 
   it("does not create or persist an Offline Grant on Linux basic_text", () => {
     const statePath = temporaryStatePath();
+    fs.writeFileSync(statePath, "stale encrypted state");
     const store = createDesktopOfflineGrantStore({
       safeStorage: fakeSafeStorage("basic_text"),
       platform: "linux",
