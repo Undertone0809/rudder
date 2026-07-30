@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  copyLegacyMessengerLocalPreferences,
   getHiddenIssueThreadsStorageKey,
   getMessengerDefaultThreadOrderStorageKey,
   getMessengerThreadGroupOrderStorageKey,
@@ -85,6 +86,49 @@ describe("messenger preferences", () => {
 
     values.order = JSON.stringify(["chat:3", 4, null]);
     expect(readStringList("order")).toEqual(["chat:3"]);
+  });
+
+  it("copies legacy account-scoped ordering without overwriting account-era preferences", () => {
+    values["rudder.projectOrder:org-1:local-board"] = JSON.stringify(["project-2", "project-1"]);
+    values["rudder.messengerProjectGroupOrder:org-1:anonymous"] = JSON.stringify(["project:2"]);
+    values["rudder.messengerThreadGroupOrder:kind:org-1:local-board"] = JSON.stringify(["kind:issue"]);
+    values["rudder.messengerDefaultThreadOrder:org-1:local-board"] = JSON.stringify(["chat:old"]);
+    values["rudder.messengerDefaultThreadOrder:org-1:account-1"] = JSON.stringify(["chat:new"]);
+    values["rudder.messengerHiddenIssueThreads:org-1:anonymous"] = JSON.stringify({
+      "issue:1": "2026-07-29T00:00:00.000Z",
+    });
+
+    const copied = copyLegacyMessengerLocalPreferences("org-1", "account-1");
+
+    expect(copied).toContain("rudder.projectOrder:org-1:account-1");
+    expect(values["rudder.projectOrder:org-1:account-1"]).toBe(
+      values["rudder.projectOrder:org-1:local-board"],
+    );
+    expect(values["rudder.messengerProjectGroupOrder:org-1:account-1"]).toBe(
+      values["rudder.messengerProjectGroupOrder:org-1:anonymous"],
+    );
+    expect(values["rudder.messengerThreadGroupOrder:kind:org-1:account-1"]).toBe(
+      values["rudder.messengerThreadGroupOrder:kind:org-1:local-board"],
+    );
+    expect(values["rudder.messengerDefaultThreadOrder:org-1:account-1"]).toBe(
+      JSON.stringify(["chat:new"]),
+    );
+    expect(values["rudder.messengerHiddenIssueThreads:org-1:account-1"]).toBe(
+      values["rudder.messengerHiddenIssueThreads:org-1:anonymous"],
+    );
+
+    expect(copyLegacyMessengerLocalPreferences("org-1", "account-1")).toEqual([]);
+  });
+
+  it("ignores malformed legacy preference payloads", () => {
+    values["rudder.projectOrder:org-1:local-board"] = "{";
+    values["rudder.messengerHiddenIssueThreads:org-1:anonymous"] = JSON.stringify({
+      "issue:1": 42,
+    });
+
+    expect(copyLegacyMessengerLocalPreferences("org-1", "account-1")).toEqual([]);
+    expect(values["rudder.projectOrder:org-1:account-1"]).toBeUndefined();
+    expect(values["rudder.messengerHiddenIssueThreads:org-1:account-1"]).toBeUndefined();
   });
 
   it("keeps collapsed groups scoped by organization and grouping rule", () => {
