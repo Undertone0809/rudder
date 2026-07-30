@@ -846,9 +846,11 @@ copying context into the composer or losing the relationship to its source.
    marker within the visible surface and clear of body text. Deleting an item
    removes its highlight and renumbers the remaining markers.
 5. The composer renders an `N annotations` chip. Expanding it shows an ordered
-   list of Selected text, an optional operator comment without a redundant
-   `User comment` label, and annotation-owned files in a portal above the
-   composer, without increasing composer height. Details
+   list whose entries separate the selected source into a labeled
+   `Selected excerpt` quote block and, when present, the operator-authored text
+   into a labeled `Your comment` section. Annotation-owned files remain
+   associated with their entry in a portal above the composer, without
+   increasing composer height. Details
    appear only after explicit chip activation; creating or editing an
    annotation does not automatically reveal the complete list. Draft rows
    expose edit and delete actions. Collapsing the details keeps the draft
@@ -877,7 +879,17 @@ copying context into the composer or losing the relationship to its source.
    It reads legacy string-only drafts as body-only drafts. Draft annotation
    metadata survives reload; pending local files follow the governed pending
    attachment lifecycle and never serialize file bytes into browser storage.
-9. On admission, the server validates organization and conversation access,
+9. Before an annotation-bearing Send, Queue, Side Chat first Send, or
+   historical-message edit, the client consults the latest observed
+   development-runtime health. When that health reports that the development
+   server requires restart, Rudder blocks the mutation before issuing its API
+   request, preserves the complete draft, and surfaces one stable
+   restart-required warning. A restart action may be offered only when the
+   draft is durably recoverable; an in-memory-only Side Chat or edit draft
+   instead tells the operator to copy unsaved text before restarting. A
+   subsequently observed fresh runtime state dismisses the stale-runtime
+   warning and allows the mutation.
+10. On admission, the server validates organization and conversation access,
    the source message and Side Chat lineage, eligible surface and terminal
    status, source hash, range, surrounding context, generation sequence
    provenance, annotation limits, and every file reference. A source or file
@@ -887,39 +899,40 @@ copying context into the composer or losing the relationship to its source.
    saved hash/range; protected Library paths are rejected. Desktop-local file
    snapshots require canonical absolute-path provenance and valid bounded
    metadata, but the server does not gain permission to read that local path.
-10. Multipart input refers to newly uploaded annotation files by bounded request
+11. Multipart input refers to newly uploaded annotation files by bounded request
     indexes. Queue uses private staged asset references, never client-supplied
     persisted staging ids. On message materialization Rudder creates
     organization- and message-scoped attachment rows, replaces temporary
     references with canonical attachment ids, and commits the message,
     attachment ownership, annotation payload, Queue/Steer linkage, and activity
     evidence atomically. Failed admission cleans up unowned staged uploads.
-11. A successful send clears the matching draft only after server
+12. A successful send clears the matching draft only after server
     acknowledgement. A network, upload, runtime-admission, or server validation
     failure retains body, ordinary attachments, annotations, comments, and
     annotation files for correction or retry.
-12. The assistant prompt receives annotations as an ordered, bounded
+13. The assistant prompt receives annotations as an ordered, bounded
     user-authored quote section. Selected text is explicitly untrusted quoted
     context, not a system/developer instruction. Operator comments retain their
     user origin, and annotation attachment metadata preserves which files
     belong to which quote. Process text remains Run evidence under
     `RUN.RESULT.001`; prompt projection does not turn it into assistant final
     body.
-13. After Send, the user message renders a read-only count chip above the
-   message. Its card shows Selected text, an optional operator comment without a
-   redundant `User comment` label, and annotation-owned files without
-   edit/delete controls or duplicate generic attachment tiles. Editing that
-   historical user message creates a new turn variant carrying the annotation
-   semantic snapshots unchanged while remapping attachment ids to the new user
-   message; retry, queued delivery, and Steer reuse the same evidence.
-14. Expanding historical annotations temporarily restores their numbered source
+14. After Send, the user message renders a read-only count chip above the
+   message. Each card uses the same distinct `Selected excerpt` quote block and
+   optional `Your comment` section as the draft list, and shows
+   annotation-owned files without edit/delete controls or duplicate generic
+   attachment tiles. Editing that historical user message creates a new turn
+   variant carrying the annotation semantic snapshots unchanged while
+   remapping attachment ids to the new user message; retry, queued delivery,
+   and Steer reuse the same evidence.
+15. Expanding historical annotations temporarily restores their numbered source
     markers. Selecting a card item reveals eligible collapsed Process details,
     scrolls to the source, and briefly highlights it. If the immutable snapshot
     remains readable but its source cannot be loaded or verified, the card says
     it cannot be located and does not fabricate a marker. Selecting a
     workspace- or local-file annotation opens or focuses its matching Side
     Panel file target before attempting source location.
-15. Fork copies annotation snapshots with copied user messages, remaps source
+16. Fork copies annotation snapshots with copied user messages, remaps source
     message ids to the child copies, and creates child-owned annotation
     attachment rows. Side Chat validates the owning completed assistant anchor
     and uses the exact selected snapshot in its preview and first user message.
