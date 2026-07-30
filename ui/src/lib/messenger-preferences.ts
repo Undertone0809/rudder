@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 export type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention" | "custom";
 export type MessengerThreadDensity = "comfortable" | "compact";
 
@@ -204,6 +206,21 @@ export function copyLegacyMessengerLocalPreferences(
     }
   }
   return copied;
+}
+
+export function useRecoveredMessengerPreferenceUserId(
+  orgId: string | null | undefined,
+  session: {
+    user?: { id?: string | null } | null;
+    session?: { userId?: string | null } | null;
+  } | null | undefined,
+) {
+  const userId = session?.user?.id ?? session?.session?.userId ?? null;
+  useEffect(() => {
+    if (!orgId || !userId) return;
+    copyLegacyMessengerLocalPreferences(orgId, userId);
+  }, [orgId, userId]);
+  return userId;
 }
 
 export function getMessengerProjectGroupOrderStorageKey(

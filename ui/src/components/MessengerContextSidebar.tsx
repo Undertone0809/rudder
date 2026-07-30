@@ -52,9 +52,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTimeline";
 import { useChatGenerationActions, useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
-import {
-  useMainWorkbench,
-} from "@/context/MainWorkbenchContext";
+import { useMainWorkbench } from "@/context/MainWorkbenchContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
 import { useSidebar } from "@/context/SidebarContext";
@@ -65,7 +63,6 @@ import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
-  copyLegacyMessengerLocalPreferences,
   DEFAULT_THREAD_ORGANIZATION_RULE,
   getHiddenIssueThreadsStorageKey,
   getMessengerDefaultThreadOrderStorageKey,
@@ -79,6 +76,7 @@ import {
   readStringList,
   readThreadDensity,
   readThreadOrganizationRule,
+  useRecoveredMessengerPreferenceUserId,
   writeCollapsedThreadGroups,
   writeHiddenIssueThreadWatermarks,
   writeSplitIssueNotifications,
@@ -858,11 +856,7 @@ export function MessengerContextSidebar() {
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
-  const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
-  useEffect(() => {
-    if (!model.selectedOrganizationId || !currentUserId) return;
-    copyLegacyMessengerLocalPreferences(model.selectedOrganizationId, currentUserId);
-  }, [currentUserId, model.selectedOrganizationId]);
+  const currentUserId = useRecoveredMessengerPreferenceUserId(model.selectedOrganizationId, sessionQuery.data);
   const projectOrderStorageKey = useMemo(() => {
     if (!model.selectedOrganizationId) return null;
     return getProjectOrderStorageKey(model.selectedOrganizationId, currentUserId);
