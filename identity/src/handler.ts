@@ -17,7 +17,9 @@ import {
 } from "@rudderhq/identity-db";
 import { toNodeHandler } from "better-auth/node";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import path from "node:path";
 import { identityClientScript } from "./client-script.js";
 import {
   accountPage,
@@ -41,7 +43,7 @@ function sendHtml(res: ServerResponse, value: string, options?: { sensitive?: bo
     res.setHeader("cache-control", "no-store");
     res.setHeader("pragma", "no-cache");
   }
-  res.setHeader("content-security-policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+  res.setHeader("content-security-policy", "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
   res.setHeader("content-type", "text/html; charset=utf-8");
   res.setHeader("referrer-policy", "no-referrer");
   res.setHeader("x-content-type-options", "nosniff");
@@ -182,6 +184,22 @@ export async function identityHandler(
     res.setHeader("content-type", "text/javascript; charset=utf-8");
     res.setHeader("x-content-type-options", "nosniff");
     res.end(identityClientScript);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/rudder-logo.png") {
+    res.statusCode = 200;
+    res.setHeader("cache-control", "public, max-age=86400, immutable");
+    res.setHeader("content-type", "image/png");
+    res.setHeader("x-content-type-options", "nosniff");
+    res.end(await readFile(path.join(process.cwd(), "public", "rudder-logo.png")));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/favicon.ico") {
+    res.statusCode = 200;
+    res.setHeader("cache-control", "public, max-age=86400, immutable");
+    res.setHeader("content-type", "image/x-icon");
+    res.setHeader("x-content-type-options", "nosniff");
+    res.end(await readFile(path.join(process.cwd(), "public", "favicon.ico")));
     return;
   }
   if (req.method === "GET" && url.pathname === "/privacy") {

@@ -161,6 +161,10 @@ describe("Rudder Identity HTTP journey", () => {
       expect((await fetch(`${baseUrl}/privacy`)).status).toBe(200);
       expect((await fetch(`${baseUrl}/terms`)).status).toBe(200);
       expect((await fetch(`${baseUrl}/identity.js`)).status).toBe(200);
+      const logo = await fetch(`${baseUrl}/rudder-logo.png`);
+      expect(logo.status).toBe(200);
+      expect(logo.headers.get("content-type")).toBe("image/png");
+      expect((await fetch(`${baseUrl}/favicon.ico`)).status).toBe(200);
     } finally {
       process.env.IDENTITY_DATABASE_URL = databaseUrl;
       process.env.IDENTITY_BETTER_AUTH_SECRET = secret;
@@ -179,6 +183,8 @@ describe("Rudder Identity HTTP journey", () => {
     expect((await fetch(`${baseUrl}/privacy`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/terms`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/identity.js`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/rudder-logo.png`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/favicon.ico`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/dev/mailbox`)).status).toBe(404);
   });
 
