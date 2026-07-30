@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import {
   LiveSurfaceAnchor,
   createLiveSurfaceRuntimeId,
@@ -79,7 +80,6 @@ import {
   Plus,
   Settings2,
   Workflow,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -178,89 +178,62 @@ function SortableWorkbenchTab({
     : undefined;
 
   return (
-    <div
-      ref={sortable.setNodeRef}
-      data-dragging={sortable.isDragging ? "true" : undefined}
-      className={cn(
-        "group flex h-8 max-w-[15rem] shrink-0 items-center gap-0.5 rounded-md border pr-1",
-        "transition-[color,background-color,border-color,opacity]",
-        active
-          ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
-          : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
-        sortable.isDragging && "opacity-50",
-      )}
-      style={style}
-    >
-      <button
-        ref={(node) => {
+    <WorkspaceTab
+      active={active}
+      buttonRef={(node) => {
           setTabRef(node);
           sortable.setActivatorNodeRef(node);
-        }}
-        type="button"
-        {...sortable.attributes}
-        {...sortable.listeners}
-        id={tabDomId(organizationId, tab.viewInstanceId)}
-        role="tab"
-        aria-controls={panelDomId(organizationId, tab.viewInstanceId)}
-        aria-selected={active}
-        data-target-kind={tab.target.kind}
-        data-view-instance-id={tab.viewInstanceId}
-        tabIndex={focused ? 0 : -1}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        onClick={onActivate}
-        onFocus={onFocus}
-        onKeyDown={(event) => {
+      }}
+      activatorProps={{
+        ...sortable.attributes,
+        ...sortable.listeners,
+        "data-target-kind": tab.target.kind,
+        "data-view-instance-id": tab.viewInstanceId,
+      }}
+      disabled={moving}
+      dragging={sortable.isDragging}
+      focused={focused}
+      id={tabDomId(organizationId, tab.viewInstanceId)}
+      panelId={panelDomId(organizationId, tab.viewInstanceId)}
+      icon={tab.target.kind === "local_app" ? (
+        <LocalAppIdentityIcon
+          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+          identity={tab.target}
+          testId="messenger-workbench-local-app-icon"
+        />
+      ) : favicon ? (
+        <img
+          src={favicon}
+          alt=""
+          data-dark-mode={browserIconDarkMode}
+          referrerPolicy="no-referrer"
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 rounded-sm object-contain",
+            browserIconDarkMode === "invert" && "dark:invert",
+          )}
+        />
+      ) : (
+        <Icon className="h-3.5 w-3.5 shrink-0" aria-label={icon.label} />
+      )}
+      label={tab.target.label}
+      movingLabel={moving ? "Moving…" : undefined}
+      onActivate={onActivate}
+      onClose={onClose}
+      onFocus={onFocus}
+      onKeyDown={(event) => {
           sortable.listeners?.onKeyDown?.(event);
           if (!event.defaultPrevented) onKeyDown(event);
-        }}
-      >
-        {tab.target.kind === "local_app" ? (
-          <LocalAppIdentityIcon
-            className="h-3.5 w-3.5 shrink-0 rounded-sm"
-            identity={tab.target}
-            testId="messenger-workbench-local-app-icon"
-          />
-        ) : favicon ? (
-          <img
-            src={favicon}
-            alt=""
-            data-dark-mode={browserIconDarkMode}
-            referrerPolicy="no-referrer"
-            className={cn(
-              "h-3.5 w-3.5 shrink-0 rounded-sm object-contain",
-              browserIconDarkMode === "invert" && "dark:invert",
-            )}
-          />
-        ) : (
-          <Icon className="h-3.5 w-3.5 shrink-0" aria-label={icon.label} />
-        )}
-        <span className="truncate">{tab.target.label}</span>
-        {moving ? (
-          <span className="shrink-0 text-[10px] text-muted-foreground">
-            Moving…
-          </span>
-        ) : null}
-      </button>
+      }}
+      rootRef={sortable.setNodeRef}
+      rootStyle={style}
+    >
       {tab.target.kind === "local_app" ? (
         <LocalAppTabActions
           target={tab.target}
           onUpdated={onLocalAppUpdated}
         />
       ) : null}
-      <button
-        type="button"
-        aria-label={`Close ${tab.target.label} tab`}
-        disabled={moving}
-        className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        onClick={(event) => {
-          event.stopPropagation();
-          if (moving) return;
-          onClose();
-        }}
-      >
-        <X className="h-3 w-3" aria-hidden />
-      </button>
-    </div>
+    </WorkspaceTab>
   );
 }
 

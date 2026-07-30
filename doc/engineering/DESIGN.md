@@ -276,6 +276,32 @@ Rules:
 - Desktop workspace cards and their headers should remain materially more opaque than the shell around them. They are the paper surfaces where work happens, not part of the glass.
 - Chat uses two explicit work cards after the primary rail: a conversation-list card and a main chat card.
 - Agents, Issues, Projects, and Org workspaces use two explicit work cards after the primary rail: a middle context card and a main content card.
+- New desktop workspaces must extend the existing shell composition instead of
+  recreating it inside a page. Register the route with `Layout`, render its
+  navigation in `ThreeColumnContextSidebar` (or a dedicated sidebar selected
+  there), and use the shared `workspace-context-card` /
+  `workspace-main-card` surfaces.
+- A workspace that needs document-style tabs should follow the Messenger
+  workbench composition: a separate compact tab card above the main work card.
+  Use `WorkspaceTab` for tab chrome and interaction rather than introducing a
+  browser-tab silhouette, page-local active treatment, or page-local close
+  affordance.
+- Workspace tabs use roving focus and support the established baseline keyboard
+  model: Left/Right and Home/End move focus, while Enter/Space activates the
+  focused tab. A workspace may add scoped close or cycle shortcuts when its
+  runtime model requires them, but must not install window-global handlers that
+  capture keys from sidebars, editors, dialogs, or other host UI. Preserve the
+  same compact height, active surface, focus ring, and progressive close-button
+  disclosure across workspaces.
+- A three-column workspace means primary rail, context card, and main work
+  region. Do not add a persistent tutorial or secondary explanation column.
+  Put optional guidance behind progressive disclosure; place true object
+  properties inside the main work region or the established side-panel system.
+- Before implementing a new workspace shell, inspect at least one current
+  sibling implementation with the same interaction model. For a resizable
+  context column and tabs, the required references are `Layout`,
+  `ThreeColumnContextSidebar`, `MessengerContextSidebar`, and
+  `MessengerMainWorkbench`.
 - The gap between the middle card and main card should stay minimal, the top inset should stay tight, and both cards should use a small radius.
 - In light mode, pale or glass rails use dark neutral icon and text colors by default. Active emphasis should come from surface treatment, not white text on a pale background.
 - In dark mode, the primary rail may stay translucent, but it should still read as a quiet structural surface rather than a bright wallpaper reveal.
@@ -615,6 +641,15 @@ For visible desktop shell changes, verify all of the following before hand-off:
 
 - dark and light screenshots both show a clear shell tint difference; neither mode reads like raw wallpaper behind the product
 - the outer shell still reads as backdrop-only rather than a giant parent card around the workspace
+- the route participates in the shared `Layout` workspace composition rather
+  than rendering a second shell inside the page
+- context navigation and workbench tabs reuse the established shared
+  components and interaction states
+- a side-by-side screenshot comparison against the closest shipped sibling
+  surface (Messenger, Issues, or Agents) shows matching card geometry, tab
+  chrome, density, and active-state language
+- keyboard tab navigation and close behavior are verified, including
+  reduced-motion behavior for structural transitions
 - middle and main work cards remain paper-like and readable, with glass treatment staying outside the cards
 - primary-rail emphasis still comes from surface treatment and hierarchy rather than high-contrast decorative text treatment
 - translucency adjustments were made in shell-owned layers first, not by making the work cards themselves too transparent
