@@ -1,10 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-  <g fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M9 5.15 5.35 11.1M9 5.15l3.65 5.95M6.15 12.05h5.7"/>
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <circle data-rudder-mark="outer-ring" cx="9" cy="9" r="7.25" stroke-width="1.5"/>
+    <path
+      data-rudder-mark="inner-arc"
+      d="M4.55 11.45A5.35 5.35 0 0 1 13.8 7.2"
+      stroke-width="1.75"
+    />
   </g>
-  <g fill="#000">
-    <circle cx="9" cy="3.85" r="1.95"/>
-    <circle cx="4.45" cy="12.9" r="1.95"/>
-    <circle cx="13.55" cy="12.9" r="1.95"/>
-  </g>
+  <path
+    data-rudder-mark="pointer"
+    d="M4.45 11.7 14.65 7.55 8.15 14.65c.7-2.45.05-3.55-3.7-2.95Z"
+    fill="#000"
+  />
 </svg>

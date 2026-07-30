@@ -12,6 +12,7 @@ import {
   registerAppBuilderIpcHandlers,
 } from "./app-builder-ipc.js";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
+import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
@@ -364,11 +365,32 @@ function resolveDesktopResourceAssetPath(fileName: string): string | null {
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
-function createResidentTrayIcon(): string | Electron.NativeImage {
+type ResidentTrayIcon = {
+  image: Electron.NativeImage;
+  source: string;
+};
+
+function writeResidentShellSmokeStatus(status: Record<string, unknown>): void {
+  const targetPath = process.env.RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH?.trim();
+  if (!targetPath) return;
+
+  const resolvedPath = path.resolve(targetPath);
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+  fs.writeFileSync(resolvedPath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
+}
+
+function createResidentTrayIcon(): ResidentTrayIcon {
   if (process.platform === "darwin") {
     const templatePath = resolveResidentTrayTemplatePath();
     if (templatePath) {
-      return templatePath;
+      const templateImage = nativeImage.createFromPath(templatePath);
+      if (!templateImage.isEmpty()) {
+        templateImage.setTemplateImage(true);
+        return {
+          image: templateImage,
+          source: path.basename(templatePath),
+        };
+      }
     }
   }
 
@@ -378,20 +400,20 @@ function createResidentTrayIcon(): string | Electron.NativeImage {
   if (iconPath) {
     const image = nativeImage.createFromPath(iconPath);
     if (!image.isEmpty()) {
-      return process.platform === "win32" ? image : image.resize({ width: 16, height: 16 });
+      return {
+        image: process.platform === "win32" ? image : image.resize({ width: 16, height: 16 }),
+        source: path.basename(iconPath),
+      };
     }
   }
 
   const iconSvg = process.platform === "darwin"
     ? `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <g fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 5.15 5.35 11.1M9 5.15l3.65 5.95M6.15 12.05h5.7"/>
+        <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="9" cy="9" r="7.25" stroke-width="1.5"/>
+          <path d="M4.55 11.45A5.35 5.35 0 0 1 13.8 7.2" stroke-width="1.75"/>
         </g>
-        <g fill="#000">
-          <circle cx="9" cy="3.85" r="1.95"/>
-          <circle cx="4.45" cy="12.9" r="1.95"/>
-          <circle cx="13.55" cy="12.9" r="1.95"/>
-        </g>
+        <path d="M4.45 11.7 14.65 7.55 8.15 14.65c.7-2.45.05-3.55-3.7-2.95Z" fill="#000"/>
       </svg>`
     : `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
         <g fill="none" stroke="#111827" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
@@ -407,7 +429,10 @@ function createResidentTrayIcon(): string | Electron.NativeImage {
   if (process.platform === "darwin") {
     image.setTemplateImage(true);
   }
-  return image;
+  return {
+    image,
+    source: "generated",
+  };
 }
 
 function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
@@ -686,7 +711,7 @@ function applyDesktopRuntimeIcon(profile: LocalEnvProfile): Electron.NativeImage
   const icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) return null;
 
-  if (process.platform === "darwin" && app.dock) {
+  if (shouldOverrideDesktopDockIcon(process.platform, app.isPackaged) && app.dock) {
     app.dock.setIcon(icon);
   }
 
@@ -1742,21 +1767,43 @@ function createResidentShellControls(): void {
   if (!platformSupportsResidentShellControls()) return;
   try {
     const trayIcon = createResidentTrayIcon();
-    residentTray = new Tray(trayIcon);
+    residentTray = new Tray(trayIcon.image);
     residentTray.on("click", () => {
       showMainWindow();
     });
     residentControlsAvailable = true;
+    const iconSize = trayIcon.image.getSize();
+    const iconScaleFactors = trayIcon.image.getScaleFactors();
+    const iconIsTemplate = trayIcon.image.isTemplateImage();
     console.info("[rudder-desktop] Resident shell controls active", {
       packaged: app.isPackaged,
       platform: process.platform,
       profile: currentBootState.runtime?.localEnv ?? initialProfile.name,
-      iconSource: typeof trayIcon === "string" ? path.basename(trayIcon) : "generated",
+      iconSource: trayIcon.source,
+      iconSize,
+      iconScaleFactors,
+      iconIsTemplate,
+    });
+    writeResidentShellSmokeStatus({
+      enabled: residentShellEnabled,
+      controlsAvailable: residentControlsAvailable,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      iconSource: trayIcon.source,
+      iconSize,
+      iconScaleFactors,
+      iconIsTemplate,
     });
     updateResidentShellMenu();
   } catch (error) {
     residentTray = null;
     residentControlsAvailable = false;
+    writeResidentShellSmokeStatus({
+      enabled: residentShellEnabled,
+      controlsAvailable: residentControlsAvailable,
+      packaged: app.isPackaged,
+      platform: process.platform,
+    });
     console.warn("[rudder-desktop] Resident shell controls unavailable, falling back to windowed lifecycle", error);
   }
 }

@@ -1016,10 +1016,80 @@ test.describe("Chat Side Panel", () => {
     await annotationEditor.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByRole("button", { name: "Show 1 annotation" })).toBeVisible();
 
+    await page.getByRole("button", { name: "Send" }).click();
+    const sentTurn = page.getByTestId("chat-user-message-turn").last();
+    await expect(sentTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+    await sentTurn.getByRole("button", { name: "Show 1 annotation" }).click();
+    const sentCard = page.getByTestId("chat-response-annotation-sent-card");
+    await expect(sentCard).toBeVisible();
+    await expect(sentCard.getByTestId("chat-response-annotation-selected-text"))
+      .toContainText("Draft heading ready");
+    await expect(sentCard.getByTestId("chat-response-annotation-comment"))
+      .toContainText("Review this Markdown heading.");
+
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-markdown-editor-annotation.png"),
       fullPage: true,
     });
+
+    await page.route("**/api/health", async (route) => {
+      const response = await route.fetch();
+      const health = await response.json() as Record<string, unknown>;
+      await route.fulfill({
+        response,
+        json: {
+          ...health,
+          devServer: {
+            enabled: true,
+            restartRequired: true,
+            reason: "backend_changes",
+            lastChangedAt: new Date().toISOString(),
+            changedPathCount: 1,
+            changedPathsSample: ["server/src/routes/chats.ts"],
+            envFileChanged: false,
+            pendingMigrations: [],
+            lastRestartAt: new Date(Date.now() - 60_000).toISOString(),
+          },
+        },
+      });
+    });
+    await page.reload();
+    await page.getByTestId("chat-assistant-message").filter({ hasText: fileName })
+      .getByRole("link", { name: fileName }).click();
+    const staleReadyHeading = page.getByText("Draft heading ready", { exact: true });
+    await expect(staleReadyHeading).toBeVisible();
+    await staleReadyHeading.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    await expect(annotationToolbar).toBeVisible();
+    await annotationToolbar.getByRole("button", { name: "Add to chat" }).click();
+    const staleDraftChip = page.getByTestId("chat-composer-file-drop-target")
+      .getByRole("button", { name: "Show 1 annotation" });
+    await expect(staleDraftChip).toBeVisible();
+    let staleSendRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST"
+        && request.url().includes(`/api/chats/${chat.id}/messages/stream`)
+      ) staleSendRequests += 1;
+    });
+    await page.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await expect(page.getByText("Restart Rudder to send annotations")).toBeVisible();
+    await expect(staleDraftChip).toBeVisible();
+    expect(staleSendRequests).toBe(0);
+
+    await page.unroute("**/api/health");
+    await expect(page.getByText("Restart Rudder to send annotations"))
+      .toBeHidden({ timeout: 10_000 });
+    await page.reload();
+    await expect(page.getByTestId("chat-composer-file-drop-target")
+      .getByRole("button", { name: "Show 1 annotation" })).toBeVisible();
   });
 
   test("previews a Library PDF inline in the Side Panel", async ({ page, request }, testInfo) => {

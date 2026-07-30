@@ -3,7 +3,6 @@ import { appBuilderApi } from "@/api/app-builder";
 import { chatsApi } from "@/api/chats";
 import { healthApi } from "@/api/health";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
-import { LocalAppDefinitionReviewDialog } from "@/components/side-panel/LocalAppsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,28 +12,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
+import { useAppRegistry } from "@/hooks/useAppRegistry";
 import {
   APP_BUILDER_SCAFFOLD_VERSION,
   appBuilderChatPrefill,
   appBuilderSourceRoot,
 } from "@/lib/app-builder";
 import {
+  activeKeyFromPath,
+  appBuildStatusLabel,
+  appRoute,
+  localBindingKey,
+  type AppEntry,
+  type ManagedAppEntry,
+} from "@/lib/apps-workspace";
+import {
   readDesktopShell,
   type DesktopLocalAppDefinition,
-  type DesktopLocalAppDefinitionDraft,
-  type DesktopPreparedLocalAppDefinition,
 } from "@/lib/desktop-shell";
 import {
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
-import { cn } from "@/lib/utils";
 import type {
   Agent,
   AppBuilderApp,
@@ -45,22 +49,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   ArrowUp,
-  CircleAlert,
   Copy,
   Download,
   ExternalLink,
-  FolderSearch,
   Home,
   Loader2,
   MessageSquare,
   Play,
   Plus,
-  Search,
   Settings,
-  Sparkles,
   Square,
-  Upload,
-  X,
+  Upload
 } from "lucide-react";
 import {
   createElement,
@@ -69,58 +68,13 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
 } from "react";
-
-type ManagedAppEntry = {
-  kind: "managed";
-  key: string;
-  app: AppBuilderApp;
-  definition: DesktopLocalAppDefinition | null;
-};
-
-type LocalAppEntry = {
-  kind: "local";
-  key: string;
-  definition: DesktopLocalAppDefinition;
-};
-
-type AppEntry = ManagedAppEntry | LocalAppEntry;
 
 type WorkspaceTab = {
   key: string;
   title: string;
 };
-
-function appRoute(key: string) {
-  return `/apps/view/${encodeURIComponent(key)}`;
-}
-
-function localBindingKey(
-  desktopInstallationId: string,
-  appPublicId: string,
-  localBindingId: string,
-) {
-  return `${desktopInstallationId}:${appPublicId}:${localBindingId}`;
-}
-
-function activeKeyFromPath(pathname: string) {
-  const relativePath = toOrganizationRelativePath(pathname);
-  const match = relativePath.match(/^\/apps\/view\/([^/]+)$/);
-  if (!match?.[1]) return "home";
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return "home";
-  }
-}
-
-function statusLabel(status: AppBuilderApp["buildStatus"]) {
-  if (status === "preparing") return "Preparing";
-  if (status === "building") return "Building";
-  if (status === "verifying") return "Verifying";
-  if (status === "ready") return "Ready";
-  return "Needs attention";
-}
 
 function runtimeLabel(status: string | null | undefined) {
   if (!status) return "Checking";
@@ -134,33 +88,6 @@ function chooseBuilderAgent(agents: Agent[]) {
     ?? available.find((agent) => agent.status === "active")
     ?? available[0]
     ?? null;
-}
-
-function AppIdentity({
-  entry,
-  className,
-}: {
-  entry: AppEntry;
-  className?: string;
-}) {
-  if (entry.definition) {
-    return (
-      <LocalAppIdentityIcon
-        className={className}
-        iconDataUrl={entry.definition.iconDataUrl}
-      />
-    );
-  }
-  return (
-    <span
-      className={cn(
-        "flex items-center justify-center rounded-[var(--radius-sm)] bg-[color:color-mix(in_oklab,var(--accent-base)_18%,transparent)] text-[color:var(--accent-base)]",
-        className,
-      )}
-    >
-      <AppWindow className="h-3.5 w-3.5" aria-hidden />
-    </span>
-  );
 }
 
 function AppsHome({
@@ -191,29 +118,26 @@ function AppsHome({
   return (
     <div className="flex min-h-0 flex-1">
       <main
-        className="scrollbar-auto-hide min-w-0 flex-1 overflow-y-auto bg-[color:var(--surface-panel)]"
+        className="scrollbar-auto-hide min-w-0 flex-1 overflow-y-auto"
         data-testid="apps-home"
       >
-        <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 py-12 lg:px-14 lg:py-16">
-          <div className="motion-content-reveal mx-auto w-full max-w-3xl text-center">
-            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-raised)] text-[color:var(--accent-base)] shadow-sm">
-              <Sparkles className="h-5 w-5" aria-hidden />
-            </div>
-            <h1 className="mt-5 text-[clamp(1.65rem,3vw,2.35rem)] font-semibold tracking-[-0.035em] text-foreground">
+        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-6 py-8 lg:px-10 lg:py-10">
+          <div className="motion-content-reveal w-full max-w-2xl">
+            <h1 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">
               Turn ideas into <span className="text-[color:var(--accent-base)]">applications</span>
             </h1>
-            <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+            <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
               Describe the workflow you need. Rudder opens a Chat with App Builder,
               creates the source, verifies it, and brings the finished App back here.
             </p>
           </div>
 
           <form
-            className="motion-content-reveal mx-auto mt-8 w-full max-w-3xl"
+            className="motion-content-reveal mt-6 w-full max-w-2xl"
             style={{ animationDelay: "70ms" }}
             onSubmit={submit}
           >
-            <div className="rounded-[calc(var(--radius-xl)+2px)] border border-[color:var(--border-base)] bg-[color:var(--surface-raised)] p-3 shadow-[0_18px_55px_-42px_rgba(0,0,0,0.7)] transition-[border-color,box-shadow,transform] duration-200 focus-within:-translate-y-0.5 focus-within:border-[color:color-mix(in_oklab,var(--accent-base)_45%,var(--border-base))] focus-within:shadow-[0_24px_70px_-44px_rgba(0,0,0,0.85)] motion-reduce:transform-none motion-reduce:transition-none">
+            <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:color-mix(in_oklab,var(--accent-base)_45%,var(--border-base))] focus-within:shadow-[var(--shadow-md)] motion-reduce:transition-none">
               <textarea
                 ref={inputRef}
                 value={idea}
@@ -229,17 +153,17 @@ function AppsHome({
                 placeholder="Describe the App you want to build…"
                 aria-label="Describe the App you want to build"
                 data-testid="apps-idea-input"
-                className="min-h-[6.5rem] w-full resize-none bg-transparent px-2 py-1 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-60"
+                className="min-h-[5.5rem] w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-60"
               />
               <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-2 py-1 text-[11px] font-medium text-muted-foreground">
                   <AppWindow className="h-3 w-3" aria-hidden />
                   App Builder
                 </span>
                 <Button
                   type="submit"
                   size="icon"
-                  className="h-9 w-9 rounded-full transition-transform hover:scale-[1.04] active:scale-[0.96] motion-reduce:transform-none motion-reduce:transition-none"
+                  className="h-8 w-8 rounded-[var(--radius-md)] transition-transform active:scale-[0.96] motion-reduce:transform-none motion-reduce:transition-none"
                   disabled={!idea.trim() || createPending}
                   aria-label="Create App"
                   data-testid="apps-create-submit"
@@ -259,54 +183,36 @@ function AppsHome({
             ) : null}
           </form>
 
-          <div className="mx-auto mt-8 grid w-full max-w-3xl gap-3 md:grid-cols-3">
+          <div className="mt-7 w-full max-w-2xl border-t border-[color:var(--border-soft)] pt-4">
+            <p className="mb-2 text-[11px] font-medium text-muted-foreground">Start with an example</p>
             {examples.map((example, index) => (
               <button
                 key={example}
                 type="button"
-                className="motion-list-enter group rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4 text-left transition-[transform,border-color,background-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color:var(--border-base)] hover:bg-[color:var(--surface-raised)] hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none"
+                className="motion-list-enter group flex w-full items-start gap-3 rounded-[var(--radius-sm)] px-2 py-2 text-left transition-[background-color,color] duration-150 hover:bg-[color:var(--surface-active)] motion-reduce:transition-none"
                 style={{ animationDelay: `${120 + index * 45}ms` }}
                 onClick={() => {
                   setIdea(example);
                   requestAnimationFrame(() => inputRef.current?.focus());
                 }}
               >
-                <span className="text-xs font-semibold text-foreground">
+                <span className="w-20 shrink-0 text-xs font-medium text-foreground">
                   {index === 0 ? "CRM" : index === 1 ? "Dashboard" : "Portal"}
                 </span>
-                <span className="mt-2 block text-xs leading-5 text-muted-foreground">
+                <span className="text-xs leading-5 text-muted-foreground">
                   {example}
                 </span>
               </button>
             ))}
           </div>
 
-          <div className="mt-auto pt-12 text-center text-xs text-muted-foreground">
+          <div className="mt-auto pt-10 text-xs text-muted-foreground">
             {appCount === 0
               ? "Your registered Apps will appear in the left sidebar."
               : `${appCount} registered ${appCount === 1 ? "App" : "Apps"} on this device.`}
           </div>
         </div>
       </main>
-      <aside className="hidden w-[280px] shrink-0 border-l border-[color:var(--border-soft)] bg-[color:var(--surface-shell)] p-5 xl:block">
-        <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4">
-          <h2 className="text-sm font-semibold text-foreground">How creation works</h2>
-          <ol className="mt-4 space-y-4 text-xs leading-5 text-muted-foreground">
-            <li className="flex gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--surface-active)] font-semibold text-foreground">1</span>
-              A dedicated Chat captures your requirements.
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--surface-active)] font-semibold text-foreground">2</span>
-              App Builder creates and verifies the App on this device.
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--surface-active)] font-semibold text-foreground">3</span>
-              Register it here, then open it in Rudder or copy its local link.
-            </li>
-          </ol>
-        </div>
-      </aside>
     </div>
   );
 }
@@ -516,7 +422,7 @@ function LocalRuntimePane({
           {managedApp ? (
             <div>
               <p className="font-medium text-muted-foreground">Build</p>
-              <p className="mt-1 text-foreground">{statusLabel(managedApp.buildStatus)}</p>
+              <p className="mt-1 text-foreground">{appBuildStatusLabel(managedApp.buildStatus)}</p>
             </div>
           ) : null}
         </div>
@@ -786,7 +692,7 @@ function ManagedSetupPane({
         <dl className="mt-4 space-y-4 text-xs">
           <div>
             <dt className="font-medium text-muted-foreground">Build status</dt>
-            <dd className="mt-1 text-foreground">{statusLabel(entry.app.buildStatus)}</dd>
+            <dd className="mt-1 text-foreground">{appBuildStatusLabel(entry.app.buildStatus)}</dd>
           </div>
           <div>
             <dt className="font-medium text-muted-foreground">Source</dt>
@@ -851,16 +757,12 @@ export function Apps() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const desktopShell = readDesktopShell();
-  const localApps = desktopShell?.localApps;
   const activeKey = activeKeyFromPath(location.pathname);
-  const [search, setSearch] = useState("");
   const [tabs, setTabs] = useState<WorkspaceTab[]>([
     { key: "home", title: "Home" },
   ]);
-  const [review, setReview] = useState<{
-    definition: DesktopPreparedLocalAppDefinition;
-  } | null>(null);
+  const [focusedTabKey, setFocusedTabKey] = useState("home");
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousOrganizationId = useRef(selectedOrganizationId);
 
   const healthQuery = useQuery({
@@ -868,14 +770,7 @@ export function Apps() {
     queryFn: () => healthApi.get(),
   });
   const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
-  const appsQuery = useQuery({
-    queryKey: queryKeys.appBuilder.organization(selectedOrganizationId ?? "__none__"),
-    queryFn: () => appBuilderApi.list(selectedOrganizationId!),
-    enabled: Boolean(
-      selectedOrganizationId
-      && sitesEnabled,
-    ),
-  });
+  const { appsQuery, definitionsQuery, entries } = useAppRegistry(sitesEnabled);
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
@@ -884,81 +779,17 @@ export function Apps() {
       && sitesEnabled,
     ),
   });
-  const definitionsQuery = useQuery({
-    queryKey: queryKeys.localApps.definitions,
-    queryFn: () => localApps!.list(),
-    enabled: Boolean(
-      localApps?.supported
-      && sitesEnabled,
-    ),
-  });
-
-  const definitionByBinding = useMemo(
-    () => new Map(
-      (definitionsQuery.data ?? []).map((definition) => [
-        localBindingKey(
-          definition.desktopInstallationId,
-          definition.appPublicId,
-          definition.localBindingId,
-        ),
-        definition,
-      ]),
-    ),
-    [definitionsQuery.data],
-  );
-  const managedEntries = useMemo<ManagedAppEntry[]>(() => (
-    (appsQuery.data ?? []).map((app) => ({
-      kind: "managed",
-      key: `managed:${app.id}`,
-      app,
-      definition: app.desktopInstallationId && app.appPublicId && app.localBindingId
-        ? definitionByBinding.get(localBindingKey(
-            app.desktopInstallationId,
-            app.appPublicId,
-            app.localBindingId,
-          )) ?? null
-        : null,
-    }))
-  ), [appsQuery.data, definitionByBinding]);
-  const managedBindingIds = useMemo(
-    () => new Set(
-      managedEntries
-        .map((entry) => entry.definition?.id)
-        .filter((id): id is string => Boolean(id)),
-    ),
-    [managedEntries],
-  );
-  const localEntries = useMemo<LocalAppEntry[]>(() => (
-    (definitionsQuery.data ?? [])
-      .filter((definition) => !managedBindingIds.has(definition.id))
-      .map((definition) => ({
-        kind: "local",
-        key: `local:${definition.id}`,
-        definition,
-      }))
-  ), [definitionsQuery.data, managedBindingIds]);
-  const entries = useMemo<AppEntry[]>(
-    () => [...managedEntries, ...localEntries],
-    [localEntries, managedEntries],
-  );
   const entryByKey = useMemo(
     () => new Map(entries.map((entry) => [entry.key, entry])),
     [entries],
   );
-  const filteredEntries = entries.filter((entry) => {
-    const title = entry.kind === "managed"
-      ? entry.app.name
-      : entry.definition.title;
-    return title.toLowerCase().includes(search.trim().toLowerCase());
-  });
   const activeEntry = entryByKey.get(activeKey) ?? null;
 
   useEffect(() => {
     if (previousOrganizationId.current === selectedOrganizationId) return;
     previousOrganizationId.current = selectedOrganizationId;
-    setSearch("");
-    setReview(null);
     setTabs([{ key: "home", title: "Home" }]);
+    setFocusedTabKey("home");
     navigate("/apps", { replace: true });
   }, [navigate, selectedOrganizationId]);
 
@@ -1072,24 +903,53 @@ export function Apps() {
       ]);
     },
   });
-  const discoverMutation = useMutation({
-    mutationFn: () => localApps!.discover(),
-    onSuccess: (result) => {
-      if (!result.canceled) setReview({ definition: result.draft });
-    },
-  });
-  const saveMutation = useMutation({
-    mutationFn: (definition: DesktopLocalAppDefinitionDraft) =>
-      localApps!.create(definition),
-    onSuccess: (saved) => {
-      queryClient.setQueryData<DesktopLocalAppDefinition[]>(
-        queryKeys.localApps.definitions,
-        (current) => [...(current ?? []), saved],
-      );
-      setReview(null);
-      navigate(appRoute(`local:${saved.id}`));
-    },
-  });
+
+  const activateTab = (key: string) => {
+    setFocusedTabKey(key);
+    navigate(key === "home" ? "/apps" : appRoute(key));
+  };
+
+  const closeTab = (key: string) => {
+    const index = tabs.findIndex((candidate) => candidate.key === key);
+    const nextTabs = tabs.filter((candidate) => candidate.key !== key);
+    const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
+    setTabs(nextTabs);
+    tabRefs.current.delete(key);
+    if (activeKey === key) {
+      activateTab(fallback?.key ?? "home");
+    } else if (focusedTabKey === key) {
+      const fallbackKey = fallback?.key ?? "home";
+      setFocusedTabKey(fallbackKey);
+      requestAnimationFrame(() => tabRefs.current.get(fallbackKey)?.focus());
+    }
+  };
+
+  const handleTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+    key: string,
+  ) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (event.key === "Delete" && key !== "home") {
+      event.preventDefault();
+      closeTab(key);
+      return;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextKey = tabs[nextIndex]?.key;
+    if (!nextKey) return;
+    setFocusedTabKey(nextKey);
+    tabRefs.current.get(nextKey)?.focus();
+  };
+
+  useEffect(() => {
+    setFocusedTabKey(activeKey);
+  }, [activeKey]);
 
   if (healthQuery.isLoading) {
     return (
@@ -1123,177 +983,56 @@ export function Apps() {
 
   return (
     <section
-      className="flex h-full min-h-0 w-full overflow-hidden bg-[color:var(--surface-shell)]"
+      className="flex h-full min-h-0 w-full flex-col gap-2 overflow-hidden"
       data-testid="apps-workspace"
     >
-      <aside className="flex w-[236px] shrink-0 flex-col border-r border-[color:var(--border-soft)] bg-[color:var(--surface-shell)]">
-        <div className="flex h-12 shrink-0 items-center justify-between border-b border-[color:var(--border-soft)] px-3">
-          <div className="flex items-center gap-2">
-            <AppWindow className="h-4 w-4 text-[color:var(--accent-base)]" aria-hidden />
-            <span className="text-sm font-semibold text-foreground">Apps</span>
-          </div>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            title="Load an App"
-            aria-label="Load an App"
-            disabled={!localApps?.supported || discoverMutation.isPending}
-            onClick={() => discoverMutation.mutate()}
-            data-testid="apps-load"
-          >
-            {discoverMutation.isPending
-              ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />
-              : <Plus className="h-4 w-4" aria-hidden />}
-          </Button>
-        </div>
-
-        <div className="p-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="h-8 pl-8 text-xs"
-              placeholder="Search Apps"
-              aria-label="Search Apps"
-            />
-          </div>
-        </div>
-
-        <nav className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Apps">
-          <button
-            type="button"
-            className={cn(
-              "flex h-9 w-full items-center gap-2 rounded-[var(--radius-md)] px-2.5 text-left text-sm transition-[background-color,color,transform] duration-150 active:scale-[0.99] motion-reduce:transform-none motion-reduce:transition-none",
-              activeKey === "home"
-                ? "bg-[color:var(--surface-active)] font-medium text-foreground"
-                : "text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-active)_55%,transparent)] hover:text-foreground",
-            )}
-            onClick={() => navigate("/apps")}
-          >
-            <Home className="h-4 w-4" aria-hidden />
-            Home
-          </button>
-
-          <div className="mb-2 mt-5 flex items-center justify-between px-2.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/75">
-              Registered
-            </span>
-            <span className="text-[10px] tabular-nums text-muted-foreground">
-              {entries.length}
-            </span>
-          </div>
-
-          {filteredEntries.length ? (
-            <div className="space-y-0.5">
-              {filteredEntries.map((entry) => {
-                const title = entry.kind === "managed"
-                  ? entry.app.name
-                  : entry.definition.title;
-                const selected = entry.key === activeKey;
-                const status = entry.kind === "managed" && !entry.definition
-                  ? statusLabel(entry.app.buildStatus)
-                  : "On this device";
-                return (
-                  <button
-                    key={entry.key}
-                    type="button"
-                    className={cn(
-                      "group motion-list-enter flex w-full items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-2 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] motion-reduce:transform-none motion-reduce:transition-none",
-                      selected
-                        ? "bg-[color:var(--surface-active)] text-foreground"
-                        : "text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-active)_55%,transparent)] hover:text-foreground",
-                    )}
-                    onClick={() => navigate(appRoute(entry.key))}
-                  >
-                    <AppIdentity entry={entry} className="h-7 w-7 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">{title}</span>
-                      <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                        {status}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mx-2 mt-3 rounded-[var(--radius-md)] border border-dashed border-[color:var(--border-soft)] px-3 py-5 text-center">
-              <FolderSearch className="mx-auto h-5 w-5 text-muted-foreground" aria-hidden />
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                {search ? "No matching Apps." : "Create or load your first App."}
-              </p>
-            </div>
-          )}
-        </nav>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-end gap-1 overflow-x-auto border-b border-[color:var(--border-soft)] bg-[color:var(--surface-shell)] px-2 pt-2">
-          {tabs.map((tab) => {
+      <header className="workspace-main-card desktop-chrome flex h-11 shrink-0 items-center gap-1 overflow-x-auto rounded-[var(--desktop-workspace-radius)] px-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1" role="tablist" aria-label="Open Apps">
+          {tabs.map((tab, index) => {
             const selected = tab.key === activeKey;
             return (
-              <div
+              <WorkspaceTab
                 key={tab.key}
-                className={cn(
-                  "group relative flex h-9 min-w-[120px] max-w-[220px] items-center gap-2 rounded-t-[var(--radius-md)] border border-b-0 px-3 text-xs transition-[background-color,border-color,color,transform] duration-200 motion-reduce:transform-none motion-reduce:transition-none",
-                  selected
-                    ? "translate-y-px border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] text-foreground"
-                    : "border-transparent text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-active)_48%,transparent)] hover:text-foreground",
-                )}
-                data-testid={`apps-tab-${tab.key}`}
-              >
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  onClick={() => navigate(tab.key === "home" ? "/apps" : appRoute(tab.key))}
-                >
-                  {tab.key === "home"
-                    ? <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    : <AppWindow className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-                  <span className="truncate">{tab.title}</span>
-                </button>
-                {tab.key !== "home" ? (
-                  <button
-                    type="button"
-                    className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-[color:var(--surface-active)] hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
-                    aria-label={`Close ${tab.title}`}
-                    onClick={() => {
-                      const index = tabs.findIndex((candidate) => candidate.key === tab.key);
-                      const nextTabs = tabs.filter((candidate) => candidate.key !== tab.key);
-                      setTabs(nextTabs);
-                      if (selected) {
-                        const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
-                        navigate(fallback?.key === "home" || !fallback
-                          ? "/apps"
-                          : appRoute(fallback.key));
-                      }
-                    }}
-                  >
-                    <X className="h-3 w-3" aria-hidden />
-                  </button>
-                ) : null}
-              </div>
+                active={selected}
+                buttonRef={(node) => {
+                  if (node) tabRefs.current.set(tab.key, node);
+                  else tabRefs.current.delete(tab.key);
+                }}
+                focused={focusedTabKey === tab.key}
+                icon={tab.key === "home"
+                  ? <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  : <AppWindow className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+                id={`apps-workspace-tab-${encodeURIComponent(tab.key)}`}
+                panelId={`apps-workspace-panel-${encodeURIComponent(tab.key)}`}
+                label={tab.title}
+                onActivate={() => activateTab(tab.key)}
+                onClose={tab.key === "home" ? undefined : () => closeTab(tab.key)}
+                onFocus={() => setFocusedTabKey(tab.key)}
+                onKeyDown={(event) => handleTabKeyDown(event, index, tab.key)}
+                testId={`apps-tab-${tab.key}`}
+              />
             );
           })}
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            className="mb-1 h-7 w-7 shrink-0"
-            onClick={() => navigate("/apps")}
-            aria-label="New App"
-            title="New App"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-          </Button>
-          <span className="ml-auto mb-1 hidden items-center gap-1.5 rounded-full border border-[color:var(--border-soft)] px-2.5 py-1 text-[10px] text-muted-foreground lg:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent-base)]" />
-            Device runtime
-          </span>
-        </header>
+        </div>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          className="h-7 w-7 shrink-0"
+          onClick={() => activateTab("home")}
+          aria-label="New App"
+          title="New App"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+      </header>
 
+      <div
+        id={`apps-workspace-panel-${encodeURIComponent(activeKey)}`}
+        role="tabpanel"
+        aria-labelledby={`apps-workspace-tab-${encodeURIComponent(activeKey)}`}
+        className="workspace-main-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]"
+      >
         {activeKey === "home" || !activeEntry ? (
           <AppsHome
             appCount={entries.length}
@@ -1305,35 +1044,6 @@ export function Apps() {
           <ActiveAppPane entry={activeEntry} />
         )}
       </div>
-
-      {review ? (
-        <LocalAppDefinitionReviewDialog
-          definition={review.definition}
-          edit={false}
-          error={saveMutation.error}
-          open
-          pending={saveMutation.isPending}
-          onCancel={() => {
-            saveMutation.reset();
-            setReview(null);
-          }}
-          onSubmit={(definition) => saveMutation.mutate(definition)}
-        />
-      ) : null}
-
-      {discoverMutation.error ? (
-        <div
-          className="fixed bottom-5 right-5 z-50 flex max-w-sm items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-[color:var(--surface-overlay)] p-4 text-sm text-destructive shadow-lg"
-          role="alert"
-        >
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <span>
-            {discoverMutation.error instanceof Error
-              ? discoverMutation.error.message
-              : "Could not load this App."}
-          </span>
-        </div>
-      ) : null}
     </section>
   );
 }

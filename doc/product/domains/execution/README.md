@@ -24,6 +24,8 @@ edit_policy: user_confirmed_only
 - Runtime invocation and adapter results.
 - Run logs, transcripts, usage, sessions, and finalization.
 - Issue execution locks and deferred wake promotion.
+- Desktop shell application identity and platform-native packaged icon
+  ownership.
 - Desktop Local App definition review, safe local process execution,
   attestation, lifecycle, and exact live-guest continuity.
 
@@ -49,6 +51,9 @@ edit_policy: user_confirmed_only
   release/promote correctly.
 - `RUN.RESULT.001`: transcripts, usage, logs, sessions, and result metadata are
   persisted for inspection.
+- `DESKTOP.SHELL.IDENTITY.001`: packaged macOS keeps its bundle-owned `.icns`
+  identity while running and after restart; development and non-macOS icon
+  paths remain platform-specific.
 - `DESKTOP.LOCAL.APPS.001`: Desktop runs only explicitly reviewed local
   development services, keeps executable authority installation-local, and
   preserves exact runtime identity across Side-to-Main transfer.

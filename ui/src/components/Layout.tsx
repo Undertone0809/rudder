@@ -75,9 +75,10 @@ const SIDE_PANEL_COLLAPSE_GAP = SIDE_PANEL_MIN_WIDTH - SIDE_PANEL_COLLAPSE_WIDTH
 const SIDE_PANEL_RESIZER_WIDTH = 4;
 const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
 
-type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
+type WorkspaceColumnFamily = "apps" | "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
 const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
+  apps: 268,
   chat: 318,
   messenger: 332,
   issues: 248,
@@ -89,6 +90,7 @@ const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
 };
 
 const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number; max: number; maxViewportFraction?: number }> = {
+  apps: { min: 236, max: 360 },
   chat: { min: 280, max: 420 },
   messenger: { min: 280, max: 420 },
   issues: { min: 220, max: 340, maxViewportFraction: 1 / 3 },
@@ -366,6 +368,7 @@ function isMacDesktopShell(): boolean {
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
+  if (/^\/apps(?:\/|$)/.test(relativePath)) return "apps";
   if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return "backups";
   if (/^\/chat(?:\/|$)/.test(relativePath)) return "chat";
   if (/^\/messenger(?:\/|$)/.test(relativePath)) return "messenger";
@@ -924,7 +927,7 @@ export function Layout() {
   );
   const useMiddleContextColumn = useMemo(
     () =>
-      /^\/(?:chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+      /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isWorkspaceBackupsRoute = useMemo(

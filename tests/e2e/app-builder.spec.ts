@@ -49,9 +49,13 @@ test.describe("Apps workspace", () => {
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
     await expect(page.getByTestId("apps-workspace")).toBeVisible();
+    await expect(page.getByTestId("workspace-context-card")).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Open Apps" })).toBeVisible();
     await expect(page.getByRole("heading", {
       name: "Turn ideas into applications",
     })).toBeVisible();
+    await expect(page.getByText("How creation works")).toHaveCount(0);
+    await expect(page.locator('[data-testid="apps-home"] svg.lucide-sparkles')).toHaveCount(0);
     await expect(page.getByTestId("primary-rail").getByText("Apps", { exact: true }))
       .toBeVisible();
     await page.setViewportSize({ width: 1680, height: 1000 });
@@ -210,6 +214,22 @@ test.describe("Apps workspace", () => {
     await appsNavigation.getByRole("button", { name: /Beta Dashboard/ }).click();
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
     await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
+    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
+
+    await page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
+      .toBeFocused();
+    await page.getByRole("searchbox", { name: "Search Apps" }).evaluate((input) => {
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: "w",
+      }));
+    });
+    await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
 
     await appsNavigation.getByRole("button", { name: /Alpha CRM/ }).click();
     await page.getByTestId("apps-start-app").click();
@@ -240,6 +260,12 @@ test.describe("Apps workspace", () => {
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __copiedText?: string }).__copiedText
     ))).toBe("http://127.0.0.1:41731/");
+
+    await page.getByTestId("apps-tab-local:definition-beta").getByRole("tab").focus();
+    await page.keyboard.press("Delete");
+    await expect(page.getByTestId("apps-tab-local:definition-beta")).toHaveCount(0);
+    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
+      .toBeFocused();
 
     await page.screenshot({
       path: `/tmp/rudder-apps-e2e-tabs-${testInfo.workerIndex}.png`,

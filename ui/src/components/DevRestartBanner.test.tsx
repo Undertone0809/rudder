@@ -5,7 +5,7 @@ import { ToastProvider } from "@/context/ToastContext";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { ToastViewport } from "./ToastViewport";
 
@@ -30,6 +30,7 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  Reflect.deleteProperty(window, "desktopShell");
 });
 
 function renderWithToasts(devServer?: DevServerHealthStatus) {
@@ -73,6 +74,53 @@ describe("DevRestartBanner", () => {
     expect(document.body.textContent).toContain("Changed: server/src/services/messenger.ts.");
   });
 
+  it("offers an immediate Desktop restart while keeping the warning persistent", async () => {
+    const restart = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { restart },
+    });
+    renderWithToasts(baseDevServer);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const restartButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Restart Rudder");
+    expect(restartButton).toBeDefined();
+
+    await act(async () => {
+      restartButton?.click();
+      await Promise.resolve();
+    });
+    expect(restart).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the restart action available and reports a Desktop restart failure", async () => {
+    const restart = vi.fn().mockRejectedValue(new Error("restart unavailable"));
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { restart },
+    });
+    renderWithToasts(baseDevServer);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const restartButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Restart Rudder");
+    await act(async () => {
+      restartButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Restart required");
+    expect(document.body.textContent).toContain("Could not restart Rudder");
+    expect(document.body.textContent).toContain("restart unavailable");
+  });
+
   it("describes env-file drift explicitly when .env changed after boot", async () => {
     renderWithToasts({
       ...baseDevServer,
@@ -110,5 +158,27 @@ describe("DevRestartBanner", () => {
 
     const text = document.body.textContent ?? "";
     expect(text.match(/Restart required/g)?.length ?? 0).toBe(1);
+  });
+
+  it("dismisses the persistent warning after the runtime becomes fresh", async () => {
+    const { root } = renderWithToasts(baseDevServer);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("Restart required");
+
+    act(() => {
+      root.render(
+        <ToastProvider>
+          <DevRestartBanner devServer={{ ...baseDevServer, restartRequired: false }} />
+          <ToastViewport />
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain("Restart required");
   });
 });

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { Schema } from "@milkdown/kit/prose/model";
+import { EditorState, TextSelection } from "@milkdown/kit/prose/state";
 import {
   buildAgentMentionHref,
   buildAutomationMentionHref,
@@ -33,6 +35,7 @@ import {
   shouldActivateMilkdownInlineTokenClick,
   shouldCopySelectionAsMarkdown,
   shouldParsePastedMarkdown,
+  stabilizeRudderTokenBoundary,
 } from "./MilkdownMarkdownEditor";
 
 describe("isMilkdownEditableUnexpectedlyBlank", () => {
@@ -698,6 +701,61 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
 
     expect(moveSelectionAfterRudderTokenBoundary(view)).toBe(true);
     expect(inserted).toEqual([{ pos: label.length, content: { text: " ", marks: [] } }]);
+  });
+
+  it("keeps the caret outside a Library entry reference before typing continues", () => {
+    const label = "product-brief.md";
+    const href = "library-entry://entry-1?p=docs%2Fproduct-brief.md";
+    let focused = false;
+    const schema = new Schema({
+      nodes: {
+        doc: { content: "paragraph+" },
+        paragraph: {
+          content: "inline*",
+          group: "block",
+          toDOM: () => ["p", 0],
+        },
+        text: { group: "inline" },
+      },
+      marks: {
+        link: {
+          attrs: { href: {} },
+          toDOM: (mark) => ["a", { href: mark.attrs.href }, 0],
+        },
+      },
+    });
+    const link = schema.marks.link.create({ href });
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, [
+        schema.text(label, [link]),
+        schema.text(" "),
+      ]),
+    ]);
+    let state = EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, label.length + 2),
+    });
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch(transaction: typeof state.tr) {
+        state = state.apply(transaction);
+      },
+      focus: () => {
+        focused = true;
+      },
+    };
+    const proseMirrorView = view as unknown as Parameters<typeof stabilizeRudderTokenBoundary>[0];
+
+    expect(stabilizeRudderTokenBoundary(proseMirrorView)).toBe(true);
+    expect(state.selection.from).toBe(label.length + 2);
+    expect(state.storedMarks).toEqual([]);
+    expect(focused).toBe(true);
+
+    expect(insertTextAfterRudderTokenBoundary(proseMirrorView, "继续输入")).toBe(true);
+    expect(state.doc.textContent).toBe(`${label} 继续输入`);
+    expect(state.doc.firstChild?.firstChild?.text).toBe(label);
   });
 
   it("copies selected Rudder token links as canonical Markdown", () => {

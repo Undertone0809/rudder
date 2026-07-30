@@ -8,6 +8,7 @@ import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { projectsApi } from "@/api/projects";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import { AppsContextSidebar } from "@/components/AppsContextSidebar";
 import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
@@ -754,12 +755,13 @@ export function ThreeColumnContextSidebar() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
+  const isAppsRoute = /^\/apps(?:\/|$)/.test(relativePath);
   const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
   const isOrgWorkspaceRoute = /^\/(?:dashboard|org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
-  const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
+  const isAgentRoute = !isAppsRoute && !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
@@ -1199,6 +1201,10 @@ export function ThreeColumnContextSidebar() {
       status: nextVisible ? "active" : "paused",
     });
   };
+
+  if (isAppsRoute) {
+    return <AppsContextSidebar />;
+  }
 
   if (isMessengerRoute) {
     return <MessengerContextSidebar />;
