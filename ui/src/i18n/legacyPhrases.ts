@@ -504,7 +504,6 @@ const zhExactPhrases: Record<string, string> = {
   "This will be the root agent for the organization.": "这会成为组织的根 agent。",
   "Task": "任务",
   "Threads": "话题",
-  "Threads sorted by latest activity": "话题按最近活动排序",
   "Sub Goal": "子目标",
   "planned": "计划中",
   "Thinking effort": "思考强度",

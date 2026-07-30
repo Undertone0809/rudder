@@ -459,7 +459,7 @@ function ContextColumnHeader({
   description,
 }: {
   title: string;
-  description: string;
+  description?: string;
 }) {
   const { isMobile, setSidebarOpen } = useSidebar();
 
@@ -470,7 +470,9 @@ function ContextColumnHeader({
     >
       <div className="min-w-0">
         <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
-        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+        {description ? (
+          <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+        ) : null}
       </div>
       {!isMobile ? (
         <button
@@ -4077,7 +4079,7 @@ export function MessengerContextSidebar() {
       <ContextColumnHeader
         title="Messenger"
         description={effectiveThreadOrganizationRule === "custom"
-          ? "Threads sorted by latest activity"
+          ? undefined
           : `Threads organized by ${threadOrganizationLabel(effectiveThreadOrganizationRule).toLowerCase()}`}
       />
       <MessengerThreadSectionHeader
