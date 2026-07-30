@@ -12,6 +12,7 @@ import {
   registerAppBuilderIpcHandlers,
 } from "./app-builder-ipc.js";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
+import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
@@ -686,7 +687,7 @@ function applyDesktopRuntimeIcon(profile: LocalEnvProfile): Electron.NativeImage
   const icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) return null;
 
-  if (process.platform === "darwin" && app.dock) {
+  if (shouldOverrideDesktopDockIcon(process.platform, app.isPackaged) && app.dock) {
     app.dock.setIcon(icon);
   }
 
