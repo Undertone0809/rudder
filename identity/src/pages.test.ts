@@ -13,6 +13,8 @@ describe("Identity public pages", () => {
     expect(html).toContain("Create account with password");
     expect(html).toContain("Reset password");
     expect(html).toContain('class="auth-card"');
+    expect(html).toContain('<img src="/rudder-logo.png" alt="">');
+    expect(html).toContain('<link rel="icon" href="/favicon.ico"');
     expect(html).toContain("Welcome to Rudder");
     expect(html).toContain("Signing in connects your identity and devices");
     expect(html).toContain('id="change-email"');

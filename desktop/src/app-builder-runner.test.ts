@@ -1,4 +1,3 @@
-import electronBinary from "electron";
 import { spawn } from "node:child_process";
 import {
   chmod,
@@ -144,17 +143,21 @@ describe("App Builder managed runner", () => {
     expect(recorded.slice(0, -1).every((call) => call.dataRoot === null)).toBe(true);
   });
 
-  it("provides a managed node command when Electron hosts the runner", async () => {
-    const { appRoot, logPath, runner } = await fixture();
-    await run(
-      runner,
-      [appRoot, "preview"],
-      logPath,
-      { PORT: "43124" },
-      electronBinary,
-    );
-    expect((await calls(logPath)).every(
-      (call) => call.nodeExecutable === electronBinary,
-    )).toBe(true);
-  });
+  it.skipIf(process.env.ELECTRON_SKIP_BINARY_DOWNLOAD === "1")(
+    "provides a managed node command when Electron hosts the runner",
+    async () => {
+      const { default: electronBinary } = await import("electron");
+      const { appRoot, logPath, runner } = await fixture();
+      await run(
+        runner,
+        [appRoot, "preview"],
+        logPath,
+        { PORT: "43124" },
+        electronBinary,
+      );
+      expect((await calls(logPath)).every(
+        (call) => call.nodeExecutable === electronBinary,
+      )).toBe(true);
+    },
+  );
 });

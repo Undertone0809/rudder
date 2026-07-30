@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { requestChatFileAnnotationLocation } from "@/lib/chat-file-annotation-events";
+import { hashChatAnnotationSource } from "@/lib/chat-response-annotation-selection";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { requestChatFileAnnotationLocation } from "@/lib/chat-file-annotation-events";
-import { hashChatAnnotationSource } from "@/lib/chat-response-annotation-selection";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })

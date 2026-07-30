@@ -15,6 +15,7 @@ function page(title: string, body: string, layout: "document" | "auth" = "docume
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <title>${escapeHtml(title)} · Rudder Account</title>
   <style>
     :root {
@@ -84,7 +85,7 @@ function page(title: string, body: string, layout: "document" | "auth" = "docume
       color: var(--primary-text);
       box-shadow: inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
     }
-    .brand-mark svg { width: 29px; height: 29px; }
+    .brand-mark img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
     .auth-heading { margin: 0; text-align: center; font-size: 1.72rem; letter-spacing: -.035em; line-height: 1.15; }
     .auth-intro { max-width: 34ch; margin: 10px auto 26px; text-align: center; color: var(--muted); font-size: .92rem; line-height: 1.55; }
     .social-stack { display: grid; gap: 10px; }
@@ -154,10 +155,7 @@ export function homePage(providers: { google: boolean; github: boolean }): strin
     "Sign in",
     `<section class="auth-card" aria-labelledby="sign-in-heading">
        <div class="brand-mark" aria-hidden="true">
-         <svg viewBox="0 0 64 64" role="img">
-           <path fill="var(--primary-text)" d="M32 3a29 29 0 1 0 29 29A29 29 0 0 0 32 3Zm0 6a23 23 0 0 1 22.4 17.8l-6 1.6A17 17 0 0 0 18.5 43l-5.3 3.2A23 23 0 0 1 32 9Z"/>
-           <path fill="var(--primary)" d="m17 42 33-14-16 28 1.4-15.2Z"/>
-         </svg>
+         <img src="/rudder-logo.png" alt="">
        </div>
        <h1 class="auth-heading" id="sign-in-heading">Welcome to Rudder</h1>
        <p class="auth-intro">Sign in to connect this device. Your Local Workspace stays on your machine.</p>

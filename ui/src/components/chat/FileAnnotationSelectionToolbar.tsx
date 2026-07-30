@@ -1,8 +1,10 @@
 import {
-  MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH,
-  type ChatInlineAnnotationInput,
-} from "@rudderhq/shared";
-import { useEffect, useRef, useState, type RefObject } from "react";
+  CHAT_FILE_ANNOTATION_LOCATE_EVENT,
+  consumePendingChatFileAnnotationLocation,
+  readPendingChatFileAnnotationLocation,
+  requestChatFileAnnotation,
+  type ChatFileAnnotationLocateDetail,
+} from "@/lib/chat-file-annotation-events";
 import {
   chatAnnotationRenderedTextToSourceSpans,
   chatAnnotationSemanticOffsetForBoundary,
@@ -13,12 +15,10 @@ import {
   shouldAutoFocusChatAnnotationToolbar,
 } from "@/lib/chat-response-annotation-selection";
 import {
-  CHAT_FILE_ANNOTATION_LOCATE_EVENT,
-  consumePendingChatFileAnnotationLocation,
-  readPendingChatFileAnnotationLocation,
-  requestChatFileAnnotation,
-  type ChatFileAnnotationLocateDetail,
-} from "@/lib/chat-file-annotation-events";
+  MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH,
+  type ChatInlineAnnotationInput,
+} from "@rudderhq/shared";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { SelectionAnnotationToolbar } from "./SelectionAnnotationToolbar";
 
 export type FileTextSelection = {

@@ -273,10 +273,9 @@ function LocalRuntimePane({
     ) {
       return;
     }
+    if (runtime?.status === "starting" || runtime?.status === "stopping") return;
     setPendingOpenIntent(0);
-    if (runtime?.status === "stopped") {
-      runtimeMutation.mutate();
-    }
+    if (runtime?.status === "stopped") runtimeMutation.mutate();
   }, [
     localApps?.supported,
     pendingOpenIntent,

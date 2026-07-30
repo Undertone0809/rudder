@@ -1932,7 +1932,7 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
   );
 }
 
-async function assertFreshDesktopWindowSize(electronApp, context) {
+async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64) {
   const { actual, workArea } = await electronApp.evaluate(({ BrowserWindow, screen }) => ({
     actual: BrowserWindow.getAllWindows()[0]?.getSize(),
     workArea: screen.getPrimaryDisplay().workAreaSize,
@@ -1942,7 +1942,14 @@ async function assertFreshDesktopWindowSize(electronApp, context) {
     const minimum = Math.min(MINIMUM_INITIAL_WINDOW_SIZE[index], available);
     return Math.max(minimum, Math.min(preferred, Math.floor(available * INITIAL_WINDOW_WORK_AREA_RATIO)));
   });
-  assert.deepEqual(actual, expected, `${context} should open at the expected default window size`);
+  assert.ok(actual, `${context} should expose an application window`);
+  assert.equal(actual.length, expected.length);
+  for (const [index, expectedDimension] of expected.entries()) {
+    assert.ok(
+      Math.abs(actual[index] - expectedDimension) <= tolerance,
+      `${context} should open at the expected default window size: expected ${expected.join("x")} ±${tolerance}px, got ${actual.join("x")}`,
+    );
+  }
 }
 
 async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
@@ -2058,6 +2065,9 @@ async function runAccountGateScenario(mode) {
 async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
   const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports, extraEnv);
   const page = await waitForBoardWindow(electronApp, firstPage);
+  // On macOS the Dock can change the reported work area while the boot window
+  // hands off to the application window. The shared tolerance stays strict
+  // enough to reject the former 1440px default.
   await assertFreshDesktopWindowSize(electronApp, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
@@ -2338,7 +2348,14 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("Execution context was destroyed") && !message.includes("Target page, context or browser has been closed")) {
+      const isMainFrameTransition = message.includes(
+        "available only to the current Rudder main frame",
+      );
+      if (
+        !message.includes("Execution context was destroyed")
+        && !message.includes("Target page, context or browser has been closed")
+        && !isMainFrameTransition
+      ) {
         throw error;
       }
     }
@@ -3810,7 +3827,10 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix, o
   await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
   await page.waitForLoadState("networkidle");
   await dismissReleaseNotesDialogIfVisible(page);
-  await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator("[data-settings-trigger='true']").waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
   await assertDesktopServiceWorkersDisabled(page);
   const openWindowCount = electronApp.windows().filter((candidate) => !candidate.isClosed()).length;
 
@@ -3819,7 +3839,10 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix, o
   await page.waitForLoadState("networkidle");
   await page.waitForURL(new RegExp(`/${organizationRouteKey}/dashboard$`), { timeout: 30_000 });
   await dismissReleaseNotesDialogIfVisible(page);
-  await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator("[data-settings-trigger='true']").waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
   await assertDesktopServiceWorkersDisabled(page);
   const navigationType = await page.evaluate(() => performance.getEntriesByType("navigation")[0]?.type ?? null);
   assert.equal(navigationType, "reload", "desktop refresh should behave like a native page reload");
@@ -5360,23 +5383,35 @@ async function runAppBuilderScenario(mode) {
     await browserPage.goto(new URL(target.openPath, target.origin).href);
     await browserPage.getByText(uniqueEmail).waitFor({ timeout: 30_000 });
 
-    await run.page.getByRole("button", { name: "Stop App" }).click();
-    await run.page.getByRole("button", { name: "Start App" }).waitFor({ timeout: 30_000 });
-    await run.page.getByRole("button", { name: "Start App" }).click();
-    await run.page.getByRole("button", { name: "Stop App" }).waitFor({ timeout: 360_000 });
+    const entryKey = `managed:${appRecord.id}`;
+    const appEntry = run.page.getByTestId(`apps-entry-${entryKey}`);
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    await run.page.getByRole("menuitem", { name: "Stop App" }).click();
+    await waitForSmokeCondition(
+      "stopped App to clear its attested target",
+      async () => (await run.page.evaluate(
+        (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
+        definition.id,
+      )) === null,
+      { timeoutMs: 30_000 },
+    );
+    await appEntry.click();
     target = await waitForSmokeCondition(
       "restarted App to publish its attested target",
       () => run.page.evaluate(
         (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
         definition.id,
       ),
-      { timeoutMs: 30_000 },
+      { timeoutMs: 360_000 },
     );
     const persisted = await fetch(new URL("/api/contacts", target.origin));
     assert.equal(persisted.status, 200);
     assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
 
-    await run.page.getByTestId("apps-copy-link").click();
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    await run.page.getByTestId(`apps-copy-link-${entryKey}`).click();
     await run.page.getByText("App link copied").waitFor();
     assert.equal(
       await run.electronApp.evaluate(({ clipboard }) => clipboard.readText()),

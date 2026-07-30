@@ -329,34 +329,36 @@ describe("desktop local file preview bridge", () => {
 
   it("registers a trusted-renderer-only IPC handler that calls the preview service", async () => {
     const mainSource = await fs.readFile(path.join(desktopSourceDirectory, "main.ts"), "utf8");
-    const handlerStart = mainSource.indexOf('ipcMain.handle("desktop:preview-local-file"');
-    const handlerEnd = mainSource.indexOf("ipcMain.handle(", handlerStart + 1);
-    const handlerSource = mainSource.slice(handlerStart, handlerEnd);
+    const ipcSource = await fs.readFile(path.join(desktopSourceDirectory, "local-file-ipc.ts"), "utf8");
+    const handlerStart = ipcSource.indexOf('ipcMain.handle("desktop:preview-local-file"');
+    const handlerEnd = ipcSource.indexOf("ipcMain.handle(", handlerStart + 1);
+    const handlerSource = ipcSource.slice(handlerStart, handlerEnd);
 
-    expect(mainSource).toContain('import { previewLocalFile, updateLocalFile } from "./local-file-preview.js";');
+    expect(mainSource).toContain('import { registerLocalFileIpcHandlers } from "./local-file-ipc.js";');
+    expect(mainSource).toContain("registerLocalFileIpcHandlers(ipcMain");
     expect(handlerStart).toBeGreaterThanOrEqual(0);
-    expect(handlerSource).toContain("event.sender !== mainWindow.webContents");
-    expect(handlerSource).toContain('throw new Error("Local file preview is only available to the main Rudder window.")');
-    expect(handlerSource).toContain("const preview = await previewLocalFile(targetPath)");
-    expect(handlerSource).toContain("localFileWriteAdmissions.set(writeCapability, preview.canonicalPath)");
+    expect(handlerSource).toContain('requireMainRenderer(event, "preview")');
+    expect(ipcSource).toContain('"Local file preview is only available to the main Rudder window."');
+    expect(handlerSource).toContain("const result = await preview(targetPath)");
+    expect(handlerSource).toContain("localFileWriteAdmissions.set(writeCapability, result.canonicalPath)");
     expect(handlerSource).toContain("localFileWriteAdmissions.size > 256");
     expect(handlerSource).not.toContain("previousCapability");
-    expect(handlerSource).toContain("return { ...preview, writeCapability }");
+    expect(handlerSource).toContain("return { ...result, writeCapability }");
     expect(handlerSource).not.toContain("shell.openPath");
   });
 
   it("registers and exposes the trusted conditional local-file update bridge", async () => {
-    const mainSource = await fs.readFile(path.join(desktopSourceDirectory, "main.ts"), "utf8");
+    const ipcSource = await fs.readFile(path.join(desktopSourceDirectory, "local-file-ipc.ts"), "utf8");
     const preloadSource = await fs.readFile(path.join(desktopSourceDirectory, "preload.ts"), "utf8");
-    const handlerStart = mainSource.indexOf('ipcMain.handle("desktop:update-local-file"');
-    const handlerEnd = mainSource.indexOf("ipcMain.handle(", handlerStart + 1);
-    const handlerSource = mainSource.slice(handlerStart, handlerEnd);
+    const handlerStart = ipcSource.indexOf('ipcMain.handle("desktop:update-local-file"');
+    const handlerEnd = ipcSource.indexOf("ipcMain.handle(", handlerStart + 1);
+    const handlerSource = ipcSource.slice(handlerStart, handlerEnd);
 
     expect(handlerStart).toBeGreaterThanOrEqual(0);
-    expect(handlerSource).toContain("event.sender !== mainWindow.webContents");
+    expect(handlerSource).toContain('requireMainRenderer(event, "editing")');
     expect(handlerSource).toContain("localFileWriteAdmissions.get(input.writeCapability)");
     expect(handlerSource).toContain("admittedPath !== targetPath");
-    expect(handlerSource).toContain("const preview = await updateLocalFile(targetPath, input)");
+    expect(handlerSource).toContain("const result = await update(targetPath, input)");
     expect(preloadSource).toContain('ipcRenderer.invoke("desktop:update-local-file", targetPath, input)');
   });
 
