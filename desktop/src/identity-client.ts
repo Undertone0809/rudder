@@ -417,9 +417,24 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
       } catch {
         // Signing out locally must remain available while Identity is offline.
       } finally {
-        options.offlineGrantStore?.signOut();
-        options.vault.clear();
         accessToken = null;
+        const cleanupErrors: unknown[] = [];
+        try {
+          options.offlineGrantStore?.signOut();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          options.vault.clear();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length > 0) {
+          console.warn(
+            "[rudder-desktop] local account credentials could not be fully removed",
+            ...cleanupErrors,
+          );
+        }
       }
     },
   };

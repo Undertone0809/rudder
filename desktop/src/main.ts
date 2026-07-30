@@ -57,7 +57,6 @@ import {
   createDesktopIdentityRuntime,
   type DesktopLocalAccountAuth,
 } from "./identity-runtime.js";
-import { resolveDesktopIdentitySafeStorage } from "./identity-safe-storage-policy.js";
 import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
 import { previewLocalFile } from "./local-file-preview.js";
@@ -747,15 +746,10 @@ function initializeLocalApps(desktopInstallationId: string): void {
 
 function initializeDesktopIdentity(desktopInstallationId: string): void {
   if (desktopIdentityRuntime) return;
-  const identitySafeStorage = resolveDesktopIdentitySafeStorage({
-    safeStorage,
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-  });
   desktopIdentityRuntime = createDesktopIdentityRuntime({
     installationId: desktopInstallationId,
     appName: APP_NAME,
-    safeStorage: identitySafeStorage,
+    safeStorage,
     getMainRenderer: getCurrentMainRenderer,
     getLocalApiUrl: () => serverHandle?.apiUrl ?? lastKnownAppUrl,
     onSignedIn: startLocalRudder,

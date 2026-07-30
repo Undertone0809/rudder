@@ -226,8 +226,11 @@ export function createDesktopOfflineGrantStore(options: {
         // A fail-closed memory-only build may follow an older secure build.
         // Remove stale encrypted state without decrypting it or touching the
         // unavailable native secure-storage API.
-        fs.rmSync(options.statePath, { force: true });
-        pendingDeviceKeys = null;
+        try {
+          fs.rmSync(options.statePath, { force: true });
+        } finally {
+          pendingDeviceKeys = null;
+        }
         return;
       }
       const state = readState();
