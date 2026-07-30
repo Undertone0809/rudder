@@ -4,6 +4,8 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
+import { ToastViewport } from "@/components/ToastViewport";
+import { ToastProvider } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
@@ -241,13 +243,16 @@ async function renderView({
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <SideChatPanelView
-          organizationId={sourceConversation.orgId}
-          target={viewTarget}
-          onRegisterCloseHandler={vi.fn()}
-          onReplaceTarget={onReplaceTarget}
-          onSelectResponseAnnotation={onSelectResponseAnnotation}
-        />
+        <ToastProvider>
+          <SideChatPanelView
+            organizationId={sourceConversation.orgId}
+            target={viewTarget}
+            onRegisterCloseHandler={vi.fn()}
+            onReplaceTarget={onReplaceTarget}
+            onSelectResponseAnnotation={onSelectResponseAnnotation}
+          />
+          <ToastViewport />
+        </ToastProvider>
       </QueryClientProvider>,
     );
   });
@@ -773,6 +778,31 @@ describe("SideChatPanelView response annotations", () => {
     expect(document.body.querySelector('[aria-label="Edit annotation 1"]')).toBeNull();
     expect(chip.getAttribute("aria-expanded")).toBe("false");
     await vi.waitFor(() => expect(document.activeElement).toBe(chip));
+  });
+
+  it("keeps an annotation draft and does not create a Side Chat while the dev runtime is stale", async () => {
+    queryClient.setQueryData(queryKeys.health, {
+      devServer: {
+        enabled: true,
+        restartRequired: true,
+      },
+    });
+    await renderView();
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+
+    expect(chatsApi.createSideChat).not.toHaveBeenCalled();
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("1 annotation");
+    expect(document.body.textContent).toContain("Restart Rudder to send annotations");
+    expect(document.body.textContent).toContain("Copy it before restarting Rudder");
+    expect(Array.from(document.body.querySelectorAll("button"))
+      .some((button) => button.textContent === "Restart Rudder")).toBe(false);
   });
 
   it("keeps the Side Chat provisional until annotation-only Send and owns comment files", async () => {

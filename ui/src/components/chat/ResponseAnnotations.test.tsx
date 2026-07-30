@@ -236,7 +236,7 @@ describe("response annotation components", () => {
       />,
     );
 
-    expect(host.textContent).not.toContain("Selected text:");
+    expect(host.textContent).not.toContain("Selected excerpt");
     expect(host.textContent).not.toContain(annotation.selectedText);
     expect(host.textContent).toContain("screenshot.png");
     expect(host.textContent).not.toContain("User comment:");
@@ -306,7 +306,7 @@ describe("response annotation components", () => {
       />,
     );
 
-    expect(host.textContent).toContain("2. Selected text:");
+    expect(host.textContent).toContain("2. Selected excerpt");
     expect(host.textContent).toContain(annotation.selectedText);
     expect(host.textContent).not.toContain("User comment:");
   });
@@ -612,10 +612,16 @@ describe("response annotation components", () => {
 
     expect(host.textContent).toContain("1 annotation");
     click(host.querySelector("[aria-label='Show 1 annotation']")!);
-    expect(document.body.textContent).toContain("1. Selected text:");
+    expect(document.body.textContent).toContain("1. Selected excerpt");
     expect(document.body.textContent).toContain(annotation.selectedText);
-    expect(document.body.textContent).not.toContain("User comment:");
+    expect(document.body.textContent).toContain("Your comment");
     expect(document.body.textContent).toContain("When can this happen?");
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-selected-text']",
+    )?.textContent).toContain(annotation.selectedText);
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-comment']",
+    )?.textContent).toContain("When can this happen?");
     expect(document.body.textContent).toContain("failure-notes.pdf");
     expect(document.body.querySelector("textarea")).toBeNull();
     expect(document.body.querySelector("[aria-label^='Delete annotation']")).toBeNull();

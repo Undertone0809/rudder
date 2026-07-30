@@ -39,8 +39,12 @@ function ToastActionControl({
       <button
         type="button"
         onClick={() => {
-          void toast.action?.onClick?.();
-          onDismiss(toast.id);
+          Promise.resolve()
+            .then(() => toast.action?.onClick?.())
+            .then(() => onDismiss(toast.id))
+            .catch(() => {
+              // The action owns its user-facing error. Keep the toast available for retry.
+            });
         }}
         className={className}
       >

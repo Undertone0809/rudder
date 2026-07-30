@@ -310,6 +310,7 @@ export type ResponseAnnotationLabels = {
   clearAll: string;
   selectedText: string;
   comment: string;
+  displayComment: string;
   optionalComment: string;
   addFiles: string;
   delete: string;
@@ -325,8 +326,9 @@ const DEFAULT_LABELS: ResponseAnnotationLabels = {
   showAnnotations: (count) => `Show ${count} ${count === 1 ? "annotation" : "annotations"}`,
   hideAnnotations: (count) => `Hide ${count} ${count === 1 ? "annotation" : "annotations"}`,
   clearAll: "Clear all annotations",
-  selectedText: "Selected text:",
+  selectedText: "Selected excerpt",
   comment: "Comment",
+  displayComment: "Your comment",
   optionalComment: "Add an optional comment…",
   addFiles: "Add images or files",
   delete: "Delete",
@@ -639,21 +641,29 @@ function AnnotationContent({
 }) {
   return (
     <>
-      <p className="text-xs font-medium text-muted-foreground">
-        {ordinal}. {labels.selectedText}
-      </p>
-      {annotation.surface === "workspace_file" || annotation.surface === "local_file" ? (
-        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={annotation.sourceFilePath}>
-          {annotation.sourceFilePath}
+      <section data-testid="chat-response-annotation-selected-text">
+        <p className="text-xs font-semibold text-muted-foreground">
+          {ordinal}. {labels.selectedText}
         </p>
-      ) : null}
-      <blockquote className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">
-        {annotation.selectedText}
-      </blockquote>
+        {annotation.surface === "workspace_file" || annotation.surface === "local_file" ? (
+          <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={annotation.sourceFilePath}>
+            {annotation.sourceFilePath}
+          </p>
+        ) : null}
+        <blockquote className="mt-2 border-l-2 border-[color:var(--accent-base)] bg-muted/45 px-3 py-2 whitespace-pre-wrap text-sm leading-5 text-foreground">
+          {annotation.selectedText}
+        </blockquote>
+      </section>
       {showComment && annotation.comment?.trim() ? (
-        <p className="mt-3 whitespace-pre-wrap text-sm leading-5 text-foreground">
-          {annotation.comment}
-        </p>
+        <section
+          className="mt-3 border-t border-[color:var(--border-soft)] pt-3"
+          data-testid="chat-response-annotation-comment"
+        >
+          <p className="text-xs font-semibold text-muted-foreground">{labels.displayComment}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">
+            {annotation.comment}
+          </p>
+        </section>
       ) : null}
       {attachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">

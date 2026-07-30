@@ -2,6 +2,7 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import type { HealthStatus } from "@/api/health";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -20,8 +21,10 @@ import {
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
+import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
 import {
   canSubmitChatResponseAnnotations,
   createChatResponseAnnotationState,
@@ -125,6 +128,7 @@ export function SideChatPanelView({
   onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
 }) {
   const queryClient = useQueryClient();
+  const { pushToast } = useToast();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -413,6 +417,12 @@ export function SideChatPanelView({
     const serializedAnnotations = serializeChatResponseAnnotations(annotationState, {
       fileIndexOffset: regularFiles.length,
     });
+    if (blockStaleAnnotationSubmission({
+      annotations: serializedAnnotations.inlineAnnotations,
+      devServer: queryClient.getQueryData<HealthStatus>(queryKeys.health)?.devServer,
+      draftPersistence: "memory",
+      pushToast,
+    })) return;
     const createdAt = new Date();
     let acknowledged = false;
     setSending(true);
