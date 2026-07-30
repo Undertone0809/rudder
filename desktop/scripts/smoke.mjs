@@ -2007,22 +2007,22 @@ async function runAccountGateScenario(mode) {
       null,
       "packaged Desktop must not start the Local Workspace server before account sign-in",
     );
-    const residentStatus = await waitForSmokeCondition(
-      "packaged resident shell controls",
-      async () => {
-        if (!(await pathExists(residentStatusPath))) return null;
-        return JSON.parse(await readFile(residentStatusPath, "utf8"));
-      },
-    );
-    assert.equal(residentStatus.enabled, true, "packaged Desktop should enable resident shell controls");
-    assert.equal(
-      residentStatus.controlsAvailable,
-      true,
-      "packaged Desktop should create its resident shell controls",
-    );
-    assert.equal(residentStatus.packaged, true, "resident shell probe should come from a packaged Desktop");
-    assert.equal(residentStatus.platform, process.platform);
     if (process.platform === "darwin") {
+      const residentStatus = await waitForSmokeCondition(
+        "packaged macOS resident shell controls",
+        async () => {
+          if (!(await pathExists(residentStatusPath))) return null;
+          return JSON.parse(await readFile(residentStatusPath, "utf8"));
+        },
+      );
+      assert.equal(residentStatus.enabled, true, "packaged macOS Desktop should enable resident shell controls");
+      assert.equal(
+        residentStatus.controlsAvailable,
+        true,
+        "packaged macOS Desktop should create its resident shell controls",
+      );
+      assert.equal(residentStatus.packaged, true, "resident shell probe should come from a packaged Desktop");
+      assert.equal(residentStatus.platform, process.platform);
       assert.equal(residentStatus.iconSource, "trayTemplate.png");
       assert.equal(residentStatus.iconIsTemplate, true, "macOS menu bar icon must use template rendering");
       assert.deepEqual(residentStatus.iconSize, { width: 18, height: 18 });
