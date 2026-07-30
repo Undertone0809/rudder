@@ -36,6 +36,12 @@ function isBrowserRequest(req: object): boolean {
     || pathname === "/api/instance/browser/broker";
 }
 
+function isLocalAccountCredentialRequest(req: object): boolean {
+  const pathname = requestPathname(req);
+  return pathname === "/api/auth/local-exchange"
+    || pathname === "/api/auth/local-offline";
+}
+
 function containsInlineAnnotations(body: unknown): boolean {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
   if (Object.hasOwn(body, "inlineAnnotations")) return true;
@@ -73,11 +79,14 @@ export function requestQueryForLogs(req: object, query: unknown): unknown {
 }
 
 export function requestHeadersForLogs(req: object, headers: unknown): unknown {
-  if (!isMcpOAuthCallbackRequest(req) || !headers || typeof headers !== "object") {
+  if (!headers || typeof headers !== "object") {
     return headers;
   }
   const output = { ...(headers as Record<string, unknown>) };
-  for (const name of ["referer", "referrer", "cookie", "authorization"]) {
+  const sensitiveNames = isMcpOAuthCallbackRequest(req)
+    ? ["referer", "referrer", "cookie", "authorization"]
+    : ["cookie", "authorization"];
+  for (const name of sensitiveNames) {
     if (Object.keys(output).some((key) => key.toLowerCase() === name)) {
       for (const key of Object.keys(output)) {
         if (key.toLowerCase() === name) output[key] = REDACTED_REQUEST_QUERY;
@@ -103,6 +112,19 @@ export function serializeHttpRequestForLogs(
   };
 }
 
+export function serializeHttpResponseForLogs(
+  serializedResponse: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!serializedResponse.headers || typeof serializedResponse.headers !== "object") {
+    return serializedResponse;
+  }
+  const headers = { ...(serializedResponse.headers as Record<string, unknown>) };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "set-cookie") headers[key] = REDACTED_REQUEST_QUERY;
+  }
+  return { ...serializedResponse, headers };
+}
+
 export function markHttpRequestBodySensitive(req: object): void {
   (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody = true;
 }
@@ -119,6 +141,7 @@ export function markBrowserHttpRequestBodySensitive(
 export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
+    || isLocalAccountCredentialRequest(req)
     || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY
     : body;
@@ -219,6 +242,9 @@ export const httpLogger = pinoHttp({
   serializers: {
     req(serializedRequest) {
       return serializeHttpRequestForLogs(serializedRequest);
+    },
+    res(serializedResponse) {
+      return serializeHttpResponseForLogs(serializedResponse);
     },
   },
   customLogLevel(_req, res, err) {

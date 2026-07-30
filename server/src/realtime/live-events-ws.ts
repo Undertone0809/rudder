@@ -1,6 +1,10 @@
 import type { Db } from "@rudderhq/db";
 import { agentApiKeys, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
-import type { DeploymentMode } from "@rudderhq/shared";
+import {
+  authRequirementForDeploymentMode,
+  type AuthRequirement,
+  type DeploymentMode,
+} from "@rudderhq/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Server as HttpServer, IncomingMessage } from "node:http";
@@ -9,6 +13,7 @@ import type { Duplex } from "node:stream";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
+import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 
 interface WsSocket {
   readyState: number;
@@ -45,6 +50,7 @@ interface UpgradeContext {
   orgId: string;
   actorType: "board" | "agent";
   actorId: string;
+  sessionRevocationGeneration?: number;
 }
 
 interface IncomingMessageWithContext extends IncomingMessage {
@@ -104,6 +110,7 @@ async function authorizeUpgrade(
   url: URL,
   opts: {
     deploymentMode: DeploymentMode;
+    authRequirement?: AuthRequirement;
     resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   },
 ): Promise<UpgradeContext | null> {
@@ -113,7 +120,9 @@ async function authorizeUpgrade(
 
   // Browser board context has no bearer token in local_trusted and authenticated modes.
   if (!token) {
-    if (opts.deploymentMode === "local_trusted") {
+    const authRequirement =
+      opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
+    if (authRequirement === "optional" && opts.deploymentMode === "local_trusted") {
       return {
         orgId,
         actorType: "board",
@@ -121,7 +130,7 @@ async function authorizeUpgrade(
       };
     }
 
-    if (opts.deploymentMode !== "authenticated" || !opts.resolveSessionFromHeaders) {
+    if (!opts.resolveSessionFromHeaders) {
       return null;
     }
 
@@ -185,11 +194,14 @@ export function setupLiveEventsWebSocketServer(
   db: Db,
   opts: {
     deploymentMode: DeploymentMode;
+    authRequirement?: AuthRequirement;
     resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
+    sessionRevocation?: LocalAccountSessionRevocation;
   },
 ): LiveEventsWebSocketRuntime {
   const wss = new WebSocketServer({ noServer: true });
   const cleanupByClient = new Map<WsSocket, () => void>();
+  const contextByClient = new Map<WsSocket, UpgradeContext>();
   const aliveByClient = new Map<WsSocket, boolean>();
   const pendingUpgradeSockets = new Set<Duplex>();
   let closing = false;
@@ -198,6 +210,7 @@ export function setupLiveEventsWebSocketServer(
   const cleanupClient = (socket: WsSocket) => {
     const cleanup = cleanupByClient.get(socket);
     cleanupByClient.delete(socket);
+    contextByClient.delete(socket);
     aliveByClient.delete(socket);
     try {
       cleanup?.();
@@ -223,6 +236,14 @@ export function setupLiveEventsWebSocketServer(
       socket.close(1008, "missing context");
       return;
     }
+    if (
+      context.actorType === "board"
+      && context.sessionRevocationGeneration !== undefined
+      && opts.sessionRevocation?.generation() !== context.sessionRevocationGeneration
+    ) {
+      socket.close(1008, "account session changed");
+      return;
+    }
 
     const unsubscribe = subscribeCompanyLiveEvents(context.orgId, (event) => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -230,6 +251,7 @@ export function setupLiveEventsWebSocketServer(
     });
 
     cleanupByClient.set(socket, unsubscribe);
+    contextByClient.set(socket, context);
     aliveByClient.set(socket, true);
 
     socket.on("pong", () => {
@@ -247,6 +269,14 @@ export function setupLiveEventsWebSocketServer(
 
   wss.on("close", () => {
     clearInterval(pingInterval);
+  });
+
+  const unsubscribeSessionRevocation = opts.sessionRevocation?.subscribe((userId) => {
+    for (const [socket, context] of contextByClient) {
+      if (context.actorType === "board" && context.actorId === userId) {
+        socket.close(1008, "account signed out");
+      }
+    }
   });
 
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -267,10 +297,12 @@ export function setupLiveEventsWebSocketServer(
     }
 
     const removePendingSocket = () => pendingUpgradeSockets.delete(socket);
+    const sessionRevocationGeneration = opts.sessionRevocation?.generation();
     pendingUpgradeSockets.add(socket);
     socket.once("close", removePendingSocket);
     void authorizeUpgrade(db, req, orgId, url, {
       deploymentMode: opts.deploymentMode,
+      authRequirement: opts.authRequirement,
       resolveSessionFromHeaders: opts.resolveSessionFromHeaders,
     })
       .then((context) => {
@@ -282,9 +314,20 @@ export function setupLiveEventsWebSocketServer(
           rejectUpgrade(socket, "403 Forbidden", "forbidden");
           return;
         }
+        if (
+          context.actorType === "board"
+          && sessionRevocationGeneration !== undefined
+          && opts.sessionRevocation?.generation() !== sessionRevocationGeneration
+        ) {
+          rejectUpgrade(socket, "403 Forbidden", "account session changed");
+          return;
+        }
 
         const reqWithContext = req as IncomingMessageWithContext;
-        reqWithContext.rudderUpgradeContext = context;
+        reqWithContext.rudderUpgradeContext = {
+          ...context,
+          sessionRevocationGeneration,
+        };
 
         wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
           wss.emit("connection", ws, reqWithContext);
@@ -312,6 +355,7 @@ export function setupLiveEventsWebSocketServer(
       closing = true;
       server.off("upgrade", handleUpgrade);
       clearInterval(pingInterval);
+      unsubscribeSessionRevocation?.();
 
       for (const socket of pendingUpgradeSockets) {
         socket.destroy();

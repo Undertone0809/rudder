@@ -17,22 +17,22 @@ import { Input } from "@/components/ui/input";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
 import {
+  APP_BUILDER_SCAFFOLD_VERSION,
+  appBuilderChatPrefill,
+  appBuilderSourceRoot,
+} from "@/lib/app-builder";
+import {
+  readDesktopShell,
   type DesktopLocalAppDefinition,
   type DesktopLocalAppDefinitionDraft,
   type DesktopPreparedLocalAppDefinition,
-  readDesktopShell,
 } from "@/lib/desktop-shell";
-import {
-  appBuilderChatPrefill,
-  APP_BUILDER_SCAFFOLD_VERSION,
-  appBuilderSourceRoot,
-} from "@/lib/app-builder";
 import {
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
-import { queryKeys } from "@/lib/queryKeys";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import type {

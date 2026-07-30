@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import electronBinary from "electron";
+import { spawn } from "node:child_process";
 import {
   chmod,
   copyFile,

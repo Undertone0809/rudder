@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/server",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
   "bugs": {
@@ -57,6 +57,7 @@
     "@rudderhq/agent-runtime-pi-local": "workspace:*",
     "@rudderhq/agent-runtime-utils": "workspace:*",
     "@rudderhq/db": "workspace:*",
+    "@rudderhq/identity-core": "workspace:*",
     "@rudderhq/plugin-sdk": "workspace:*",
     "@rudderhq/run-intelligence-core": "workspace:*",
     "@rudderhq/shared": "workspace:*",

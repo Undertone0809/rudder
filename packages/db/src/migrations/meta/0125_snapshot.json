@@ -1,5 +1,5 @@
 {
-  "id": "36837d11-5f09-4ddc-8856-54fd023feae9",
+  "id": "43f837c0-0054-419f-8577-601e6e9619e6",
   "prevId": "d81c9c13-e6b8-4083-b364-f27e7b7c301c",
   "version": "7",
   "dialect": "postgresql",
@@ -534,7 +534,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -645,7 +645,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "agent_enabled_skills_agent_id_agents_id_fk": {
@@ -2825,301 +2825,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.app_builder_apps": {
-      "name": "app_builder_apps",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "org_id": {
-          "name": "org_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source_root": {
-          "name": "source_root",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scaffold_version": {
-          "name": "scaffold_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "build_status": {
-          "name": "build_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'preparing'"
-        },
-        "latest_build_run_id": {
-          "name": "latest_build_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "latest_verification_run_id": {
-          "name": "latest_verification_run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "desktop_installation_id": {
-          "name": "desktop_installation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "app_public_id": {
-          "name": "app_public_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "local_binding_id": {
-          "name": "local_binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "app_builder_apps_project_uq": {
-          "name": "app_builder_apps_project_uq",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"app_builder_apps\".\"project_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "app_builder_apps_org_source_root_uq": {
-          "name": "app_builder_apps_org_source_root_uq",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_root",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "app_builder_apps_org_status_updated_idx": {
-          "name": "app_builder_apps_org_status_updated_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "build_status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "app_builder_apps_installation_public_uq": {
-          "name": "app_builder_apps_installation_public_uq",
-          "columns": [
-            {
-              "expression": "desktop_installation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "app_public_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"app_builder_apps\".\"desktop_installation_id\" is not null and \"app_builder_apps\".\"app_public_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "app_builder_apps_installation_binding_uq": {
-          "name": "app_builder_apps_installation_binding_uq",
-          "columns": [
-            {
-              "expression": "desktop_installation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "local_binding_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"app_builder_apps\".\"desktop_installation_id\" is not null and \"app_builder_apps\".\"local_binding_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "app_builder_apps_org_id_organizations_id_fk": {
-          "name": "app_builder_apps_org_id_organizations_id_fk",
-          "tableFrom": "app_builder_apps",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "org_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "app_builder_apps_project_id_projects_id_fk": {
-          "name": "app_builder_apps_project_id_projects_id_fk",
-          "tableFrom": "app_builder_apps",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "app_builder_apps_conversation_id_chat_conversations_id_fk": {
-          "name": "app_builder_apps_conversation_id_chat_conversations_id_fk",
-          "tableFrom": "app_builder_apps",
-          "tableTo": "chat_conversations",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "app_builder_apps_latest_build_run_id_heartbeat_runs_id_fk": {
-          "name": "app_builder_apps_latest_build_run_id_heartbeat_runs_id_fk",
-          "tableFrom": "app_builder_apps",
-          "tableTo": "heartbeat_runs",
-          "columnsFrom": [
-            "latest_build_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "app_builder_apps_latest_verification_run_id_heartbeat_runs_id_fk": {
-          "name": "app_builder_apps_latest_verification_run_id_heartbeat_runs_id_fk",
-          "tableFrom": "app_builder_apps",
-          "tableTo": "heartbeat_runs",
-          "columnsFrom": [
-            "latest_verification_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "app_builder_apps_build_status_check": {
-          "name": "app_builder_apps_build_status_check",
-          "value": "\"app_builder_apps\".\"build_status\" in ('preparing', 'building', 'verifying', 'ready', 'failed')"
-        },
-        "app_builder_apps_source_root_check": {
-          "name": "app_builder_apps_source_root_check",
-          "value": "\"app_builder_apps\".\"source_root\" ~ '^apps/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'"
-        },
-        "app_builder_apps_binding_all_or_none_check": {
-          "name": "app_builder_apps_binding_all_or_none_check",
-          "value": "(\n        (\"app_builder_apps\".\"desktop_installation_id\" is null and \"app_builder_apps\".\"app_public_id\" is null and \"app_builder_apps\".\"local_binding_id\" is null)\n        or\n        (\"app_builder_apps\".\"desktop_installation_id\" is not null and \"app_builder_apps\".\"app_public_id\" is not null and \"app_builder_apps\".\"local_binding_id\" is not null)\n      )"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.approval_comments": {
@@ -13113,6 +12818,218 @@
       },
       "isRLSEnabled": false
     },
+    "public.external_user_bindings": {
+      "name": "external_user_bindings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_user_id": {
+          "name": "local_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_verified_at": {
+          "name": "last_verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "external_user_bindings_issuer_subject_uq": {
+          "name": "external_user_bindings_issuer_subject_uq",
+          "columns": [
+            {
+              "expression": "issuer",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "external_user_bindings_local_user_idx": {
+          "name": "external_user_bindings_local_user_idx",
+          "columns": [
+            {
+              "expression": "local_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "external_user_bindings_local_user_id_user_id_fk": {
+          "name": "external_user_bindings_local_user_id_user_id_fk",
+          "tableFrom": "external_user_bindings",
+          "tableTo": "user",
+          "columnsFrom": [
+            "local_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.installation_account_bindings": {
+      "name": "installation_account_bindings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "installation_id": {
+          "name": "installation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_user_id": {
+          "name": "local_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "installation_account_bindings_installation_uq": {
+          "name": "installation_account_bindings_installation_uq",
+          "columns": [
+            {
+              "expression": "installation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "installation_account_bindings_issuer_subject_idx": {
+          "name": "installation_account_bindings_issuer_subject_idx",
+          "columns": [
+            {
+              "expression": "issuer",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "installation_account_bindings_local_user_id_user_id_fk": {
+          "name": "installation_account_bindings_local_user_id_user_id_fk",
+          "tableFrom": "installation_account_bindings",
+          "tableTo": "user",
+          "columnsFrom": [
+            "local_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.instance_settings": {
       "name": "instance_settings",
       "schema": "",
@@ -21550,6 +21467,120 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.server_exchange_redemptions": {
+      "name": "server_exchange_redemptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "jti": {
+          "name": "jti",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "audience": {
+          "name": "audience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_user_id": {
+          "name": "local_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "redeemed_at": {
+          "name": "redeemed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "server_exchange_redemptions_issuer_jti_uq": {
+          "name": "server_exchange_redemptions_issuer_jti_uq",
+          "columns": [
+            {
+              "expression": "issuer",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "jti",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "server_exchange_redemptions_expiry_idx": {
+          "name": "server_exchange_redemptions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "server_exchange_redemptions_local_user_id_user_id_fk": {
+          "name": "server_exchange_redemptions_local_user_id_user_id_fk",
+          "tableFrom": "server_exchange_redemptions",
+          "tableTo": "user",
+          "columnsFrom": [
+            "local_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

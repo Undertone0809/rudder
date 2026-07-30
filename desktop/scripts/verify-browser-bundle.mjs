@@ -100,15 +100,14 @@ export async function verifyBrowserBundle(options) {
       assertEqual(browserCommand.provenance, "desktop_bundle", "Browser resolver provenance");
       assertEqual(command.expectedVersion, expectedVersion, "core resolver expected version");
       assertEqual(browserCommand.expectedVersion, expectedVersion, "Browser resolver expected version");
-      const expectedArgs = process.platform === "win32" || process.platform === "darwin"
-        ? [path.join(path.dirname(cliEntry), "desktop-cli-runner.js"), "mcp-server"]
-        : ["--desktop-cli", "mcp-server"];
+      const expectedArgs = [
+        path.join(path.dirname(cliEntry), "desktop-cli-runner.js"),
+        "mcp-server",
+      ];
       const expectedBrowserArgs = [...expectedArgs, "--server", "browser"];
       assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "core resolver arguments");
       assertEqual(JSON.stringify(browserCommand.args), JSON.stringify(expectedBrowserArgs), "Browser resolver arguments");
-      if (process.platform === "win32" || process.platform === "darwin") {
-        assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
-      }
+      assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
       const packagedExecutable = options.desktopExecutable
         ? path.resolve(options.desktopExecutable)
         : packagedExecutableForServerPackage(path.dirname(cliEntry));
@@ -118,22 +117,21 @@ export async function verifyBrowserBundle(options) {
       const packagedCommand = {
         ...command,
         command: packagedExecutable,
-        args: process.platform === "linux" ? ["--no-sandbox", ...command.args] : command.args,
       };
       const packagedBrowserCommand = {
         ...browserCommand,
         command: packagedExecutable,
-        args: process.platform === "linux" ? ["--no-sandbox", ...browserCommand.args] : browserCommand.args,
+      };
+      const packagedRuntimeEnv = {
+        ...process.env,
+        HOME: tempRoot,
+        PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
+        RUDDER_BROWSER_ENABLED: "true",
+        RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
       };
       const coreResult = await preflightModule.preflightRudderMcpServer({
         command: packagedCommand,
-        runtimeEnv: {
-          ...process.env,
-          HOME: tempRoot,
-          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
-          RUDDER_BROWSER_ENABLED: "true",
-          RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
-        },
+        runtimeEnv: packagedRuntimeEnv,
         browserEnabled: false,
         timeoutMs: 15_000,
       });
@@ -144,13 +142,7 @@ export async function verifyBrowserBundle(options) {
       }
       const result = await preflightModule.preflightRudderBrowserMcpServer({
         command: packagedBrowserCommand,
-        runtimeEnv: {
-          ...process.env,
-          HOME: tempRoot,
-          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
-          RUDDER_BROWSER_ENABLED: "true",
-          RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
-        },
+        runtimeEnv: packagedRuntimeEnv,
         timeoutMs: 15_000,
       });
       if (!result.browserAvailable) {

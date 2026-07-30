@@ -1,4 +1,4 @@
-import { getDatabase, closeDatabases, dataMode } from "@/lib/db/client";
+import { closeDatabases, dataMode, getDatabase } from "@/lib/db/client";
 import { contacts } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
 

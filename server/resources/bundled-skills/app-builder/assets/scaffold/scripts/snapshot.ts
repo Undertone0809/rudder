@@ -1,7 +1,7 @@
-import { backup, DatabaseSync } from "node:sqlite";
+import { databasePath } from "@/lib/db/client";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { databasePath } from "@/lib/db/client";
+import { backup, DatabaseSync } from "node:sqlite";
 
 const source = databasePath();
 const snapshotDir = path.resolve("data", "snapshots");

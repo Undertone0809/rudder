@@ -10,7 +10,9 @@ const desktopRoot = path.resolve(scriptDir, "..");
 const packageJsonPath = path.join(desktopRoot, "package.json");
 const releaseDir = path.join(desktopRoot, "release");
 const packagingNodeModulesDir = path.join(desktopRoot, "node_modules");
-const hiddenPackagingNodeModulesDir = path.join(desktopRoot, ".node_modules.packaging-hidden");
+// Keep this non-hidden and at the same directory depth as node_modules so pnpm's
+// relative workspace links remain valid while electron-builder is packaging.
+const hiddenPackagingNodeModulesDir = path.join(desktopRoot, "node_modules-packaging-hidden");
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
@@ -258,6 +260,30 @@ async function hidePackagingNodeModules() {
         );
       } else {
         await fs.symlink(electronLinkTarget, path.join(packagingNodeModulesDir, "electron"));
+      }
+    } catch (error) {
+      const code = /** @type {{ code?: string }} */ (error).code;
+      if (code !== "ENOENT") throw error;
+    }
+
+    try {
+      const identityCoreDir = path.join(packagingNodeModulesDir, "@rudderhq", "identity-core");
+      const identityCoreLinkTarget = await fs.readlink(
+        path.join(hiddenPackagingNodeModulesDir, "@rudderhq", "identity-core"),
+      );
+      await fs.mkdir(path.dirname(identityCoreDir), { recursive: true });
+      if (process.platform === "win32") {
+        await fs.cp(
+          path.resolve(
+            hiddenPackagingNodeModulesDir,
+            "@rudderhq",
+            identityCoreLinkTarget,
+          ),
+          identityCoreDir,
+          { recursive: true, dereference: true },
+        );
+      } else {
+        await fs.symlink(identityCoreLinkTarget, identityCoreDir);
       }
     } catch (error) {
       const code = /** @type {{ code?: string }} */ (error).code;

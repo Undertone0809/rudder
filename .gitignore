@@ -85,3 +85,4 @@ tests/release-smoke/playwright-report/
 .claude/worktrees/
 .gstack/
 .superpowers/
+.vercel/

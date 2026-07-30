@@ -1,8 +1,10 @@
 import type { Db } from "@rudderhq/db";
+import { authRequirementForDeploymentMode } from "@rudderhq/shared";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import {
   errorHandler,
@@ -108,9 +110,13 @@ export async function createHttpApp(
   app.use(
     actorMiddleware(db, {
       deploymentMode: opts.deploymentMode,
+      authRequirement: opts.authRequirement,
       resolveSession: opts.resolveSession,
     }),
   );
+  const authRequirement =
+    opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
+  app.use(accountSessionRequired(authRequirement));
   app.get("/api/auth/get-session", (req, res) => {
     if (req.actor.type !== "board" || !req.actor.userId) {
       res.status(401).json({ error: "Unauthorized" });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { buildExportEnvelope, importEnvelopeSchema } from "@/lib/data-transfer";
+import { describe, expect, it } from "vitest";
 
 describe("app data transfer", () => {
   it("round-trips the versioned export envelope", () => {

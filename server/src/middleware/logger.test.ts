@@ -9,6 +9,7 @@ import {
   requestQueryForLogs,
   requestUrlForLogs,
   serializeHttpRequestForLogs,
+  serializeHttpResponseForLogs,
 } from "./logger.js";
 
 describe("HTTP request-body logging", () => {
@@ -40,6 +41,27 @@ describe("HTTP request-body logging", () => {
     expect(requestBodyForLogs({ originalUrl: "/API/INSTANCE/BROWSER/BROKER/" }, body)).toBe("[REDACTED]");
     expect(requestBodyForLogs({ originalUrl: "/API/BROWSER/CLIPBOARD/" }, body)).toBe("[REDACTED]");
     expect(requestBodyForLogs({ originalUrl: "/api/issues" }, body)).toBe(body);
+  });
+
+  it("redacts local account exchange and Offline Grant bodies before route validation", () => {
+    const exchange = { exchangeCode: "live-one-time-code" };
+    const offline = {
+      grant: "signed-offline-grant",
+      proof: { signature: "device-proof" },
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/auth/local-exchange" },
+      exchange,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { url: "/API/AUTH/LOCAL-OFFLINE/?retry=1" },
+      offline,
+    )).toBe("[REDACTED]");
+    expect(JSON.stringify([
+      requestBodyForLogs({ originalUrl: "/api/auth/local-exchange" }, exchange),
+      requestBodyForLogs({ originalUrl: "/api/auth/local-offline" }, offline),
+    ])).not.toContain("live-one-time-code");
   });
 
   it("redacts direct and queued inline annotation request bodies", () => {
@@ -182,5 +204,37 @@ describe("HTTP request-body logging", () => {
       headers: requestHeadersForLogs(req, req.headers),
       serialized,
     })).not.toMatch(/raw-state|raw-code|private|oauth\.example|referer-state|pkce-secret|cookie-secret|callback-secret/u);
+  });
+
+  it("redacts session credentials from all request and response headers", () => {
+    const requestHeaders = requestHeadersForLogs(
+      { originalUrl: "/api/auth/local-claim" },
+      {
+        cookie: "better-auth.session_token=secret",
+        authorization: "Bearer secret",
+        origin: "http://127.0.0.1:3100",
+      },
+    );
+    const response = serializeHttpResponseForLogs({
+      statusCode: 200,
+      headers: {
+        "set-cookie": "better-auth.session_token=secret; HttpOnly",
+        "content-type": "application/json",
+      },
+    });
+
+    expect(requestHeaders).toEqual({
+      cookie: "[REDACTED]",
+      authorization: "[REDACTED]",
+      origin: "http://127.0.0.1:3100",
+    });
+    expect(response).toEqual({
+      statusCode: 200,
+      headers: {
+        "set-cookie": "[REDACTED]",
+        "content-type": "application/json",
+      },
+    });
+    expect(JSON.stringify({ requestHeaders, response })).not.toContain("secret");
   });
 });

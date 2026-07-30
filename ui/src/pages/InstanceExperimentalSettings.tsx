@@ -9,8 +9,8 @@ import {
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
 import { useI18n } from "@/context/I18nContext";
-import { queryKeys } from "@/lib/queryKeys";
 import { readDesktopShell } from "@/lib/desktop-shell";
+import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Beaker, FlaskConical } from "lucide-react";

@@ -1,0 +1,43 @@
+{
+  "name": "@rudderhq/identity-core",
+  "version": "0.6.6",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "packages/identity-core"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

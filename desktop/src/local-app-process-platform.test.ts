@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  isAbsoluteLocalAppPath,
+  isValidLocalAppWatchdogConfig,
+  localAppUsesDetachedProcessGroup,
+  terminateLocalAppOwner,
+} from "./local-app-process-platform-shared.mjs";
+import {
   createLocalAppProcessPlatform,
   descendantProcessIds,
   parseLinuxTcpListenerInodes,
   parseWindowsLoopbackListenerPids,
   parseWindowsProcessTable,
 } from "./local-app-process-platform.js";
-import {
-  isAbsoluteLocalAppPath,
-  isValidLocalAppWatchdogConfig,
-  localAppUsesDetachedProcessGroup,
-  terminateLocalAppOwner,
-} from "./local-app-process-platform-shared.mjs";
 
 describe("Local App process platform abstraction", () => {
   it("uses portable absolute-path and detached-process rules", () => {

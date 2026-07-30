@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";

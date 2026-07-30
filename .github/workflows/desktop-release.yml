@@ -129,8 +129,10 @@ jobs:
           fi
 
           if [ "$(uname -s)" = "Linux" ]; then
-            xvfb-run --auto-servernum pnpm desktop:dist
-            xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
+            command -v dbus-run-session
+            command -v xvfb-run
+            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:dist
+            dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
           else
             pnpm desktop:dist
             node desktop/scripts/app-builder-smoke.mjs --packaged

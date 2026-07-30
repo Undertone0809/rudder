@@ -1,6 +1,6 @@
+import { closeDatabases, getDatabase } from "@/lib/db/client";
 import { migrate } from "drizzle-orm/sqlite-proxy/migrator";
 import path from "node:path";
-import { closeDatabases, getDatabase } from "@/lib/db/client";
 
 const migrationsFolder = path.resolve("migrations");
 const { db, filePath, sqlite } = getDatabase();

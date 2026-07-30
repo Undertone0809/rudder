@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/desktop",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "Rudder Desktop local-first Electron shell",
   "author": "Rudder",
@@ -21,6 +21,7 @@
     "smoke:app-builder:packaged": "node scripts/app-builder-smoke.mjs --packaged"
   },
   "dependencies": {
+    "@rudderhq/identity-core": "workspace:*",
     "pnpm": "9.15.4"
   },
   "devDependencies": {

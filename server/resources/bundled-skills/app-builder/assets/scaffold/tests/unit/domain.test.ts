@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { contactCreateSchema } from "@/lib/domain";
+import { describe, expect, it } from "vitest";
 
 describe("contact input", () => {
   it("normalizes a valid contact", () => {

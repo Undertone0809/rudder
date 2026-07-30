@@ -66,6 +66,11 @@ export { issues } from "./issues.js";
 export { joinRequests } from "./join_requests.js";
 export { labels } from "./labels.js";
 export { libraryEntries } from "./library_entries.js";
+export {
+  externalUserBindings,
+  installationAccountBindings,
+  serverExchangeRedemptions
+} from "./local_account_auth.js";
 export { mcpConnections, mcpOAuthGrants, mcpOAuthSessions } from "./mcp_connections.js";
 export { messengerCustomGroupEntries, messengerCustomGroups } from "./messenger_custom_groups.js";
 export { messengerSavedViewMutations, messengerSavedViews } from "./messenger_saved_views.js";
