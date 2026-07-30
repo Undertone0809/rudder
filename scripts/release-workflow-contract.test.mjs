@@ -106,6 +106,20 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain('-f source_ref="$tag"');
   });
 
+  it("opens the packaged macOS account gate before publishing Desktop artifacts", () => {
+    expect(desktopWorkflow).toContain("matrix.platform == 'macos' && matrix.arch == 'arm64'");
+    expect(desktopWorkflow).toContain(
+      "node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate",
+    );
+
+    const smokeIndex = desktopWorkflow.indexOf(
+      "node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate",
+    );
+    const collectIndex = desktopWorkflow.indexOf("node scripts/collect-desktop-release-assets.mjs");
+    expect(smokeIndex).toBeGreaterThan(-1);
+    expect(collectIndex).toBeGreaterThan(smokeIndex);
+  });
+
   it("does not rebuild after the local verification gate already built the workspace", () => {
     expect(releaseScript).toContain("workspace_built=true");
     expect(releaseScript).toContain("Reusing workspace build from verification gate");

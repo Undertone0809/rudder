@@ -9,7 +9,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-function page(title: string, body: string): string {
+function page(title: string, body: string, layout: "document" | "auth" = "document"): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -17,68 +17,211 @@ function page(title: string, body: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} · Rudder Account</title>
   <style>
-    :root { color-scheme: light dark; font-family: Geist, Avenir, ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #0b0c0f; color: #f5f5f4; }
-    main { max-width: 720px; margin: 0 auto; padding: 72px 24px 96px; }
-    a { color: #a7f3d0; } h1 { font-size: 2.5rem; letter-spacing: -.04em; }
-    h2 { margin-top: 2rem; } p, li { color: #d6d3d1; line-height: 1.65; }
-    nav { display: flex; gap: 20px; margin-top: 40px; }
-    .eyebrow { color: #a7f3d0; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-    section { display: grid; gap: 12px; margin-top: 32px; padding: 24px; border: 1px solid #292524; border-radius: 16px; }
-    form { display: grid; gap: 12px; } label { display: grid; gap: 6px; }
-    input, button { box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid #44403c; border-radius: 9px; font: inherit; }
-    button { cursor: pointer; font-weight: 700; } button:disabled { cursor: not-allowed; opacity: .45; }
+    :root {
+      color-scheme: light dark;
+      font-family: Geist, "Avenir Next", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --page: #f1f0ec;
+      --surface: #fbfaf7;
+      --surface-raised: #ffffff;
+      --surface-muted: #f3f2ee;
+      --text: #20211f;
+      --muted: #676963;
+      --faint: #92958d;
+      --line: #deddd7;
+      --line-strong: #cbc9c1;
+      --primary: #20211f;
+      --primary-text: #fbfaf7;
+      --focus: #2f7d5a;
+      --positive: #256f4d;
+      --negative: #b33a35;
+      --shadow: rgba(54, 52, 45, .11);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--page); color: var(--text); }
+    main { max-width: 760px; margin: 0 auto; padding: 72px 24px 96px; }
+    a { color: inherit; text-underline-offset: 3px; }
+    h1 { margin: 16px 0; font-size: clamp(2rem, 5vw, 2.75rem); letter-spacing: -.045em; line-height: 1.04; }
+    h2 { margin-top: 2rem; }
+    p, li { color: var(--muted); line-height: 1.65; }
+    nav { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 40px; }
+    .eyebrow { color: var(--positive); font-size: .78rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+    section { display: grid; gap: 12px; margin-top: 32px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--surface) 78%, transparent); }
+    form { display: grid; gap: 14px; }
+    label { display: grid; gap: 7px; color: var(--text); font-size: .82rem; font-weight: 650; }
+    input, button { box-sizing: border-box; width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid var(--line-strong); border-radius: 10px; font: inherit; }
+    input { background: var(--surface-raised); color: var(--text); outline: none; }
+    input::placeholder { color: var(--faint); }
+    input:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 32%, transparent);
+      outline-offset: 2px;
+    }
+    button { cursor: pointer; background: var(--surface-raised); color: var(--text); font-weight: 700; transition: transform 140ms ease, border-color 140ms ease, background 140ms ease; }
+    button:hover:not(:disabled) { border-color: var(--text); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    button[data-loading="true"] { cursor: progress; opacity: .68; }
+    .auth-page { min-height: 100dvh; display: grid; place-items: center; padding: 48px 20px; }
+    .auth-page main { width: 100%; max-width: 440px; margin: 0; padding: 0; }
+    .auth-card {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 34px;
+      border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: 0 24px 64px -36px var(--shadow), 0 8px 24px -18px var(--shadow);
+    }
+    .brand-mark {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 20px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--primary);
+      color: var(--primary-text);
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
+    }
+    .brand-mark svg { width: 29px; height: 29px; }
+    .auth-heading { margin: 0; text-align: center; font-size: 1.72rem; letter-spacing: -.035em; line-height: 1.15; }
+    .auth-intro { max-width: 34ch; margin: 10px auto 26px; text-align: center; color: var(--muted); font-size: .92rem; line-height: 1.55; }
+    .social-stack { display: grid; gap: 10px; }
+    .social-button { position: relative; display: grid; grid-template-columns: 22px 1fr 22px; align-items: center; background: var(--surface-raised); }
+    .social-button svg { width: 18px; height: 18px; }
+    .social-button span { grid-column: 2; }
+    .divider { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; margin: 22px 0; color: var(--faint); font-size: .68rem; font-weight: 780; letter-spacing: .12em; text-transform: uppercase; }
+    .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); }
+    .primary-button { border-color: var(--primary); background: var(--primary); color: var(--primary-text); }
+    .primary-button:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 91%, white); }
+    .auth-form + .auth-form { margin-top: 14px; }
+    .otp-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .step-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .78rem; }
+    .step-context strong { color: var(--text); font-weight: 680; }
+    .text-button { width: auto; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .76rem; text-decoration: underline; text-underline-offset: 3px; }
+    .text-button:hover:not(:disabled) { border-color: transparent; color: var(--text); }
+    .mode-toggle { display: block; width: fit-content; min-height: 0; margin: 18px auto 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: .82rem; font-weight: 680; }
+    .mode-toggle::after { content: " →"; }
+    .mode-toggle:hover:not(:disabled) { border-color: transparent; color: var(--text); }
+    .password-panel { margin-top: 18px; }
+    .password-section { display: grid; gap: 14px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .password-section + .password-section { margin-top: 18px; }
+    .password-section h2 { margin: 0; font-size: .9rem; letter-spacing: -.01em; }
+    .password-section p { margin: -6px 0 0; font-size: .78rem; line-height: 1.5; }
+    .secondary-disclosure > summary { color: var(--muted); cursor: pointer; font-size: .8rem; font-weight: 650; }
+    .secondary-disclosure form { margin-top: 14px; }
+    .auth-status { min-height: 20px; margin: 16px 0 0; text-align: center; font-size: .8rem; line-height: 1.45; }
+    .auth-status[data-state="error"] { color: var(--negative); }
+    .auth-status[data-state="success"] { color: var(--positive); }
+    .auth-privacy { margin: 22px auto 0; text-align: center; color: var(--faint); font-size: .74rem; line-height: 1.5; }
+    .auth-legal { display: flex; justify-content: center; gap: 18px; margin-top: 12px; color: var(--muted); font-size: .75rem; }
+    [hidden] { display: none !important; }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #171816;
+        --surface: #20211f;
+        --surface-raised: #272825;
+        --surface-muted: #242522;
+        --text: #f1f0eb;
+        --muted: #b1b3ac;
+        --faint: #858880;
+        --line: #363833;
+        --line-strong: #474a43;
+        --primary: #f1f0eb;
+        --primary-text: #1d1e1b;
+        --focus: #70b58f;
+        --positive: #8dc9a7;
+        --negative: #f08c85;
+        --shadow: rgba(0, 0, 0, .42);
+      }
+    }
+    @media (max-width: 520px) {
+      .auth-page { padding: 20px 14px; align-items: start; }
+      .auth-card { padding: 28px 22px; border-radius: 18px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button { transition: none; }
+    }
   </style>
 </head>
-<body><main>${body}</main></body>
+<body class="${layout === "auth" ? "auth-page" : "document-page"}"><main>${body}</main></body>
 </html>`;
 }
 
 export function homePage(providers: { google: boolean; github: boolean }): string {
   return page(
     "Sign in",
-    `<p class="eyebrow">Rudder Account</p>
-     <h1>Your identity for Rudder.</h1>
-     <p>Sign in securely from Rudder Desktop. Your Local Workspace content stays on your device and is not uploaded just because you sign in.</p>
-     <section aria-labelledby="sign-in-heading">
-       <h2 id="sign-in-heading">Sign in</h2>
-       <button type="button" data-social="google"${providers.google ? "" : " disabled"}>Continue with Google</button>
-       <button type="button" data-social="github"${providers.github ? "" : " disabled"}>Continue with GitHub</button>
-       <form id="otp-form">
-         <label>Email <input required type="email" name="email" autocomplete="email"></label>
-         <button type="submit">Continue with email code</button>
+    `<section class="auth-card" aria-labelledby="sign-in-heading">
+       <div class="brand-mark" aria-hidden="true">
+         <svg viewBox="0 0 64 64" role="img">
+           <path fill="var(--primary-text)" d="M32 3a29 29 0 1 0 29 29A29 29 0 0 0 32 3Zm0 6a23 23 0 0 1 22.4 17.8l-6 1.6A17 17 0 0 0 18.5 43l-5.3 3.2A23 23 0 0 1 32 9Z"/>
+           <path fill="var(--primary)" d="m17 42 33-14-16 28 1.4-15.2Z"/>
+         </svg>
+       </div>
+       <h1 class="auth-heading" id="sign-in-heading">Welcome to Rudder</h1>
+       <p class="auth-intro">Sign in to connect this device. Your Local Workspace stays on your machine.</p>
+       <div class="social-stack" role="group" aria-label="Social sign in">
+         <button class="social-button" type="button" data-social="google"${providers.google ? "" : " disabled"}>
+           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.55h3.24c1.9-1.75 2.98-4.33 2.98-7.42Z"/><path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.43l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.05v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.86A6 6 0 0 1 6.08 12c0-.65.11-1.28.31-1.86V7.52H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.48l3.34-2.62Z"/><path fill="#EA4335" d="M12 6.01c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.65 9.65 0 0 0 12 2a10 10 0 0 0-8.95 5.52l3.34 2.62C7.18 7.77 9.39 6.01 12 6.01Z"/></svg>
+           <span>Continue with Google</span>
+         </button>
+         <button class="social-button" type="button" data-social="github"${providers.github ? "" : " disabled"}>
+           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.54 1.03 1.54 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 6.82c.85 0 1.7.11 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86l-.01 2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+           <span>Continue with GitHub</span>
+         </button>
+       </div>
+       <div class="divider">or continue with email</div>
+       <form class="auth-form" id="otp-form">
+         <label>Email address <input required type="email" name="email" autocomplete="email" placeholder="you@example.com"></label>
+         <button class="primary-button" type="submit">Continue with email code</button>
        </form>
-       <form id="otp-verify-form" hidden>
-         <label>6-digit code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}"></label>
-         <button type="submit">Verify code</button>
+       <form class="auth-form otp-form" id="otp-verify-form" hidden>
+         <div class="step-context">
+           <span>Code sent to <strong id="otp-email"></strong></span>
+           <button class="text-button" id="change-email" type="button">Change email</button>
+         </div>
+         <label>Verification code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000"></label>
+         <button class="primary-button" type="submit">Verify and continue</button>
        </form>
-       <details>
-         <summary>Use password instead</summary>
-         <form id="password-form">
-           <label>Email <input required type="email" name="email" autocomplete="email"></label>
-           <label>Password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="current-password"></label>
-           <button type="submit">Sign in with password</button>
-         </form>
-         <form id="password-signup-form">
-           <label>Name <input required name="name" autocomplete="name"></label>
-           <label>Email <input required type="email" name="email" autocomplete="email"></label>
-           <label>Password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
-           <button type="submit">Create account with password</button>
-         </form>
-         <form id="forgot-password-form">
-           <label>Email <input required type="email" name="email" autocomplete="email"></label>
-           <button type="submit">Forgot password</button>
-         </form>
-         <form id="reset-password-form" hidden>
-           <label>6-digit reset code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}"></label>
-           <label>New password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
-           <button type="submit">Reset password</button>
-         </form>
-       </details>
-       <p id="auth-status" role="status" aria-live="polite"></p>
+       <button class="mode-toggle" id="password-mode-toggle" type="button" aria-controls="password-panel" aria-expanded="false">Use password instead</button>
+       <div class="password-panel" id="password-panel" hidden>
+         <div class="password-section">
+           <h2>Password sign in</h2>
+           <form class="auth-form" id="password-form">
+             <label>Email address <input required type="email" name="email" autocomplete="email"></label>
+             <label>Password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="current-password"></label>
+             <button class="primary-button" type="submit">Sign in with password</button>
+           </form>
+           <details class="secondary-disclosure">
+             <summary>Create a password account</summary>
+             <form class="auth-form" id="password-signup-form">
+               <label>Name <input required name="name" autocomplete="name"></label>
+               <label>Email address <input required type="email" name="email" autocomplete="email"></label>
+               <label>Password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+               <button type="submit">Create account with password</button>
+             </form>
+           </details>
+           <details class="secondary-disclosure">
+             <summary>Forgot password?</summary>
+             <form class="auth-form" id="forgot-password-form">
+               <label>Email address <input required type="email" name="email" autocomplete="email"></label>
+               <button type="submit">Send reset code</button>
+             </form>
+             <form class="auth-form otp-form" id="reset-password-form" hidden>
+               <label>Reset code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+               <label>New password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+               <button class="primary-button" type="submit">Reset password</button>
+             </form>
+           </details>
+         </div>
+       </div>
+       <p class="auth-status" id="auth-status" role="status" aria-live="polite"></p>
+       <p class="auth-privacy">Signing in connects your identity and devices. It does not upload Local Workspace content.</p>
+       <nav class="auth-legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
      </section>
-     <nav><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
-     <script src="/identity.js" defer></script>`,
+     <script src="/identity.js?v=20260730-login-card" defer></script>`,
+    "auth",
   );
 }
 

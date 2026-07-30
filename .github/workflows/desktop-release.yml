@@ -170,6 +170,10 @@ jobs:
             trap - EXIT
           fi
 
+      - name: Smoke packaged account gate
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
+
       - name: Collect release asset
         id: collect
         run: |

@@ -27,8 +27,9 @@ export function createIdentityAuth(input: {
   db: IdentityDb;
   config: IdentityConfig;
   mail: IdentityMailAdapter;
+  backgroundTaskHandler?: (promise: Promise<unknown>) => void;
 }) {
-  const { db, config, mail } = input;
+  const { backgroundTaskHandler, db, config, mail } = input;
   const securityEventMetadata = (request?: Request | null) => ({
     ...requestMetadata(request),
     ipHashKey: config.secret,
@@ -151,6 +152,9 @@ export function createIdentityAuth(input: {
       }),
     ],
     advanced: {
+      ...(backgroundTaskHandler
+        ? { backgroundTasks: { handler: backgroundTaskHandler } }
+        : {}),
       trustedProxyHeaders: true,
       ipAddress: {
         ipAddressHeaders: ["x-real-ip", "x-forwarded-for"],

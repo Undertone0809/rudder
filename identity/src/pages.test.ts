@@ -12,6 +12,12 @@ describe("Identity public pages", () => {
     expect(html).toContain("Sign in with password");
     expect(html).toContain("Create account with password");
     expect(html).toContain("Reset password");
+    expect(html).toContain('class="auth-card"');
+    expect(html).toContain("Welcome to Rudder");
+    expect(html).toContain("Signing in connects your identity and devices");
+    expect(html).toContain('id="change-email"');
+    expect(html).toContain("[hidden] { display: none !important; }");
+    expect(html).not.toContain("background-image");
     expect(html).not.toContain("font-family: Inter");
   });
 
@@ -66,6 +72,69 @@ describe("Identity public pages", () => {
     expect(passwordHandler).toBeTypeOf("function");
     await passwordHandler!({ preventDefault() {}, currentTarget: {} });
     expect(assigned).toBe("/");
+  });
+
+  it("keeps the email step visible when sending a code fails", async () => {
+    let otpHandler: ((event: { preventDefault(): void }) => Promise<void>) | undefined;
+    const status = { textContent: "", dataset: {} as Record<string, string>, style: { color: "" } };
+    const submit = {
+      dataset: {} as Record<string, string>,
+      disabled: false,
+      setAttribute() {},
+    };
+    const emailInput = { focus() {} };
+    const otpInput = { focus() {} };
+    const otpForm = {
+      hidden: false,
+      addEventListener: (
+        _name: string,
+        handler: (event: { preventDefault(): void }) => Promise<void>,
+      ) => {
+        otpHandler = handler;
+      },
+      querySelector: (selector: string) =>
+        selector === 'button[type="submit"]' ? submit : emailInput,
+    };
+    const verifyForm = {
+      hidden: true,
+      querySelector: () => otpInput,
+      addEventListener() {},
+    };
+    runInNewContext(identityClientScript, {
+      URL,
+      URLSearchParams,
+      location: {
+        origin: "https://accounts.rudderhq.dev",
+        search: "",
+        assign() {},
+      },
+      document: {
+        querySelector: (selector: string) => {
+          if (selector === "#auth-status") return status;
+          if (selector === "#otp-form") return otpForm;
+          if (selector === "#otp-verify-form") return verifyForm;
+          return null;
+        },
+        querySelectorAll: () => [],
+      },
+      FormData: class {
+        get() {
+          return "owner@example.com";
+        }
+      },
+      fetch: async () => ({
+        ok: false,
+        json: async () => ({ message: "Mail transport unavailable" }),
+      }),
+    });
+
+    expect(otpHandler).toBeTypeOf("function");
+    await otpHandler!({ preventDefault() {} });
+    expect(otpForm.hidden).toBe(false);
+    expect(verifyForm.hidden).toBe(true);
+    expect(submit.disabled).toBe(false);
+    expect(status.dataset.state).toBe("error");
+    expect(status.textContent).toBe("Mail transport unavailable");
   });
 
   it("publishes the Local privacy boundary and deletion contact", () => {
