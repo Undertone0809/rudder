@@ -3,6 +3,7 @@ import type { DesktopLocalAppDefinition } from "./desktop-shell";
 import {
   localAppDefinitionFromForm,
   localAppDefinitionToForm,
+  localAppFailureHelpPrompt,
   localAppIdentityMatches,
   resolveLocalAppAttestedWebview,
 } from "./local-apps";
@@ -49,6 +50,19 @@ describe("Local App UI contract", () => {
       appPublicId: "public-2",
       localBindingId: "binding-1",
     })).toBe(false);
+  });
+
+  it("builds an AI-help draft without local launch diagnostics", () => {
+    const prompt = localAppFailureHelpPrompt("Marketing command center\nnightly");
+
+    expect(prompt).toContain("A Local App could not open in Rudder Desktop.");
+    expect(prompt).toContain("Marketing command center nightly");
+    expect(prompt).not.toContain(definition.cwd);
+    expect(prompt).not.toContain(definition.executable);
+    expect(prompt).not.toContain(definition.argv.join(" "));
+    expect(prompt).not.toContain(definition.inheritedEnvNames.join(" "));
+    expect(prompt).not.toContain(definition.readiness.path);
+    expect(prompt).not.toContain(definition.openPath);
   });
 
   it("round-trips explicit argv and environment rows without shell parsing", () => {

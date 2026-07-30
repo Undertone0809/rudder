@@ -14,6 +14,13 @@ async function createOrganization(request: APIRequestContext) {
   return response.json() as Promise<{ id: string; issuePrefix: string }>;
 }
 
+async function setExperimentalSitesEnabled(request: APIRequestContext, enabled: boolean) {
+  const response = await request.patch("/api/instance/settings/general", {
+    data: { experimentalSitesEnabled: enabled },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+}
+
 async function createChat(page: Page, orgId: string) {
   await createE2EChatAgent(page.request, orgId, { name: "Local Apps host agent" });
   const response = await page.request.post(`/api/orgs/${orgId}/chats`, {
@@ -131,6 +138,8 @@ async function installLocalAppsStub(page: Page) {
           },
           start: async () => {
             record("start");
+            const failure = window.localStorage.getItem("e2e.localApps.startFailure");
+            if (failure) throw new Error(failure);
             const next = runtime("running", "generation-a");
             window.localStorage.setItem(statusKey, JSON.stringify(next));
             return next;
@@ -212,6 +221,84 @@ async function closeActiveMainTab(page: Page) {
 }
 
 test.describe("Messenger Local Apps", () => {
+  test("prepares a redacted AI recovery draft until the operator explicitly sends it", async ({ page }) => {
+    const organization = await createOrganization(page.request);
+    const chat = await createChat(page, organization.id);
+    const failure = "Readiness timed out at /Users/private/marketing with API_KEY=not-for-chat on 127.0.0.1:43123";
+    await setExperimentalSitesEnabled(page.request, true);
+    await selectOrganization(page, organization.id);
+    await installLocalAppsStub(page);
+    await page.setViewportSize({ width: 1500, height: 920 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder:chat-drafts", JSON.stringify({
+        [orgId]: {
+          __new__: {
+            version: 1,
+            body: "Keep this unrelated new Chat draft.",
+            inlineAnnotations: [],
+          },
+        },
+      }));
+    }, organization.id);
+
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await page.getByTestId("chat-side-panel-empty-local-apps-target").click();
+    await page.getByTestId("local-apps-add").click();
+    await page.getByTestId("local-app-definition-review")
+      .getByRole("button", { name: "Review & add" }).click();
+    await page.getByTestId("local-apps-open-binding-a").click();
+    const localView = page.getByTestId("local-app-view")
+      .filter({ hasText: "MKT dashboard" });
+    await page.evaluate((nextFailure) => {
+      window.localStorage.setItem("e2e.localApps.startFailure", nextFailure);
+    }, failure);
+    const chatsBefore = await (await page.request.get(
+      `/api/orgs/${organization.id}/chats?status=all`,
+    )).json() as Array<{ id: string }>;
+
+    await localView.getByTestId("local-app-start").click();
+    await expect(localView.getByTestId("local-app-error")).toContainText("Readiness timed out");
+    await expect(localView.getByTestId("local-app-ask-ai")).toBeVisible();
+    const callsBeforeHelp = await calls(page);
+
+    await localView.getByTestId("local-app-ask-ai").click();
+    await expect(page).toHaveURL(
+      /\/messenger\/chat(?:\?.*)?$/,
+    );
+    const recoveryDraftId = new URL(page.url()).searchParams.get("localAppRecoveryDraft");
+    expect(recoveryDraftId).toMatch(
+      /^[0-9a-f-]{36}$/i,
+    );
+    const composer = page.getByTestId("chat-composer-editor-scroll")
+      .locator("[contenteditable='true']").first();
+    await expect(composer).toContainText("A Local App could not open in Rudder Desktop.");
+    await expect(composer).toContainText("MKT dashboard");
+    const prompt = await composer.innerText();
+    expect(prompt).not.toContain(failure);
+    expect(prompt).not.toContain("/Users/private/marketing");
+    expect(prompt).not.toContain("API_KEY");
+    expect(prompt).not.toContain("127.0.0.1:43123");
+    const preservedRootDraft = await page.evaluate((orgId) => {
+      const drafts = JSON.parse(window.localStorage.getItem("rudder:chat-drafts") ?? "{}");
+      return drafts[orgId]?.__new__?.body ?? "";
+    }, organization.id);
+    expect(preservedRootDraft).toBe("Keep this unrelated new Chat draft.");
+    expect((await calls(page)).start ?? 0).toBe(callsBeforeHelp.start ?? 0);
+    expect((await calls(page)).logs ?? 0).toBe(callsBeforeHelp.logs ?? 0);
+    const chatsAfter = await (await page.request.get(
+      `/api/orgs/${organization.id}/chats?status=all`,
+    )).json() as Array<{ id: string }>;
+    expect(chatsAfter.map(({ id }) => id)).toEqual(chatsBefore.map(({ id }) => id));
+
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[^/?]+$/);
+    await expect.poll(() => page.evaluate(({ orgId, recoveryId }) => {
+      const drafts = JSON.parse(window.localStorage.getItem("rudder:chat-drafts") ?? "{}");
+      return drafts[orgId]?.[`local-app-recovery:${recoveryId}`] ?? null;
+    }, { orgId: organization.id, recoveryId: recoveryDraftId })).toBeNull();
+  });
+
   test("shares Browser capacity across Main and cold-restores canonical identity", async ({ page }) => {
     const organization = await createOrganization(page.request);
     const groupName = "Browser capacity recovery";

@@ -1753,6 +1753,7 @@ contracts:
       - server/src/services/messenger-saved-views.ts
       - ui/src/components/side-panel/LocalAppsPanel.tsx
       - ui/src/components/side-panel/LocalAppPanelView.tsx
+      - ui/src/lib/local-apps.ts
       - ui/src/context/LiveSurfaceRuntimeContext.tsx
       - ui/src/components/workbench/MessengerMainWorkbench.tsx
     related_tests:
