@@ -29,6 +29,7 @@ import {
   Terminal,
   X
 } from "lucide-react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getUIAdapter } from "../agent-runtimes";
 import { agentsApi } from "../api/agents";
@@ -98,6 +99,7 @@ export function OnboardingWizard() {
     ? onboardingOptions
     : routeOnboardingOptions ?? {};
   const existingCompanyId = effectiveOnboardingOptions.orgId;
+  const canDismissOnboarding = Boolean(existingCompanyId);
   const initialStep = existingCompanyId ? 2 : 1;
   const minimumStep = existingCompanyId ? 2 : 1;
   const [step, setStep] = useState<Step>(initialStep);
@@ -419,6 +421,7 @@ export function OnboardingWizard() {
     }
   }
   async function handleDismiss() {
+    if (!canDismissOnboarding) return;
     if (await handleClose()) {
       setRouteDismissed(true);
     }
@@ -765,18 +768,33 @@ export function OnboardingWizard() {
       }} >
       <DialogPortal>
         <div className="fixed inset-0 z-50 bg-background" />
-        <div className="fixed inset-0 z-50 flex" onKeyDown={handleKeyDown}>
-          <button
-            data-testid="onboarding-close"
-            onClick={() => void handleDismiss()}
-            className={cn(
-              "absolute top-4 right-4 z-10 rounded-full border p-2 transition-colors",
-              step === 1
-                ? "border-white/15 bg-white/10 text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white"
-                : "border-border/70 bg-background/85 text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
-            )} >
-            <X className="h-5 w-5" />
-            <span className="sr-only">Close</span> </button>
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className="fixed inset-0 z-50 flex overflow-hidden bg-transparent outline-none"
+          data-testid="onboarding-dialog"
+          onEscapeKeyDown={(event) => {
+            if (!canDismissOnboarding) event.preventDefault();
+          }}
+          onKeyDown={handleKeyDown}
+        >
+          <DialogPrimitive.Title className="sr-only">
+            {canDismissOnboarding
+              ? "Add agent onboarding"
+              : "Create organization onboarding"}
+          </DialogPrimitive.Title>
+          {canDismissOnboarding && (
+            <button
+              data-testid="onboarding-close"
+              onClick={() => void handleDismiss()}
+              className={cn(
+                "absolute top-4 right-4 z-10 rounded-full border p-2 transition-colors",
+                step === 1
+                  ? "border-white/15 bg-white/10 text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white"
+                  : "border-border/70 bg-background/85 text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+              )} >
+              <X className="h-5 w-5" />
+              <span className="sr-only">Close</span> </button>
+          )}
           <div className={cn(
               "w-full flex flex-col overflow-y-auto transition-[width] duration-500 ease-in-out",
               step === 1 ? "md:w-1/2" : "md:w-full"
@@ -1130,7 +1148,7 @@ export function OnboardingWizard() {
               "hidden md:block overflow-hidden bg-[#1d1d1d] transition-[width,opacity] duration-500 ease-in-out",
               step === 1 ? "w-1/2 opacity-100" : "w-0 opacity-0"
             )} >
-            <AsciiArtAnimation /> </div> </div>
+            <AsciiArtAnimation /> </div> </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
   );

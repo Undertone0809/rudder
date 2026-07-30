@@ -101,6 +101,8 @@ test.describe("Onboarding wizard", () => {
 
     await page.goto("/onboarding");
     await expectOnboardingStep(page, "Name your organization");
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
+    await expect(page.getByText("Create your first organization")).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveCount(0);
     await expect(page.getByText("Mission / goal (optional)")).toHaveCount(0);
 
@@ -123,9 +125,17 @@ test.describe("Onboarding wizard", () => {
       issuePrefix: "E2E",
     });
     await expectOnboardingStep(page, "Create your first agent");
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expectOnboardingStep(page, "Create your first agent");
 
-    await page.getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByRole("button", { name: "Start Onboarding" })).toBeVisible();
+    const createdOrganization = await (await createOrganizationResponse).json() as {
+      id: string;
+    };
+    const cleanupResponse = await page.request.delete(
+      `/api/orgs/${createdOrganization.id}`,
+    );
+    expect(cleanupResponse.ok()).toBe(true);
   });
 
   test("explains each slow setup stage while creating a starter organization", async ({
@@ -188,8 +198,7 @@ test.describe("Onboarding wizard", () => {
     ).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("onboarding-creation-progress")).toBeVisible();
-    await page.getByTestId("onboarding-close").click();
-    await expect(page.getByTestId("onboarding-creation-progress")).toBeVisible();
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
     await page.keyboard.press("ControlOrMeta+Enter");
     organizationGate.release();
 
@@ -959,6 +968,11 @@ test.describe("Onboarding wizard", () => {
     await page.goto(`/${organization.urlKey}/onboarding`);
 
     await expectOnboardingStep(page, "Create your first agent");
+    await expect(page.getByTestId("onboarding-close")).toBeVisible();
+    await page.getByTestId("onboarding-close").click();
+    await expect(page.getByRole("button", { name: "Add agent" })).toBeVisible();
+    await page.getByRole("button", { name: "Add agent" }).click();
+    await expectOnboardingStep(page, "Create your first agent");
     const onboardingNameInput = page.locator('input[placeholder="Agent name"]');
     await expect(page.getByText("Agent name", { exact: true })).toBeVisible();
     await expect(page.getByText("Agent name (optional)")).toHaveCount(0);
@@ -1005,36 +1019,73 @@ test.describe("Onboarding wizard", () => {
     expect(await afterIssuesRes.json()).toEqual(beforeIssues);
   });
 
-  test("new organization drafts are rolled back when onboarding closes before completion", async ({
+  test("new organization onboarding blocks background Escape navigation", async ({
     page,
   }) => {
-    const organizationName = `E2E-Draft-Close-${Date.now()}`;
+    const createRes = await page.request.post("/api/orgs", {
+      data: { name: `E2E-Onboarding-Modal-${Date.now()}` },
+    });
+    expect(createRes.ok()).toBe(true);
+    const organization = await createRes.json() as {
+      id: string;
+      urlKey: string;
+    };
+
+    await page.goto(`/${organization.urlKey}/messenger`);
+    await page.goto(`/${organization.urlKey}/dashboard`);
+    const backgroundUrl = page.url();
+
+    await page.getByRole("button", { name: "Organization menu" }).click();
+    await page.getByRole("menuitem", { name: "Add organization" }).click();
+    await expectOnboardingStep(page, "Name your organization");
+    await expect(
+      page.getByRole("dialog", { name: "Create organization onboarding" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
+
+    await page.keyboard.press("Escape");
+
+    await expectOnboardingStep(page, "Name your organization");
+    await expect(page).toHaveURL(backgroundUrl);
+
+    const cleanupResponse = await page.request.delete(
+      `/api/orgs/${organization.id}`,
+    );
+    expect(cleanupResponse.ok()).toBe(true);
+  });
+
+  test("new organization onboarding cannot be closed before completion", async ({
+    page,
+  }) => {
+    const organizationName = `E2E-Required-Onboarding-${Date.now()}`;
 
     await page.goto("/onboarding");
     await expectOnboardingStep(page, "Name your organization");
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expectOnboardingStep(page, "Name your organization");
 
     await page.locator('input[placeholder="Acme Corp"]').fill(organizationName);
+    const createOrganizationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith("/api/orgs")
+      && response.ok(),
+    );
     await page.getByRole("button", { name: "Next" }).click();
     await expectOnboardingStep(page, "Create your first agent");
+    await expect(page.getByTestId("onboarding-close")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expectOnboardingStep(page, "Create your first agent");
+    await expect(page.getByText("Create your first organization")).toHaveCount(0);
+    await expect(page.getByText("Create another organization")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByRole("button", { name: "Start Onboarding" })).toBeVisible({
-      timeout: 15_000,
-    });
-
-    await expect
-      .poll(async () => {
-        const organizationsRes = await page.request.get("/api/orgs");
-        expect(organizationsRes.ok()).toBe(true);
-        const organizations = await organizationsRes.json();
-        return organizations.some(
-          (organization: { name: string }) => organization.name === organizationName
-        );
-      }, {
-        timeout: 15_000,
-        intervals: [250, 500, 1_000],
-      })
-      .toBe(false);
+    const createdOrganization = await (await createOrganizationResponse).json() as {
+      id: string;
+    };
+    const cleanupResponse = await page.request.delete(
+      `/api/orgs/${createdOrganization.id}`,
+    );
+    expect(cleanupResponse.ok()).toBe(true);
   });
 
   test("new organization drafts are rolled back on reload before completion", async ({
