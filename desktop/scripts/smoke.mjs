@@ -2320,7 +2320,14 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("Execution context was destroyed") && !message.includes("Target page, context or browser has been closed")) {
+      const isMainFrameTransition = message.includes(
+        "available only to the current Rudder main frame",
+      );
+      if (
+        !message.includes("Execution context was destroyed")
+        && !message.includes("Target page, context or browser has been closed")
+        && !isMainFrameTransition
+      ) {
         throw error;
       }
     }
@@ -3792,7 +3799,10 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix, o
   await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
   await page.waitForLoadState("networkidle");
   await dismissReleaseNotesDialogIfVisible(page);
-  await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator("[data-settings-trigger='true']").waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
   await assertDesktopServiceWorkersDisabled(page);
   const openWindowCount = electronApp.windows().filter((candidate) => !candidate.isClosed()).length;
 
@@ -3801,7 +3811,10 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix, o
   await page.waitForLoadState("networkidle");
   await page.waitForURL(new RegExp(`/${organizationRouteKey}/dashboard$`), { timeout: 30_000 });
   await dismissReleaseNotesDialogIfVisible(page);
-  await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator("[data-settings-trigger='true']").waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
   await assertDesktopServiceWorkersDisabled(page);
   const navigationType = await page.evaluate(() => performance.getEntriesByType("navigation")[0]?.type ?? null);
   assert.equal(navigationType, "reload", "desktop refresh should behave like a native page reload");
