@@ -25,7 +25,8 @@ related_code:
   - desktop/src/local-apps-runtime.ts
   - ui/src/pages/Apps.tsx
   - ui/src/pages/InstanceExperimentalSettings.tsx
-commit_refs: []
+commit_refs:
+  - e776e33ca
 updated_at: 2026-07-29
 ---
 
