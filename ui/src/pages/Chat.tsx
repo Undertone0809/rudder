@@ -21,6 +21,7 @@ import {
   ChatComposerSurface,
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
+import { ChatConversationHeader } from "@/components/chat/ChatConversationHeader";
 import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
@@ -546,6 +547,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? customGroups.find((group) => group.entries.some((entry) => entry.threadKey === selectedConversationThreadKey))?.id ?? null
     : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null;
+  const conversationHeaderAgentId = selectedConversation?.preferredAgentId
+    ?? selectedConversation?.chatRuntime.runtimeAgentId
+    ?? null;
+  const conversationHeaderAgent = conversationHeaderAgentId
+    ? (agents ?? []).find((agent) => agent.id === conversationHeaderAgentId) ?? null
+    : null;
   const { activeRuntimeOverrides, adapterModelsQuery, draftRuntimeOverrides, runtimeModelSelectRef, runtimeSelectorRef, setDraftRuntimeOverrides, setPendingConversationRuntimeOverrides } = useChatRuntimeSelection({ selectedOrganizationId, selectedConversation, activeAgentId: activeSkillAgentId, activeAgent: activeSkillAgent }); const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const openSubagentInspection = useCallback((inspection: TranscriptAgentInspection) => {
     if (!selectedConversation) return;
@@ -3475,10 +3482,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         >
           {conversationId && macDesktopShell ? (
             <div
-              aria-hidden="true"
               data-testid="chat-desktop-toolbar-clearance"
-              className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 md:block"
-            />
+              className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 items-center px-3 pr-32 md:flex"
+            >
+              {selectedConversation ? (
+                <ChatConversationHeader
+                  agent={conversationHeaderAgent}
+                  title={conversationDisplayTitle(selectedConversation)}
+                />
+              ) : null}
+            </div>
           ) : null}
           {loadErrorMessage && conversationId ? (
             <div
@@ -3513,30 +3526,38 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   "pointer-events-none absolute right-3 top-12 z-30 flex justify-end gap-1.5",
                   macDesktopShell
                     ? "md:right-3 md:top-2"
-                    : "md:relative md:right-auto md:top-auto md:h-9 md:shrink-0 md:items-center md:px-3",
+                    : "workspace-card-header workspace-main-header md:relative md:right-auto md:top-auto md:h-11 md:shrink-0 md:items-center md:justify-between md:px-3",
                 )}
               >
-                {workManifestAvailable && !sidePanelOpen ? (
-                  <ChatWorkManifestToggle
-                    open={workManifestWideOpen}
-                    count={workManifest?.totalCount ?? 0}
-                    onToggle={() => setWorkManifestWideOpen((open) => !open)}
+                {!macDesktopShell ? (
+                  <ChatConversationHeader
+                    agent={conversationHeaderAgent}
+                    title={conversationDisplayTitle(selectedConversation)}
+                    className="hidden md:flex"
                   />
                 ) : null}
-                {!sidePanelOpen ? (
-                  <button
-                    type="button"
-                    data-testid="chat-side-panel-trigger"
-                    aria-label="Open Side Panel"
-                    aria-pressed={false}
-                    title="Open Side Panel"
-                    className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                    onClick={() => showSidePanelForContext(resolveCurrentSidePanelChatContextKey())}
-                  >
-                    <PanelRight className="h-4 w-4" aria-hidden />
-                  </button>
-                ) : null}
-                <DropdownMenu>
+                <div className="ml-auto flex items-center gap-1.5">
+                  {workManifestAvailable && !sidePanelOpen ? (
+                    <ChatWorkManifestToggle
+                      open={workManifestWideOpen}
+                      count={workManifest?.totalCount ?? 0}
+                      onToggle={() => setWorkManifestWideOpen((open) => !open)}
+                    />
+                  ) : null}
+                  {!sidePanelOpen ? (
+                    <button
+                      type="button"
+                      data-testid="chat-side-panel-trigger"
+                      aria-label="Open Side Panel"
+                      aria-pressed={false}
+                      title="Open Side Panel"
+                      className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                      onClick={() => showSidePanelForContext(resolveCurrentSidePanelChatContextKey())}
+                    >
+                      <PanelRight className="h-4 w-4" aria-hidden />
+                    </button>
+                  ) : null}
+                  <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
@@ -3684,7 +3705,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       </>
                     ) : null}
                   </DropdownMenuContent>
-                </DropdownMenu>
+                  </DropdownMenu>
+                </div>
               </div>
               <div className="pointer-events-none absolute right-4 top-12 z-20 md:right-5">
                 <ChatWorkManifest

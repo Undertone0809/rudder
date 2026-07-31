@@ -4,6 +4,69 @@ import { createE2EChatAgent } from "./support/chat-agent";
 const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
 test.describe("Chat sidebar layout", () => {
+  test("shows the active agent and a compact conversation title in the chat header", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      });
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          setBadgeCount: async () => {},
+        },
+      });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Header-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Header Agent" });
+    const fullTitle = "这是一个超过十个字符的对话标题";
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: fullTitle,
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Verify the compact chat header." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
+
+    const header = page.getByTestId("chat-conversation-header");
+    await expect(header).toBeVisible();
+    await expect(page.getByRole("group", { name: `Header Agent chat: ${fullTitle}` })).toBeVisible();
+    await expect(header).toHaveCSS("pointer-events", "auto");
+    await expect(header.getByTestId("chat-header-agent-name")).toHaveText("Header Agent");
+    await expect(header.getByTestId("chat-header-title")).toHaveText("这是一个超过十个字…");
+    await expect(header.getByTestId("chat-header-title")).toHaveAttribute("title", fullTitle);
+    await expect(header.locator("img")).toBeVisible();
+
+    const headerBox = await header.boundingBox();
+    const actionsBox = await page.getByTestId("chat-desktop-toolbar-actions").boundingBox();
+    expect(headerBox).not.toBeNull();
+    expect(actionsBox).not.toBeNull();
+    expect(headerBox!.x + headerBox!.width).toBeLessThanOrEqual(actionsBox!.x);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-agent-title-header.png"),
+      fullPage: true,
+    });
+  });
+
   test("keeps chat load errors inside the main workspace card", async ({ page }, testInfo) => {
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "userAgent", {
