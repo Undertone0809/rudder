@@ -312,6 +312,8 @@ describe("Identity public pages", () => {
     const privacy = privacyPage("support@rudderhq.dev");
     expect(privacy).toContain("Signing in does not upload");
     expect(privacy).toContain("request access, correction, export, or deletion");
+    expect(privacy).toContain("revoke browser sessions and registered devices");
+    expect(privacy).not.toContain("revoke sessions and linked login methods");
     expect(termsPage("support@rudderhq.dev")).toContain("account deletion requests");
   });
 });

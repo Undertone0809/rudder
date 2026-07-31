@@ -150,7 +150,7 @@ emails are not account authority.
 ### Actors / Objects / State
 
 - Operator, Supabase user/identity, verified email, stable Rudder subject,
-  provider subject, binding, and security event.
+  provider subject, binding, and migration/security evidence.
 - States: unbound, bound, automatically linked, conflict, and manual repair.
 
 ### Entry Points / Inputs
@@ -165,8 +165,8 @@ emails are not account authority.
 2. Supabase linking converges verified identities on one root user.
 3. Rudder creates one bidirectionally unique Supabase UUID to stable-subject
    binding and rereads the winner after a compatible uniqueness conflict.
-4. Rudder records automatic account creation/linking security evidence without
-   storing the provider's OAuth token.
+4. Supabase retains provider-link evidence. Rudder records the unique root-user
+   binding and migration state without storing provider OAuth tokens.
 5. A conflicting provider subject, email, or migration marker stops for manual
    repair instead of creating a second user or rebinding Local ownership.
 
@@ -193,8 +193,8 @@ All linked methods open the same Rudder Account, devices, and Local ownership.
 
 Supabase persists root identities and Google/GitHub provider provenance. The
 private schema persists the unique Supabase-to-Rudder binding, verified-email
-projection, and bounded account-created/identity-linked security events without
-storing provider tokens.
+projection, migration ledger, and bounded Rudder account/device security events
+without claiming a separate event for every provider link inside Supabase.
 
 ### Canonical Scenarios
 
