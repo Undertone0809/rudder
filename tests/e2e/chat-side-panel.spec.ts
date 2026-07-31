@@ -1,11 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
+import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
 import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+const LOCAL_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const LIBRARY_IMAGE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
+  "base64",
+);
 
 function uniqueIssuePrefix() {
   return `T${randomUUID().replaceAll("-", "").slice(0, 9).toUpperCase()}`;
@@ -160,6 +168,39 @@ async function installDesktopShellLocalFilePreviewStub(
   });
 }
 
+async function installDesktopShellLocalImagePreviewStub(page: Page, targetPath: string) {
+  await page.addInitScript(({ requestedPath, base64 }) => {
+    const previewCalls: string[] = [];
+    Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
+      configurable: true,
+      value: previewCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        openPath: async () => {},
+        previewLocalFile: async (filePath: string) => {
+          previewCalls.push(filePath);
+          if (filePath !== requestedPath) throw new Error(`Unexpected local image path: ${filePath}`);
+          return {
+            canonicalPath: requestedPath,
+            fileName: "side-chat.png",
+            parentPath: requestedPath.slice(0, requestedPath.lastIndexOf("/")),
+            contentType: "image/png",
+            previewKind: "image",
+            content: null,
+            base64,
+            sizeBytes: 68,
+            modifiedAt: "2026-07-31T00:00:00.000Z",
+            truncated: false,
+          };
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  }, { requestedPath: targetPath, base64: LOCAL_IMAGE_BASE64 });
+}
+
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
     let openEmptySidePanelListener: (() => void) | null = null;
@@ -201,6 +242,147 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 }
 
 test.describe("Chat Side Panel", () => {
+  test("opens local image links in the global image preview instead of the Side Panel", async ({ page }) => {
+    const localImagePath = "/tmp/side-chat.png";
+    await installDesktopShellLocalImagePreviewStub(page, localImagePath);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Local-Image-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Local Image Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Local image preview host chat",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Inspect the referenced image." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [side-chat.png](${localImagePath}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const localImageLink = assistantMessage.getByRole("link", { name: "side-chat.png" });
+    await expect(localImageLink).toBeVisible({ timeout: 15_000 });
+    await expect(localImageLink.locator('[data-local-file-icon="image"]')).toBeVisible();
+    await localImageLink.click();
+
+    const preview = page.getByTestId("chat-local-image-preview-dialog");
+    await expect(preview).toBeVisible({ timeout: 15_000 });
+    await expect(preview.getByRole("img", { name: "side-chat.png" })).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${LOCAL_IMAGE_BASE64}`,
+    );
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
+    ))).toEqual([localImagePath]);
+
+    await page.screenshot({ path: "/tmp/rudder-chat-local-image-preview.png", fullPage: true });
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveCount(0);
+  });
+
+  test("opens Library image links in the global image preview instead of the Side Panel", async ({ page }) => {
+    const imageFilePath = `projects/rudder/verification/${Date.now()}-side-chat.png`;
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Library-Image-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Library Image Agent" });
+    const imagePath = path.join(resolveE2EOrganizationWorkspaceRoot(organization.id), imageFilePath);
+    await fs.mkdir(path.dirname(imagePath), { recursive: true });
+    await fs.writeFile(imagePath, LIBRARY_IMAGE_PNG);
+
+    const fileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(imageFilePath)}`,
+    );
+    expect(fileRes.ok(), await fileRes.text()).toBe(true);
+    const libraryFile = await fileRes.json() as { markdownLink: string; contentPath: string; previewKind: string };
+    expect(libraryFile.previewKind).toBe("image");
+    expect(libraryFile.contentPath).toContain("/workspace/file/content");
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Library image preview host chat",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Inspect the Library image." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect ${libraryFile.markdownLink}.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const libraryImageLink = assistantMessage.getByRole("link", { name: imageFilePath.split("/").at(-1) });
+    await expect(libraryImageLink).toBeVisible({ timeout: 15_000 });
+    await libraryImageLink.click();
+
+    const preview = page.getByTestId("chat-library-image-preview-dialog");
+    await expect(preview).toBeVisible({ timeout: 15_000 });
+    await expect(preview.getByRole("img", { name: imageFilePath.split("/").at(-1) })).toHaveAttribute(
+      "src",
+      new RegExp(`/api/orgs/${organization.id}/workspace/file/content\\?path=${encodeURIComponent(imageFilePath)}`),
+    );
+    await expect(preview.getByRole("img")).toHaveJSProperty("naturalWidth", 1);
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+
+    await page.screenshot({ path: "/tmp/rudder-chat-library-image-preview.png", fullPage: true });
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveCount(0);
+  });
+
   test("opens titled source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
     const localFilePath = "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution/transcripts-and-results.md";
     await installDesktopShellLocalFilePreviewStub(page, localFilePath, "transcripts-and-results.md", "40");
