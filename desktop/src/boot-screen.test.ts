@@ -24,10 +24,16 @@ describe("desktop boot screen", () => {
     expect(html).toContain("Forgot or need to set a password?");
     expect(html).toContain("It does not upload Local Workspace content.");
     expect(html).toContain("window.rudderBoot.signIn({");
-    expect(html).toContain('startSignIn("email_otp"');
-    expect(html).toContain('startSignIn("password_reset"');
+    expect(html).toContain("window.rudderBoot.sendEmailOtp");
+    expect(html).toContain("window.rudderBoot.verifyEmailOtp");
+    expect(html).toContain("window.rudderBoot.signInWithPassword");
+    expect(html).toContain("window.rudderBoot.requestPasswordReset");
+    expect(html).toContain("window.rudderBoot.resetPassword");
+    expect(html).not.toContain("Opening email code sign-in in your browser");
+    expect(html).not.toContain("Opening password sign-in in your browser");
+    expect(html).not.toContain("Opening password recovery in your browser");
     expect(html).toContain('aria-label="Social sign in"');
-    expect(html).not.toContain('autocomplete="one-time-code"');
+    expect(html).toContain('autocomplete="one-time-code"');
     expect(html).toContain('id="loading-view" aria-hidden="true" hidden');
   });
 
