@@ -37,8 +37,8 @@ edit_policy: user_confirmed_only
 
 - `IDENTITY.AUTH.001`: Supabase Auth is the Rudder Account root and formal
   builds require one of the supported login methods before Board entry.
-- `IDENTITY.ACCOUNT.LINKING.001`: only verified normalized email and explicit
-  reauthenticated actions may converge login identities on one account.
+- `IDENTITY.ACCOUNT.LINKING.001`: supported login identities converge
+  automatically only through the same safely normalized verified email.
 - `IDENTITY.DEVICE.SESSION.001`: web, Desktop device, and Local sessions remain
   separate, with bounded PKCE and revocation semantics.
 - `IDENTITY.SERVER.EXCHANGE.001`: a short-lived one-time exchange creates a

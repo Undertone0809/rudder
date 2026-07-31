@@ -3,14 +3,20 @@ import {
   hashOpaqueSecret,
 } from "@rudderhq/identity-core";
 import {
+  accountEmails,
   beginCredentialRevocationIntent,
   claimCredentialRevocationIntent,
   completeCredentialRevocationIntent,
   createIdentityDb,
   credentialRevocationIntents,
+  identityAuthAccounts,
   identityServerExchangeCodes,
+  identityUsers,
   markCredentialProviderMutationComplete,
   recoverCredentialRevocationIntents,
+  resolveVerifiedIdentity,
+  securityEvents,
+  supabaseAuthUserBindings,
 } from "@rudderhq/identity-db";
 import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -675,6 +681,114 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
         cookie: signedInCookie,
       })).status,
     ).toBe(200);
+  });
+
+  it("projects OAuth and Email OTP for one verified root user into one Rudder binding", async () => {
+    const email = "linked-methods@example.com";
+    const oauthCallback = await fetch(
+      `${baseUrl}/auth/callback?code=${encodeURIComponent(email)}&next=%2Faccount`,
+      { redirect: "manual" },
+    );
+    expect(oauthCallback.status).toBe(302);
+    expect(
+      (await fetch(`${baseUrl}/account`, {
+        headers: { cookie: cookieFrom(oauthCallback) },
+      })).status,
+    ).toBe(200);
+
+    const otpCookie = await otpSignIn(email.toUpperCase());
+    expect(
+      (await fetch(`${baseUrl}/account`, { headers: { cookie: otpCookie } })).status,
+    ).toBe(200);
+
+    const runtime = getIdentityRuntime();
+    const bindings = await runtime.db
+      .select({
+        authUserId: supabaseAuthUserBindings.authUserId,
+        rudderUserId: supabaseAuthUserBindings.rudderUserId,
+        normalizedEmail: supabaseAuthUserBindings.normalizedEmail,
+      })
+      .from(supabaseAuthUserBindings)
+      .where(eq(supabaseAuthUserBindings.normalizedEmail, email));
+    expect(bindings).toEqual([{
+      authUserId: rootIdentity.authUserId(email),
+      rudderUserId: expect.any(String),
+      normalizedEmail: email,
+    }]);
+  });
+
+  it("converges concurrent verified Google and GitHub first login in PostgreSQL", async () => {
+    const databaseUrl = process.env.IDENTITY_DATABASE_URL;
+    if (!databaseUrl) throw new Error("Identity E2E database URL missing");
+    const googleConnection = createIdentityDb(databaseUrl);
+    const githubConnection = createIdentityDb(databaseUrl);
+    const email = "Concurrent.Link+tag@Example.com";
+    const normalizedEmail = email.toLowerCase();
+
+    try {
+      const [google, github] = await Promise.all([
+        resolveVerifiedIdentity(googleConnection.db, {
+          provider: "google",
+          providerSubject: "google-concurrent-subject",
+          email,
+          emailVerified: true,
+          name: "Concurrent Owner",
+        }),
+        resolveVerifiedIdentity(githubConnection.db, {
+          provider: "github",
+          providerSubject: "github-concurrent-subject",
+          email: ` ${normalizedEmail} `,
+          emailVerified: true,
+          name: "Concurrent Owner",
+        }),
+      ]);
+
+      expect(google.userId).toBe(github.userId);
+      expect([google.created, github.created].sort()).toEqual([false, true]);
+
+      const users = await googleConnection.db
+        .select({ id: identityUsers.id })
+        .from(identityUsers)
+        .where(eq(identityUsers.email, normalizedEmail));
+      const emails = await googleConnection.db
+        .select({ userId: accountEmails.userId })
+        .from(accountEmails)
+        .where(eq(accountEmails.normalizedEmail, normalizedEmail));
+      const providers = await googleConnection.db
+        .select({
+          providerId: identityAuthAccounts.providerId,
+          accountId: identityAuthAccounts.accountId,
+          userId: identityAuthAccounts.userId,
+        })
+        .from(identityAuthAccounts)
+        .where(eq(identityAuthAccounts.userId, google.userId));
+      const events = await googleConnection.db
+        .select({ eventType: securityEvents.eventType })
+        .from(securityEvents)
+        .where(eq(securityEvents.userId, google.userId));
+
+      expect(users).toEqual([{ id: google.userId }]);
+      expect(emails).toEqual([{ userId: google.userId }]);
+      expect(providers).toEqual(expect.arrayContaining([
+        {
+          providerId: "google",
+          accountId: "google-concurrent-subject",
+          userId: google.userId,
+        },
+        {
+          providerId: "github",
+          accountId: "github-concurrent-subject",
+          userId: google.userId,
+        },
+      ]));
+      expect(providers).toHaveLength(2);
+      expect(events.map(({ eventType }) => eventType).sort()).toEqual([
+        "account.created",
+        "identity.linked",
+      ]);
+    } finally {
+      await Promise.all([googleConnection.close(), githubConnection.close()]);
+    }
   });
 
   it("fails closed on login CSRF and completes the recovery-link page journey", async () => {
