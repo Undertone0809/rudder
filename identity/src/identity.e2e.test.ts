@@ -882,6 +882,16 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       email,
     })).status).toBe(200);
 
+    expect((await post("/api/desktop/native-auth/email-otp/verify", {
+      client_id: "rudder-desktop",
+      email,
+      token: rootIdentity.latestOtp(email),
+      redirect_uri: redirectUri,
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+      audience: "",
+    })).status).toBe(400);
+
     const authorization = await post("/api/desktop/native-auth/email-otp/verify", {
       client_id: "rudder-desktop",
       email,

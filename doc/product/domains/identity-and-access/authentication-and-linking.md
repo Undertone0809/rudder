@@ -21,6 +21,9 @@ related_tests:
   - identity/src/supabase-root-identity-adapter.test.ts
   - identity/src/pages.test.ts
   - identity/src/identity.e2e.test.ts
+  - desktop/src/boot-screen.test.ts
+  - desktop/src/identity-client.test.ts
+  - desktop/src/identity-ipc.test.ts
   - packages/identity-db/src/account-linking.test.ts
   - packages/identity-db/src/supabase-auth-binding.test.ts
 related_plans:
@@ -64,12 +67,17 @@ reach Desktop, a Local Server, or a runtime agent.
 
 ### Product Logic Flow
 
-1. The login surface presents Google, GitHub, and Email OTP as direct methods;
-   password remains an explicit alternative and recovery path.
+1. The Desktop login surface presents Google, GitHub, and Email OTP as direct
+   methods; password remains an explicit alternative and recovery path.
+   Google/GitHub continue in the system browser. Email OTP, password sign-in,
+   forgot password, and reset password remain native in Desktop.
 2. Supabase Auth verifies the root identity and owns users, identities,
    passwords, OTP material, web sessions, and refresh tokens.
 3. Rudder Identity accepts only an active verified Supabase principal, maps it
-   to a stable Rudder subject, and records bounded security evidence.
+   to a stable Rudder subject, and records bounded security evidence. Native
+   Desktop email/password transactions discard Supabase web-session material
+   server-side and return only a short-lived, single-use Rudder authorization
+   code bound to Desktop PKCE and the installation audience.
 4. Password set/change requires a signed-in or recently reauthenticated user.
    Forgot/reset uses an enumeration-safe response and revokes old long-lived
    access according to the documented session matrix.
@@ -87,8 +95,9 @@ reach Desktop, a Local Server, or a runtime agent.
 
 ### Actor-Visible Input
 
-The operator sees the Rudder login card, supported methods, verification and
-recovery forms, clear errors, and Privacy/Terms links.
+The operator sees the Rudder login card, supported methods, native Desktop
+verification and recovery forms, clear errors, and Privacy/Terms links. Only
+Google/GitHub transfer the operator to the system browser.
 
 ### Operator-Visible Output
 
@@ -104,8 +113,9 @@ password, provider token, and refresh-token plaintext are not duplicated there.
 
 ### Canonical Scenarios
 
-1. Email OTP signs a new operator into one Supabase user and proceeds to the
-   same Desktop authorization path as Google or GitHub.
+1. Email OTP signs a new operator into one Supabase user through the native
+   Desktop form, then exchanges a Rudder-owned PKCE code without launching the
+   system browser.
 2. Password reset invalidates the old password and long-lived credentials while
    preserving Local files.
 3. A provider response without verified email fails closed.

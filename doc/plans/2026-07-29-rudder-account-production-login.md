@@ -515,19 +515,26 @@ failure, Canary/Stable fail-closed policy, Desktop PKCE/Device Authorization,
 Local exchange, offline grant, credential vault, account UI, and response-cache
 privacy controls are implemented and covered by automated tests.
 
-The exact implementation commit passed macOS, Ubuntu, Windows, architecture,
+The initial implementation commit passed macOS, Ubuntu, Windows, architecture,
 and secret-scanning CI. Independent review passed, followed by a real packaged
 macOS black-box run that completed production Google login, Board entry,
 restart persistence, account-response no-store checks, credential-file
 permission checks, and a full profile scan for identity plaintext. Production
-Google, GitHub, OTP, password/reset, and verified-email linking were exercised
-through their real providers during the controlled smoke sequence.
+Google and GitHub completed against the same account. Production OTP send
+returned success, but mailbox receipt and code completion were not observed;
+hosted password/reset completion also remains a final black-box gate. Their
+deterministic fixture paths are covered by automated E2E.
 
-The implementation is merged into local `main`. Existing
+The initial implementation is merged into `main`. Existing
 `0.6.6-canary.10` is an immutable partial historical release and must not be
-retagged or republished; `0.6.6-canary.11` is the next eligible Canary. Stable
-publication retains the additional paid-plan, backup, signing, notarization,
-and fresh-install/update gates below.
+retagged or republished. `0.6.6-canary.11` published immutable npm packages,
+but its Windows packaged smoke exited with Node code 13 before Desktop assets
+could be attached. It is a superseded intermediate Canary, not acceptance of
+the native Desktop email interaction. The watchdog deadline repair, native
+Desktop OTP/password/reset flow, and revised Device Approval UI must fix
+forward through the next immutable Canary. Stable publication retains the
+additional paid-plan, backup, signing, notarization, hosted-auth, and fresh
+install/update gates below.
 
 ## Success Criteria
 
