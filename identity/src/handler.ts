@@ -1152,7 +1152,7 @@ export async function identityHandler(
     try {
       const principal = await runtime.rootIdentity.completePkceCallback(
         rootIdentityContext(req, res),
-        { code },
+        { code, flowId: url.searchParams.get("sb_flow_id") ?? undefined },
       );
       await bindRootPrincipal(runtime, principal);
       res.statusCode = 302;

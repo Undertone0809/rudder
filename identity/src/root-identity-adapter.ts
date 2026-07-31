@@ -58,7 +58,7 @@ export interface RootIdentityAdapter {
   ): Promise<{ redirectUrl: string }>;
   completePkceCallback(
     context: RootIdentityRequestContext,
-    input: { code: string },
+    input: { code: string; flowId?: string },
   ): Promise<RootIdentityPrincipal>;
   sendEmailOtp(
     context: RootIdentityRequestContext,

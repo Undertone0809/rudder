@@ -188,9 +188,12 @@ describe("createSupabaseRootIdentityAdapter", () => {
     );
     expect(redirect.searchParams.get("provider")).toBe("github");
     expect(redirect.searchParams.get("code_challenge_method")).toBe("s256");
-    expect(redirect.searchParams.get("redirect_to")).toContain(
-      encodeURIComponent("/api/desktop/authorize?state=local-state"),
+    const callback = new URL(redirect.searchParams.get("redirect_to")!);
+    expect(callback.pathname).toBe("/auth/callback");
+    expect(callback.searchParams.get("next")).toBe(
+      "/api/desktop/authorize?state=local-state",
     );
+    expect(callback.searchParams.get("sb_flow_id")).toMatch(/^[A-Za-z0-9_-]{8,64}$/u);
     const writtenCookies = cookieBatches.flatMap((batch) => batch.cookies);
     expect(writtenCookies.length).toBeGreaterThan(0);
     expect(writtenCookies.every(({ options }) =>
@@ -337,7 +340,7 @@ describe("createSupabaseRootIdentityAdapter", () => {
     });
 
     const callbackStart = requestContext();
-    await adapter.beginOAuth(callbackStart.context, { provider: "google" });
+    const oauthRedirect = await adapter.beginOAuth(callbackStart.context, { provider: "google" });
     const verifierCookie = callbackStart.cookieBatches
       .flatMap((batch) => batch.cookies)
       .filter(({ value, options }) => value && options.maxAge !== 0)
@@ -345,8 +348,10 @@ describe("createSupabaseRootIdentityAdapter", () => {
       .join("; ");
     expect(verifierCookie).not.toBe("");
     const callback = requestContext(verifierCookie);
+    const callbackUrl = new URL(new URL(oauthRedirect.redirectUrl).searchParams.get("redirect_to")!);
     await expect(adapter.completePkceCallback(callback.context, {
       code: "supabase-pkce-code",
+      flowId: callbackUrl.searchParams.get("sb_flow_id") ?? undefined,
     })).resolves.toMatchObject({ id: verifiedUser.id });
 
     const signUp = requestContext();
@@ -404,6 +409,12 @@ describe("createSupabaseRootIdentityAdapter", () => {
       return `${request.method} ${url.pathname}?grant_type=${url.searchParams.get("grant_type") ?? ""}`;
     });
     expect(pathAndGrant).toContain("POST /auth/v1/token?grant_type=pkce");
+    const oauthUserRequest = requests.find((request) =>
+      request.method === "GET" && new URL(request.url).pathname === "/auth/v1/user"
+    );
+    expect(oauthUserRequest?.headers.get("authorization")).toBe(
+      `Bearer ${String(sessionResponse().access_token)}`,
+    );
     expect(pathAndGrant).toContain("POST /auth/v1/signup?grant_type=");
     expect(pathAndGrant).toContain("POST /auth/v1/recover?grant_type=");
     expect(pathAndGrant).toContain("POST /auth/v1/verify?grant_type=");

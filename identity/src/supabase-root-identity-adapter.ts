@@ -172,6 +172,10 @@ export function createSupabaseRootIdentityAdapter(
         detectSessionInUrl: false,
         persistSession: true,
         autoRefreshToken: false,
+        // Bind each callback to the verifier created for that OAuth attempt.
+        // The identifier is non-secret and is validated by auth-js before it
+        // is used as part of a storage key.
+        experimental: { appendPkceFlowIdToRedirects: true },
       },
     });
   };
@@ -267,9 +271,24 @@ export function createSupabaseRootIdentityAdapter(
 
     async completePkceCallback(context, input) {
       const client = createRequestClient(context);
-      const { error } = await client.auth.exchangeCodeForSession(input.code);
+      const { data, error } = await client.auth.exchangeCodeForSession(
+        input.code,
+        input.flowId ? { flowId: input.flowId } : undefined,
+      );
       throwAuthError(error);
-      return getVerifiedPrincipal(client);
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        throw new RootIdentityError({
+          code: "identity_provider_error",
+          message: "The identity provider did not return an active session",
+          status: 502,
+        });
+      }
+      // Validate the just-exchanged credential directly. Re-reading the
+      // request cookie here can race the response's Set-Cookie handoff.
+      const { data: userData, error: userError } = await client.auth.getUser(accessToken);
+      throwAuthError(userError);
+      return verifiedPrincipal(userData.user);
     },
 
     async sendEmailOtp(context, input) {
