@@ -90,6 +90,9 @@ describe("in-process root identity fixture", () => {
     expect(resetMessage?.text).toContain(
       "/reset-password?token_hash=345678&type=recovery",
     );
+    expect(resetMessage?.text).toContain(
+      "Use 345678 to reset your Rudder Account password.",
+    );
     const recoveryContext = context();
     await adapter.completePasswordRecovery(recoveryContext.value, {
       tokenHash: "345678",
