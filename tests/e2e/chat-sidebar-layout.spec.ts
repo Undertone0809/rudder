@@ -55,6 +55,23 @@ test.describe("Chat sidebar layout", () => {
     await expect(header.getByTestId("chat-header-title")).toHaveAttribute("title", fullTitle);
     await expect(header.locator("img")).toBeVisible();
 
+    for (const button of [
+      page.getByRole("button", { name: "Search", exact: true }),
+      page.getByRole("button", { name: "Create", exact: true }),
+      page.getByRole("button", { name: "System settings", exact: true }),
+      page.getByRole("button", { name: "Add files and options", exact: true }),
+    ]) {
+      await expect(button).toHaveClass(/control-hover/);
+      await button.hover();
+      const hoverStyle = await button.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { boxShadow: style.boxShadow, scale: style.scale, transform: style.transform };
+      });
+      expect(hoverStyle.boxShadow).not.toBe("none");
+      expect(hoverStyle.scale).not.toBe("none");
+      expect(hoverStyle.transform).not.toBe("none");
+    }
+
     const headerBox = await header.boundingBox();
     const actionsBox = await page.getByTestId("chat-desktop-toolbar-actions").boundingBox();
     expect(headerBox).not.toBeNull();

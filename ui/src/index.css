@@ -1957,30 +1957,6 @@
     }
   }
 
-  .settings-entry-button {
-    transition:
-      transform 120ms ease,
-      background-color 140ms ease,
-      border-color 140ms ease,
-      box-shadow 160ms ease,
-      color 140ms ease;
-  }
-
-  .settings-entry-button:hover {
-    transform: translateY(-1px) scale(1.03);
-    box-shadow:
-      0 14px 28px -20px rgb(20 20 20 / 0.28),
-      0 6px 12px -10px rgb(20 20 20 / 0.16);
-  }
-
-  .settings-entry-button:active {
-    transform: scale(0.97);
-  }
-
-  .settings-entry-button:focus-visible {
-    transform: translateY(-1px);
-  }
-
   .surface-inset {
     background: color-mix(in oklab, var(--surface-inset) 98%, transparent);
     border: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
@@ -5833,5 +5809,60 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   .workspace-html-preview-network-chevron,
   .workspace-html-preview-open-icon {
     display: block;
+  }
+}
+
+/* Keep shared control states outside Tailwind layers so variant utilities do not hide the hover treatment. */
+.settings-entry-button {
+  transition-duration: 140ms;
+}
+
+.control-hover {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform, scale;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
+  scale: 1.02;
+}
+
+.control-hover:hover:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--border-strong) 74%, var(--accent-base) 26%);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--surface-active) 58%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 12%, transparent),
+    0 10px 20px -16px rgb(0 0 0 / 0.46);
+}
+
+.control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
+  scale: 0.985;
+}
+
+.control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
+  transform: translateY(0);
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--surface-active) 46%, transparent),
+    inset 0 1px 2px color-mix(in oklab, black 14%, transparent);
+}
+
+.control-hover:focus-visible:not([aria-disabled="true"]):not([data-variant="link"]) {
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-hover {
+    transition: none !important;
+  }
+
+  .control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])),
+  .control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
+    scale: none !important;
+  }
+
+  .control-hover:hover:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]),
+  .control-hover:focus-visible:not([aria-disabled="true"]):not([data-variant="link"]),
+  .control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
+    transform: none !important;
   }
 }
