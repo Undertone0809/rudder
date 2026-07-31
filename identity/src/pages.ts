@@ -114,6 +114,34 @@ function page(title: string, body: string, layout: "document" | "auth" = "docume
     .password-section p { margin: -6px 0 0; font-size: .78rem; line-height: 1.5; }
     .secondary-disclosure > summary { color: var(--muted); cursor: pointer; font-size: .8rem; font-weight: 650; }
     .secondary-disclosure form { margin-top: 14px; }
+    .device-card { max-width: 420px; padding: 32px; border-radius: 8px; }
+    .device-intro { margin-bottom: 20px; }
+    .device-code-block { margin: 0 0 24px; padding: 18px 0; border-block: 1px solid var(--line); text-align: center; }
+    .device-code-label { display: block; margin-bottom: 8px; color: var(--muted); font-size: .76rem; font-weight: 650; }
+    .device-code {
+      display: block;
+      max-width: 100%;
+      color: var(--text);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 1.9rem;
+      font-variant-numeric: tabular-nums;
+      font-weight: 760;
+      letter-spacing: 0;
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .device-actions { display: grid; gap: 12px; }
+    .device-deny { width: fit-content; min-height: 30px; margin: 0 auto; padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: .78rem; font-weight: 650; }
+    .device-deny:hover:not(:disabled) { border-color: transparent; color: var(--negative); }
+    .device-result { text-align: center; }
+    .device-result-icon { display: grid; width: 40px; height: 40px; margin: 2px auto 14px; place-items: center; border-radius: 50%; }
+    .device-result-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.2; }
+    .device-result[data-state="approved"] .device-result-icon { background: color-mix(in srgb, var(--positive) 13%, transparent); color: var(--positive); }
+    .device-result[data-state="denied"] .device-result-icon { background: color-mix(in srgb, var(--negative) 11%, transparent); color: var(--negative); }
+    .device-result-title { margin: 0; font-size: 1.05rem; line-height: 1.35; }
+    .device-result-copy { max-width: 31ch; margin: 7px auto 20px; font-size: .82rem; line-height: 1.5; }
+    .device-return { background: var(--surface-raised); }
+    .device-status { margin-bottom: 0; }
     .auth-status { min-height: 20px; margin: 16px 0 0; text-align: center; font-size: .8rem; line-height: 1.45; }
     .auth-status[data-state="error"] { color: var(--negative); }
     .auth-status[data-state="success"] { color: var(--positive); }
@@ -280,17 +308,34 @@ export function passwordRecoveryPage(email: string): string {
 export function deviceApprovalPage(userCode: string): string {
   return page(
     "Approve device",
-    `<p class="eyebrow">Rudder Account</p>
-     <h1>Approve device</h1>
-     <p>A Rudder device wants to sign in. Confirm that this code matches the device:</p>
-     <p><strong id="device-user-code">${escapeHtml(userCode)}</strong></p>
-     <section>
-       <button type="button" id="approve-device">Approve</button>
-       <button type="button" id="deny-device">Deny</button>
+    `<section class="auth-card device-card" aria-labelledby="device-heading">
+       <div class="brand-mark" aria-hidden="true">
+         <img src="/rudder-logo.png" alt="">
+       </div>
+       <h1 class="auth-heading" id="device-heading">Confirm this device</h1>
+       <p class="auth-intro device-intro">Only approve if this code matches the one shown in Rudder Desktop.</p>
+       <div class="device-code-block">
+         <span class="device-code-label">Verification code</span>
+         <strong class="device-code" id="device-user-code">${escapeHtml(userCode)}</strong>
+       </div>
+       <div class="device-actions" id="device-decision">
+         <button class="primary-button" type="button" id="approve-device" data-idle-label="Approve device">Approve device</button>
+         <button class="device-deny" type="button" id="deny-device" data-idle-label="Deny request">Deny request</button>
+       </div>
+       <div class="device-result" id="device-result" role="status" aria-live="polite" aria-atomic="true" hidden>
+         <div class="device-result-icon" aria-hidden="true">
+           <svg class="device-approved-icon" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg>
+           <svg class="device-denied-icon" viewBox="0 0 24 24" hidden><path d="m7 7 10 10M17 7 7 17"></path></svg>
+         </div>
+         <h2 class="device-result-title" id="device-result-title"></h2>
+         <p class="device-result-copy" id="device-result-copy"></p>
+         <button class="device-return" type="button" id="return-to-rudder">Return to Rudder</button>
+       </div>
+       <p class="auth-status device-status" id="auth-status" role="status" aria-live="polite"></p>
+       <nav class="auth-legal"><a href="/account">Account &amp; Security</a><a href="/privacy">Privacy</a></nav>
      </section>
-     <p id="auth-status" role="status" aria-live="polite"></p>
-     <nav><a href="/account">Account &amp; Security</a><a href="/privacy">Privacy</a></nav>
-     <script src="/identity.js" defer></script>`,
+     <script src="/identity.js?v=20260731-device-approval" defer></script>`,
+    "auth",
   );
 }
 
