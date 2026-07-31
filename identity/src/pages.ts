@@ -52,6 +52,7 @@ function page(title: string, body: string, layout: "document" | "auth" = "docume
     input, button { box-sizing: border-box; width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid var(--line-strong); border-radius: 10px; font: inherit; }
     input { background: var(--surface-raised); color: var(--text); outline: none; }
     input::placeholder { color: var(--faint); }
+    input[type="checkbox"] { width: auto; min-height: 0; }
     input:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible {
       outline: 3px solid color-mix(in srgb, var(--focus) 32%, transparent);
       outline-offset: 2px;
@@ -84,6 +85,7 @@ function page(title: string, body: string, layout: "document" | "auth" = "docume
       background: var(--primary);
       color: var(--primary-text);
       box-shadow: inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
+      overflow: hidden;
     }
     .brand-mark img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
     .auth-heading { margin: 0; text-align: center; font-size: 1.72rem; letter-spacing: -.035em; line-height: 1.15; }
@@ -179,7 +181,7 @@ export function homePage(providers: { google: boolean; github: boolean }): strin
            <span>Code sent to <strong id="otp-email"></strong></span>
            <button class="text-button" id="change-email" type="button">Change email</button>
          </div>
-         <label>Verification code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000"></label>
+         <label>Verification code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="00000000"></label>
          <button class="primary-button" type="submit">Verify and continue</button>
        </form>
        <button class="mode-toggle" id="password-mode-toggle" type="button" aria-controls="password-panel" aria-expanded="false">Use password instead</button>
@@ -194,7 +196,6 @@ export function homePage(providers: { google: boolean; github: boolean }): strin
            <details class="secondary-disclosure">
              <summary>Create a password account</summary>
              <form class="auth-form" id="password-signup-form">
-               <label>Name <input required name="name" autocomplete="name"></label>
                <label>Email address <input required type="email" name="email" autocomplete="email"></label>
                <label>Password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
                <button type="submit">Create account with password</button>
@@ -207,7 +208,7 @@ export function homePage(providers: { google: boolean; github: boolean }): strin
                <button type="submit">Send reset code</button>
              </form>
              <form class="auth-form otp-form" id="reset-password-form" hidden>
-               <label>Reset code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+               <label>Reset code <input required name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8"></label>
                <label>New password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
                <button class="primary-button" type="submit">Reset password</button>
              </form>
@@ -230,42 +231,49 @@ export function accountPage(email: string): string {
      <h1>Account &amp; Security</h1>
      <p>Signed in as ${escapeHtml(email)}</p>
      <section>
-       <h2>Set a password</h2>
-       <p>For an account that currently uses Google, GitHub, or email codes. Email verification is required immediately before setting it.</p>
+       <h2>Set or change password</h2>
+       <p>Confirm this account by email immediately before setting a new password.</p>
        <form id="set-password-request-form"><button type="submit">Send verification code</button></form>
        <form id="set-password-form" hidden>
-         <label>6-digit code <input required name="otp" pattern="[0-9]{6}" inputmode="numeric" autocomplete="one-time-code"></label>
+         <label>Verification code <input required name="otp" pattern="[0-9]{6,8}" maxlength="8" inputmode="numeric" autocomplete="one-time-code"></label>
          <label>New password <input required type="password" name="newPassword" minlength="8" maxlength="128" autocomplete="new-password"></label>
-         <button type="submit">Set password</button>
-       </form>
-     </section>
-     <section>
-       <h2>Change password</h2>
-       <form id="change-password-form">
-         <label>Current password <input required type="password" name="currentPassword" autocomplete="current-password"></label>
-         <label>New password <input required type="password" name="newPassword" minlength="8" maxlength="128" autocomplete="new-password"></label>
-         <label><input type="checkbox" name="revokeOtherSessions" checked> Sign out other sessions</label>
-         <button type="submit">Change password</button>
+         <label><input type="checkbox" name="revokeOthers" value="yes"> Sign out other browsers and revoke Rudder Desktop access</label>
+         <button type="submit">Save new password</button>
        </form>
      </section>
      <section>
        <h2>Web sessions</h2>
-       <p>Browser sign-ins are managed separately from Rudder Desktop devices.</p>
-       <div id="web-session-list">Loading web sessions…</div>
-       <button type="button" id="revoke-other-web-sessions">Sign out other web sessions</button>
+       <p>This browser and other-browser actions leave Rudder Desktop access unchanged. Signing out everywhere also revokes Rudder Desktop cloud access; an already-issued Local Server session ends at its local expiry or next identity sync.</p>
+       <button type="button" data-sign-out-scope="current">Sign out this browser</button>
+       <button type="button" data-sign-out-scope="others">Sign out other browsers</button>
+       <button type="button" data-sign-out-scope="global">Sign out all browsers</button>
      </section>
      <section>
        <h2>Devices</h2>
        <div id="device-list">Loading devices…</div>
      </section>
-     <section>
-       <h2>Sign out</h2>
-       <p>This signs out the current web session only. Rudder Desktop devices remain connected until you revoke them above.</p>
-       <button type="button" id="sign-out">Sign out of this web session</button>
-     </section>
      <p id="auth-status" role="status" aria-live="polite"></p>
      <nav><a href="/">Rudder Account</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
      <script src="/identity.js" defer></script>`,
+  );
+}
+
+export function passwordRecoveryPage(email: string): string {
+  return page(
+    "Reset password",
+    `<section class="auth-card" aria-labelledby="recovery-heading">
+       <div class="brand-mark"><img src="/rudder-logo.png" alt="Rudder"></div>
+       <h1 class="auth-heading" id="recovery-heading">Choose a new password</h1>
+       <p class="auth-intro">Resetting ${escapeHtml(email)} signs out every browser and revokes Rudder Desktop cloud access. An already-issued Local Server session ends at its local expiry or next identity sync.</p>
+       <form class="auth-form" id="recovery-password-form">
+         <label>New password <input required type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+         <button class="primary-button" type="submit">Reset password and sign out devices</button>
+       </form>
+       <p class="auth-status" id="auth-status" role="status" aria-live="polite"></p>
+       <nav class="auth-legal"><a href="/">Cancel</a><a href="/privacy">Privacy</a></nav>
+     </section>
+     <script src="/identity.js" defer></script>`,
+    "auth",
   );
 }
 
@@ -294,15 +302,15 @@ export function privacyPage(supportEmail: string): string {
      <h1>Privacy Policy</h1>
      <p>Effective: ${EFFECTIVE_DATE}</p>
      <h2>What account data we process</h2>
-     <p>Rudder Identity processes the email address, display name and avatar you provide; your Google or GitHub provider identifier; password credentials stored as one-way hashes; verification challenges; login sessions; registered devices; and limited security events used to prevent abuse and let you revoke access.</p>
+     <p>Supabase Auth processes the email address, display name and avatar you provide; your Google or GitHub provider identifier; password credentials stored as one-way hashes; verification challenges; and browser sessions. Rudder Identity processes registered devices and limited security events used to prevent abuse and let you revoke access.</p>
      <h2>Local data stays local</h2>
      <p>Signing in does not upload your Local Organizations, Workspaces, files, paths, prompts, transcripts, runs, runtime credentials, or provider access tokens to Rudder Identity. Those remain in your Local Rudder installation unless you separately choose a future remote or sharing feature.</p>
      <h2>Service providers</h2>
-     <p>We use Google and GitHub when you choose their sign-in methods, Resend to deliver verification and security email, Supabase to host the private PostgreSQL account database, and Vercel to run the Identity service. Each processes only the information needed to provide that function.</p>
+     <p>We use Google and GitHub when you choose their sign-in methods, Supabase Auth for account authentication and browser sessions, Resend to deliver verification and security email, Supabase PostgreSQL for private Rudder device data, and Vercel to run the Identity service. Each processes only the information needed to provide that function.</p>
      <h2>Retention and security</h2>
      <p>We retain account and security data while your account is active and as reasonably needed for security, legal compliance, and fraud prevention. Verification codes and authorization codes expire quickly and are stored only in hashed form. Provider access and refresh tokens are not retained by Rudder Identity.</p>
      <h2>Your choices and deletion</h2>
-     <p>You can revoke sessions and linked login methods from Account &amp; Security. To request access, correction, export, or deletion of your Rudder Account data, email <a href="mailto:${contact}">${contact}</a>. Deleting a Rudder Account does not silently delete Local Workspace data on your devices.</p>
+     <p>You can revoke browser sessions and registered devices from Account &amp; Security. To request access, correction, export, or deletion of your Rudder Account data, email <a href="mailto:${contact}">${contact}</a>. Deleting a Rudder Account does not silently delete Local Workspace data on your devices.</p>
      <nav><a href="/">Rudder Account</a><a href="/terms">Terms</a></nav>`,
   );
 }

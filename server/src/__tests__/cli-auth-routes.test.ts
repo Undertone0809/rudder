@@ -125,6 +125,41 @@ describe("cli auth routes", () => {
     expect(res.body.canApprove).toBe(false);
   });
 
+  it("prevents Chromium from caching challenge secrets and approved account identity", async () => {
+    mockBoardAuthService.describeCliAuthChallenge.mockResolvedValue({
+      id: "challenge-1",
+      status: "approved",
+      command: "rudder organization import",
+      clientName: "rudder cli",
+      requestedAccess: "board",
+      requestedCompanyId: null,
+      requestedCompanyName: null,
+      approvedAt: "2026-03-23T12:30:00.000Z",
+      cancelledAt: null,
+      expiresAt: "2026-03-23T13:00:00.000Z",
+      approvedByUser: {
+        id: "user-1",
+        name: "User One",
+        email: "user@example.com",
+      },
+    });
+
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-1"],
+    });
+    const res = await request(app).get("/api/cli-auth/challenges/challenge-1?token=fixture-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.approvedByUser.email).toBe("user@example.com");
+    expect(res.headers["cache-control"]).toBe("private, no-store, max-age=0");
+    expect(res.headers.pragma).toBe("no-cache");
+    expect(res.headers.expires).toBe("0");
+  });
+
   it("approves a CLI auth challenge for a signed-in board user", async () => {
     mockBoardAuthService.approveCliAuthChallenge.mockResolvedValue({
       status: "approved",
@@ -203,6 +238,28 @@ describe("cli auth routes", () => {
       boardApiKeyId: "board-key-2",
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it("prevents Chromium from persisting the current account response", async () => {
+    mockBoardAuthService.resolveBoardAccess.mockResolvedValue({
+      user: { id: "user-1", name: "User One", email: "user@example.com" },
+      orgIds: ["organization-1"],
+      isInstanceAdmin: false,
+    });
+
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-1"],
+    });
+    const res = await request(app).get("/api/cli-auth/me");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store, max-age=0");
+    expect(res.headers.pragma).toBe("no-cache");
+    expect(res.headers.expires).toBe("0");
   });
 
   it("logs revoke activity with resolved audit organization ids", async () => {

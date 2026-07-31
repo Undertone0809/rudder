@@ -72,6 +72,9 @@ history or line-by-line code copies.
   who should act next.
 - `domains/agents/`: durable agent identity, runtime config, skills, inbox,
   runtime adapters, and instruction loading.
+- `domains/identity-and-access/`: Rudder Account authentication, identity
+  linking, device/Local sessions, release isolation, and the Local data privacy
+  boundary.
 - `domains/organizations-and-goals/`: organization mission, goal hierarchy,
   project grouping, and project-to-work context.
 - `domains/library-and-context/`: Library files, resources, project context,

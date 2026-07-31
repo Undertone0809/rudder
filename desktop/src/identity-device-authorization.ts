@@ -26,7 +26,7 @@ type DeviceCodeResponse = {
   device_code: string;
   user_code: string;
   verification_uri: string;
-  verification_uri_complete: string;
+  verification_uri_complete?: string;
   expires_in: number;
   interval: number;
 };
@@ -38,7 +38,10 @@ function parseDeviceCodeResponse(value: unknown): DeviceCodeResponse {
     typeof record.device_code !== "string"
     || typeof record.user_code !== "string"
     || typeof record.verification_uri !== "string"
-    || typeof record.verification_uri_complete !== "string"
+    || (
+      record.verification_uri_complete !== undefined
+      && typeof record.verification_uri_complete !== "string"
+    )
     || typeof record.expires_in !== "number"
     || typeof record.interval !== "number"
     || record.expires_in <= 0
@@ -55,6 +58,15 @@ function requireSameIdentityOrigin(value: string, identityOrigin: string): strin
     throw new Error("Rudder Identity returned an untrusted device approval URL");
   }
   return url.toString();
+}
+
+function completeVerificationUrl(code: DeviceCodeResponse, identityOrigin: string): string {
+  if (code.verification_uri_complete) {
+    return requireSameIdentityOrigin(code.verification_uri_complete, identityOrigin);
+  }
+  const url = new URL(code.verification_uri, identityOrigin);
+  url.searchParams.set("user_code", code.user_code);
+  return requireSameIdentityOrigin(url.toString(), identityOrigin);
 }
 
 function parseDeviceSession(value: unknown): DesktopDeviceAuthorizationResult {
@@ -124,7 +136,7 @@ export async function runDesktopDeviceAuthorization(options: {
   installationId: string;
   deviceName: string;
   devicePublicKeyThumbprint?: string;
-  signOutEpoch?: number;
+  localSignOutEpoch?: number;
   openExternal(url: string): Promise<void>;
   onPrompt?(prompt: DesktopDeviceAuthorizationPrompt): void;
   fetch?: typeof globalThis.fetch;
@@ -136,7 +148,7 @@ export async function runDesktopDeviceAuthorization(options: {
   const request = options.fetch ?? globalThis.fetch;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
-  const codeResponse = await request(new URL("/api/auth/device/code", identityOrigin), {
+  const codeResponse = await request(new URL("/api/desktop/device-code", identityOrigin), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -148,7 +160,7 @@ export async function runDesktopDeviceAuthorization(options: {
   if (!codeResponse.ok) throw new Error(`Rudder Identity device authorization failed (${codeResponse.status})`);
   const code = parseDeviceCodeResponse(await codeResponse.json());
   const verificationUri = requireSameIdentityOrigin(code.verification_uri, identityOrigin);
-  const verificationUriComplete = requireSameIdentityOrigin(code.verification_uri_complete, identityOrigin);
+  const verificationUriComplete = completeVerificationUrl(code, identityOrigin);
   const deadline = now() + code.expires_in * 1000;
   const prompt: DesktopDeviceAuthorizationPrompt = {
     userCode: code.user_code,
@@ -170,13 +182,19 @@ export async function runDesktopDeviceAuthorization(options: {
   while (now() < deadline) {
     await sleep(intervalMs, options.signal);
     if (now() >= deadline) break;
-    const tokenResponse = await request(new URL("/api/auth/device/token", identityOrigin), {
+    const tokenResponse = await request(new URL("/api/desktop/device-code/token", identityOrigin), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         grant_type: DEVICE_GRANT_TYPE,
         device_code: code.device_code,
         client_id: DESKTOP_CLIENT_ID,
+        installation_id: options.installationId,
+        device_name: options.deviceName,
+        sign_out_epoch: options.localSignOutEpoch ?? 0,
+        ...(options.devicePublicKeyThumbprint
+          ? { device_public_key_thumbprint: options.devicePublicKeyThumbprint }
+          : {}),
       }),
       signal: options.signal,
     });
@@ -184,41 +202,21 @@ export async function runDesktopDeviceAuthorization(options: {
     if (!tokenResponse.ok) {
       if (tokenBody.error === "authorization_pending") continue;
       if (tokenBody.error === "slow_down") {
-        intervalMs += 5_000;
+        intervalMs =
+          typeof tokenBody.interval === "number"
+          && tokenBody.interval >= 1
+          && tokenBody.interval <= 30
+            ? tokenBody.interval * 1_000
+            : intervalMs + 5_000;
         continue;
       }
       if (tokenBody.error === "access_denied") throw new Error("Rudder Account device authorization was denied");
       if (tokenBody.error === "expired_token") throw new Error("Rudder Account device authorization expired");
       throw new Error("Rudder Account device authorization failed");
     }
-    if (typeof tokenBody.access_token !== "string" || tokenBody.token_type !== "Bearer") {
-      throw new Error("Rudder Identity returned an invalid device authorization token");
-    }
-
-    // The RFC 8628 token proves the approved Better Auth user. This final
-    // exchange registers the same installation in Rudder's identityDevices
-    // registry and returns the normal device access/refresh credential pair.
-    const sessionResponse = await request(new URL("/api/desktop/device-session", identityOrigin), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${tokenBody.access_token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        client_id: DESKTOP_CLIENT_ID,
-        installation_id: options.installationId,
-        device_name: options.deviceName,
-        sign_out_epoch: options.signOutEpoch ?? 0,
-        ...(options.devicePublicKeyThumbprint
-          ? { device_public_key_thumbprint: options.devicePublicKeyThumbprint }
-          : {}),
-      }),
-      signal: options.signal,
-    });
-    if (!sessionResponse.ok) {
-      throw new Error(`Rudder Identity device registration failed (${sessionResponse.status})`);
-    }
-    return parseDeviceSession(await sessionResponse.json());
+    // A successful Rudder-owned Device Authorization poll atomically consumes
+    // the approval and returns the final device access/refresh credentials.
+    return parseDeviceSession(tokenBody);
   }
   throw new Error("Rudder Account device authorization timed out");
 }

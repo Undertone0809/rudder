@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDevIdentityEnvironment } from "./dev-identity-env.mjs";
 import {
   isolateDevShellFromParentRuntime,
   resolveDevScriptEnvironment,
@@ -21,6 +22,7 @@ const pollIntervalMs = 250;
 let shuttingDown = false;
 let desktopStarted = false;
 let serverChild = null;
+let identityChild = null;
 let desktopChild = null;
 
 function resolveDescriptorPath(env) {
@@ -83,6 +85,39 @@ async function waitForDevRuntimeReady(env) {
   );
 }
 
+async function waitForIdentityReady(identityOrigin) {
+  const deadline = Date.now() + startupTimeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    if (!identityChild) {
+      throw new Error("The local Identity service exited before becoming ready.");
+    }
+    try {
+      const response = await fetch(new URL("/api/health", identityOrigin), {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(1_500),
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        if (payload?.status === "ok" && payload?.service === "rudder-identity") return;
+        lastError = new Error("Identity health returned an unexpected service.");
+      } else {
+        lastError = new Error(`Identity health failed (${response.status}).`);
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error(
+    `Timed out waiting for local Identity. ${
+      lastError instanceof Error ? lastError.message : String(lastError ?? "Unknown error")
+    }`,
+  );
+}
+
 function spawnManagedChild(name, command, args, env, options = {}) {
   const child = spawn(command, args, {
     cwd: repoRoot,
@@ -98,6 +133,24 @@ function spawnManagedChild(name, command, args, env, options = {}) {
   return child;
 }
 
+async function runManagedCommand(name, command, args, env) {
+  const child = spawnManagedChild(name, command, args, env);
+  const result = await new Promise((resolve, reject) => {
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`${name} exited via ${signal}`));
+        return;
+      }
+      if ((code ?? 1) !== 0) {
+        reject(new Error(`${name} exited with code ${code}`));
+        return;
+      }
+      resolve();
+    });
+  });
+  return result;
+}
+
 async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -106,6 +159,10 @@ async function shutdown(exitCode = 0) {
   if (desktopChild && !desktopChild.killed) {
     desktopChild.kill("SIGTERM");
     waits.push(new Promise((resolve) => desktopChild.once("exit", resolve)));
+  }
+  if (identityChild && !identityChild.killed) {
+    identityChild.kill("SIGTERM");
+    waits.push(new Promise((resolve) => identityChild.once("exit", resolve)));
   }
   if (serverChild && !serverChild.killed) {
     serverChild.kill("SIGTERM");
@@ -123,10 +180,12 @@ async function shutdown(exitCode = 0) {
 }
 
 async function main() {
-  const { env } = resolveDevScriptEnvironment({
+  const resolvedDev = resolveDevScriptEnvironment({
     repoRoot,
     baseEnv: isolateDevShellFromParentRuntime(process.env),
   });
+  const resolvedIdentity = resolveDevIdentityEnvironment(resolvedDev.env);
+  const env = resolvedIdentity.env;
   const desktopEnv = {
     ...env,
   };
@@ -149,6 +208,9 @@ async function main() {
     if (desktopChild && !desktopChild.killed) {
       desktopChild.kill("SIGTERM");
     }
+    if (identityChild && !identityChild.killed) {
+      identityChild.kill("SIGTERM");
+    }
     if (signal) {
       process.kill(process.pid, signal);
       return;
@@ -157,6 +219,52 @@ async function main() {
   });
 
   await waitForDevRuntimeReady(env);
+
+  await runManagedCommand(
+    "identity-core-build",
+    pnpmBin,
+    ["--filter", "@rudderhq/identity-core", "build"],
+    env,
+  );
+  await runManagedCommand(
+    "identity-db-build",
+    pnpmBin,
+    ["--filter", "@rudderhq/identity-db", "build"],
+    env,
+  );
+  await runManagedCommand(
+    "identity-migrate",
+    pnpmBin,
+    ["--filter", "@rudderhq/identity-db", "migrate"],
+    env,
+  );
+
+  identityChild = spawnManagedChild(
+    "identity",
+    pnpmBin,
+    ["--filter", "@rudderhq/identity", "dev"],
+    env,
+  );
+  identityChild.once("exit", (code, signal) => {
+    identityChild = null;
+    if (shuttingDown) return;
+    if (desktopChild && !desktopChild.killed) desktopChild.kill("SIGTERM");
+    if (serverChild && !serverChild.killed) serverChild.kill("SIGTERM");
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+  await waitForIdentityReady(resolvedIdentity.identityOrigin);
+  console.log(
+    `[rudder:identity] local façade ready at ${resolvedIdentity.identityOrigin} (${resolvedIdentity.rootAuthMode})`,
+  );
+  if (resolvedIdentity.mailbox) {
+    console.log(
+      `[rudder:identity] captured mailbox: ${resolvedIdentity.mailbox.url} (Bearer ${resolvedIdentity.mailbox.secret})`,
+    );
+  }
 
   desktopChild = spawnManagedChild(
     "desktop",

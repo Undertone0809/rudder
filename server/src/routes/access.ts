@@ -60,6 +60,13 @@ export function accessRoutes(
   const boardAuth = boardAuthService(db);
   const agents = agentService(db);
 
+  router.use("/cli-auth", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+  });
+
   async function assertInstanceAdmin(req: Request) {
     if (req.actor.type !== "board") throw unauthorized();
     if (isLocalImplicit(req)) return;

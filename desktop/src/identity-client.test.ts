@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDesktopIdentityClient } from "./identity-client.js";
+import { applyDesktopSignInIntent, createDesktopIdentityClient } from "./identity-client.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -9,6 +9,23 @@ afterEach(() => {
 });
 
 describe("Desktop Identity client", () => {
+  it("adds only an opaque intent to the PKCE authorize URL", () => {
+    const authorize = applyDesktopSignInIntent(
+      new URL("https://accounts.rudderhq.dev/api/desktop/authorize?state=opaque"),
+      "opaque_intent_with_enough_random_material",
+    );
+    expect(authorize.searchParams.get("login_intent")).toBe(
+      "opaque_intent_with_enough_random_material",
+    );
+    expect(authorize.searchParams.has("login_method")).toBe(false);
+    expect(authorize.searchParams.has("login_email")).toBe(false);
+    expect(authorize.searchParams.get("state")).toBe("opaque");
+    expect(() => applyDesktopSignInIntent(
+      new URL("https://accounts.rudderhq.dev/api/desktop/authorize"),
+      "not valid!",
+    )).toThrow("invalid sign-in intent");
+  });
+
   it("rejects insecure non-local issuers", () => {
     expect(() => createDesktopIdentityClient({
       identityOrigin: "http://accounts.example.com",

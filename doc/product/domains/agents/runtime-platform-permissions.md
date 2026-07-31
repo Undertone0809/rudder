@@ -127,6 +127,14 @@ The runtime authorization boundary also includes a persisted run-start policy
 snapshot. Current binding and provider policy can immediately reduce that
 snapshot, while permission increases wait for the next run.
 
+Rudder Account authentication is an independent admission predicate. A valid
+user or Local Server session identifies who may access data; it does not grant
+Desktop Bridge, Browser, filesystem, IDE, Local App, or runtime capability.
+Authenticated Desktop retains only the local capabilities proven by its
+Desktop context, attestation, settings, and run-scoped authorization. An
+ordinary authenticated browser receives none of those capabilities merely
+because it represents the same user.
+
 ## Actors / Objects / State
 
 - Operator: the human whose machine, local CLIs, provider credentials, and

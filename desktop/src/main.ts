@@ -15,6 +15,7 @@ import { AppBuilderPreviewController } from "./app-builder-preview.js";
 import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
+import { resolveOfficialRudderLogoDataUrl } from "./brand-logo.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
 import {
   BrowserAgentError,
@@ -1200,8 +1201,7 @@ function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
 }
 
 function resolveDesktopBrandIconDataUrl(): string | null {
-  if (!desktopWindowIcon || desktopWindowIcon.isEmpty()) return null;
-  return desktopWindowIcon.resize({ width: 128, height: 128 }).toDataURL();
+  return resolveOfficialRudderLogoDataUrl({ isPackaged: app.isPackaged, moduleDir: MODULE_DIR, resourcesPath: process.resourcesPath });
 }
 
 function createCurrentRecoveryDiagnostic(): string {

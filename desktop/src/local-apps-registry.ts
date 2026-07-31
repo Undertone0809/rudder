@@ -82,6 +82,16 @@ const OWNERLESS_RUNTIME_STATUSES = new Set<LocalAppPersistedRuntimeStatus>([
   "quarantined",
 ]);
 
+export function isUnsupportedDirectorySyncError(
+  error: unknown,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32"
+    && typeof error === "object"
+    && error !== null
+    && (error as NodeJS.ErrnoException).code === "EPERM";
+}
+
 function requireBoundedString(value: unknown, label: string, maxLength: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.includes("\0")) {
     throw new Error(`Invalid Local App ${label}`);
@@ -382,7 +392,9 @@ export class LocalAppRegistry {
       await chmod(this.registryPath, 0o600);
       const directoryHandle = await open(directory, "r");
       try {
-        await directoryHandle.sync();
+        await directoryHandle.sync().catch((error: unknown) => {
+          if (!isUnsupportedDirectorySyncError(error)) throw error;
+        });
       } finally {
         await directoryHandle.close();
       }

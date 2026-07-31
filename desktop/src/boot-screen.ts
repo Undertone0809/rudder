@@ -78,31 +78,37 @@ export function createBootScreenHtml(
     <style>
       :root {
         color-scheme: light dark;
-        --shell: rgba(244, 242, 238, 0.86);
-        --paper: rgba(250, 248, 245, 0.97);
-        --paper-solid: #faf8f5;
-        --text: #20242a;
-        --muted: #686e76;
-        --border: rgba(47, 53, 61, 0.18);
-        --border-strong: rgba(47, 53, 61, 0.34);
-        --accent: #315f66;
-        --accent-hover: #264d53;
+        --shell: #f1f0ec;
+        --paper: #fbfaf7;
+        --paper-raised: #ffffff;
+        --paper-solid: #fbfaf7;
+        --text: #20211f;
+        --muted: #676963;
+        --faint: #92958d;
+        --border: #deddd7;
+        --border-strong: #cbc9c1;
+        --accent: #20211f;
+        --accent-hover: #30312e;
         --danger: #a0444d;
-        --focus: #146b75;
+        --focus: #2f7d5a;
+        --shadow: rgba(54, 52, 45, 0.11);
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --shell: rgba(21, 23, 27, 0.88);
-          --paper: rgba(36, 38, 42, 0.97);
-          --paper-solid: #24262a;
-          --text: #f3f1ed;
-          --muted: #afb3ba;
-          --border: rgba(235, 232, 225, 0.16);
-          --border-strong: rgba(235, 232, 225, 0.32);
-          --accent: #8db7b8;
-          --accent-hover: #a7cbcb;
+          --shell: #171816;
+          --paper: #20211f;
+          --paper-raised: #272825;
+          --paper-solid: #20211f;
+          --text: #f1f0eb;
+          --muted: #b1b3ac;
+          --faint: #858880;
+          --border: #363833;
+          --border-strong: #474a43;
+          --accent: #f1f0eb;
+          --accent-hover: #ffffff;
           --danger: #e39aa1;
-          --focus: #9bd2d4;
+          --focus: #70b58f;
+          --shadow: rgba(0, 0, 0, 0.42);
         }
       }
       * { box-sizing: border-box; }
@@ -112,10 +118,9 @@ export function createBootScreenHtml(
         margin: 0;
         min-height: 100vh;
         overflow: auto;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        font-family: Geist, "Avenir Next", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
         background: var(--shell);
         color: var(--text);
-        backdrop-filter: blur(36px) saturate(112%);
       }
       .sr-only {
         position: absolute;
@@ -208,16 +213,154 @@ export function createBootScreenHtml(
         animation: reveal-failure 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
       .account-sheet {
-        width: min(460px, calc(100vw - 56px));
-        padding: 28px;
+        width: min(440px, calc(100vw - 40px));
+        padding: 34px;
         background: var(--paper);
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        box-shadow: 0 24px 64px -36px var(--shadow), 0 8px 24px -18px var(--shadow);
+      }
+      .account-brand {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        margin: 0 auto 20px;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid var(--border-strong);
+        border-radius: 12px;
+        background: #20211f;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+      }
+      .account-brand img { width: 32px; height: 32px; object-fit: contain; }
+      .account-brand .brand-fallback { width: 32px; height: 32px; border-radius: 0; font-size: 17px; }
+      .account-sheet h1 {
+        text-align: center;
+        font-size: 28px;
+        letter-spacing: -0.035em;
+        line-height: 1.15;
+      }
+      #account-title:focus { outline: none; }
+      .account-intro {
+        max-width: 34ch;
+        margin: 10px auto 26px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .social-stack { display: grid; gap: 10px; }
+      .auth-button {
+        position: relative;
+        width: 100%;
+        min-height: 48px;
+        display: grid;
+        grid-template-columns: 22px 1fr 22px;
+        align-items: center;
+        border-color: var(--border-strong);
+        border-radius: 10px;
+        background: var(--paper-raised);
+        color: var(--text);
+        font-weight: 700;
+      }
+      .auth-button:hover:not(:disabled) { border-color: var(--text); background: var(--paper-raised); }
+      .auth-button svg { width: 18px; height: 18px; }
+      .auth-button span { grid-column: 2; }
+      .divider {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 12px;
+        align-items: center;
+        margin: 22px 0;
+        color: var(--faint);
+        font-size: 11px;
+        font-weight: 760;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .divider::before, .divider::after { content: ""; height: 1px; background: var(--border); }
+      .email-form { display: grid; gap: 8px; }
+      .email-form label { color: var(--text); font-size: 13px; font-weight: 650; }
+      .email-form input {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 7px;
+        padding: 11px 13px;
         border: 1px solid var(--border-strong);
         border-radius: 10px;
-        box-shadow: 0 24px 64px rgba(29, 32, 36, 0.16);
+        outline: none;
+        background: var(--paper-raised);
+        color: var(--text);
+        font: inherit;
       }
-      .account-sheet h1 { margin-top: 18px; }
-      .account-sheet p { margin-top: 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
-      .account-sheet .privacy-note { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; }
+      .email-form input::placeholder { color: var(--faint); }
+      .email-form input:focus-visible {
+        border-color: var(--focus);
+        outline: 3px solid color-mix(in srgb, var(--focus) 30%, transparent);
+        outline-offset: 1px;
+      }
+      .auth-primary {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 8px;
+        border-radius: 10px;
+        background: var(--accent);
+        color: var(--paper-solid);
+        font-weight: 700;
+      }
+      @media (prefers-color-scheme: dark) {
+        .auth-primary { color: #1d1e1b; }
+      }
+      .auth-primary:hover:not(:disabled) { background: var(--accent-hover); }
+      .mode-toggle {
+        display: block;
+        width: fit-content;
+        min-height: 32px;
+        margin: 12px auto 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 680;
+      }
+      .mode-toggle::after { content: " →"; }
+      .mode-toggle:hover:not(:disabled) { color: var(--text); transform: none; }
+      .password-panel {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .password-panel p {
+        margin: 0 0 12px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .password-actions { display: grid; gap: 8px; }
+      .password-recovery {
+        width: fit-content;
+        min-height: 30px;
+        margin: 0 auto;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .password-recovery:hover:not(:disabled) { color: var(--text); transform: none; }
+      .account-sheet .inline-status { text-align: center; }
+      .account-sheet .privacy-note {
+        margin: 22px auto 0;
+        color: var(--faint);
+        text-align: center;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .account-sheet .privacy-note strong { color: inherit; }
       .device-approval { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
       .device-code { margin-top: 8px; font: 650 24px/1.2 ui-monospace, "SFMono-Regular", monospace; letter-spacing: 0.08em; }
       .device-url { margin-top: 8px; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, "SFMono-Regular", monospace; }
@@ -309,6 +452,7 @@ export function createBootScreenHtml(
       .fallback-actions { display: flex; flex-wrap: wrap; gap: 16px; }
       @media (max-width: 620px) {
         .boot-shell { padding-inline: 18px; }
+        .account-sheet { width: min(100%, 440px); padding: 28px 22px; border-radius: 18px; }
         .failure-sheet { width: min(100%, 560px); padding: 20px; }
         .report-paths { grid-template-columns: 1fr; gap: 2px; }
         .report-paths dd + dt { margin-top: 6px; }
@@ -316,12 +460,12 @@ export function createBootScreenHtml(
         .diagnostic-grid dd + dt { margin-top: 7px; }
       }
       @media (prefers-contrast: more) {
-        body { background: var(--paper-solid); backdrop-filter: none; }
+        body { background: var(--paper-solid); }
         .brand-stage, .failure-sheet, .secondary, details, .support-guide { border-color: currentColor; }
         .failure-sheet { border-left-color: var(--danger); }
       }
       @media (forced-colors: active) {
-        body, .failure-sheet { background: Canvas; color: CanvasText; backdrop-filter: none; }
+        body, .failure-sheet, .account-sheet { background: Canvas; color: CanvasText; }
         .brand-stage, .failure-sheet, .secondary { border: 1px solid CanvasText; }
         .failure-sheet { border-left: 3px solid Highlight; }
         .primary { background: Highlight; color: HighlightText; }
@@ -342,11 +486,33 @@ export function createBootScreenHtml(
         </div>
       </section>
       <section class="account-sheet" id="account-sheet" role="region" aria-labelledby="account-title"${initialAccountRequired ? "" : " hidden"}>
-        <div class="failure-mark" aria-hidden="true">${brandMark}</div>
-        <h1 id="account-title" tabindex="-1">Sign in to Rudder Account</h1>
-        <p>Sign in to open your Local Workspace and manage this device.</p>
-        <div class="actions">
-          <button class="primary" id="sign-in-button" type="button">Sign in</button>
+        <div class="account-brand">${brandMark}</div>
+        <h1 id="account-title" tabindex="-1">Welcome to Rudder</h1>
+        <p class="account-intro">Sign in to connect this device. Your Local Workspace stays on your machine.</p>
+        <div class="social-stack" role="group" aria-label="Social sign in">
+          <button class="auth-button auth-entry" id="google-sign-in-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.55h3.24c1.9-1.75 2.98-4.33 2.98-7.42Z"/><path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.43l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.05v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.86A6 6 0 0 1 6.08 12c0-.65.11-1.28.31-1.86V7.52H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.48l3.34-2.62Z"/><path fill="#EA4335" d="M12 6.01c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.65 9.65 0 0 0 12 2a10 10 0 0 0-8.95 5.52l3.34 2.62C7.18 7.77 9.39 6.01 12 6.01Z"/></svg>
+            <span>Continue with Google</span>
+          </button>
+          <button class="auth-button auth-entry" id="github-sign-in-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.54 1.03 1.54 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 6.82c.85 0 1.7.11 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86l-.01 2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+            <span>Continue with GitHub</span>
+          </button>
+        </div>
+        <div class="divider">or continue with email</div>
+        <form class="email-form" id="email-sign-in-form">
+          <label>Email address
+            <input id="account-email" required type="email" autocomplete="email" placeholder="you@example.com">
+          </label>
+          <button class="auth-primary auth-entry" type="submit">Continue with email code</button>
+        </form>
+        <button class="mode-toggle" id="password-mode-toggle" type="button" aria-controls="password-panel" aria-expanded="false">Use password instead</button>
+        <div class="password-panel" id="password-panel" hidden>
+          <p>Your password is entered securely in your browser, never in the Desktop app.</p>
+          <div class="password-actions">
+            <button class="auth-button auth-entry" id="password-sign-in-button" type="button"><span>Continue with password</span></button>
+            <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
+          </div>
         </div>
         <p class="inline-status" id="account-status" role="status" aria-live="polite"></p>
         <div class="device-approval" id="device-approval" hidden>
@@ -358,7 +524,7 @@ export function createBootScreenHtml(
             <button class="secondary" id="copy-device-button" type="button">Copy address and code</button>
           </div>
         </div>
-        <p class="privacy-note"><strong>Your work stays local.</strong> Signing in sends account and device information, not Local Workspace content.</p>
+        <p class="privacy-note">Signing in connects your identity and devices. It does not upload Local Workspace content.</p>
       </section>
       <section class="failure-sheet" id="failure-sheet" role="region" aria-labelledby="failure-title"${initialFailure ? "" : " hidden"}>
         <div class="failure-header">
@@ -414,7 +580,15 @@ export function createBootScreenHtml(
       const failureSheet = document.getElementById("failure-sheet");
       const accountSheet = document.getElementById("account-sheet");
       const accountTitle = document.getElementById("account-title");
-      const signInButton = document.getElementById("sign-in-button");
+      const authEntryButtons = Array.from(document.querySelectorAll(".auth-entry"));
+      const googleSignInButton = document.getElementById("google-sign-in-button");
+      const githubSignInButton = document.getElementById("github-sign-in-button");
+      const emailSignInForm = document.getElementById("email-sign-in-form");
+      const accountEmail = document.getElementById("account-email");
+      const passwordModeToggle = document.getElementById("password-mode-toggle");
+      const passwordPanel = document.getElementById("password-panel");
+      const passwordSignInButton = document.getElementById("password-sign-in-button");
+      const passwordResetButton = document.getElementById("password-reset-button");
       const accountStatus = document.getElementById("account-status");
       const deviceApproval = document.getElementById("device-approval");
       const deviceCode = document.getElementById("device-code");
@@ -437,6 +611,7 @@ export function createBootScreenHtml(
       let failureWasVisible = false;
       let viewGeneration = 0;
       let latestDeviceApproval = null;
+      passwordPanel.hidden = true;
 
       function syncFallbackActions() {
         fallbackActions.hidden = copyEmailButton.hidden && copyIssueButton.hidden;
@@ -482,7 +657,7 @@ export function createBootScreenHtml(
         failureSheet.hidden = !failed;
         accountSheet.hidden = !accountRequired;
         if (accountRequired) {
-          signInButton.disabled = false;
+          for (const button of authEntryButtons) button.disabled = false;
           accountStatus.textContent = "";
           requestAnimationFrame(() => accountTitle.focus({ preventScroll: true }));
           return;
@@ -507,24 +682,66 @@ export function createBootScreenHtml(
         }
       }
 
-      signInButton.addEventListener("click", async () => {
-        if (signInButton.disabled) return;
-        signInButton.disabled = true;
+      function optionalEmailHint() {
+        const email = accountEmail.value.trim();
+        if (!email) return undefined;
+        if (!accountEmail.checkValidity()) {
+          accountEmail.reportValidity();
+          return null;
+        }
+        return email;
+      }
+
+      async function startSignIn(method, pendingMessage, email) {
+        if (authEntryButtons.some((button) => button.disabled)) return;
+        for (const button of authEntryButtons) button.disabled = true;
         latestDeviceApproval = null;
         deviceApproval.hidden = true;
-        accountStatus.textContent = "Opening secure sign-in…";
+        accountStatus.textContent = pendingMessage;
         try {
-          const state = await window.rudderBoot.signIn();
+          const state = await window.rudderBoot.signIn({
+            method,
+            ...(email ? { email } : {}),
+          });
           if (state?.status === "error") {
             accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-            signInButton.disabled = false;
+            for (const button of authEntryButtons) button.disabled = false;
           } else {
             accountStatus.textContent = "Signed in. Opening your Local Workspace…";
           }
         } catch {
           accountStatus.textContent = "Rudder Account sign-in could not start.";
-          signInButton.disabled = false;
+          for (const button of authEntryButtons) button.disabled = false;
         }
+      }
+
+      googleSignInButton.addEventListener("click", () => {
+        void startSignIn("google", "Opening Google sign-in in your browser…");
+      });
+      githubSignInButton.addEventListener("click", () => {
+        void startSignIn("github", "Opening GitHub sign-in in your browser…");
+      });
+      emailSignInForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!emailSignInForm.reportValidity()) return;
+        void startSignIn("email_otp", "Opening email code sign-in in your browser…", accountEmail.value.trim());
+      });
+      passwordModeToggle.addEventListener("click", () => {
+        const expanded = passwordModeToggle.getAttribute("aria-expanded") === "true";
+        passwordModeToggle.setAttribute("aria-expanded", String(!expanded));
+        passwordModeToggle.textContent = expanded ? "Use password instead" : "Use email code instead";
+        passwordPanel.hidden = expanded;
+        if (!expanded) passwordSignInButton.focus();
+      });
+      passwordSignInButton.addEventListener("click", () => {
+        const email = optionalEmailHint();
+        if (email === null) return;
+        void startSignIn("password", "Opening password sign-in in your browser…", email);
+      });
+      passwordResetButton.addEventListener("click", () => {
+        const email = optionalEmailHint();
+        if (email === null) return;
+        void startSignIn("password_reset", "Opening password recovery in your browser…", email);
       });
       copyDeviceButton.addEventListener("click", async () => {
         if (!latestDeviceApproval) return;
@@ -651,7 +868,7 @@ export function createBootScreenHtml(
         }
         if (state?.status === "error") {
           accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-          signInButton.disabled = false;
+          for (const button of authEntryButtons) button.disabled = false;
         }
       });
     </script>

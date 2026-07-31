@@ -4,6 +4,7 @@ import {
   signInWithDesktopIdentityFallback,
   type DesktopDeviceAuthorizationPrompt,
 } from "./identity-device-authorization.js";
+import type { DesktopSignInHint } from "./identity-ipc.js";
 import type { createDesktopOfflineGrantStore } from "./identity-offline-grant.js";
 import { createIdentityPkceRequest, openIdentityLoopbackCallback } from "./identity-pkce.js";
 
@@ -68,6 +69,14 @@ function normalizedIdentityOrigin(value: string): string {
     throw new Error("Rudder Identity must use HTTPS outside local development");
   }
   return url.origin;
+}
+
+export function applyDesktopSignInIntent(url: URL, intent: string): URL {
+  if (!/^[A-Za-z0-9_-]{32,2048}$/u.test(intent)) {
+    throw new Error("Rudder Identity returned an invalid sign-in intent");
+  }
+  url.searchParams.set("login_intent", intent);
+  return url;
 }
 
 function parseTokenResponse(value: unknown): IdentityTokenResponse {
@@ -176,7 +185,7 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
             grant_type: "refresh_token",
             client_id: DESKTOP_CLIENT_ID,
             refresh_token: credential.refreshToken,
-            sign_out_epoch: material?.signOutEpoch ?? 0,
+            sign_out_epoch: material?.localSignOutEpoch ?? 0,
           }),
         });
       } catch (cause) {
@@ -262,7 +271,11 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
       return value.code;
     },
 
-    async signIn(): Promise<{ account: IdentityAccount; device: IdentityDevice; accessToken: string }> {
+    async signIn(hint?: DesktopSignInHint): Promise<{
+      account: IdentityAccount;
+      device: IdentityDevice;
+      accessToken: string;
+    }> {
       return signInWithDesktopIdentityFallback({
         signInWithPkce: async () => {
           const material = offlineMaterial();
@@ -283,6 +296,31 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
             authorizeUrl.searchParams.set("code_challenge_method", pkce.method);
             authorizeUrl.searchParams.set("state", pkce.state);
             authorizeUrl.searchParams.set("audience", options.installationId);
+            if (hint) {
+              const intentResponse = await request(
+                new URL("/api/desktop/sign-in-intent", identityOrigin),
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    client_id: DESKTOP_CLIENT_ID,
+                    redirect_uri: callback.redirectUri,
+                    code_challenge: pkce.challenge,
+                    state: pkce.state,
+                    method: hint.method,
+                    ...(hint.email ? { email: hint.email } : {}),
+                  }),
+                },
+              );
+              if (!intentResponse.ok) {
+                throw new Error(`Unable to prepare Rudder sign-in (${intentResponse.status})`);
+              }
+              const intentValue = await intentResponse.json() as { intent?: unknown };
+              if (typeof intentValue.intent !== "string") {
+                throw new Error("Rudder Identity returned an invalid sign-in intent");
+              }
+              applyDesktopSignInIntent(authorizeUrl, intentValue.intent);
+            }
             await options.openExternal(authorizeUrl.toString()).catch((error: unknown) => {
               throw identityFallbackError(
                 "EXTERNAL_BROWSER_UNAVAILABLE",
@@ -303,7 +341,7 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
                 code_verifier: pkce.verifier,
                 installation_id: options.installationId,
                 device_name: options.deviceName,
-                sign_out_epoch: material?.signOutEpoch ?? 0,
+                sign_out_epoch: material?.localSignOutEpoch ?? 0,
                 ...(material?.thumbprint || options.devicePublicKeyThumbprint
                   ? { device_public_key_thumbprint: material?.thumbprint ?? options.devicePublicKeyThumbprint }
                   : {}),
@@ -329,7 +367,7 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
             installationId: options.installationId,
             deviceName: options.deviceName,
             devicePublicKeyThumbprint: material?.thumbprint ?? options.devicePublicKeyThumbprint,
-            signOutEpoch: material?.signOutEpoch ?? 0,
+            localSignOutEpoch: material?.localSignOutEpoch ?? 0,
             openExternal: async (url) => {
               try {
                 await options.openExternal(url);

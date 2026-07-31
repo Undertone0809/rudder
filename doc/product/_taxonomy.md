@@ -22,6 +22,9 @@ Seed domains:
   eligibility.
 - `agents`: agent identity, capabilities, runtime config, skills, instructions,
   and runtime-context loading.
+- `identity-and-access`: root user authentication, verified account linking,
+  web/device/Local authorization layers, Local exchange and offline grants,
+  authentication release isolation, and login-time Local data privacy.
 - `collaboration`: chat, Messenger, comments, issue threads, unread, and
   conversation semantics.
 - `review-feedback-learning`: review decisions, feedback capture, issue/review
@@ -52,6 +55,13 @@ Seed domains:
   to the owning domain that emits the underlying state.
 - UI page maps belong to `surfaces/`; button/state behavior belongs to the
   owning domain contract.
+- Root user identity and authentication belong to `identity-and-access`;
+  Organization UUID, membership, roles, goals, and projects remain in
+  `organizations-and-goals`.
+- Identity security events belong to `identity-and-access`; business activity
+  and audit presentation remain in `governance-and-visibility`.
+- Authentication admits a user; Desktop, Browser, filesystem, IDE, Local App,
+  and runtime capabilities remain owned by `agents` and `execution`.
 
 ## Contract IDs
 

@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createOfflineGrantProof,
@@ -10,6 +10,34 @@ import {
 } from "./offline-grant.js";
 
 const nowMs = Date.parse("2026-07-29T00:00:00.000Z");
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) =>
+    `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+}
+
+function asLegacyGrant(
+  grant: string,
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+): string {
+  const [header, payload] = grant.split(".");
+  const claims = JSON.parse(
+    Buffer.from(payload!, "base64url").toString("utf8"),
+  ) as Record<string, unknown>;
+  claims.version = 1;
+  claims.signOutEpoch = claims.localSignOutEpoch;
+  delete claims.localSignOutEpoch;
+  delete claims.authSchemaEpoch;
+  delete claims.accountAuthEpoch;
+  delete claims.deviceAuthEpoch;
+  const encodedPayload = Buffer.from(stableJson(claims)).toString("base64url");
+  const signingInput = `${header}.${encodedPayload}`;
+  const signature = sign(null, Buffer.from(signingInput), privateKey);
+  return `${signingInput}.${signature.toString("base64url")}`;
+}
 
 function fixture() {
   const identityKeys = generateKeyPairSync("ed25519");
@@ -24,7 +52,10 @@ function fixture() {
     publicKeyThumbprint: deviceKeys.thumbprint,
     nowMs,
     trustedTimeMs: nowMs,
-    signOutEpoch: 3,
+    localSignOutEpoch: 3,
+    authSchemaEpoch: 2,
+    accountAuthEpoch: 4,
+    deviceAuthEpoch: 5,
     jti: "grant-1",
   });
   const bodyHash = offlineRequestBodyHash('{"intent":"open-local-board"}');
@@ -80,7 +111,10 @@ describe("Local offline grant proof of possession", () => {
       deviceId: "device-1",
       installationId: "default",
       audience: "rudder-local-board",
-      signOutEpoch: 3,
+      localSignOutEpoch: 3,
+      authSchemaEpoch: 2,
+      accountAuthEpoch: 4,
+      deviceAuthEpoch: 5,
     });
     expect(result.nextTrustedTimeMs).toBe(nowMs + 1_000);
   });
@@ -116,6 +150,38 @@ describe("Local offline grant proof of possession", () => {
     };
     expect(() => verifyFixture(value, options)).not.toThrow();
     expect(() => verifyFixture(value, options)).toThrow("proof_replay");
+  });
+
+  it("rejects a grant after any server-owned auth epoch advances", () => {
+    const value = fixture();
+    expect(() => verifyFixture(value, { expectedAuthSchemaEpoch: 3 }))
+      .toThrow("offline_grant_revoked");
+    expect(() => verifyFixture(value, { expectedAccountAuthEpoch: 5 }))
+      .toThrow("offline_grant_revoked");
+    expect(() => verifyFixture(value, { expectedDeviceAuthEpoch: 6 }))
+      .toThrow("offline_grant_revoked");
+  });
+
+  it("rejects legacy grants online but preserves their bounded offline residual", () => {
+    const value = fixture();
+    const legacyGrant = asLegacyGrant(
+      value.grant,
+      value.identityKeys.privateKey,
+    );
+    const legacyProof = createOfflineGrantProof({
+      grant: legacyGrant,
+      devicePrivateKey: value.deviceKeys.privateKey,
+      method: "POST",
+      path: "/api/auth/offline",
+      bodyHash: value.bodyHash,
+      nonce: "legacy-offline-proof",
+      issuedAtMs: nowMs + 1_000,
+    });
+    const legacy = { ...value, grant: legacyGrant, proof: legacyProof };
+
+    expect(() => verifyFixture(legacy)).toThrow("invalid_offline_grant");
+    expect(() => verifyFixture(legacy, { allowLegacyOffline: true }))
+      .not.toThrow();
   });
 
   it("rejects clock rollback, expiry, installation mismatch, and local sign-out", () => {
@@ -156,7 +222,10 @@ describe("Local offline grant proof of possession", () => {
       nowMs,
       expiresAtMs: nowMs + MAX_OFFLINE_GRANT_LIFETIME_MS + 1,
       trustedTimeMs: nowMs,
-      signOutEpoch: 0,
+      localSignOutEpoch: 0,
+      authSchemaEpoch: 2,
+      accountAuthEpoch: 0,
+      deviceAuthEpoch: 0,
       jti: "grant-too-long",
     })).toThrow("lifetime");
   });
