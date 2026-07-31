@@ -176,7 +176,7 @@ export function SubagentsPanelView({
         prompt: inspection.prompt,
         model: inspection.model,
         reasoningEffort: inspection.reasoningEffort,
-        status: inspection.status,
+        status: item.status,
         response: inspection.response,
         entries: inspection.entries,
         conversationId: target.conversationId,

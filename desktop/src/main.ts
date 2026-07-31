@@ -15,6 +15,7 @@ import { AppBuilderPreviewController } from "./app-builder-preview.js";
 import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
+import { resolveOfficialRudderLogoDataUrl } from "./brand-logo.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
 import {
   BrowserAgentError,
@@ -68,7 +69,7 @@ import {
 } from "./identity-runtime.js";
 import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
-import { previewLocalFile } from "./local-file-preview.js";
+import { registerLocalFileIpcHandlers } from "./local-file-ipc.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
   canOpenBlockedNavigationExternally,
@@ -118,6 +119,7 @@ import {
 import {
   type DesktopUpdateChannel
 } from "./update-check.js";
+import { resolveInitialDesktopWindowSize } from "./window-size.js";
 
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
 import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
@@ -463,9 +465,6 @@ const TRANSPARENT_DESKTOP_WINDOW_BACKGROUND: Record<DesktopAppearance, string> =
   light: "rgba(246, 244, 241, 0.18)",
   dark: "rgba(18, 20, 24, 0.28)",
 };
-const PREFERRED_DESKTOP_WINDOW_SIZE = { width: 1620, height: 1020 };
-const MINIMUM_DESKTOP_WINDOW_SIZE = { width: 1080, height: 720 };
-const DESKTOP_WINDOW_WORK_AREA_RATIO = 0.9;
 const desktopUserDataOverride = process.env.RUDDER_DESKTOP_USER_DATA_DIR?.trim();
 if (desktopUserDataOverride) {
   app.setPath("userData", path.resolve(desktopUserDataOverride));
@@ -1202,8 +1201,7 @@ function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
 }
 
 function resolveDesktopBrandIconDataUrl(): string | null {
-  if (!desktopWindowIcon || desktopWindowIcon.isEmpty()) return null;
-  return desktopWindowIcon.resize({ width: 128, height: 128 }).toDataURL();
+  return resolveOfficialRudderLogoDataUrl({ isPackaged: app.isPackaged, moduleDir: MODULE_DIR, resourcesPath: process.resourcesPath });
 }
 
 function createCurrentRecoveryDiagnostic(): string {
@@ -1446,29 +1444,6 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
-function resolveInitialDesktopWindowSize(): {
-  width: number;
-  height: number;
-  minWidth: number;
-  minHeight: number;
-} {
-  const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const minWidth = Math.min(MINIMUM_DESKTOP_WINDOW_SIZE.width, workArea.width);
-  const minHeight = Math.min(MINIMUM_DESKTOP_WINDOW_SIZE.height, workArea.height);
-  return {
-    width: Math.max(
-      minWidth,
-      Math.min(PREFERRED_DESKTOP_WINDOW_SIZE.width, Math.floor(workArea.width * DESKTOP_WINDOW_WORK_AREA_RATIO)),
-    ),
-    height: Math.max(
-      minHeight,
-      Math.min(PREFERRED_DESKTOP_WINDOW_SIZE.height, Math.floor(workArea.height * DESKTOP_WINDOW_WORK_AREA_RATIO)),
-    ),
-    minWidth,
-    minHeight,
-  };
-}
-
 async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const macWindowEffects = process.platform === "darwin"
@@ -1476,7 +1451,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     : {
         backgroundColor: resolveDesktopWindowBackgroundColor(),
       };
-  const initialWindowSize = resolveInitialDesktopWindowSize();
+  const initialWindowSize = resolveInitialDesktopWindowSize(
+    screen.getPrimaryDisplay().workAreaSize,
+  );
   const window = new BrowserWindow({
     ...initialWindowSize,
     title: APP_NAME,
@@ -2345,11 +2322,8 @@ function registerIpc(): void {
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });
-  ipcMain.handle("desktop:preview-local-file", async (event, targetPath: string) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      throw new Error("Local file preview is only available to the main Rudder window.");
-    }
-    return await previewLocalFile(targetPath);
+  registerLocalFileIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
   });
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();

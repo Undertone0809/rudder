@@ -61,6 +61,10 @@
       {
         "from": "build/icon-dev.png",
         "to": "icon-dev.png"
+      },
+      {
+        "from": "../ui/public/rudder-logo.png",
+        "to": "rudder-logo.png"
       }
     ],
     "dmg": {

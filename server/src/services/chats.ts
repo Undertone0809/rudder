@@ -27,6 +27,7 @@ import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
 import {
   hydrateQueuedMessage,
   materializeQueuedUserMessage,
@@ -3728,12 +3729,10 @@ export function chatService(db: Db) {
         ))
         .then((rows) => rows.map((row) => row.title));
       const childTitle = input.title?.trim() || nextForkTitle(source, familyTitles);
-      const messageConditions = [
-        eq(chatMessages.conversationId, source.id),
-        eq(chatMessages.orgId, input.orgId),
-        isNull(chatMessages.supersededAt),
-      ];
-      let forkSourceCreatedAt: Date | null = null;
+      let forkSourceMessage: Pick<
+        typeof chatMessages.$inferSelect,
+        "id" | "kind" | "role" | "createdAt" | "chatTurnId" | "turnVariant"
+      > | null = null;
       if (input.sourceMessageId) {
         const sourceMessage = await tx
           .select({
@@ -3741,15 +3740,21 @@ export function chatService(db: Db) {
             kind: chatMessages.kind,
             role: chatMessages.role,
             createdAt: chatMessages.createdAt,
+            chatTurnId: chatMessages.chatTurnId,
+            turnVariant: chatMessages.turnVariant,
           })
           .from(chatMessages)
-          .where(and(...messageConditions, eq(chatMessages.id, input.sourceMessageId)))
+          .where(and(
+            eq(chatMessages.conversationId, source.id),
+            eq(chatMessages.orgId, input.orgId),
+            eq(chatMessages.id, input.sourceMessageId),
+          ))
           .then((rows) => rows[0] ?? null);
         if (!sourceMessage) throw unprocessable("Fork source message must belong to the source conversation");
         if (sourceMessage.role !== "assistant" || sourceMessage.kind !== "message") {
           throw unprocessable("Fork source message must be an assistant response");
         }
-        forkSourceCreatedAt = sourceMessage.createdAt;
+        forkSourceMessage = sourceMessage;
       }
 
       const now = new Date();
@@ -3799,10 +3804,17 @@ export function chatService(db: Db) {
         .select()
         .from(chatMessages)
         .where(and(
-          ...messageConditions,
-          ...(forkSourceCreatedAt && input.sourceMessageId
-            ? [or(lt(chatMessages.createdAt, forkSourceCreatedAt), eq(chatMessages.id, input.sourceMessageId))]
-            : []),
+          eq(chatMessages.conversationId, source.id),
+          eq(chatMessages.orgId, input.orgId),
+          ...(forkSourceMessage
+            ? [
+              selectedChatMessageBranchCondition(forkSourceMessage),
+              or(
+                lt(chatMessages.createdAt, forkSourceMessage.createdAt),
+                eq(chatMessages.id, forkSourceMessage.id),
+              ),
+            ]
+            : [isNull(chatMessages.supersededAt)]),
         ))
         .orderBy(chatMessages.createdAt, chatMessages.id);
       const forkMessages = input.sourceMessageId

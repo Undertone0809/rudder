@@ -19,7 +19,7 @@ type OfflineGrantHeader = {
   kid: string;
 };
 
-export type OfflineGrantClaims = {
+export type LegacyOfflineGrantClaims = {
   version: 1;
   issuer: string;
   accountId: string;
@@ -31,6 +31,24 @@ export type OfflineGrantClaims = {
   expiresAtMs: number;
   trustedTimeMs: number;
   signOutEpoch: number;
+  jti: string;
+};
+
+export type OfflineGrantClaims = {
+  version: 2;
+  issuer: string;
+  accountId: string;
+  deviceId: string;
+  installationId: string;
+  audience: "rudder-local-board";
+  publicKeyThumbprint: string;
+  issuedAtMs: number;
+  expiresAtMs: number;
+  trustedTimeMs: number;
+  localSignOutEpoch: number;
+  authSchemaEpoch: number;
+  accountAuthEpoch: number;
+  deviceAuthEpoch: number;
   jti: string;
 };
 
@@ -91,17 +109,38 @@ function assertNonce(value: unknown): asserts value is string {
   ) throw new Error("invalid_nonce");
 }
 
-function parseClaims(value: unknown): OfflineGrantClaims {
+function parseClaims(
+  value: unknown,
+  allowLegacyOffline: boolean,
+): OfflineGrantClaims | LegacyOfflineGrantClaims {
   if (!value || typeof value !== "object") throw new Error("invalid_offline_grant");
   const claims = value as Record<string, unknown>;
   if (
-    claims.version !== 1
+    (claims.version !== 2 && !(allowLegacyOffline && claims.version === 1))
     || claims.audience !== "rudder-local-board"
     || !Number.isSafeInteger(claims.issuedAtMs)
     || !Number.isSafeInteger(claims.expiresAtMs)
     || !Number.isSafeInteger(claims.trustedTimeMs)
-    || !Number.isSafeInteger(claims.signOutEpoch)
-    || Number(claims.signOutEpoch) < 0
+    || (
+      claims.version === 1
+      && (
+        !Number.isSafeInteger(claims.signOutEpoch)
+        || Number(claims.signOutEpoch) < 0
+      )
+    )
+  ) throw new Error("invalid_offline_grant");
+  if (
+    claims.version === 2
+    && (
+      !Number.isSafeInteger(claims.authSchemaEpoch)
+      || Number(claims.authSchemaEpoch) < 1
+      || !Number.isSafeInteger(claims.accountAuthEpoch)
+      || Number(claims.accountAuthEpoch) < 0
+      || !Number.isSafeInteger(claims.deviceAuthEpoch)
+      || Number(claims.deviceAuthEpoch) < 0
+      || !Number.isSafeInteger(claims.localSignOutEpoch)
+      || Number(claims.localSignOutEpoch) < 0
+    )
   ) throw new Error("invalid_offline_grant");
   assertSafeString(claims.issuer, "issuer");
   assertSafeString(claims.accountId, "account_id");
@@ -109,7 +148,7 @@ function parseClaims(value: unknown): OfflineGrantClaims {
   assertSafeString(claims.installationId, "installation_id");
   assertSafeString(claims.publicKeyThumbprint, "public_key_thumbprint");
   assertSafeString(claims.jti, "jti");
-  return claims as OfflineGrantClaims;
+  return claims as OfflineGrantClaims | LegacyOfflineGrantClaims;
 }
 
 export function generateOfflineDeviceKeyPair(): { privateKey: KeyObject; publicKey: KeyObject; thumbprint: string } {
@@ -136,7 +175,10 @@ export function issueOfflineGrant(input: {
   nowMs: number;
   expiresAtMs?: number;
   trustedTimeMs: number;
-  signOutEpoch: number;
+  localSignOutEpoch: number;
+  authSchemaEpoch: number;
+  accountAuthEpoch: number;
+  deviceAuthEpoch: number;
   jti: string;
 }): string {
   const expiresAtMs = input.expiresAtMs ?? input.nowMs + MAX_OFFLINE_GRANT_LIFETIME_MS;
@@ -147,8 +189,14 @@ export function issueOfflineGrant(input: {
     || expiresAtMs - input.nowMs > MAX_OFFLINE_GRANT_LIFETIME_MS
     || !Number.isSafeInteger(input.trustedTimeMs)
     || input.trustedTimeMs > input.nowMs
-    || !Number.isSafeInteger(input.signOutEpoch)
-    || input.signOutEpoch < 0
+    || !Number.isSafeInteger(input.localSignOutEpoch)
+    || input.localSignOutEpoch < 0
+    || !Number.isSafeInteger(input.authSchemaEpoch)
+    || input.authSchemaEpoch < 1
+    || !Number.isSafeInteger(input.accountAuthEpoch)
+    || input.accountAuthEpoch < 0
+    || !Number.isSafeInteger(input.deviceAuthEpoch)
+    || input.deviceAuthEpoch < 0
   ) throw new Error("invalid_offline_grant_lifetime");
   for (const [label, value] of [
     ["key_id", input.keyId],
@@ -166,7 +214,7 @@ export function issueOfflineGrant(input: {
     kid: input.keyId,
   };
   const claims: OfflineGrantClaims = {
-    version: 1,
+    version: 2,
     issuer: input.issuer,
     accountId: input.accountId,
     deviceId: input.deviceId,
@@ -176,7 +224,10 @@ export function issueOfflineGrant(input: {
     issuedAtMs: input.nowMs,
     expiresAtMs,
     trustedTimeMs: input.trustedTimeMs,
-    signOutEpoch: input.signOutEpoch,
+    localSignOutEpoch: input.localSignOutEpoch,
+    authSchemaEpoch: input.authSchemaEpoch,
+    accountAuthEpoch: input.accountAuthEpoch,
+    deviceAuthEpoch: input.deviceAuthEpoch,
     jti: input.jti,
   };
   const signingInput = `${base64url(stableJson(header))}.${base64url(stableJson(claims))}`;
@@ -195,7 +246,11 @@ export function verifyOfflineGrant(input: {
   nowMs: number;
   lastTrustedTimeMs: number;
   localSignOutEpoch: number;
-}): OfflineGrantClaims {
+  allowLegacyOffline?: boolean;
+  expectedAuthSchemaEpoch?: number;
+  expectedAccountAuthEpoch?: number;
+  expectedDeviceAuthEpoch?: number;
+}): OfflineGrantClaims | LegacyOfflineGrantClaims {
   if (
     !Number.isSafeInteger(input.nowMs)
     || !Number.isSafeInteger(input.lastTrustedTimeMs)
@@ -227,7 +282,7 @@ export function verifyOfflineGrant(input: {
   );
   if (!signatureValid) throw new Error("invalid_offline_grant_signature");
 
-  const claims = parseClaims(claimsValue);
+  const claims = parseClaims(claimsValue, input.allowLegacyOffline === true);
   if (
     claims.issuer !== input.expectedIssuer
     || claims.installationId !== input.expectedInstallationId
@@ -246,7 +301,21 @@ export function verifyOfflineGrant(input: {
     input.nowMs < claims.issuedAtMs - PROOF_CLOCK_SKEW_MS
     || input.nowMs >= claims.expiresAtMs
   ) throw new Error("offline_grant_expired");
-  if (input.localSignOutEpoch > claims.signOutEpoch) throw new Error("offline_grant_signed_out");
+  const grantLocalSignOutEpoch =
+    claims.version === 1 ? claims.signOutEpoch : claims.localSignOutEpoch;
+  if (input.localSignOutEpoch > grantLocalSignOutEpoch) {
+    throw new Error("offline_grant_signed_out");
+  }
+  if (claims.version === 2) {
+    if (
+      (input.expectedAuthSchemaEpoch !== undefined
+        && claims.authSchemaEpoch !== input.expectedAuthSchemaEpoch)
+      || (input.expectedAccountAuthEpoch !== undefined
+        && claims.accountAuthEpoch !== input.expectedAccountAuthEpoch)
+      || (input.expectedDeviceAuthEpoch !== undefined
+        && claims.deviceAuthEpoch !== input.expectedDeviceAuthEpoch)
+    ) throw new Error("offline_grant_revoked");
+  }
   return claims;
 }
 
@@ -292,8 +361,15 @@ export function verifyOfflineGrantAndProof(input: {
   nowMs: number;
   lastTrustedTimeMs: number;
   localSignOutEpoch: number;
+  allowLegacyOffline?: boolean;
+  expectedAuthSchemaEpoch?: number;
+  expectedAccountAuthEpoch?: number;
+  expectedDeviceAuthEpoch?: number;
   consumeNonce(nonce: string): boolean;
-}): { claims: OfflineGrantClaims; nextTrustedTimeMs: number } {
+}): {
+  claims: OfflineGrantClaims | LegacyOfflineGrantClaims;
+  nextTrustedTimeMs: number;
+} {
   const claims = verifyOfflineGrant(input);
   if (offlineDevicePublicKeyThumbprint(input.devicePublicKey) !== claims.publicKeyThumbprint) {
     throw new Error("offline_device_key_mismatch");

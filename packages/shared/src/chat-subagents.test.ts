@@ -97,6 +97,41 @@ describe("chat subagent transcript projection", () => {
     });
   });
 
+  it("does not keep a stale active snapshot alive after its native generation completed", () => {
+    const completedGeneration = collectChatSubagentInspections([{
+      kind: "tool_call",
+      ts: "2026-07-29T02:00:00.000Z",
+      name: "subagent_activity",
+      toolUseId: "activity-terminal-source",
+      input: {
+        id: "activity-terminal-source",
+        activity_kind: "interacted",
+        agent_path: "/root/runtime_verifier",
+        receiver_thread_ids: ["thread-runtime"],
+        agent_transcripts: {
+          "thread-runtime": {
+            status: "inProgress",
+            entries: [{
+              kind: "assistant",
+              ts: "2026-07-29T02:00:01.000Z",
+              text: "Runtime verification passed.",
+            }],
+          },
+        },
+      },
+    }], {
+      ...context,
+      sourceActive: false,
+      sourceTerminalStatus: "completed",
+    });
+
+    expect(completedGeneration[0]).toMatchObject({
+      state: "done",
+      status: "completed",
+      response: "Runtime verification passed.",
+    });
+  });
+
   it("deduplicates a thread across observations while preserving first identity and latest state", () => {
     const merged = mergeChatSubagentSummaries([
       {

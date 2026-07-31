@@ -210,6 +210,51 @@ async function scrollMessengerUntilTestId(page: Page, testId: string) {
 }
 
 test.describe("Messenger unified threads contract", () => {
+  test("keeps legacy Messenger ordering preferences when the session switches to an account UUID", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Account-Preference-${Date.now()}`);
+    const accountUserId = randomUUID();
+    await page.route("**/api/auth/get-session", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: { id: "account-session", userId: accountUserId },
+          user: { id: accountUserId, email: "operator@example.com", name: "Operator" },
+        }),
+      });
+    });
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem(
+        `rudder.projectOrder:${orgId}:local-board`,
+        JSON.stringify(["project-2", "project-1"]),
+      );
+      window.localStorage.setItem(
+        `rudder.messengerThreadGroupOrder:kind:${orgId}:anonymous`,
+        JSON.stringify(["kind:issue", "kind:chat"]),
+      );
+      window.localStorage.setItem(
+        `rudder.messengerDefaultThreadOrder:${orgId}:local-board`,
+        JSON.stringify(["system:failed-runs", "system:approvals"]),
+      );
+    }, { orgId: organization.id });
+
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+    await expect(page.getByRole("heading", { name: "Messenger" })).toBeVisible();
+    await expect.poll(async () => page.evaluate(({ orgId, userId }) => ({
+      projects: window.localStorage.getItem(`rudder.projectOrder:${orgId}:${userId}`),
+      kinds: window.localStorage.getItem(`rudder.messengerThreadGroupOrder:kind:${orgId}:${userId}`),
+      defaults: window.localStorage.getItem(`rudder.messengerDefaultThreadOrder:${orgId}:${userId}`),
+    }), { orgId: organization.id, userId: accountUserId })).toEqual({
+      projects: JSON.stringify(["project-2", "project-1"]),
+      kinds: JSON.stringify(["kind:issue", "kind:chat"]),
+      defaults: JSON.stringify(["system:failed-runs", "system:approvals"]),
+    });
+    await page.reload();
+    await expect.poll(async () => page.evaluate(({ orgId, userId }) =>
+      window.localStorage.getItem(`rudder.messengerDefaultThreadOrder:${orgId}:${userId}`),
+    { orgId: organization.id, userId: accountUserId }))
+      .toBe(JSON.stringify(["system:failed-runs", "system:approvals"]));
+  });
+
   test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
     const baseTime = Date.parse("2026-05-15T12:00:00.000Z");

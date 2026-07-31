@@ -20,6 +20,8 @@ edit_policy: user_confirmed_only
 ## Owns
 
 - Organization mission and lifecycle as the top-level operating boundary.
+- Local installation account claims and compatibility-preserving operator-state
+  recovery across identity upgrades.
 - Goal hierarchy, status, owner, and dependency protection.
 - Project identity, project-goal links, lead agent, status, and grouping of
   chats/issues/resources/workspaces.
@@ -41,6 +43,9 @@ edit_policy: user_confirmed_only
 - `ORG.SETTINGS.001`: settings persist instance/operator/organization behavior
   without crossing scopes.
 - `ORG.ONBOARDING.001`: onboarding guides a fresh user to a real work surface.
+- `ORG.LOCAL.ACCOUNT.UPGRADE.001`: local account claim and repair preserve
+  scoped operator state, Messenger organization, and downgrade-readable legacy
+  data across Desktop upgrades.
 - `ORG.PORTABILITY.001`: export/import moves the explicitly supported
   organization configuration and work records with previewable, scoped
   mutations.

@@ -400,6 +400,71 @@ describe("chatWorkManifestService", () => {
     expect(manifest.subagents.totalCount).toBe(1);
   });
 
+  it("closes stale active subagent snapshots when the native generation is terminal", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("TerminalNativeSubagents");
+    const messageId = randomUUID();
+    const generationId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      status: "completed",
+      body: "Finished.",
+      replyingAgentId: agentId,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "completed",
+      acceptedThroughSeq: 1,
+    });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId,
+      generationSeq: 1,
+      attemptEpoch: 1,
+      eventKind: "transcript",
+      assistantMessageId: messageId,
+      payload: {
+        entry: {
+          kind: "tool_call",
+          ts: "2026-07-29T01:00:01.000Z",
+          name: "subagent_activity",
+          toolUseId: "native-stale-active",
+          input: {
+            id: "native-stale-active",
+            activity_kind: "interacted",
+            agent_path: "/root/native_verifier",
+            receiver_thread_ids: ["thread-native-terminal"],
+            agent_transcripts: {
+              "thread-native-terminal": {
+                status: "inProgress",
+                entries: [{
+                  kind: "assistant",
+                  ts: "2026-07-29T01:00:02.000Z",
+                  text: "Verification passed.",
+                }],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const manifest = await svc.getConversationManifest(conversationId);
+    expect(manifest.subagents.active).toEqual([]);
+    expect(manifest.subagents.done).toEqual([
+      expect.objectContaining({
+        threadId: "thread-native-terminal",
+        label: "Native Verifier",
+        state: "done",
+        status: "completed",
+      }),
+    ]);
+  });
+
   it("excludes annotation-owned attachments and quoted annotation content from work sources", async () => {
     const { orgId, conversationId } = await seedBase("Annotations");
     const messageId = randomUUID();

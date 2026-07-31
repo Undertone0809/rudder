@@ -25,6 +25,7 @@ import {
 } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { conflict, forbidden, unauthorized } from "../errors.js";
+import { copyLegacyOperatorState } from "./legacy-operator-state.js";
 
 const LOCAL_BOARD_USER_ID = "local-board";
 const LOCAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -380,6 +381,11 @@ export function localAccountAuthService(db: Db, policy: LocalAccountExchangePoli
         nowMs: now.getTime(),
         lastTrustedTimeMs: offline.lastTrustedTimeMs,
         localSignOutEpoch: offline.localSignOutEpoch,
+        // A Local Workspace can be genuinely offline when the cloud schema
+        // epoch advances. Legacy grants remain bounded by their original
+        // signature, device proof, and expiry until the next online exchange;
+        // the Identity service rejects them for any online renewal.
+        allowLegacyOffline: true,
         // Durable consumption happens in the transaction below, after all
         // cryptographic and binding checks have passed.
         consumeNonce: () => true,
@@ -501,9 +507,6 @@ export function localAccountAuthService(db: Db, policy: LocalAccountExchangePoli
       ) {
         throw forbidden("This Rudder installation is already claimed by another account");
       }
-      if (existing) {
-        return { status: "already_claimed" as const, localUserId: existing.localUserId, orgIds: [] as string[] };
-      }
 
       const externalBinding = await tx
         .select({ localUserId: externalUserBindings.localUserId })
@@ -517,6 +520,18 @@ export function localAccountAuthService(db: Db, policy: LocalAccountExchangePoli
         )
         .then((rows) => rows[0] ?? null);
       if (!externalBinding) throw forbidden("The local user does not match the authenticated Rudder Account");
+
+      if (existing) {
+        const copied = await copyLegacyOperatorState(tx, {
+          installationId: input.installationId,
+          targetUserId: input.localUserId,
+        });
+        return {
+          status: "already_claimed" as const,
+          localUserId: existing.localUserId,
+          orgIds: copied.orgIds,
+        };
+      }
 
       const legacyMemberships = await tx
         .select()
@@ -589,6 +604,11 @@ export function localAccountAuthService(db: Db, policy: LocalAccountExchangePoli
           },
         });
       }
+
+      await copyLegacyOperatorState(tx, {
+        installationId: input.installationId,
+        targetUserId: input.localUserId,
+      });
 
       return {
         status: "claimed" as const,

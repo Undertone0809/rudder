@@ -1,6 +1,8 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -9,6 +11,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 export const identitySchema = pgSchema("rudder_identity");
@@ -20,6 +23,7 @@ export const identityUsers = identitySchema.table(
     name: text("name").notNull(),
     email: text("email").notNull(),
     emailVerified: boolean("email_verified").notNull().default(false),
+    authEpoch: integer("auth_epoch").notNull().default(0),
     image: text("image"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -94,7 +98,10 @@ export const identityDeviceCodes = identitySchema.table(
   "device_code",
   {
     id: text("id").primaryKey(),
-    deviceCode: text("device_code").notNull(),
+    // Retained nullable only for a rollback window. New requests store only the
+    // SHA-256 hash so a database read cannot redeem an authorization request.
+    deviceCode: text("device_code"),
+    deviceCodeHash: text("device_code_hash"),
     userCode: text("user_code").notNull(),
     userId: text("user_id").references(() => identityUsers.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -103,11 +110,17 @@ export const identityDeviceCodes = identitySchema.table(
     pollingInterval: integer("polling_interval"),
     clientId: text("client_id"),
     scope: text("scope"),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("identity_device_code_uidx").on(table.deviceCode),
+    uniqueIndex("identity_device_code_hash_uidx").on(table.deviceCodeHash),
     uniqueIndex("identity_device_user_code_uidx").on(table.userCode),
     index("identity_device_code_expiry_idx").on(table.expiresAt),
+    check(
+      "identity_device_code_secret_shape_check",
+      sql`${table.deviceCodeHash} is not null or ${table.deviceCode} is not null`,
+    ),
   ],
 );
 
@@ -139,6 +152,10 @@ export const accountEmails = identitySchema.table(
   (table) => [
     uniqueIndex("account_email_normalized_uidx").on(table.normalizedEmail),
     index("account_email_user_idx").on(table.userId),
+    check(
+      "account_email_normalized_shape_check",
+      sql`${table.normalizedEmail} <> '' and ${table.normalizedEmail} = lower(btrim(${table.normalizedEmail}))`,
+    ),
   ],
 );
 
@@ -155,6 +172,7 @@ export const identityDevices = identitySchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    authEpoch: integer("auth_epoch").notNull().default(0),
   },
   (table) => [
     uniqueIndex("identity_device_installation_uidx").on(table.userId, table.installationId),
@@ -281,5 +299,159 @@ export const identityEmailRateLimits = identitySchema.table(
   (table) => [
     primaryKey({ columns: [table.bucketKeyHash, table.action] }),
     index("email_rate_limit_blocked_idx").on(table.blockedUntil),
+  ],
+);
+
+export const supabaseAuthUserBindings = identitySchema.table(
+  "supabase_auth_user_binding",
+  {
+    authUserId: uuid("auth_user_id").primaryKey(),
+    rudderUserId: text("rudder_user_id")
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: "restrict" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    migrationBatch: text("migration_batch").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("supabase_auth_binding_rudder_user_uidx").on(table.rudderUserId),
+    uniqueIndex("supabase_auth_binding_normalized_email_uidx").on(table.normalizedEmail),
+    index("supabase_auth_binding_batch_idx").on(table.migrationBatch),
+    check(
+      "supabase_auth_binding_normalized_email_check",
+      sql`${table.normalizedEmail} <> '' and ${table.normalizedEmail} = lower(btrim(${table.normalizedEmail}))`,
+    ),
+  ],
+);
+
+export const supabaseAuthMigrationLedger = identitySchema.table(
+  "supabase_auth_migration_ledger",
+  {
+    id: text("id").primaryKey(),
+    migrationBatch: text("migration_batch").notNull(),
+    rudderUserId: text("rudder_user_id")
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: "restrict" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    authUserId: uuid("auth_user_id"),
+    state: text("state")
+      .$type<
+        "pending" | "auth_user_created" | "bound" | "linked" | "verified" | "failed"
+      >()
+      .notNull(),
+    resumeState: text("resume_state").$type<
+      "pending" | "auth_user_created" | "bound" | "linked" | "verified"
+    >(),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("supabase_auth_migration_rudder_user_uidx").on(table.rudderUserId),
+    uniqueIndex("supabase_auth_migration_normalized_email_uidx").on(table.normalizedEmail),
+    uniqueIndex("supabase_auth_migration_auth_user_uidx").on(table.authUserId),
+    index("supabase_auth_migration_batch_state_idx").on(
+      table.migrationBatch,
+      table.state,
+    ),
+    check(
+      "supabase_auth_migration_state_check",
+      sql`${table.state} in ('pending', 'auth_user_created', 'bound', 'linked', 'verified', 'failed')`,
+    ),
+    check(
+      "supabase_auth_migration_resume_state_check",
+      sql`${table.resumeState} is null or ${table.resumeState} in ('pending', 'auth_user_created', 'bound', 'linked', 'verified')`,
+    ),
+    check(
+      "supabase_auth_migration_failure_shape_check",
+      sql`(${table.state} = 'failed' and ${table.resumeState} is not null and ${table.lastError} is not null) or (${table.state} <> 'failed' and ${table.resumeState} is null)`,
+    ),
+    check(
+      "supabase_auth_migration_auth_user_shape_check",
+      sql`(${table.state} = 'pending' and ${table.authUserId} is null) or (${table.state} in ('auth_user_created', 'bound', 'linked', 'verified') and ${table.authUserId} is not null) or (${table.state} = 'failed' and ((${table.resumeState} = 'pending' and ${table.authUserId} is null) or (${table.resumeState} <> 'pending' and ${table.authUserId} is not null)))`,
+    ),
+    check(
+      "supabase_auth_migration_normalized_email_check",
+      sql`${table.normalizedEmail} <> '' and ${table.normalizedEmail} = lower(btrim(${table.normalizedEmail}))`,
+    ),
+  ],
+);
+
+export const identityAuthState = identitySchema.table(
+  "auth_state",
+  {
+    id: text("id").primaryKey(),
+    offlineGrantSchemaEpoch: integer("offline_grant_schema_epoch")
+      .notNull()
+      .default(2),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "auth_state_schema_epoch_check",
+      sql`${table.offlineGrantSchemaEpoch} >= 2`,
+    ),
+  ],
+);
+
+export const credentialRevocationIntents = identitySchema.table(
+  "credential_revocation_intent",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: "restrict" }),
+    rootIdentityUserId: uuid("root_identity_user_id").notNull(),
+    operation: text("operation")
+      .$type<"password-change" | "password-reset" | "global-sign-out">()
+      .notNull(),
+    deviceScope: text("device_scope")
+      .$type<"none" | "all">()
+      .notNull(),
+    state: text("state")
+      .$type<
+        "pending-provider" | "pending-rudder" | "manual-repair" | "completed"
+      >()
+      .notNull(),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    claimOwner: text("claim_owner"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    providerCompletedAt: timestamp("provider_completed_at", { withTimezone: true }),
+    rudderCompletedAt: timestamp("rudder_completed_at", { withTimezone: true }),
+    manualRepairAt: timestamp("manual_repair_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("credential_revocation_user_state_idx").on(table.userId, table.state),
+    uniqueIndex("credential_revocation_one_pending_user_uidx")
+      .on(table.userId)
+      .where(sql`${table.state} <> 'completed'`),
+    check(
+      "credential_revocation_operation_check",
+      sql`${table.operation} in ('password-change', 'password-reset', 'global-sign-out')`,
+    ),
+    check(
+      "credential_revocation_device_scope_check",
+      sql`${table.deviceScope} in ('none', 'all')`,
+    ),
+    check(
+      "credential_revocation_state_check",
+      sql`${table.state} in ('pending-provider', 'pending-rudder', 'manual-repair', 'completed')`,
+    ),
+    check(
+      "credential_revocation_completion_shape_check",
+      sql`(${table.state} = 'pending-provider' and ${table.providerCompletedAt} is null and ${table.rudderCompletedAt} is null and ${table.manualRepairAt} is null) or (${table.state} = 'pending-rudder' and ${table.providerCompletedAt} is not null and ${table.rudderCompletedAt} is null and ${table.manualRepairAt} is null) or (${table.state} = 'manual-repair' and ${table.rudderCompletedAt} is null and ${table.manualRepairAt} is not null) or (${table.state} = 'completed' and ${table.providerCompletedAt} is not null and ${table.rudderCompletedAt} is not null and ${table.manualRepairAt} is null)`,
+    ),
+    check(
+      "credential_revocation_claim_shape_check",
+      sql`(${table.claimOwner} is null and ${table.claimedAt} is null) or (${table.claimOwner} is not null and ${table.claimedAt} is not null)`,
+    ),
   ],
 );

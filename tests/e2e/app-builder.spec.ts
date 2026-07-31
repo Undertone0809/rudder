@@ -185,8 +185,22 @@ test.describe("Apps workspace", () => {
               return next;
             },
             stop: async (id: string) => {
-              const testWindow = window as typeof window & { __stoppedApps?: string[] };
+              const testWindow = window as typeof window & {
+                __releaseAppStop?: () => void;
+                __stoppedApps?: string[];
+              };
               testWindow.__stoppedApps = [...(testWindow.__stoppedApps ?? []), id];
+              runtime.set(id, {
+                status: "stopping",
+                generation: runtime.get(id)?.generation ?? null,
+                origin: undefined,
+                openPath: "/",
+                partition: undefined,
+              });
+              await new Promise<void>((resolve) => {
+                testWindow.__releaseAppStop = resolve;
+              });
+              delete testWindow.__releaseAppStop;
               const next = {
                 status: "stopped",
                 generation: null,
@@ -254,7 +268,10 @@ test.describe("Apps workspace", () => {
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
 
     await alphaEntry.click();
-    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect(page.getByTestId("apps-local-webview")).toHaveAttribute(
+      "data-local-binding-id",
+      "binding-alpha",
+    );
     const alphaIsolationKey = await page.getByTestId("apps-local-webview")
       .getAttribute("data-webview-isolation-key");
     await page.getByTestId("apps-local-webview").evaluate((element) => {
@@ -263,7 +280,10 @@ test.describe("Apps workspace", () => {
     });
 
     await betaEntry.click();
-    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect(page.getByTestId("apps-local-webview")).toHaveAttribute(
+      "data-local-binding-id",
+      "binding-beta",
+    );
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps
     ))).toEqual(["definition-alpha", "definition-beta"]);
@@ -323,10 +343,40 @@ test.describe("Apps workspace", () => {
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
     ))).toEqual(["definition-alpha"]);
-    await page.waitForTimeout(750);
+    await page.evaluate(() => {
+      (window as typeof window & { __releaseAppStop?: () => void }).__releaseAppStop?.();
+    });
+    await expect(page.getByTestId("apps-local-webview")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
     ))).toEqual(["definition-alpha", "definition-beta"]);
+    await alphaEntry.click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
+    ))).toEqual(["definition-alpha", "definition-beta", "definition-alpha"]);
+    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await page.getByRole("menuitem", { name: "Stop App" }).click({ force: true });
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual(["definition-alpha", "definition-alpha"]);
+    await alphaEntry.click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
+    ))).toEqual(["definition-alpha", "definition-beta", "definition-alpha"]);
+    await page.evaluate(() => {
+      (window as typeof window & { __releaseAppStop?: () => void }).__releaseAppStop?.();
+    });
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps ?? []
+    ))).toEqual([
+      "definition-alpha",
+      "definition-beta",
+      "definition-alpha",
+      "definition-alpha",
+    ]);
   });
 
   test("does not expose a managed local binding in another organization", async ({

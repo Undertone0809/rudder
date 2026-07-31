@@ -555,6 +555,7 @@ describe("applyPendingMigrations", () => {
           "0124_petite_cargill.sql",
           "0125_ambiguous_winter_soldier.sql",
           "0126_flashy_sentinels.sql",
+          "0127_remove_project_budgets.sql",
         ],
         reason: "pending-migrations",
       });
@@ -701,6 +702,7 @@ describe("applyPendingMigrations", () => {
           "0124_petite_cargill.sql",
           "0125_ambiguous_winter_soldier.sql",
           "0126_flashy_sentinels.sql",
+          "0127_remove_project_budgets.sql",
         ],
         reason: "pending-migrations",
       });

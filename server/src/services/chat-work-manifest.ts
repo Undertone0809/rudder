@@ -218,10 +218,16 @@ export function chatWorkManifestService(db: Db) {
       const sourceActive = native
         ? ACTIVE_GENERATION_STATUSES.has(native.generationStatus)
         : message.status === "streaming";
+      const sourceTerminalStatus = native && !sourceActive
+        ? native.generationStatus === "completed"
+          ? "completed" as const
+          : "stopped" as const
+        : null;
       for (const inspection of collectChatSubagentInspections(entries, {
         sourceMessageId: message.id,
         runId: message.runId ?? native?.runId ?? null,
         sourceActive,
+        sourceTerminalStatus,
         senderLabel: message.senderLabel,
       })) {
         const { response: _response, entries: _entries, ...summary } = inspection;

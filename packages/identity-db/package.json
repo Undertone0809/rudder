@@ -15,6 +15,7 @@
     "clean": "rm -rf dist",
     "generate": "tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "production:migration-gate": "pnpm --filter @rudderhq/identity-core build && node --import tsx src/production-migration-runner.ts",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },

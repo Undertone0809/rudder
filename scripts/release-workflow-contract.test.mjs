@@ -106,6 +106,19 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain('-f source_ref="$tag"');
   });
 
+  it("installs the Playwright browser required by the packaged app-builder smoke", () => {
+    expect(desktopWorkflow).toContain("Install Playwright Chromium");
+    expect(desktopWorkflow).toContain("pnpm exec playwright install --with-deps chromium");
+    expect(desktopWorkflow).toContain("pnpm exec playwright install chromium");
+
+    const installIndex = desktopWorkflow.indexOf("Install Playwright Chromium");
+    const smokeIndex = desktopWorkflow.indexOf(
+      "node desktop/scripts/app-builder-smoke.mjs --packaged",
+    );
+    expect(installIndex).toBeGreaterThan(-1);
+    expect(smokeIndex).toBeGreaterThan(installIndex);
+  });
+
   it("opens the packaged macOS account gate before publishing Desktop artifacts", () => {
     expect(desktopWorkflow).toContain("matrix.platform == 'macos' && matrix.arch == 'arm64'");
     expect(desktopWorkflow).toContain(

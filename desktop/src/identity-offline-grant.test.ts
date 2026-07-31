@@ -54,7 +54,10 @@ describe("Desktop Offline Grant store", () => {
       publicKeyThumbprint: device.thumbprint,
       nowMs,
       trustedTimeMs: nowMs,
-      signOutEpoch: device.signOutEpoch,
+      localSignOutEpoch: device.localSignOutEpoch,
+      authSchemaEpoch: 2,
+      accountAuthEpoch: 0,
+      deviceAuthEpoch: 0,
       jti: randomUUID(),
     });
     store.acceptGrant({
@@ -70,14 +73,14 @@ describe("Desktop Offline Grant store", () => {
     expect(store.read()).toMatchObject({
       accountId: "account-1",
       trustedTimeMs: nowMs + 60_000,
-      signOutEpoch: 0,
+      localSignOutEpoch: 0,
     });
     expect(fs.readFileSync(statePath, "utf8")).not.toContain(grant);
 
     store.signOut();
 
     expect(store.read()).toBeNull();
-    expect(store.prepareDeviceKey()?.signOutEpoch).toBe(1);
+    expect(store.prepareDeviceKey()?.localSignOutEpoch).toBe(1);
     expect(() => store.acceptGrant({
       grant,
       expiresAtMs: nowMs + 30 * 24 * 60 * 60_000,
@@ -102,6 +105,25 @@ describe("Desktop Offline Grant store", () => {
     expect(store.prepareDeviceKey()).toBeNull();
     store.signOut();
     expect(fs.existsSync(statePath)).toBe(false);
+  });
+
+  it("preserves a version-1 local sign-out tombstone during state migration", () => {
+    const statePath = temporaryStatePath();
+    const legacyState = JSON.stringify({
+      version: 1,
+      signOutEpoch: 7,
+      credential: null,
+    });
+    fs.writeFileSync(statePath, Buffer.from(legacyState, "utf8").reverse());
+    const store = createDesktopOfflineGrantStore({
+      safeStorage: fakeSafeStorage(),
+      platform: "darwin",
+      statePath,
+      issuer: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+    });
+
+    expect(store.prepareDeviceKey()?.localSignOutEpoch).toBe(7);
   });
 
   it("forgets a pending device key even when secure sign-out persistence fails", () => {

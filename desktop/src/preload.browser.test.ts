@@ -189,7 +189,7 @@ describe("Rudder Browser preload bridge", () => {
 
   it("exposes only narrow Local App DTO and opaque-id IPC calls", async () => {
     const localApps = desktopShell().localApps;
-    expect(localApps.supported).toBe(process.platform === "darwin");
+    expect(localApps.supported).toBe(["darwin", "linux", "win32"].includes(process.platform));
     const definition = { title: "fixture" };
     await localApps.list();
     await localApps.discover();

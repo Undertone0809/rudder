@@ -29,6 +29,11 @@ function fixture() {
     current: true,
   }]);
   const revokeDeviceSession = vi.fn(async () => undefined);
+  const signIn = vi.fn(async () => ({
+    accessToken: "not-exposed",
+    account: { id: "account-1", email: "verified@example.com", name: "Rudder User", image: null },
+    device: { id: "device-1", installationId: "default", displayName: "Test Mac" },
+  }));
   const controller = createDesktopIdentityIpcController({
     origin: "https://accounts.rudderhq.dev",
     vault: {
@@ -36,11 +41,7 @@ function fixture() {
       read: () => null,
     },
     client: {
-      signIn: vi.fn(async () => ({
-        accessToken: "not-exposed",
-        account: { id: "account-1", email: "verified@example.com", name: "Rudder User", image: null },
-        device: { id: "device-1", installationId: "default", displayName: "Test Mac" },
-      })),
+      signIn,
       signOut: async () => clear(),
       listDeviceSessions,
       revokeDeviceSession,
@@ -51,7 +52,7 @@ function fixture() {
     getMainRenderer: () => renderer,
     controller,
   });
-  return { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession, controller };
+  return { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession, controller, signIn };
 }
 
 describe("Desktop Rudder Account IPC", () => {
@@ -92,6 +93,28 @@ describe("Desktop Rudder Account IPC", () => {
       { sender: renderer, senderFrame: renderer.mainFrame },
       { deviceId: "device-1", accessToken: "renderer-secret" },
     )).rejects.toThrow("valid opaque device id");
+  });
+
+  it("accepts only bounded login method hints and normalizes the optional email", async () => {
+    const { handlers, renderer, signIn: clientSignIn } = fixture();
+    const event = { sender: renderer, senderFrame: renderer.mainFrame };
+    const signIn = handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.signIn);
+
+    await signIn?.(event, { method: "email_otp", email: "River@Example.com" });
+    expect(clientSignIn).toHaveBeenCalledWith({
+      method: "email_otp",
+      email: "river@example.com",
+    });
+    await expect(signIn?.(event, { method: "saml" })).rejects.toThrow("valid method hint");
+    await expect(signIn?.(event, {
+      method: "password",
+      email: "river@example.com",
+      password: ["must", "not", "cross", "ipc"].join("-"),
+    })).rejects.toThrow("valid method hint");
+    await expect(signIn?.(event, {
+      method: "password_reset",
+      email: "not-an-email",
+    })).rejects.toThrow("invalid email hint");
   });
 
   it("publishes state without exposing the access token", async () => {
