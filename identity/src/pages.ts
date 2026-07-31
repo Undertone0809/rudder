@@ -310,7 +310,7 @@ export function privacyPage(supportEmail: string): string {
      <h2>Retention and security</h2>
      <p>We retain account and security data while your account is active and as reasonably needed for security, legal compliance, and fraud prevention. Verification codes and authorization codes expire quickly and are stored only in hashed form. Provider access and refresh tokens are not retained by Rudder Identity.</p>
      <h2>Your choices and deletion</h2>
-     <p>You can revoke sessions and linked login methods from Account &amp; Security. To request access, correction, export, or deletion of your Rudder Account data, email <a href="mailto:${contact}">${contact}</a>. Deleting a Rudder Account does not silently delete Local Workspace data on your devices.</p>
+     <p>You can revoke browser sessions and registered devices from Account &amp; Security. To request access, correction, export, or deletion of your Rudder Account data, email <a href="mailto:${contact}">${contact}</a>. Deleting a Rudder Account does not silently delete Local Workspace data on your devices.</p>
      <nav><a href="/">Rudder Account</a><a href="/terms">Terms</a></nav>`,
   );
 }
