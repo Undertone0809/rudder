@@ -23,7 +23,7 @@ await import("./preload.js");
 
 type ExposedDesktopIdentity = {
   getState(): Promise<unknown>;
-  signIn(): Promise<unknown>;
+  signIn(hint?: { method: "google" }): Promise<unknown>;
   signOut(): Promise<unknown>;
   listDeviceSessions(): Promise<unknown[]>;
   revokeDeviceSession(deviceId: string): Promise<void>;
@@ -47,14 +47,14 @@ describe("Desktop Rudder Account preload bridge", () => {
     const identity = desktopIdentity();
 
     await identity.getState();
-    await identity.signIn();
+    await identity.signIn({ method: "google" });
     await identity.signOut();
     await identity.listDeviceSessions();
     await identity.revokeDeviceSession("device-1");
 
     expect(electronMocks.invoke.mock.calls).toEqual([
       [DESKTOP_IDENTITY_IPC_CHANNELS.getState],
-      [DESKTOP_IDENTITY_IPC_CHANNELS.signIn],
+      [DESKTOP_IDENTITY_IPC_CHANNELS.signIn, { method: "google" }],
       [DESKTOP_IDENTITY_IPC_CHANNELS.signOut],
       [DESKTOP_IDENTITY_IPC_CHANNELS.listDeviceSessions],
       [DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession, { deviceId: "device-1" }],

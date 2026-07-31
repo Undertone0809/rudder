@@ -26,26 +26,44 @@ export type DesktopOfflineGrantCredential = {
   devicePrivateKeyPkcs8: string;
   devicePublicKeySpki: string;
   trustedTimeMs: number;
-  signOutEpoch: number;
+  localSignOutEpoch: number;
 };
 
 type OfflineState = {
-  version: 1;
-  signOutEpoch: number;
+  version: 2;
+  localSignOutEpoch: number;
   credential: DesktopOfflineGrantCredential | null;
 };
 
 function parseState(raw: string): OfflineState | null {
   if (Buffer.byteLength(raw, "utf8") > MAX_OFFLINE_STATE_BYTES) return null;
   try {
-    const value = JSON.parse(raw) as Partial<OfflineState>;
+    const value = JSON.parse(raw) as {
+      version?: unknown;
+      localSignOutEpoch?: unknown;
+      signOutEpoch?: unknown;
+      credential?: (Partial<DesktopOfflineGrantCredential> & {
+        signOutEpoch?: unknown;
+      }) | null;
+    };
+    const localSignOutEpoch =
+      value.version === 2 ? value.localSignOutEpoch : value.signOutEpoch;
     if (
-      value.version !== 1
-      || !Number.isSafeInteger(value.signOutEpoch)
-      || Number(value.signOutEpoch) < 0
+      (value.version !== 1 && value.version !== 2)
+      || !Number.isSafeInteger(localSignOutEpoch)
+      || Number(localSignOutEpoch) < 0
     ) return null;
-    if (value.credential === null) return value as OfflineState;
+    if (value.credential === null) {
+      return {
+        version: 2,
+        localSignOutEpoch: Number(localSignOutEpoch),
+        credential: null,
+      };
+    }
     const credential = value.credential as Partial<DesktopOfflineGrantCredential> | undefined;
+    const credentialLocalSignOutEpoch =
+      credential?.localSignOutEpoch
+      ?? (value.credential as { signOutEpoch?: unknown } | undefined)?.signOutEpoch;
     if (
       credential?.version !== 1
       || typeof credential.issuer !== "string"
@@ -59,9 +77,17 @@ function parseState(raw: string): OfflineState | null {
       || typeof credential.devicePublicKeySpki !== "string"
       || !Number.isSafeInteger(credential.expiresAtMs)
       || !Number.isSafeInteger(credential.trustedTimeMs)
-      || credential.signOutEpoch !== value.signOutEpoch
+      || !Number.isSafeInteger(credentialLocalSignOutEpoch)
+      || Number(credentialLocalSignOutEpoch) < 0
     ) return null;
-    return value as OfflineState;
+    return {
+      version: 2,
+      localSignOutEpoch: Number(localSignOutEpoch),
+      credential: {
+        ...credential,
+        localSignOutEpoch: Number(credentialLocalSignOutEpoch),
+      } as DesktopOfflineGrantCredential,
+    };
   } catch {
     return null;
   }
@@ -82,17 +108,17 @@ export function createDesktopOfflineGrantStore(options: {
   } | null = null;
 
   const readState = (): OfflineState => {
-    if (!available) return { version: 1, signOutEpoch: 0, credential: null };
+    if (!available) return { version: 2, localSignOutEpoch: 0, credential: null };
     try {
       const encrypted = fs.readFileSync(options.statePath);
       if (encrypted.byteLength === 0 || encrypted.byteLength > MAX_OFFLINE_STATE_BYTES) {
-        return { version: 1, signOutEpoch: 0, credential: null };
+        return { version: 2, localSignOutEpoch: 0, credential: null };
       }
       return parseState(options.safeStorage.decryptString(encrypted))
-        ?? { version: 1, signOutEpoch: 0, credential: null };
+        ?? { version: 2, localSignOutEpoch: 0, credential: null };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1, signOutEpoch: 0, credential: null };
+        return { version: 2, localSignOutEpoch: 0, credential: null };
       }
       throw error;
     }
@@ -124,7 +150,7 @@ export function createDesktopOfflineGrantStore(options: {
       privateKeyPkcs8: string;
       publicKeySpki: string;
       thumbprint: string;
-      signOutEpoch: number;
+      localSignOutEpoch: number;
     } | null {
       if (!available) return null;
       const state = readState();
@@ -148,7 +174,10 @@ export function createDesktopOfflineGrantStore(options: {
           thumbprint: keys.thumbprint,
         };
       }
-      return { ...pendingDeviceKeys!, signOutEpoch: state.signOutEpoch };
+      return {
+        ...pendingDeviceKeys!,
+        localSignOutEpoch: state.localSignOutEpoch,
+      };
     },
 
     acceptGrant(input: {
@@ -177,7 +206,10 @@ export function createDesktopOfflineGrantStore(options: {
         expectedAccountId: input.accountId,
         nowMs,
         lastTrustedTimeMs: state.credential?.trustedTimeMs ?? 0,
-        localSignOutEpoch: state.signOutEpoch,
+        // This is a Desktop-owned tombstone. Identity only echoes the value
+        // supplied on the current credential request; server revocation uses
+        // the separate schema/account/device epochs in the signed grant.
+        localSignOutEpoch: state.localSignOutEpoch,
       });
       if (claims.publicKeyThumbprint !== pendingDeviceKeys.thumbprint) {
         throw new Error("Offline Grant device binding is invalid");
@@ -195,9 +227,16 @@ export function createDesktopOfflineGrantStore(options: {
         devicePrivateKeyPkcs8: pendingDeviceKeys.privateKeyPkcs8,
         devicePublicKeySpki: pendingDeviceKeys.publicKeySpki,
         trustedTimeMs: Math.max(nowMs, claims.trustedTimeMs),
-        signOutEpoch: state.signOutEpoch,
+        localSignOutEpoch:
+          claims.version === 1
+            ? claims.signOutEpoch
+            : claims.localSignOutEpoch,
       };
-      writeState({ version: 1, signOutEpoch: state.signOutEpoch, credential });
+      writeState({
+        version: 2,
+        localSignOutEpoch: state.localSignOutEpoch,
+        credential,
+      });
       return credential;
     },
 
@@ -232,8 +271,8 @@ export function createDesktopOfflineGrantStore(options: {
         }
         const state = readState();
         writeState({
-          version: 1,
-          signOutEpoch: state.signOutEpoch + 1,
+          version: 2,
+          localSignOutEpoch: state.localSignOutEpoch + 1,
           credential: null,
         });
       } finally {

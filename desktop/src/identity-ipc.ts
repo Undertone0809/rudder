@@ -12,6 +12,11 @@ export const DESKTOP_IDENTITY_IPC_CHANNELS = {
   stateChanged: "desktop:identity:state-changed",
 } as const;
 
+export type DesktopSignInHint = {
+  method: "google" | "github" | "email_otp" | "password" | "password_reset";
+  email?: string;
+};
+
 export type DesktopIdentityState =
   | { status: "signed-out" }
   | { status: "signing-in" }
@@ -53,7 +58,11 @@ type IpcMainLike = {
 };
 
 type DesktopIdentityClient = {
-  signIn(): Promise<{ account: IdentityAccount; device: IdentityDevice; accessToken: string }>;
+  signIn(hint?: DesktopSignInHint): Promise<{
+    account: IdentityAccount;
+    device: IdentityDevice;
+    accessToken: string;
+  }>;
   signOut(): Promise<void>;
   listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
   revokeDeviceSession(deviceId: string): Promise<void>;
@@ -85,6 +94,39 @@ export function resolveDesktopIdentityOrigin(options: {
 
 function noArguments(args: unknown[], label: string): void {
   if (args.length !== 0) throw new Error(`${label} does not accept renderer arguments`);
+}
+
+function signInHintPayload(value: unknown): DesktopSignInHint | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Rudder Account sign-in requires a narrow method hint");
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (
+    keys.some((key) => key !== "method" && key !== "email")
+    || typeof record.method !== "string"
+    || !new Set(["google", "github", "email_otp", "password", "password_reset"]).has(record.method)
+  ) {
+    throw new Error("Rudder Account sign-in requires a valid method hint");
+  }
+  if (record.email === undefined) {
+    if (keys.length !== 1) throw new Error("Rudder Account sign-in contains an invalid email hint");
+    return { method: record.method as DesktopSignInHint["method"] };
+  }
+  if (
+    typeof record.email !== "string"
+    || record.email !== record.email.trim()
+    || record.email.length < 3
+    || record.email.length > 254
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(record.email)
+  ) {
+    throw new Error("Rudder Account sign-in contains an invalid email hint");
+  }
+  return {
+    method: record.method as DesktopSignInHint["method"],
+    email: record.email.toLowerCase(),
+  };
 }
 
 function deviceIdPayload(value: unknown): string {
@@ -174,10 +216,10 @@ export function createDesktopIdentityIpcController(options: {
       return publish({ status: "device-authorization", ...prompt });
     },
 
-    signIn(): Promise<DesktopIdentityState> {
+    signIn(hint?: DesktopSignInHint): Promise<DesktopIdentityState> {
       if (signInInFlight) return signInInFlight;
       publish({ status: "signing-in" });
-      const request = options.client.signIn()
+      const request = options.client.signIn(hint)
         .then(async ({ account, device }) => {
           const signedIn = publish({
             status: "signed-in",
@@ -250,8 +292,8 @@ export function registerDesktopIdentityIpcHandlers(
     return options.controller.getState();
   });
   register(DESKTOP_IDENTITY_IPC_CHANNELS.signIn, (_event, ...args) => {
-    noArguments(args, "Rudder Account sign-in");
-    return options.controller.signIn();
+    if (args.length > 1) throw new Error("Rudder Account sign-in accepts one narrow method hint");
+    return options.controller.signIn(signInHintPayload(args[0]));
   });
   register(DESKTOP_IDENTITY_IPC_CHANNELS.signOut, (_event, ...args) => {
     noArguments(args, "Rudder Account sign-out");

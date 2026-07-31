@@ -15,7 +15,6 @@ const deviceCode = {
   device_code: "device-secret",
   user_code: "ABCD-EFGH",
   verification_uri: "https://accounts.rudderhq.dev/device",
-  verification_uri_complete: "https://accounts.rudderhq.dev/device?user_code=ABCD-EFGH",
   expires_in: 600,
   interval: 5,
 };
@@ -31,17 +30,12 @@ const deviceSession = {
 };
 
 describe("Desktop Device Authorization fallback", () => {
-  it("opens the approval page, respects pending/slow-down polling, and registers the approved device", async () => {
+  it("opens the approval page and polls the Rudder-owned contract for the final device session", async () => {
     let currentTime = Date.parse("2026-07-29T00:00:00.000Z");
     const fetch = vi.fn()
       .mockResolvedValueOnce(response(200, deviceCode))
       .mockResolvedValueOnce(response(400, { error: "authorization_pending" }))
-      .mockResolvedValueOnce(response(400, { error: "slow_down" }))
-      .mockResolvedValueOnce(response(200, {
-        access_token: "better-auth-session",
-        token_type: "Bearer",
-        expires_in: 2_592_000,
-      }))
+      .mockResolvedValueOnce(response(400, { error: "slow_down", interval: 10 }))
       .mockResolvedValueOnce(response(200, deviceSession));
     const sleep = vi.fn(async (delayMs: number) => {
       currentTime += delayMs;
@@ -61,17 +55,31 @@ describe("Desktop Device Authorization fallback", () => {
       onPrompt,
     });
 
-    expect(openExternal).toHaveBeenCalledWith(deviceCode.verification_uri_complete);
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      new URL("https://accounts.rudderhq.dev/api/desktop/device-code"),
+      expect.objectContaining({
+        body: JSON.stringify({
+          client_id: "rudder-desktop",
+          scope: "rudder.identity.device",
+        }),
+      }),
+    );
+    expect(openExternal).toHaveBeenCalledWith(
+      "https://accounts.rudderhq.dev/device?user_code=ABCD-EFGH",
+    );
     expect(onPrompt).toHaveBeenCalledWith(expect.objectContaining({
       userCode: "ABCD-EFGH",
       verificationUri: deviceCode.verification_uri,
     }));
     expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([5_000, 5_000, 10_000]);
-    expect(fetch).toHaveBeenLastCalledWith(
-      new URL("https://accounts.rudderhq.dev/api/desktop/device-session"),
+    expect(fetch).toHaveBeenNthCalledWith(
+      4,
+      new URL("https://accounts.rudderhq.dev/api/desktop/device-code/token"),
       expect.objectContaining({
-        headers: expect.objectContaining({ authorization: "Bearer better-auth-session" }),
         body: JSON.stringify({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: "device-secret",
           client_id: "rudder-desktop",
           installation_id: "default",
           device_name: "Test Mac",
@@ -90,7 +98,7 @@ describe("Desktop Device Authorization fallback", () => {
     });
   });
 
-  it("stops polling after denial and never attempts device registration", async () => {
+  it("stops polling after denial", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(response(200, deviceCode))
       .mockResolvedValueOnce(response(400, { error: "access_denied" }));
@@ -103,6 +111,22 @@ describe("Desktop Device Authorization fallback", () => {
       sleep: async () => undefined,
       openExternal: async () => undefined,
     })).rejects.toThrow("denied");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces server-side device-code expiry", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(200, deviceCode))
+      .mockResolvedValueOnce(response(400, { error: "expired_token" }));
+
+    await expect(runDesktopDeviceAuthorization({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "default",
+      deviceName: "Test Mac",
+      fetch,
+      sleep: async () => undefined,
+      openExternal: async () => undefined,
+    })).rejects.toThrow("expired");
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -147,11 +171,6 @@ describe("Desktop Device Authorization fallback", () => {
   it("continues with a surfaced user code when the OS browser handoff fails", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(response(200, deviceCode))
-      .mockResolvedValueOnce(response(200, {
-        access_token: "better-auth-session",
-        token_type: "Bearer",
-        expires_in: 600,
-      }))
       .mockResolvedValueOnce(response(200, deviceSession));
     const onPrompt = vi.fn();
 

@@ -11,6 +11,7 @@ import {
   DESKTOP_IDENTITY_IPC_CHANNELS,
   type DesktopIdentityDeviceSession,
   type DesktopIdentityState,
+  type DesktopSignInHint,
 } from "./identity-ipc.js";
 import type {
   LocalAppDefinition,
@@ -246,8 +247,10 @@ function parseDesktopIdentityState(value: unknown): DesktopIdentityState | null 
 contextBridge.exposeInMainWorld("desktopIdentity", {
   getState: () =>
     ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.getState) as Promise<DesktopIdentityState>,
-  signIn: () =>
-    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn) as Promise<DesktopIdentityState>,
+  signIn: (hint?: DesktopSignInHint) =>
+    (hint
+      ? ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn, hint)
+      : ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn)) as Promise<DesktopIdentityState>,
   signOut: () =>
     ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signOut) as Promise<DesktopIdentityState>,
   listDeviceSessions: () =>
@@ -551,7 +554,7 @@ declare global {
   interface Window {
     desktopIdentity: {
       getState(): Promise<DesktopIdentityState>;
-      signIn(): Promise<DesktopIdentityState>;
+      signIn(hint?: DesktopSignInHint): Promise<DesktopIdentityState>;
       signOut(): Promise<DesktopIdentityState>;
       listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
       revokeDeviceSession(deviceId: string): Promise<void>;

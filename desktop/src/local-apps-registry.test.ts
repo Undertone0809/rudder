@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LocalAppRegistry,
   computeLocalAppTrustFingerprint,
+  isUnsupportedDirectorySyncError,
   type LocalAppDefinitionDraft,
 } from "./local-apps-registry.js";
 import { LocalAppRuntimeManager } from "./local-apps-runtime.js";
@@ -20,6 +21,22 @@ const draft = (cwd: string): LocalAppDefinitionDraft => ({
 });
 
 describe("Desktop Local App registry", () => {
+  it("ignores only unsupported Windows directory fsync errors", () => {
+    expect(isUnsupportedDirectorySyncError(
+      Object.assign(new Error("unsupported"), { code: "EPERM" }),
+      "win32",
+    )).toBe(true);
+    expect(isUnsupportedDirectorySyncError(
+      Object.assign(new Error("unsupported"), { code: "EPERM" }),
+      "darwin",
+    )).toBe(false);
+    expect(isUnsupportedDirectorySyncError(
+      Object.assign(new Error("disk failure"), { code: "EIO" }),
+      "win32",
+    )).toBe(false);
+    expect(isUnsupportedDirectorySyncError(null, "win32")).toBe(false);
+  });
+
   it("writes a versioned atomic mode-0600 registry and leaves no temporary file", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-registry-"));
     const registryPath = path.join(root, "local-apps.json");

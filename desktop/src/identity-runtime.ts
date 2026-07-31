@@ -74,7 +74,7 @@ function localAuthOptions(
         expectedAccountId: credential.accountId,
         expectedDeviceId: credential.deviceId,
         lastTrustedTimeMs: credential.trustedTimeMs,
-        localSignOutEpoch: credential.signOutEpoch,
+        localSignOutEpoch: credential.localSignOutEpoch,
       },
     } : {}),
   };

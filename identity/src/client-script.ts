@@ -1,5 +1,5 @@
 export const identityClientScript = String.raw`
-(() => {
+(async () => {
   const status = document.querySelector("#auth-status");
   const otpForm = document.querySelector("#otp-form");
   const verifyForm = document.querySelector("#otp-verify-form");
@@ -11,13 +11,30 @@ export const identityClientScript = String.raw`
   let otpPurpose = "sign-in";
   const next = new URLSearchParams(location.search).get("next");
   let safeNext = "/";
+  let requestedLoginMethod = "";
+  let requestedLoginEmail = "";
+  let requestedLoginIntent = "";
+  let requestedDesktopBinding = null;
   try {
-    const candidate = new URL(next || "/", location.origin);
+    const rawNext = next || "/";
+    const rawPath = rawNext.split(/[?#]/u, 1)[0] || "/";
+    const candidate = new URL(rawNext, location.origin);
     if (
       candidate.origin === location.origin &&
-      !/%2f|%5c/iu.test(next || "") &&
-      !(next || "").includes("\\")
+      !/%2f|%5c/iu.test(rawPath) &&
+      !rawPath.includes("\\")
     ) {
+      const intent = candidate.searchParams.get("login_intent") || "";
+      if (/^[A-Za-z0-9_-]{32,2048}$/u.test(intent)) {
+        requestedLoginIntent = intent;
+        requestedDesktopBinding = {
+          client_id: candidate.searchParams.get("client_id") || "",
+          code_challenge: candidate.searchParams.get("code_challenge") || "",
+          redirect_uri: candidate.searchParams.get("redirect_uri") || "",
+          state: candidate.searchParams.get("state") || "",
+        };
+      }
+      candidate.searchParams.delete("login_intent");
       safeNext = candidate.pathname + candidate.search + candidate.hash;
     }
   } catch {}
@@ -44,18 +61,45 @@ export const identityClientScript = String.raw`
     return value;
   };
 
+  document.querySelector("#recovery-password-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    setBusy(submit, true);
+    try {
+      const data = new FormData(form);
+      const result = await request("/api/root-auth/password/recovery/complete", {
+        newPassword: data.get("password").toString(),
+      });
+      message(
+        result.localSessionsRevoked
+          ? "Password reset. Browser sessions and Rudder Desktop cloud access were revoked. Existing Local Server sessions end at expiry or next sync."
+          : "Password reset, but device revocation is still pending. Contact support before signing in.",
+        !result.localSessionsRevoked,
+      );
+      if (result.localSessionsRevoked) {
+        form.hidden = true;
+        setTimeout(() => location.assign("/"), 900);
+      }
+    } catch (error) {
+      message(error.message || "Unable to complete password recovery.", true);
+      setBusy(submit, false);
+    }
+  });
+
   document.querySelectorAll("[data-social]").forEach((button) => {
     button.addEventListener("click", async () => {
       if (button.disabled) return;
       setBusy(button, true);
       try {
         message("Opening secure sign in…");
-        const result = await request("/api/auth/sign-in/social", {
+        const result = await request("/api/root-auth/oauth", {
           provider: button.dataset.social,
-          callbackURL: safeNext,
+          nextPath: safeNext,
         });
-        if (!result.url) throw new Error("Provider sign in is unavailable");
-        location.assign(result.url);
+        if (!result.redirectUrl) throw new Error("Provider sign in is unavailable");
+        location.assign(result.redirectUrl);
       } catch (error) {
         message(error.message || "Unable to sign in", true);
         setBusy(button, false);
@@ -72,9 +116,9 @@ export const identityClientScript = String.raw`
     otpEmail = new FormData(otpForm).get("email").toString();
     otpPurpose = "sign-in";
     try {
-      await request("/api/auth/email-otp/send-verification-otp", {
+      await request("/api/root-auth/email-otp/send", {
         email: otpEmail,
-        type: "sign-in",
+        nextPath: safeNext,
       });
       otpForm.hidden = true;
       verifyForm.hidden = false;
@@ -119,15 +163,11 @@ export const identityClientScript = String.raw`
     if (submit?.disabled) return;
     setBusy(submit, true);
     try {
-      await request(
-        otpPurpose === "email-verification"
-          ? "/api/auth/email-otp/verify-email"
-          : "/api/auth/sign-in/email-otp",
-        {
+      await request("/api/root-auth/email-otp/verify", {
         email: otpEmail,
-        otp: new FormData(verifyForm).get("otp").toString(),
-        },
-      );
+        token: new FormData(verifyForm).get("otp").toString(),
+        purpose: otpPurpose,
+      });
       location.assign(safeNext);
     } catch (error) {
       message(error.message || "The code is invalid or expired", true);
@@ -142,7 +182,7 @@ export const identityClientScript = String.raw`
     setBusy(submit, true);
     const data = new FormData(event.currentTarget);
     try {
-      await request("/api/auth/sign-in/email", {
+      await request("/api/root-auth/password/sign-in", {
         email: data.get("email").toString(),
         password: data.get("password").toString(),
       });
@@ -160,11 +200,14 @@ export const identityClientScript = String.raw`
     setBusy(submit, true);
     const data = new FormData(event.currentTarget);
     try {
-      await request("/api/auth/sign-up/email", {
-        name: data.get("name").toString(),
+      const result = await request("/api/root-auth/password/sign-up", {
         email: data.get("email").toString(),
         password: data.get("password").toString(),
       });
+      if (result.signedIn) {
+        location.assign(safeNext);
+        return;
+      }
       otpEmail = data.get("email").toString();
       otpPurpose = "email-verification";
       otpForm.hidden = true;
@@ -192,7 +235,10 @@ export const identityClientScript = String.raw`
     setBusy(submit, true);
     resetEmail = new FormData(forgotForm).get("email").toString();
     try {
-      await request("/api/auth/email-otp/request-password-reset", { email: resetEmail });
+      await request("/api/root-auth/password/reset/request", {
+        email: resetEmail,
+        nextPath: safeNext,
+      });
     } catch {
       // Password recovery must not reveal whether an account or mailbox exists.
     } finally {
@@ -209,10 +255,10 @@ export const identityClientScript = String.raw`
     setBusy(submit, true);
     const data = new FormData(resetForm);
     try {
-      await request("/api/auth/email-otp/reset-password", {
+      await request("/api/root-auth/password/reset/confirm", {
         email: resetEmail,
-        otp: data.get("otp").toString(),
-        password: data.get("password").toString(),
+        token: data.get("otp").toString(),
+        newPassword: data.get("password").toString(),
       });
       message("Password updated. You can sign in with it now.");
     } catch {
@@ -226,7 +272,7 @@ export const identityClientScript = String.raw`
   document.querySelector("#set-password-request-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await request("/api/account/password/verification", {});
+      await request("/api/root-auth/password/reauthenticate", {});
       setPasswordForm.hidden = false;
       message("A verification code is on the way.");
     } catch {
@@ -237,85 +283,40 @@ export const identityClientScript = String.raw`
     event.preventDefault();
     const data = new FormData(setPasswordForm);
     try {
-      await request("/api/account/password", {
-        otp: data.get("otp").toString(),
+      await request("/api/root-auth/password/update", {
+        verificationCode: data.get("otp").toString(),
         newPassword: data.get("newPassword").toString(),
+        revokeOthers: data.get("revokeOthers") === "yes",
       });
-      message("Password set.");
+      message(
+        data.get("revokeOthers") === "yes"
+          ? "Password set. Other browsers and Rudder Desktop cloud access were revoked."
+          : "Password set. Existing browser and Rudder Desktop sessions remain signed in.",
+      );
     } catch {
       message("The code is invalid, expired, or a password is already set.", true);
     }
   });
-  document.querySelector("#change-password-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    try {
-      await request("/api/auth/change-password", {
-        currentPassword: data.get("currentPassword").toString(),
-        newPassword: data.get("newPassword").toString(),
-        revokeOtherSessions: data.get("revokeOtherSessions") === "on",
-      });
-      message("Password changed.");
-    } catch {
-      message("The current password is incorrect or the new password is invalid.", true);
-    }
-  });
-
-  const webSessionList = document.querySelector("#web-session-list");
-  const loadWebSessions = async () => {
-    if (!webSessionList) return;
-    try {
-      const response = await fetch("/api/account/web-sessions");
-      if (!response.ok) throw new Error();
-      const result = await response.json();
-      webSessionList.replaceChildren();
-      for (const session of result.sessions) {
-        const row = document.createElement("p");
-        const description = document.createElement("span");
-        const agent = session.userAgent || "Unknown browser";
-        const address = session.ipAddress ? " · " + session.ipAddress : "";
-        description.textContent =
-          agent + address + (session.current ? " (current web session)" : "");
-        row.append(description);
-        if (!session.current) {
-          const revoke = document.createElement("button");
-          revoke.type = "button";
-          revoke.textContent = "Sign out";
-          revoke.addEventListener("click", async () => {
-            const response = await fetch(
-              "/api/account/web-sessions/" + encodeURIComponent(session.id),
-              { method: "DELETE" },
-            );
-            if (response.ok) row.remove();
-            else message("Unable to sign out that web session.", true);
-          });
-          row.append(revoke);
-        }
-        webSessionList.append(row);
-      }
-    } catch {
-      webSessionList.textContent = "Unable to load web sessions.";
-    }
+  const signOutMessages = {
+    current: "Signed out of this browser.",
+    others: "Other browser sessions signed out. This session remains active.",
+    global: "Signed out of every browser and revoked Rudder Desktop cloud access. Existing Local Server sessions end at expiry or next sync.",
   };
-  void loadWebSessions();
-
-  document.querySelector("#revoke-other-web-sessions")?.addEventListener("click", async () => {
-    try {
-      await request("/api/account/web-sessions/revoke-others", {});
-      await loadWebSessions();
-      message("Other web sessions signed out. This session remains active.");
-    } catch {
-      message("Unable to sign out other web sessions.", true);
-    }
-  });
-
-  document.querySelector("#sign-out")?.addEventListener("click", async () => {
-    try {
-      await request("/api/auth/sign-out", {});
-      location.assign("/");
-    } catch {
-      message("Unable to sign out.", true);
-    }
+  document.querySelectorAll("[data-sign-out-scope]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      const scope = button.dataset.signOutScope;
+      if (!["current", "others", "global"].includes(scope)) return;
+      setBusy(button, true);
+      try {
+        await request("/api/root-auth/sign-out", { scope });
+        message(signOutMessages[scope]);
+        if (scope !== "others") location.assign("/");
+      } catch {
+        message("Unable to sign out.", true);
+        setBusy(button, false);
+      }
+    });
   });
 
   const deviceList = document.querySelector("#device-list");
@@ -345,12 +346,51 @@ export const identityClientScript = String.raw`
   for (const [id, action] of [["#approve-device", "approve"], ["#deny-device", "deny"]]) {
     document.querySelector(id)?.addEventListener("click", async () => {
       try {
-        await request("/api/auth/device/" + action, { userCode });
+        await request("/api/desktop/device-code/" + action, { userCode });
         message(action === "approve" ? "Device approved. You can return to Rudder." : "Device denied.");
       } catch {
         message("This device request is invalid or expired.", true);
       }
     });
+  }
+
+  if (requestedLoginIntent && requestedDesktopBinding) {
+    try {
+      const hint = await request("/api/desktop/sign-in-intent/resolve", {
+        ...requestedDesktopBinding,
+        intent: requestedLoginIntent,
+      });
+      if (["google", "github", "email_otp", "password", "password_reset"].includes(hint.method)) {
+        requestedLoginMethod = hint.method;
+      }
+      if (
+        typeof hint.email === "string"
+        && hint.email.length <= 254
+        && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(hint.email)
+      ) {
+        requestedLoginEmail = hint.email;
+      }
+    } catch {
+      message("The Desktop sign-in handoff expired. Choose a sign-in method to continue.", true);
+    }
+  }
+  if (requestedLoginEmail) {
+    document.querySelectorAll('input[name="email"]').forEach((input) => {
+      input.value = requestedLoginEmail;
+    });
+  }
+  if (requestedLoginMethod === "google" || requestedLoginMethod === "github") {
+    document.querySelector('[data-social="' + requestedLoginMethod + '"]')?.click?.();
+  } else if (requestedLoginMethod === "password" || requestedLoginMethod === "password_reset") {
+    passwordModeToggle?.click?.();
+    if (requestedLoginMethod === "password_reset") {
+      const forgotPasswordForm = document.querySelector("#forgot-password-form");
+      const disclosure = forgotPasswordForm?.closest?.("details");
+      if (disclosure) disclosure.open = true;
+      forgotPasswordForm?.querySelector?.('input[name="email"]')?.focus?.();
+    }
+  } else if (requestedLoginMethod === "email_otp") {
+    otpForm?.querySelector?.('input[name="email"]')?.focus?.();
   }
 })();
 `;

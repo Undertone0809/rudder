@@ -1,8 +1,11 @@
 import { hashOpaqueSecret } from "@rudderhq/identity-core";
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readOfflineGrantServerState } from "./auth-epochs.js";
 import type { IdentityDb } from "./client.js";
+import { hasPendingCredentialRevocationIntent } from "./credential-revocation.js";
 import {
+  credentialRevocationIntents,
   deviceAccessCredentials,
   deviceRefreshCredentials,
   identityAuthorizationCodes,
@@ -85,6 +88,14 @@ export async function redeemDesktopAuthorizationCode(
     if (!authorization) {
       throw new Error("invalid_grant");
     }
+    if (
+      await hasPendingCredentialRevocationIntent(
+        tx as unknown as IdentityDb,
+        authorization.userId,
+      )
+    ) {
+      throw new Error("credential_revocation_pending");
+    }
 
     const existingDevice = await tx
       .select({ id: identityDevices.id })
@@ -153,6 +164,10 @@ export async function redeemDesktopAuthorizationCode(
     const user = users[0];
     if (!user) throw new Error("invalid_grant");
 
+    const offlineGrantState = await readOfflineGrantServerState(
+      tx as unknown as IdentityDb,
+      { userId: authorization.userId, deviceId },
+    );
     return {
       accessToken,
       refreshToken,
@@ -164,6 +179,7 @@ export async function redeemDesktopAuthorizationCode(
         displayName: input.deviceName.slice(0, 160),
         publicKeyThumbprint: input.devicePublicKeyThumbprint ?? null,
       },
+      offlineGrantState,
     };
   });
 }
@@ -180,6 +196,14 @@ export async function issueDesktopDeviceSession(
 ) {
   const now = new Date();
   return db.transaction(async (tx) => {
+    if (
+      await hasPendingCredentialRevocationIntent(
+        tx as unknown as IdentityDb,
+        input.userId,
+      )
+    ) {
+      throw new Error("credential_revocation_pending");
+    }
     const existingDevice = await tx
       .select({ id: identityDevices.id })
       .from(identityDevices)
@@ -245,6 +269,10 @@ export async function issueDesktopDeviceSession(
       .where(eq(identityUsers.id, input.userId))
       .limit(1);
     if (!user) throw new Error("invalid_grant");
+    const offlineGrantState = await readOfflineGrantServerState(
+      tx as unknown as IdentityDb,
+      { userId: input.userId, deviceId },
+    );
     return {
       accessToken,
       refreshToken,
@@ -256,6 +284,7 @@ export async function issueDesktopDeviceSession(
         displayName,
         publicKeyThumbprint: input.devicePublicKeyThumbprint ?? null,
       },
+      offlineGrantState,
     };
   });
 }
@@ -268,12 +297,20 @@ export async function resolveDeviceAccessToken(db: IdentityDb, accessToken: stri
     })
     .from(deviceAccessCredentials)
     .innerJoin(identityDevices, eq(deviceAccessCredentials.deviceId, identityDevices.id))
+    .leftJoin(
+      credentialRevocationIntents,
+      and(
+        eq(credentialRevocationIntents.userId, identityDevices.userId),
+        sql`${credentialRevocationIntents.state} <> 'completed'`,
+      ),
+    )
     .where(
       and(
         eq(deviceAccessCredentials.secretHash, hashOpaqueSecret(accessToken)),
         gt(deviceAccessCredentials.expiresAt, new Date()),
         isNull(deviceAccessCredentials.revokedAt),
         isNull(identityDevices.revokedAt),
+        isNull(credentialRevocationIntents.id),
       ),
     )
     .limit(1);
@@ -297,6 +334,13 @@ export async function rotateDeviceRefreshToken(
       })
       .from(deviceRefreshCredentials)
       .innerJoin(identityDevices, eq(deviceRefreshCredentials.deviceId, identityDevices.id))
+      .leftJoin(
+        credentialRevocationIntents,
+        and(
+          eq(credentialRevocationIntents.userId, identityDevices.userId),
+          sql`${credentialRevocationIntents.state} <> 'completed'`,
+        ),
+      )
       .where(
         and(
           eq(deviceRefreshCredentials.secretHash, hashOpaqueSecret(input.refreshToken)),
@@ -304,6 +348,7 @@ export async function rotateDeviceRefreshToken(
           gt(deviceRefreshCredentials.expiresAt, now),
           isNull(deviceRefreshCredentials.revokedAt),
           isNull(identityDevices.revokedAt),
+          isNull(credentialRevocationIntents.id),
         ),
       )
       .limit(1);
@@ -354,6 +399,10 @@ export async function rotateDeviceRefreshToken(
       .limit(1);
     if (!users[0]) throw new Error("invalid_grant");
 
+    const offlineGrantState = await readOfflineGrantServerState(
+      tx as unknown as IdentityDb,
+      { userId: credential.userId, deviceId: credential.deviceId },
+    );
     return {
       accessToken,
       refreshToken,
@@ -365,6 +414,7 @@ export async function rotateDeviceRefreshToken(
         displayName: credential.displayName,
         publicKeyThumbprint: credential.publicKeyThumbprint,
       },
+      offlineGrantState,
     };
   });
 }
@@ -392,8 +442,17 @@ export async function revokeIdentityDevice(
   return db.transaction(async (tx) => {
     const revoked = await tx
       .update(identityDevices)
-      .set({ revokedAt: now })
-      .where(and(eq(identityDevices.id, input.deviceId), eq(identityDevices.userId, input.userId)))
+      .set({
+        revokedAt: now,
+        authEpoch: sql`${identityDevices.authEpoch} + 1`,
+      })
+      .where(
+        and(
+          eq(identityDevices.id, input.deviceId),
+          eq(identityDevices.userId, input.userId),
+          isNull(identityDevices.revokedAt),
+        ),
+      )
       .returning({ id: identityDevices.id });
     if (!revoked[0]) return false;
     await tx
@@ -417,16 +476,27 @@ export async function revokeIdentityDevice(
 
 export async function revokeAllIdentityDevices(
   db: IdentityDb,
-  input: { userId: string; reason: "password-reset" | "password-change" },
+  input: {
+    userId: string;
+    reason: "password-reset" | "password-change" | "account-revoked";
+  },
 ): Promise<number> {
   const now = new Date();
   return db.transaction(async (tx) => {
+    const advanced = await tx
+      .update(identityUsers)
+      .set({ authEpoch: sql`${identityUsers.authEpoch} + 1` })
+      .where(eq(identityUsers.id, input.userId))
+      .returning({ id: identityUsers.id });
+    if (!advanced[0]) return 0;
     const revoked = await tx
       .update(identityDevices)
-      .set({ revokedAt: now })
+      .set({
+        revokedAt: now,
+        authEpoch: sql`${identityDevices.authEpoch} + 1`,
+      })
       .where(and(eq(identityDevices.userId, input.userId), isNull(identityDevices.revokedAt)))
       .returning({ id: identityDevices.id });
-    if (revoked.length === 0) return 0;
     const deviceIds = revoked.map((device) => device.id);
     for (const deviceId of deviceIds) {
       await tx

@@ -15,6 +15,34 @@
       "when": 1785315600000,
       "tag": "0001_bind_refresh_client",
       "breakpoints": false
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785402000000,
+      "tag": "0002_supabase_auth_binding",
+      "breakpoints": false
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785405600000,
+      "tag": "0003_credential_revocation_intent",
+      "breakpoints": false
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785448800000,
+      "tag": "0004_auth_session_verifier",
+      "breakpoints": false
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785452400000,
+      "tag": "0005_auth_session_verifier_isolation",
+      "breakpoints": false
     }
   ]
 }

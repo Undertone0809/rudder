@@ -752,7 +752,10 @@ describe("localAccountAuthService", () => {
       publicKeyThumbprint: deviceKeys.thumbprint,
       nowMs: nowBase,
       trustedTimeMs: nowBase,
-      signOutEpoch: 0,
+      localSignOutEpoch: 0,
+      authSchemaEpoch: 2,
+      accountAuthEpoch: 0,
+      deviceAuthEpoch: 0,
       jti: randomUUID(),
     });
     let nowMs = nowBase + 10 * 60_000;

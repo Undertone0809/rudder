@@ -14,6 +14,9 @@
   "dependencies": {
     "@rudderhq/identity-core": "workspace:*",
     "@rudderhq/identity-db": "workspace:*",
+    "@supabase/auth-js": "2.111.0",
+    "@supabase/ssr": "0.12.4",
+    "@supabase/supabase-js": "2.111.0",
     "@vercel/functions": "^2.2.13",
     "better-auth": "1.6.23",
     "drizzle-orm": "^0.45.2",

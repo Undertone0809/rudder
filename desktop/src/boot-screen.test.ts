@@ -13,9 +13,21 @@ describe("desktop boot screen", () => {
 
     expect(html).toContain('data-boot-view="account_required"');
     expect(html).toContain('id="account-sheet" role="region" aria-labelledby="account-title">');
-    expect(html).toContain("Sign in to Rudder Account");
-    expect(html).toContain("Your work stays local.");
-    expect(html).toContain("window.rudderBoot.signIn()");
+    expect(html).toContain("Welcome to Rudder");
+    expect(html).toContain("Continue with Google");
+    expect(html).toContain("Continue with GitHub");
+    expect(html).toContain("Continue with email code");
+    expect(html).toContain('id="account-email"');
+    expect(html).toContain("Use password instead");
+    expect(html).toContain('passwordPanel.hidden = true');
+    expect(html).toContain('expanded ? "Use password instead" : "Use email code instead"');
+    expect(html).toContain("Forgot or need to set a password?");
+    expect(html).toContain("It does not upload Local Workspace content.");
+    expect(html).toContain("window.rudderBoot.signIn({");
+    expect(html).toContain('startSignIn("email_otp"');
+    expect(html).toContain('startSignIn("password_reset"');
+    expect(html).toContain('aria-label="Social sign in"');
+    expect(html).not.toContain('autocomplete="one-time-code"');
     expect(html).toContain('id="loading-view" aria-hidden="true" hidden');
   });
 

@@ -381,6 +381,11 @@ export function localAccountAuthService(db: Db, policy: LocalAccountExchangePoli
         nowMs: now.getTime(),
         lastTrustedTimeMs: offline.lastTrustedTimeMs,
         localSignOutEpoch: offline.localSignOutEpoch,
+        // A Local Workspace can be genuinely offline when the cloud schema
+        // epoch advances. Legacy grants remain bounded by their original
+        // signature, device proof, and expiry until the next online exchange;
+        // the Identity service rejects them for any online renewal.
+        allowLegacyOffline: true,
         // Durable consumption happens in the transaction below, after all
         // cryptographic and binding checks have passed.
         consumeNonce: () => true,

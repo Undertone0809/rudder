@@ -12,23 +12,22 @@ const macMemoryOnlyStorage: IdentitySafeStorage = {
 };
 
 /**
- * Current macOS artifacts are intentionally built without a Developer ID.
  * Electron safeStorage can synchronously open a blocking Keychain NSAlert in
- * those ad-hoc signed bundles before Rudder creates its first window.
+ * the unsigned development shell before Rudder creates its first window.
  *
- * Keep macOS fail-closed in both development and packaged validation: online
- * sessions remain process-only and no credential or Offline Grant is written
- * to disk. This also keeps local and CI verification independent of the
- * operator's unlocked login Keychain. When signing and notarization are
- * enabled, replace this with an immutable signed-build capability verified by
- * the release workflow.
+ * Keep only the development shell memory-only so local and CI startup remains
+ * independent of the operator's unlocked login Keychain. Packaged builds must
+ * use the platform vault: otherwise a successful Rudder Account sign-in is
+ * discarded on restart and the release cannot provide a durable device
+ * session. The credential vault still fails closed when Electron reports that
+ * encryption is unavailable.
  */
 export function resolveDesktopIdentitySafeStorage(options: {
   safeStorage: IdentitySafeStorage;
   isPackaged: boolean;
   platform: NodeJS.Platform;
 }): IdentitySafeStorage {
-  if (options.platform === "darwin") {
+  if (options.platform === "darwin" && !options.isPackaged) {
     return macMemoryOnlyStorage;
   }
   return options.safeStorage;

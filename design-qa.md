@@ -1,65 +1,44 @@
-# Chat Work Manifest Subagents — Design QA
+# Rudder Account Desktop Gate Design QA
 
-## Reference and implementation evidence
+- Source visual truth: `/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/codex-clipboard-9232fc6c-d00f-42c5-9900-2445d526097d.png`
+- Implementation screenshot: `/tmp/rudder-packaged-gate-final-82885003f.png`
+- Side-by-side evidence: `/tmp/rudder-login-ui-final-comparison.png`
+- Exact implementation source: `82885003f5f2b57bf5d582633cf1741bdf21c003`
+- State: packaged macOS Desktop, signed out, default email-code path, password panel collapsed
+- Source pixels: `3158 × 2260`
+- Implementation pixels: `3158 × 2034`
+- Normalization: each full screenshot was fit into a `1579 × 1130` comparison cell without cropping; the implementation capture corresponds to a `1579 × 1017` CSS viewport at device scale factor 2.
 
-- Codex list reference:
-  `/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/codex-clipboard-d6bf2e65-7a74-40c6-89e8-a01f8a19dae3.png`
-- Codex manifest reference:
-  `/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/codex-clipboard-e505e39d-77cd-457b-80c4-6d4216ea3195.png`
-- Rudder light manifest:
-  `/tmp/rudder-chat-work-manifest-subagents-final/manifest-subagents-light-1440x900.png`
-- Rudder light list:
-  `/tmp/rudder-chat-work-manifest-subagents-final/subagents-list-light-1440x900.png`
-- Rudder dark list:
-  `/tmp/rudder-chat-work-manifest-subagents-final/subagents-list-dark-1440x900.png`
-- Rudder narrow manifest:
-  `/tmp/rudder-chat-work-manifest-subagents-final/manifest-subagents-dark-narrow.png`
-- Full-view list comparison:
-  `/tmp/rudder-chat-work-manifest-subagents-final/reference-vs-rudder-list.png`
-- Focused manifest comparison:
-  `/tmp/rudder-chat-work-manifest-subagents-final/reference-vs-rudder-summary.png`
+## Findings
 
-The implementation evidence was captured from a real local Rudder API,
-embedded PostgreSQL database, Vite UI, and Chromium. Desktop captures use a
-1440×900 viewport; the compact capture uses 900×900. Reference crops were
-scaled to the implementation height only for side-by-side visual inspection.
+No actionable P0, P1, or P2 visual differences remain.
 
-## State coverage
+- Typography follows the reference hierarchy: heavy display heading, compact provider labels, readable muted supporting copy, and a smaller uppercase divider.
+- Spacing and layout retain the centered single-card composition, generous surrounding default background, consistent field/button rhythm, rounded corners, and restrained shadow.
+- Colors use Rudder's default warm neutral shell, near-white card, dark primary action, muted secondary text, and accessible control borders.
+- The official Rudder raster logo is used. Google and GitHub marks remain sharp and provider-specific.
+- Copy preserves the requested Google, GitHub, email-code primary path, password disclosure, and Local Workspace privacy promise.
 
-- Light: 2 Active and 4 Done, four Oreo avatars, long accessible name,
-  failed/interrupted terminal states, and list-to-detail navigation.
-- Live transition: an Active detail reaches Completed inside the same source
-  message and displays its final transcript response.
-- Dark: 0 Active and 6 Done after transition, with a stable Side Panel width.
-- Narrow: the compact `Subagents 6` manifest entry remains usable.
-- Persistence: reload, Side Panel hide/restore, and canonical detail-tab
-  deduplication were exercised.
+## Focused Region Evidence
 
-## Fidelity assessment
+The complete card is readable at the normalized scale, so a separate crop was unnecessary. The final packaged capture confirms the logo, both provider controls, divider, email field, primary email-code action, password disclosure, and privacy copy in one view.
 
-- Information architecture matches the Codex references: compact avatar/count
-  summary, then `Active · N` and `Done · N` groups with avatar, readable name,
-  status, and relative time.
-- Typography, spacing, radii, surfaces, shadows, and scrolling use Rudder's
-  existing design tokens. The Rudder shell remains intentionally rounder than
-  the Codex panel rather than introducing a foreign card style.
-- Existing Oreo avatar assets are used; no placeholder or approximated assets
-  were introduced.
-- Terminal failures and interruptions keep semantic visual treatment while
-  remaining inside the Done group.
-- Truncated labels retain the full value through title/accessibility text.
+## Interaction And Runtime Evidence
 
-## Comparison history
+- Initial password panel: hidden; toggle text `Use password instead`; `aria-expanded=false`.
+- Expanded password panel: visible; toggle text `Use email code instead`; `aria-expanded=true`.
+- Google login completed against production Rudder Account.
+- The exact packaged app reopened directly into Rudder using encrypted persisted credentials.
+- Packaged smoke completed without a surfaced browser-console failure.
 
-1. Initial dark capture was taken during the Side Panel width transition and
-   clipped the tab/list edge.
-2. The E2E capture now waits for the panel to exceed 300px and settle before
-   taking the screenshot.
-3. The post-fix dark capture is stable and the independent verifier returned
-   PASS.
+## Comparison History
 
-No unresolved P0, P1, or P2 design-fidelity issues remain. The only visible
-difference from Codex is the intentional use of Rudder's established shell
-radius, width, and surface tokens.
+1. Earlier packaged evidence showed the password actions expanded while the toggle still said `Use password instead`.
+2. The toggle state machine was corrected and the initial panel is now explicitly collapsed.
+3. The exact final package was rebuilt and recaptured. The post-fix screenshot shows the compact email-first composition from the reference, and black-box interaction confirms the expanded state is coherent.
+
+## Follow-up Polish
+
+- P3: The web reference includes Privacy and Terms links. The Desktop gate keeps the privacy promise but does not repeat those links; adding them later would improve parity but does not alter the requested login composition or block use.
 
 final result: passed

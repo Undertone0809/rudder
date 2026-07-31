@@ -2038,8 +2038,21 @@ async function runAccountGateScenario(mode) {
       undefined,
       { timeout: 30_000 },
     );
-    await page.getByRole("heading", { name: "Sign in to Rudder Account" }).waitFor();
-    await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
+    await page.getByRole("button", { name: "Continue with Google" }).waitFor();
+    await page.getByRole("button", { name: "Continue with GitHub" }).waitFor();
+    await page.getByRole("textbox", { name: "Email address" }).waitFor();
+    await page.getByRole("button", { name: "Continue with email code" }).waitFor();
+    const passwordToggle = page.getByRole("button", { name: /Use password instead/ });
+    await passwordToggle.click();
+    await page.getByText(
+      "Your password is entered securely in your browser, never in the Desktop app.",
+    ).waitFor();
+    await page.getByRole("button", { name: "Continue with password" }).waitFor();
+    await page.getByRole("button", { name: "Forgot or need to set a password?" }).waitFor();
+    await page.getByText(
+      "Signing in connects your identity and devices. It does not upload Local Workspace content.",
+    ).waitFor();
     assert.equal(
       await page.locator("body").getAttribute("data-stage"),
       "account_required",
