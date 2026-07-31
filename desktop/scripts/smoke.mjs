@@ -2045,11 +2045,29 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("button", { name: "Continue with email code" }).waitFor();
     const passwordToggle = page.getByRole("button", { name: /Use password instead/ });
     await passwordToggle.click();
-    await page.getByText(
-      "Your password is entered securely in your browser, never in the Desktop app.",
-    ).waitFor();
-    await page.getByRole("button", { name: "Continue with password" }).waitFor();
+    assert.equal(
+      await page.locator("#email-code-submit-button").isVisible(),
+      false,
+      "password mode must replace the email-code primary action instead of showing both",
+    );
+    await page.locator("#account-password").waitFor();
+    await page.getByRole("button", { name: "Sign in with password" }).waitFor();
     await page.getByRole("button", { name: "Forgot or need to set a password?" }).waitFor();
+    assert.equal(
+      await page.getByText(/password is entered securely in your browser/i).count(),
+      0,
+      "packaged Desktop must keep password entry native instead of directing it to a browser",
+    );
+    assert.equal(
+      await page.locator("#account-email-code").count(),
+      1,
+      "packaged Desktop must include its native email-code input",
+    );
+    assert.equal(
+      await page.locator("#password-reset-code").count(),
+      1,
+      "packaged Desktop must include its native password-reset input",
+    );
     await page.getByText(
       "Signing in connects your identity and devices. It does not upload Local Workspace content.",
     ).waitFor();

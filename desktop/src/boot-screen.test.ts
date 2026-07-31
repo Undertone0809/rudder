@@ -17,10 +17,12 @@ describe("desktop boot screen", () => {
     expect(html).toContain("Continue with Google");
     expect(html).toContain("Continue with GitHub");
     expect(html).toContain("Continue with email code");
+    expect(html).toContain('id="email-code-submit-button"');
     expect(html).toContain('id="account-email"');
     expect(html).toContain("Use password instead");
     expect(html).toContain('passwordPanel.hidden = true');
     expect(html).toContain('expanded ? "Use password instead" : "Use email code instead"');
+    expect(html).toContain("emailCodeSubmitButton.hidden = !expanded");
     expect(html).toContain("Forgot or need to set a password?");
     expect(html).toContain("It does not upload Local Workspace content.");
     expect(html).toContain("window.rudderBoot.signIn({");
