@@ -22,7 +22,9 @@ related_code:
 related_tests:
   - identity/src/identity.e2e.test.ts
   - packages/identity-db/src/device-authorization.test.ts
+  - desktop/src/boot-screen.test.ts
   - desktop/src/identity-client.test.ts
+  - desktop/src/identity-ipc.test.ts
   - desktop/src/identity-device-authorization.test.ts
   - desktop/src/identity-credential-vault.test.ts
   - desktop/src/identity-offline-grant.test.ts
@@ -64,14 +66,19 @@ control even though Supabase owns the root web session.
 
 ### Entry Points / Inputs
 
-- System-browser Desktop sign-in, loopback callback, Device Authorization,
-  refresh, device list/revoke, Desktop sign-out, and account-wide sign-out.
+- System-browser Google/GitHub sign-in, native Desktop email/password sign-in,
+  loopback callback, Device Authorization, refresh, device list/revoke,
+  Desktop sign-out, and account-wide sign-out.
 
 ### Product Logic Flow
 
-1. Provider OAuth completes only at Supabase/Rudder Identity.
-2. After a verified web session, Identity issues a different short-lived,
+1. Provider OAuth completes only at Supabase/Rudder Identity in the system
+   browser. Email OTP, password sign-in, and password recovery complete through
+   bounded Desktop IPC and server-side native-auth transactions.
+2. After verified root authentication, Identity issues a different short-lived,
    single-use Rudder authorization code bound to Desktop PKCE and installation.
+   Native email/password transactions do not return a Supabase cookie, access
+   token, or refresh token to Desktop.
 3. Device Authorization uses the same account/device boundary for fallback.
 4. Desktop stores only Rudder device credentials in secure OS storage and gives
    the renderer a bounded account/device summary.
@@ -89,8 +96,9 @@ control even though Supabase owns the root web session.
 
 ### Actor-Visible Input
 
-The operator sees system-browser login or a verification URL/code, device
-status, and explicit revoke/sign-out actions.
+The operator sees system-browser login for Google/GitHub, native Desktop forms
+for email/password, a verification URL/code only for Device Authorization,
+device status, and explicit revoke/sign-out actions.
 
 ### Operator-Visible Output
 
@@ -105,9 +113,11 @@ vault; renderer-visible state contains no secret.
 
 ### Canonical Scenarios
 
-1. Browser sign-in completes a second PKCE exchange into a Desktop device.
-2. Device Authorization approves the same bounded device credential.
-3. Revoking a device blocks its next refresh without deleting Local files.
+1. Browser OAuth sign-in completes a second PKCE exchange into a Desktop device.
+2. Native email/password sign-in returns only a Rudder PKCE code and does not
+   launch an external browser.
+3. Device Authorization approves the same bounded device credential.
+4. Revoking a device blocks its next refresh without deleting Local files.
 
 ### Invariants / Non-Goals
 

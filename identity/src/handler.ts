@@ -529,6 +529,7 @@ export async function identityHandler(
       || !validLoopbackRedirect(redirectUri)
       || codeChallengeMethod !== "S256"
       || !/^[A-Za-z0-9_-]{43,128}$/u.test(codeChallenge)
+      || audience.length < 1
       || audience.length > 256
     ) throw new Error("invalid_request");
   };
