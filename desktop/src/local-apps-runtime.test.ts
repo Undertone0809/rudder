@@ -693,6 +693,47 @@ describe("Desktop Local App runtime", () => {
     expect(spawnWatchdog).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps watchdog startup and cleanup deadlines referenced while start is pending", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "ignored" });
+    helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
+      callback?.(null);
+    });
+    const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      spawnWatchdog,
+      watchdogStartTimeoutMs: 60_001,
+      cleanupTimeoutMs: 60_002,
+    });
+
+    try {
+      const pendingStart = manager.start(definition.id);
+      await vi.waitFor(() => expect(spawnWatchdog).toHaveBeenCalledOnce());
+      const startupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 60_001);
+      expect(startupCallIndex).toBeGreaterThanOrEqual(0);
+      const startupTimer = timeoutSpy.mock.results[startupCallIndex]?.value as NodeJS.Timeout;
+      expect(startupTimer.hasRef()).toBe(true);
+
+      helper.emit("error", new Error("watchdog fixture failed"));
+      await vi.waitFor(() => {
+        expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 60_002)).toBe(true);
+      });
+      const cleanupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 60_002);
+      const cleanupTimer = timeoutSpy.mock.results[cleanupCallIndex]?.value as NodeJS.Timeout;
+      expect(cleanupTimer.hasRef()).toBe(true);
+
+      helper.emit("message", { type: "stopped" });
+      helper.emit("exit", 1, null);
+      await expect(pendingStart).rejects.toThrow("watchdog fixture failed");
+    } finally {
+      timeoutSpy.mockRestore();
+      await manager.shutdown();
+    }
+  });
+
   it("keeps ownership orphaned when a running watchdog exits without acknowledging cleanup", async () => {
     const { registry, definition } = await approvedFixture();
     let watchdog: ChildProcess | null = null;

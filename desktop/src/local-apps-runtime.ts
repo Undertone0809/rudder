@@ -475,7 +475,6 @@ export class LocalAppRuntimeManager {
         resolve(result);
       };
       const timeout = setTimeout(() => finish(false), remaining);
-      timeout.unref();
       void promise.then(() => finish(true), () => finish(false));
     });
   }
@@ -613,7 +612,6 @@ export class LocalAppRuntimeManager {
         () => finish(new Error("Local App watchdog did not start in time")),
         this.watchdogStartTimeoutMs,
       );
-      timeout.unref();
       const finish = (error?: Error, value?: { pid: number; pgid: number }) => {
         if (settled) return;
         settled = true;
