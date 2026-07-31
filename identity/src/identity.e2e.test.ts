@@ -873,6 +873,100 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     })).status).toBe(200);
   });
 
+  it("keeps native Desktop OTP sessions server-side and returns only a Rudder PKCE code", async () => {
+    const email = "native-desktop-otp@example.com";
+    const verifier = randomBytes(48).toString("base64url");
+    const redirectUri = "http://127.0.0.1:49998/callback";
+    expect((await post("/api/desktop/native-auth/email-otp/send", {
+      client_id: "rudder-desktop",
+      email,
+    })).status).toBe(200);
+
+    const authorization = await post("/api/desktop/native-auth/email-otp/verify", {
+      client_id: "rudder-desktop",
+      email,
+      token: rootIdentity.latestOtp(email),
+      redirect_uri: redirectUri,
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+      audience: "native-desktop-installation",
+    });
+    expect(authorization.status).toBe(200);
+    expect(authorization.headers.getSetCookie()).toEqual([]);
+    const authorizationBody = await authorization.json() as Record<string, unknown>;
+    expect(authorizationBody).toEqual({ code: expect.any(String) });
+    expect(JSON.stringify(authorizationBody)).not.toMatch(/access_token|refresh_token|session/iu);
+
+    const exchanged = await post("/api/desktop/token", {
+      grant_type: "authorization_code",
+      code: authorizationBody.code,
+      client_id: "rudder-desktop",
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+      installation_id: "native-desktop-installation",
+      device_name: "Native OTP Desktop",
+      sign_out_epoch: 0,
+    });
+    expect(exchanged.status).toBe(200);
+    expect(await exchanged.json()).toMatchObject({
+      access_token: expect.any(String),
+      refresh_token: expect.any(String),
+      account: { email },
+    });
+  });
+
+  it("keeps native Desktop password sign-in and reset off the browser session surface", async () => {
+    const email = "native-desktop-password@example.com";
+    expect((await post("/api/root-auth/password/sign-up", {
+      email,
+      password: "initial-native-password",
+    })).status).toBe(200);
+    expect((await post("/api/root-auth/email-otp/verify", {
+      email,
+      token: rootIdentity.latestOtp(email),
+      purpose: "email-verification",
+    })).status).toBe(200);
+
+    const authorizationInput = (verifier: string, suffix: string) => ({
+      client_id: "rudder-desktop",
+      redirect_uri: `http://127.0.0.1:49997/${suffix}`,
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+      audience: `native-password-${suffix}`,
+    });
+    const passwordVerifier = randomBytes(48).toString("base64url");
+    const passwordSignIn = await post("/api/desktop/native-auth/password/sign-in", {
+      ...authorizationInput(passwordVerifier, "sign-in"),
+      email,
+      password: "initial-native-password",
+    });
+    expect(passwordSignIn.status).toBe(200);
+    expect(passwordSignIn.headers.getSetCookie()).toEqual([]);
+    expect(await passwordSignIn.json()).toEqual({ code: expect.any(String) });
+
+    expect((await post("/api/desktop/native-auth/password/reset/request", {
+      client_id: "rudder-desktop",
+      email,
+    })).status).toBe(200);
+    const resetVerifier = randomBytes(48).toString("base64url");
+    const passwordReset = await post("/api/desktop/native-auth/password/reset/confirm", {
+      ...authorizationInput(resetVerifier, "reset"),
+      email,
+      token: rootIdentity.latestOtp(email),
+      newPassword: "replacement-native-password",
+    });
+    expect(passwordReset.status).toBe(200);
+    expect(passwordReset.headers.getSetCookie()).toEqual([]);
+    expect(await passwordReset.json()).toEqual({ code: expect.any(String) });
+
+    const oldPassword = await post("/api/desktop/native-auth/password/sign-in", {
+      ...authorizationInput(randomBytes(48).toString("base64url"), "old-password"),
+      email,
+      password: "initial-native-password",
+    });
+    expect(oldPassword.status).toBe(401);
+  });
+
   it("uses Supabase browser identity only to issue Rudder Desktop PKCE credentials", async () => {
     const email = "desktop-pkce@example.com";
     const cookie = await otpSignIn(email);

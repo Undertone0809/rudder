@@ -188,7 +188,7 @@ The renderer receives only a bounded account/session summary.
 
 Desktop uses:
 
-- system-browser Authorization Code + PKCE;
+- system-browser Authorization Code + PKCE for Google and GitHub OAuth only;
 - a main-process ephemeral loopback callback;
 - Device Authorization as fallback and the CLI-compatible path;
 - Electron `safeStorage` or a platform-specific secure helper;
@@ -200,6 +200,16 @@ verified, Rudder Identity maps the Supabase `sub` to the stable Rudder subject
 and issues its own one-time Desktop authorization code to the loopback
 callback. A Supabase authorization code is never used as a Desktop code, and
 Desktop never stores a Supabase web refresh token.
+
+Email OTP, password sign-in, forgot password, and OTP password reset remain
+native inside Desktop. The renderer sends only bounded credential input to the
+Electron main process, which submits it over HTTPS to Rudder Identity's
+Desktop-native auth transaction endpoints. Supabase verification and web
+session material stay server-side; the response contains no Supabase cookie,
+access token, or refresh token. On success, Identity returns only a short-lived,
+single-use Rudder Desktop authorization code bound to the installation,
+loopback redirect, and PKCE challenge. Native email and password actions never
+invoke the system browser or fall back to browser Device Authorization.
 
 After Rudder Identity login, Desktop requests a short-lived, audience-bound,
 one-time Local Server exchange code. The Local Server atomically redeems it,
@@ -414,6 +424,9 @@ legacy Local claim are owned by `IDENTITY.SERVER.EXCHANGE.001` instead.
 8. Preserve the separate Rudder Desktop Authorization Code + PKCE flow,
    rotating device credentials, JWKS, one-time audience-bound Local Server
    exchange, Local Workspace claim, security events, and custom limits.
+   Google/GitHub continue through the system browser; OTP/password/recovery use
+   Desktop-native Identity transactions that discard Supabase web session
+   cookies and return only a Rudder PKCE code.
 9. Replace the Better Auth Device Authorization plugin endpoints with
    Rudder-owned device-code endpoints. Approval requires a current Supabase web
    user; polling issues only a Rudder device session.
@@ -569,7 +582,9 @@ and fresh-install/update gates below.
   complete development Supabase variables select real Auth; partial variables
   fail; preview/Canary/Stable without hosted configuration fail closed.
 - Desktop black-box PKCE, vault persistence, Linux insecure-vault fallback,
-  offline grant, renderer boundary, and sign-out tests.
+  offline grant, renderer boundary, and sign-out tests. Instrument the OS
+  browser handoff and prove Google/GitHub invoke it while OTP, password,
+  forgot-password, and reset-password flows do not.
 - Real Google, GitHub, and Resend smoke using dedicated non-personal test
   accounts/mailboxes.
 - Supabase Dashboard verification for the unique user and linked identities,

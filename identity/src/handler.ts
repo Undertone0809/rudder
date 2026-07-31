@@ -142,6 +142,16 @@ function rootIdentityContext(
   };
 }
 
+function nativeDesktopRootIdentityContext(req: IncomingMessage): RootIdentityRequestContext {
+  return {
+    requestHeaders: nodeHeaders(req),
+    // Supabase may emit a web session while verifying credentials. Native
+    // Desktop auth deliberately discards it and returns only a Rudder-owned,
+    // single-use PKCE authorization code.
+    setCookies() {},
+  };
+}
+
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let body = "";
   for await (const chunk of req) {
@@ -508,6 +518,39 @@ export async function identityHandler(
   // Static legal and bootstrap pages above intentionally remain deployable
   // before production OAuth and database credentials exist.
   const runtime = getIdentityRuntime(options);
+  const validateNativeDesktopAuthorization = (body: Record<string, unknown>): void => {
+    const clientId = stringField(body, "client_id");
+    const redirectUri = stringField(body, "redirect_uri");
+    const codeChallenge = stringField(body, "code_challenge");
+    const codeChallengeMethod = stringField(body, "code_challenge_method");
+    const audience = stringField(body, "audience");
+    if (
+      !runtime.config.deviceClientIds.has(clientId)
+      || !validLoopbackRedirect(redirectUri)
+      || codeChallengeMethod !== "S256"
+      || !/^[A-Za-z0-9_-]{43,128}$/u.test(codeChallenge)
+      || audience.length > 256
+    ) throw new Error("invalid_request");
+  };
+  const issueNativeDesktopCode = async (
+    body: Record<string, unknown>,
+    principal: RootIdentityPrincipal,
+  ): Promise<string> => {
+    validateNativeDesktopAuthorization(body);
+    const clientId = stringField(body, "client_id");
+    const redirectUri = stringField(body, "redirect_uri");
+    const codeChallenge = stringField(body, "code_challenge");
+    const audience = stringField(body, "audience");
+    const binding = await bindRootPrincipal(runtime, principal);
+    const authorization = await issueDesktopAuthorizationCode(runtime.db, {
+      userId: binding.userId,
+      clientId,
+      redirectUri,
+      codeChallenge,
+      audience,
+    });
+    return authorization.code;
+  };
   const recovery = recoverCredentialRevocationIntents(runtime.db, {
     claimOwner: credentialRecoveryWorkerId,
     maxClaims: 1,
@@ -601,6 +644,139 @@ export async function identityHandler(
       }));
     } catch {
       sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/email-otp/send") {
+    try {
+      const body = await readJson(req);
+      if (!runtime.config.deviceClientIds.has(stringField(body, "client_id"))) {
+        throw new Error("invalid_request");
+      }
+      await runtime.rootIdentity.sendEmailOtp(nativeDesktopRootIdentityContext(req), {
+        email: stringField(body, "email"),
+      });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      if (error instanceof RootIdentityError) sendRootIdentityError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/email-otp/verify") {
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      const principal = await runtime.rootIdentity.verifyEmailOtp(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email: stringField(body, "email"),
+          token: stringField(body, "token"),
+          purpose: "sign-in",
+        },
+      );
+      sendJson(res, 200, { code: await issueNativeDesktopCode(body, principal) });
+    } catch (error) {
+      if (error instanceof RootIdentityError) sendRootIdentityError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/sign-in") {
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      const principal = await runtime.rootIdentity.signInWithPassword(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email: stringField(body, "email"),
+          password: stringField(body, "password"),
+        },
+      );
+      sendJson(res, 200, { code: await issueNativeDesktopCode(body, principal) });
+    } catch (error) {
+      if (error instanceof RootIdentityError) sendRootIdentityError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/reset/request") {
+    try {
+      const body = await readJson(req);
+      if (!runtime.config.deviceClientIds.has(stringField(body, "client_id"))) {
+        throw new Error("invalid_request");
+      }
+      await runtime.rootIdentity.requestPasswordReset(nativeDesktopRootIdentityContext(req), {
+        email: stringField(body, "email"),
+      });
+    } catch (error) {
+      if (!(error instanceof RootIdentityError)) {
+        sendJson(res, 400, { error: "invalid_request" });
+        return;
+      }
+      // Keep recovery account-enumeration resistant for valid Desktop clients.
+    }
+    sendJson(res, 200, { success: true });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/reset/confirm") {
+    let intent:
+      | Awaited<ReturnType<typeof beginCredentialRevocationIntent>>
+      | undefined;
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      const principal = await runtime.rootIdentity.resetPasswordWithOtp(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email: stringField(body, "email"),
+          token: stringField(body, "token"),
+          newPassword: stringField(body, "newPassword"),
+        },
+        async (verifiedPrincipal) => {
+          const binding = await bindRootPrincipal(runtime, verifiedPrincipal);
+          intent = await beginCredentialRevocationIntent(runtime.db, {
+            userId: binding.userId,
+            rootIdentityUserId: verifiedPrincipal.id,
+            operation: "password-reset",
+            deviceScope: "all",
+          });
+        },
+      );
+      const binding = await bindRootPrincipal(runtime, principal);
+      if (!intent) throw new Error("credential_revocation_intent_missing");
+      await markCredentialProviderMutationComplete(runtime.db, intent.id);
+      const result = await finishPasswordSecurityMutation(
+        runtime,
+        req,
+        intent.id,
+        binding.userId,
+        "password.reset",
+        "all",
+      );
+      if (!result.intentCompleted) {
+        sendJson(res, 503, {
+          error: "rudder_credential_revocation_pending",
+          passwordUpdated: true,
+        });
+        return;
+      }
+      intent = undefined;
+      sendJson(res, 200, { code: await issueNativeDesktopCode(body, principal) });
+    } catch (error) {
+      if (intent) {
+        await markCredentialRevocationFailed(runtime.db, {
+          intentId: intent.id,
+          stage: "provider",
+          error: error instanceof Error ? error.message : "unknown_error",
+        }).catch(() => undefined);
+      }
+      sendCredentialMutationError(res, error);
     }
     return;
   }

@@ -350,4 +350,148 @@ describe("Desktop Identity client", () => {
     expect(clear).toHaveBeenCalledOnce();
     expect(signOut).toHaveBeenCalledOnce();
   });
+
+  it("keeps email OTP native and exchanges only a Rudder PKCE code", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const write = vi.fn();
+    const fetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/desktop/native-auth/email-otp/send") {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (url.pathname === "/api/desktop/native-auth/password/reset/request") {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (url.pathname === "/api/desktop/native-auth/email-otp/verify") {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          client_id: "rudder-desktop",
+          email: "river@example.com",
+          token: "123456",
+          code_challenge_method: "S256",
+          audience: "installation-1",
+        });
+        expect(body.redirect_uri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/u);
+        expect(init?.headers).toEqual({ "content-type": "application/json" });
+        return new Response(JSON.stringify({ code: "rudder-one-time-authorization-code" }), { status: 200 });
+      }
+      if (url.pathname === "/api/desktop/token") {
+        return new Response(JSON.stringify({
+          access_token: "access-new",
+          token_type: "Bearer",
+          expires_in: 900,
+          refresh_token: "refresh-new",
+          account: { id: "account-1", email: "river@example.com", name: "River", image: null },
+          device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected Identity request: ${url.pathname}`);
+    });
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write, clear: vi.fn() },
+      openExternal,
+      fetch,
+    });
+
+    await client.sendEmailOtp("river@example.com");
+    await client.requestPasswordReset("river@example.com");
+    await expect(client.nativeSignIn({
+      method: "email_otp",
+      email: "river@example.com",
+      token: "123456",
+    })).resolves.toMatchObject({ account: { id: "account-1" }, device: { id: "device-1" } });
+
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({ refreshToken: "refresh-new" }));
+    expect(fetch.mock.calls.map(([input]) => new URL(String(input)).pathname)).toEqual([
+      "/api/desktop/native-auth/email-otp/send",
+      "/api/desktop/native-auth/password/reset/request",
+      "/api/desktop/native-auth/email-otp/verify",
+      "/api/desktop/token",
+    ]);
+  });
+
+  it.each([
+    [{ method: "password" as const, email: "river@example.com", password: "valid-password" }, "/api/desktop/native-auth/password/sign-in"],
+    [{
+      method: "password_reset" as const,
+      email: "river@example.com",
+      token: "123456",
+      newPassword: "replacement-password",
+    }, "/api/desktop/native-auth/password/reset/confirm"],
+  ])("keeps %s native without an OS browser handoff", async (input, expectedPath) => {
+    const openExternal = vi.fn(async () => undefined);
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ code: "rudder-one-time-authorization-code" }),
+        { status: 200 },
+      ))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: "access-new",
+        token_type: "Bearer",
+        expires_in: 900,
+        refresh_token: "refresh-new",
+        account: { id: "account-1", email: "river@example.com", name: "River", image: null },
+        device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+      }), { status: 200 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal,
+      fetch,
+    });
+
+    await client.nativeSignIn(input);
+
+    expect(new URL(String(fetch.mock.calls[0]?.[0])).pathname).toBe(expectedPath);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("continues Google OAuth in the system browser with PKCE loopback", async () => {
+    const fetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/desktop/sign-in-intent") {
+        return new Response(JSON.stringify({ intent: "opaque_intent_with_enough_random_material" }), { status: 200 });
+      }
+      if (url.pathname === "/api/desktop/token") {
+        return new Response(JSON.stringify({
+          access_token: "access-new",
+          token_type: "Bearer",
+          expires_in: 900,
+          refresh_token: "refresh-new",
+          account: { id: "account-1", email: "river@example.com", name: "River", image: null },
+          device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected Identity request: ${url.pathname}`);
+    });
+    const openExternal = vi.fn(async (target: string) => {
+      const authorize = new URL(target);
+      expect(authorize.origin).toBe("https://accounts.rudderhq.dev");
+      expect(authorize.pathname).toBe("/api/desktop/authorize");
+      expect(authorize.searchParams.get("login_intent")).toBe("opaque_intent_with_enough_random_material");
+      const callback = new URL(authorize.searchParams.get("redirect_uri")!);
+      callback.searchParams.set("code", "browser-rudder-authorization-code");
+      callback.searchParams.set("state", authorize.searchParams.get("state")!);
+      await globalThis.fetch(callback);
+    });
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal,
+      fetch,
+    });
+
+    await expect(client.signIn({ method: "google" })).resolves.toMatchObject({
+      account: { id: "account-1" },
+    });
+    expect(openExternal).toHaveBeenCalledOnce();
+  });
 });
