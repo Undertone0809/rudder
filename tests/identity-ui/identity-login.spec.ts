@@ -1,4 +1,26 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { identityClientScript } from "../../identity/src/client-script.js";
+import { deviceApprovalPage } from "../../identity/src/pages.js";
+
+async function openSignedInDeviceApproval(
+  page: Page,
+  userCode: string,
+): Promise<string> {
+  await page.route("**/identity.js*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/javascript",
+      body: identityClientScript,
+    }));
+  await page.route("**/device?user_code=*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: deviceApprovalPage(userCode),
+    }));
+  await page.goto(`/device?user_code=${encodeURIComponent(userCode)}`);
+  return userCode;
+}
 
 test.describe("Rudder Account login UI", () => {
   test("shows one focused login task at a time and remains responsive", async ({ page }) => {
@@ -232,4 +254,87 @@ test.describe("Rudder Account login UI", () => {
       expect(requestProvider).toBe(provider.toLowerCase());
     });
   }
+});
+
+test.describe("Rudder Account device approval UI", () => {
+  test("locks both actions while approving, then replaces them with the success state", async ({
+    page,
+  }) => {
+    const userCode = await openSignedInDeviceApproval(
+      page,
+      "APRV-2F9K",
+    );
+    let approveRequests = 0;
+    await page.route("**/api/desktop/device-code/approve", async (route) => {
+      approveRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, status: "approved" }),
+      });
+    });
+
+    await expect(page.getByRole("heading", { name: "Confirm this device" })).toBeVisible();
+    await expect(page.locator("#device-user-code")).toHaveText(userCode);
+    const approve = page.getByRole("button", { name: "Approve device" });
+    const deny = page.getByRole("button", { name: "Deny request" });
+    await approve.click();
+
+    await expect(page.getByRole("button", { name: "Approving…" })).toBeDisabled();
+    await expect(deny).toBeDisabled();
+    await expect(page.getByRole("status")).toHaveText("Approving this device…");
+    await expect(page.locator("#device-decision")).toBeHidden();
+    await expect(page.locator("#device-result")).toHaveAttribute("data-state", "approved");
+    await expect(page.locator("#device-result")).toHaveAttribute("role", "status");
+    await expect(page.locator("#device-result")).toHaveAttribute("aria-live", "polite");
+    await expect(page.locator("#device-result")).toHaveAttribute("aria-atomic", "true");
+    await expect(page.getByRole("heading", { name: "Device approved" })).toBeVisible();
+    const returnToRudder = page.getByRole("button", { name: "Return to Rudder" });
+    await expect(returnToRudder).toBeFocused();
+    expect(approveRequests).toBe(1);
+
+    await page.evaluate(() => {
+      window.close = () => undefined;
+    });
+    await returnToRudder.click();
+    await expect(page.locator("#auth-status")).toHaveText(
+      "You can close this tab and return to Rudder.",
+    );
+  });
+
+  test("shows a denied result without leaving reusable decision controls", async ({ page }) => {
+    await openSignedInDeviceApproval(page, "DENY-7M3Q");
+    await page.route("**/api/desktop/device-code/deny", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, status: "denied" }),
+      }));
+
+    await page.getByRole("button", { name: "Deny request" }).click();
+
+    await expect(page.locator("#device-decision")).toBeHidden();
+    await expect(page.locator("#device-result")).toHaveAttribute("data-state", "denied");
+    await expect(page.getByRole("heading", { name: "Request denied" })).toBeVisible();
+    await expect(page.getByText("This device was not granted access.")).toBeVisible();
+  });
+
+  test("restores both actions after an expired-request error", async ({ page }) => {
+    await openSignedInDeviceApproval(page, "EXPR-4T8V");
+    await page.route("**/api/desktop/device-code/approve", (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "expired_token" }),
+      }));
+
+    await page.getByRole("button", { name: "Approve device" }).click();
+
+    await expect(page.getByRole("status")).toHaveText("This device request is invalid or expired.");
+    await expect(page.getByRole("status")).toHaveAttribute("data-state", "error");
+    await expect(page.getByRole("button", { name: "Approve device" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Deny request" })).toBeEnabled();
+    await expect(page.locator("#device-result")).toBeHidden();
+  });
 });
