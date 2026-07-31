@@ -47,6 +47,17 @@ async function getShellSize(modal: Locator): Promise<ShellSize> {
   return { width: box!.width, height: box!.height };
 }
 
+async function expectShellWithinViewport(page: Page, modal: Locator) {
+  const box = await modal.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+}
+
 async function expectStableSettingsLayout(modal: Locator, reference: ShellSize) {
   const settingsPage = modal.locator('[data-slot="settings-page"]');
   const main = modal.locator("#main-content");
@@ -110,11 +121,16 @@ test.describe("Settings layout", () => {
     const modal = await openSettings(page, organization);
     const reference = await getShellSize(modal);
     const backgroundWorkspace = page.getByTestId("workspace-shell");
+    const backdropFilter = await page.getByTestId("settings-modal-backdrop").evaluate(
+      (element) => getComputedStyle(element).backdropFilter,
+    );
 
-    expect(reference.width).toBeGreaterThanOrEqual(1098);
-    expect(reference.width).toBeLessThanOrEqual(1102);
-    expect(reference.height).toBeGreaterThanOrEqual(758);
-    expect(reference.height).toBeLessThanOrEqual(762);
+    expect(backdropFilter).toContain("blur(30px)");
+    expect(reference.width).toBeGreaterThanOrEqual(1406);
+    expect(reference.width).toBeLessThanOrEqual(1410);
+    expect(reference.height).toBeGreaterThanOrEqual(850);
+    expect(reference.height).toBeLessThanOrEqual(854);
+    await expectShellWithinViewport(page, modal);
     const sidebarWidth = await modal.getByTestId("workspace-sidebar").evaluate((element) => element.getBoundingClientRect().width);
     expect(sidebarWidth).toBeGreaterThanOrEqual(182);
     expect(sidebarWidth).toBeLessThanOrEqual(186);
@@ -198,6 +214,7 @@ test.describe("Settings layout", () => {
     const organization = await createOrganization(page, "SLM");
     const modal = await openSettings(page, organization);
     const reference = await getShellSize(modal);
+    await expectShellWithinViewport(page, modal);
     const navigation = modal.getByTestId("settings-modal-navigation");
     const openNavigation = modal.getByRole("button", { name: "Open sidebar" });
 
@@ -216,6 +233,7 @@ test.describe("Settings layout", () => {
     await expect(openNavigation).toBeFocused();
     await expect(modal.getByRole("heading", { name: "Appearance", level: 1 })).toBeVisible();
     await expectStableSettingsLayout(modal, reference);
+    await expectShellWithinViewport(page, modal);
 
     await page.screenshot({
       path: testInfo.outputPath("settings-layout-mobile.png"),
@@ -233,5 +251,33 @@ test.describe("Settings layout", () => {
     await expect(modal).toHaveCount(0);
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey ?? organization.issuePrefix}/dashboard$`));
     await expect(page.locator('[data-settings-trigger="true"]').first()).toBeFocused();
+  });
+
+  test("restores the glass backdrop in the dark macOS desktop shell", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {},
+      });
+      window.localStorage.setItem("rudder.theme", "dark");
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const organization = await createOrganization(page, "SLG");
+    const modal = await openSettings(page, organization);
+    const backdrop = page.getByTestId("settings-modal-backdrop");
+
+    await expect(modal).toBeVisible();
+    await expect(backdrop).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ({
+      dark: document.documentElement.classList.contains("dark"),
+      macOS: document.documentElement.classList.contains("desktop-shell-macos"),
+    }))).toEqual({ dark: true, macOS: true });
+    const backdropFilter = await backdrop.evaluate((element) => getComputedStyle(element).backdropFilter);
+    expect(backdropFilter).toContain("blur(34px)");
+
+    await page.screenshot({
+      path: testInfo.outputPath("settings-layout-dark-macos.png"),
+      fullPage: false,
+    });
   });
 });

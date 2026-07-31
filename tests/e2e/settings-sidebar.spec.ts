@@ -313,13 +313,13 @@ test.describe("Settings sidebar", () => {
     expect(modalBox).not.toBeNull();
     expect(viewport).not.toBeNull();
     expect(modalBox!.width).toBeGreaterThan(940);
-    expect(modalBox!.width).toBeLessThanOrEqual(Math.min(1180, viewport!.width - 32));
+    expect(modalBox!.width).toBeLessThanOrEqual(Math.min(1440, viewport!.width - 32));
     expect(modalBox!.y).toBeLessThan(viewport!.height * 0.4);
 
     const textTransform = await personalLabel.evaluate((element) => getComputedStyle(element).textTransform);
     expect(textTransform).not.toBe("uppercase");
     const backdropFilter = await backdrop.evaluate((element) => getComputedStyle(element).backdropFilter);
-    expect(backdropFilter).toBe("none");
+    expect(backdropFilter).toContain("blur(30px)");
     await expect(workspaceShell).toBeVisible();
 
     const clickX = Math.max(8, modalBox!.x - 20);

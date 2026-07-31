@@ -256,7 +256,7 @@ export function DesktopSettingsModalFrame({
           ref={shellRef}
           aria-describedby={undefined}
           tabIndex={-1}
-          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1100px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
+          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
           onOpenAutoFocus={(event) => {
             if (!isMobile) return;
             event.preventDefault();

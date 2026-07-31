@@ -1486,25 +1486,25 @@
   }
 
   .settings-modal-backdrop {
-    background: rgb(13 14 16 / 0.52);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: rgb(31 27 23 / 0.18);
+    -webkit-backdrop-filter: blur(30px) saturate(128%);
+    backdrop-filter: blur(30px) saturate(128%);
   }
 
   html.desktop-shell-macos .settings-modal-backdrop {
-    background: rgb(13 14 16 / 0.46);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: rgb(244 241 236 / 0.18);
+    -webkit-backdrop-filter: blur(36px) saturate(118%);
+    backdrop-filter: blur(36px) saturate(118%);
   }
 
   html.dark.desktop-shell-macos .settings-modal-backdrop {
-    background: rgb(13 14 16 / 0.54);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: rgb(13 14 16 / 0.22);
+    -webkit-backdrop-filter: blur(34px) saturate(112%);
+    backdrop-filter: blur(34px) saturate(112%);
   }
 
   .settings-modal-shell {
-    height: min(760px, calc(100dvh - 1.5rem));
+    height: min(960px, calc(100dvh - 1.5rem));
     border: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
     background: var(--surface-shell);
     box-shadow: var(--shadow-lg);
@@ -1512,7 +1512,7 @@
 
   @media (min-width: 768px) {
     .settings-modal-shell {
-      height: min(760px, calc(100dvh - 5rem));
+      height: min(960px, calc(100dvh - 3rem));
     }
   }
 

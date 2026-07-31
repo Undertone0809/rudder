@@ -1669,7 +1669,7 @@ test.describe("Workspace shell", () => {
     expect(viewport).not.toBeNull();
     expect(modalSidebarBox).not.toBeNull();
     expect(modalBox!.width).toBeGreaterThan(940);
-    expect(modalBox!.width).toBeLessThan(viewport!.width - 120);
+    expect(modalBox!.width).toBeLessThanOrEqual(viewport!.width - 32);
     expect(modalBox!.y).toBeGreaterThan(8);
     expect(modalSidebarBox!.width).toBeLessThan(260);
 
