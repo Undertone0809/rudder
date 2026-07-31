@@ -60,7 +60,10 @@ type RuntimeRecord = {
 
 type WatchdogLifecycle = {
   stoppedAcknowledged: boolean;
+  disconnected: boolean;
   exited: boolean;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
   spawnedPromise: Promise<void>;
   exitPromise: Promise<void>;
   cleanupPromise: Promise<void>;
@@ -450,7 +453,10 @@ export class LocalAppRuntimeManager {
     const cleanupPromise = new Promise<void>((resolve) => { resolveCleanup = resolve; });
     return {
       stoppedAcknowledged: false,
+      disconnected: false,
       exited: false,
+      exitCode: null,
+      exitSignal: null,
       spawnedPromise,
       exitPromise,
       cleanupPromise,
@@ -461,7 +467,15 @@ export class LocalAppRuntimeManager {
   }
 
   private noteWatchdogCleanupProgress(lifecycle: WatchdogLifecycle): void {
-    if (lifecycle.stoppedAcknowledged && lifecycle.exited) lifecycle.resolveCleanup();
+    if (this.watchdogCleanupProven(lifecycle)) lifecycle.resolveCleanup();
+  }
+
+  private watchdogCleanupProven(lifecycle: WatchdogLifecycle): boolean {
+    if (!lifecycle.exited) return false;
+    if (lifecycle.stoppedAcknowledged) return true;
+    // A disconnected watchdog cannot send `stopped`; its runner exits 0 only
+    // after the disconnect-triggered owned-tree cleanup completes.
+    return lifecycle.disconnected && lifecycle.exitCode === 0 && lifecycle.exitSignal === null;
   }
 
   private waitUntilDeadline(promise: Promise<unknown>, deadline: number): Promise<boolean> {
@@ -513,14 +527,16 @@ export class LocalAppRuntimeManager {
     const lifecycle = record.watchdog;
     const deadline = Date.now() + this.cleanupTimeoutMs;
 
-    if (record.helper?.stdin) {
+    // IPC is the primary stop protocol. Let the watchdog prove that its owned
+    // process tree stopped before using the parent-side fallback: on Windows,
+    // concurrent taskkill calls can make an already-stopped tree look unproven.
+    const canRequestWatchdogStop = Boolean(record.helper?.connected && typeof record.helper.send === "function");
+    if (canRequestWatchdogStop && record.helper) {
       try {
-        record.helper.stdin.end();
+        record.helper.send({ type: "stop" });
       } catch (error) {
-        errors.push(new Error("Local App watchdog control pipe could not be closed", { cause: error }));
+        errors.push(new Error("Local App watchdog stop request could not be sent", { cause: error }));
       }
-    } else if (record.helper) {
-      errors.push(new Error("Local App watchdog control pipe is unavailable"));
     }
 
     if (!record.pgid && lifecycle && !lifecycle.exited) {
@@ -531,8 +547,34 @@ export class LocalAppRuntimeManager {
       ]), deadline);
     }
 
-    let processGroupProven = record.pgid === null;
-    if (record.pgid !== null) {
+    // A disconnected watchdog also starts its own cleanup. Wait for either
+    // proof or an exit before considering a parent-side fallback; `stopped`
+    // alone is not proof until the watchdog has exited.
+    if (lifecycle && !this.watchdogCleanupProven(lifecycle)) {
+      await this.waitUntilDeadline(Promise.race([
+        lifecycle.cleanupPromise,
+        lifecycle.exitPromise,
+      ]), deadline);
+    }
+
+    let watchdogProven = lifecycle === null;
+    if (lifecycle) watchdogProven = this.watchdogCleanupProven(lifecycle);
+
+    // Never race a still-running watchdog with parent-side tree termination.
+    // A watchdog that has exited without proof cannot be trusted, but it is no
+    // longer concurrently terminating the owned process group.
+    const canUseParentFallback = lifecycle === null || lifecycle.exited;
+    let processGroupProven = record.pgid === null || watchdogProven;
+    if (!watchdogProven && canUseParentFallback && lifecycle === null && record.helper?.stdin) {
+      try {
+        record.helper.stdin.end();
+      } catch (error) {
+        errors.push(new Error("Local App watchdog control pipe could not be closed", { cause: error }));
+      }
+    } else if (!watchdogProven && canUseParentFallback && lifecycle === null && record.helper) {
+      errors.push(new Error("Local App watchdog control pipe is unavailable"));
+    }
+    if (!watchdogProven && canUseParentFallback && record.pgid !== null) {
       try {
         await this.processPlatform.terminate(record.pgid);
         processGroupProven = true;
@@ -540,16 +582,10 @@ export class LocalAppRuntimeManager {
         errors.push(new Error("Local App process-group termination could not be verified", { cause: error }));
       }
     }
-
-    let watchdogProven = lifecycle === null;
-    if (lifecycle) {
-      if (!lifecycle.stoppedAcknowledged || !lifecycle.exited) {
-        await this.waitUntilDeadline(lifecycle.cleanupPromise, deadline);
-      }
-      watchdogProven = lifecycle.stoppedAcknowledged && lifecycle.exited;
-      if (!watchdogProven) {
-        errors.push(new Error("Local App watchdog did not acknowledge cleanup and exit within the bounded timeout"));
-      }
+    if (!watchdogProven && lifecycle) {
+      errors.push(new Error(lifecycle.exited
+        ? "Local App watchdog exited without verified cleanup"
+        : "Local App watchdog did not prove cleanup and exit within the bounded timeout"));
     }
 
     if (processGroupProven && watchdogProven && errors.length === 0) return { proven: true };
@@ -653,8 +689,14 @@ export class LocalAppRuntimeManager {
           this.noteWatchdogCleanupProgress(lifecycle);
         }
       });
+      helper.once("disconnect", () => {
+        lifecycle.disconnected = true;
+        this.noteWatchdogCleanupProgress(lifecycle);
+      });
       helper.once("exit", (code, signal) => {
         lifecycle.exited = true;
+        lifecycle.exitCode = code;
+        lifecycle.exitSignal = signal;
         lifecycle.resolveExit();
         this.noteWatchdogCleanupProgress(lifecycle);
         finish(new Error(`Local App watchdog exited before startup (${signal ?? code ?? "unknown"})`));

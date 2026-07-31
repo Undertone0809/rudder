@@ -640,15 +640,217 @@ describe("Desktop Local App runtime", () => {
     expect((await ownershipManager.status(unowned.definition.id)).status).toBe("failed");
   });
 
+  it("accepts an explicit watchdog stop acknowledgement before using Windows fallback cleanup", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
+    (helper as unknown as { connected: boolean }).connected = true;
+    const messages: unknown[] = [];
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      messages.push(message);
+      const typed = message as { type?: string };
+      if (typed.type === "start") {
+        queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
+      }
+      if (typed.type === "stop") {
+        queueMicrotask(() => {
+          helper.emit("message", { type: "stopped" });
+          helper.emit("exit", 0, null);
+        });
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+      verifyListenerOwnership: vi.fn(async () => false),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("readiness");
+    expect(messages).toContainEqual({ type: "stop" });
+    expect(helper.stdin.end).not.toHaveBeenCalled();
+    expect(processPlatform.terminate).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "failed",
+      pid: null,
+      pgid: null,
+    });
+  });
+
+  it("accepts a disconnecting Windows watchdog's clean exit without parent fallback", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
+    (helper as unknown as { connected: boolean }).connected = true;
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as { type?: string };
+      if (typed.type === "start") {
+        queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
+        setTimeout(() => {
+          (helper as unknown as { connected: boolean }).connected = false;
+          helper.emit("disconnect");
+        }, 200);
+        setTimeout(() => {
+          helper.emit("exit", 0, null);
+        }, 275);
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+      verifyListenerOwnership: vi.fn(async () => false),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 200,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("readiness");
+    expect(helper.stdin.end).not.toHaveBeenCalled();
+    expect(processPlatform.terminate).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "failed",
+      pid: null,
+      pgid: null,
+    });
+  });
+
+  it("waits for a Windows watchdog exit after it acknowledges cleanup before fallback", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
+    (helper as unknown as { connected: boolean }).connected = true;
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as { type?: string };
+      if (typed.type === "start") {
+        queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
+      }
+      if (typed.type === "stop") {
+        queueMicrotask(() => helper.emit("message", { type: "stopped" }));
+        setTimeout(() => helper.emit("exit", 0, null), 25);
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+      verifyListenerOwnership: vi.fn(async () => false),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 200,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("readiness");
+    expect(helper.stdin.end).not.toHaveBeenCalled();
+    expect(processPlatform.terminate).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "failed",
+      pid: null,
+      pgid: null,
+    });
+  });
+
+  it("uses parent termination only after an exited Windows watchdog fails to prove cleanup", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
+    (helper as unknown as { connected: boolean }).connected = true;
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as { type?: string };
+      if (typed.type === "start") {
+        queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
+        setTimeout(() => helper.emit("exit", 1, null), 275);
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+      verifyListenerOwnership: vi.fn(async () => false),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 200,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
+    expect(helper.stdin.end).not.toHaveBeenCalled();
+    expect(processPlatform.terminate).toHaveBeenCalledWith(88_881);
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "orphaned_unverified",
+      pid: 88_881,
+      pgid: 88_881,
+    });
+  });
+
+  it("never races a still-running Windows watchdog after cleanup proof times out", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
+    (helper as unknown as { connected: boolean }).connected = true;
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as { type?: string };
+      if (typed.type === "start") {
+        queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+      verifyListenerOwnership: vi.fn(async () => false),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 20,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
+    expect(helper.stdin.end).not.toHaveBeenCalled();
+    expect(processPlatform.terminate).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "orphaned_unverified",
+      pid: 88_881,
+      pgid: 88_881,
+    });
+  });
+
   it("preserves full ownership and blocks restart when failed-start cleanup hits EPERM", async () => {
     const { registry, definition } = await approvedFixture();
     const permissionError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: "darwin",
       verifyListenerOwnership: async () => false,
       killGroup: () => { throw permissionError; },
-      cleanupTimeoutMs: 1_000,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 20,
     });
 
     await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
