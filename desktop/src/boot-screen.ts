@@ -505,7 +505,7 @@ export function createBootScreenHtml(
           <label>Email address
             <input id="account-email" required type="email" autocomplete="email" placeholder="you@example.com">
           </label>
-          <button class="auth-primary auth-entry" type="submit">Continue with email code</button>
+          <button class="auth-primary auth-entry" id="email-code-submit-button" type="submit">Continue with email code</button>
         </form>
         <form class="email-form native-auth-panel" id="email-code-form" hidden>
           <label>Verification code
@@ -603,6 +603,7 @@ export function createBootScreenHtml(
       const googleSignInButton = document.getElementById("google-sign-in-button");
       const githubSignInButton = document.getElementById("github-sign-in-button");
       const emailSignInForm = document.getElementById("email-sign-in-form");
+      const emailCodeSubmitButton = document.getElementById("email-code-submit-button");
       const emailCodeForm = document.getElementById("email-code-form");
       const accountEmail = document.getElementById("account-email");
       const accountEmailCode = document.getElementById("account-email-code");
@@ -771,6 +772,10 @@ export function createBootScreenHtml(
       });
       emailSignInForm.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (passwordModeToggle.getAttribute("aria-expanded") === "true") {
+          accountPassword.focus();
+          return;
+        }
         if (!emailSignInForm.reportValidity()) return;
         if (authEntryButtons.some((button) => button.disabled)) return;
         setAuthBusy(true);
@@ -805,6 +810,7 @@ export function createBootScreenHtml(
         const expanded = passwordModeToggle.getAttribute("aria-expanded") === "true";
         passwordModeToggle.setAttribute("aria-expanded", String(!expanded));
         passwordModeToggle.textContent = expanded ? "Use password instead" : "Use email code instead";
+        emailCodeSubmitButton.hidden = !expanded;
         passwordPanel.hidden = expanded;
         if (!expanded) accountPassword.focus();
       });
