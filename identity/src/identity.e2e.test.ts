@@ -52,6 +52,7 @@ class FixtureRootIdentityAdapter implements RootIdentityAdapter {
   private readonly users = new Map<string, FixtureUser>();
   private readonly sessions = new Map<string, FixtureUser>();
   private readonly otps = new Map<string, { purpose: "email" | "signup" | "recovery"; token: string }>();
+  private passwordResetRequestError: Error | null = null;
 
   latestOtp(email: string): string {
     const otp = this.otps.get(email.trim().toLowerCase());
@@ -63,6 +64,10 @@ class FixtureRootIdentityAdapter implements RootIdentityAdapter {
     const user = this.users.get(email.trim().toLowerCase());
     if (!user) throw new Error(`No root-auth user for ${email}`);
     return user.id;
+  }
+
+  failNextPasswordResetRequest(error: Error): void {
+    this.passwordResetRequestError = error;
   }
 
   private cookie(context: RootIdentityRequestContext): string | null {
@@ -200,6 +205,11 @@ class FixtureRootIdentityAdapter implements RootIdentityAdapter {
     _context: RootIdentityRequestContext,
     input: { email: string },
   ): Promise<void> {
+    if (this.passwordResetRequestError) {
+      const error = this.passwordResetRequestError;
+      this.passwordResetRequestError = null;
+      throw error;
+    }
     const email = input.email.trim().toLowerCase();
     if (this.users.has(email)) {
       this.otps.set(email, { purpose: "recovery", token: "345678" });
@@ -1260,6 +1270,192 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
+  it("keeps native reset enumeration-resistant without hiding provider failures", async () => {
+    const requestReset = (email: string) =>
+      post("/api/desktop/native-auth/password/reset/request", {
+        client_id: "rudder-desktop",
+        email,
+      });
+
+    const nonexistent = await requestReset("native-reset-missing@example.com");
+    expect(nonexistent.status).toBe(200);
+    expect(await nonexistent.json()).toEqual({ success: true });
+
+    rootIdentity.failNextPasswordResetRequest(new RootIdentityError({
+      code: "user_not_found",
+      message: "Provider account does not exist",
+      status: 400,
+    }));
+    const explicitMissing = await requestReset("native-reset-explicit-missing@example.com");
+    expect(explicitMissing.status).toBe(200);
+    expect(await explicitMissing.json()).toEqual({ success: true });
+
+    rootIdentity.failNextPasswordResetRequest(new RootIdentityError({
+      code: "provider_rate_limit",
+      message: "Provider detail that must remain private",
+      status: 429,
+    }));
+    const providerLimited = await requestReset("native-reset-provider-limit@example.com");
+    expect(providerLimited.status).toBe(429);
+    expect(providerLimited.headers.get("retry-after")).toBe("60");
+    expect(await providerLimited.json()).toEqual({ error: "rate_limited" });
+
+    rootIdentity.failNextPasswordResetRequest(new RootIdentityError({
+      code: "fetch_error",
+      message: "Provider network detail that must remain private",
+      status: 503,
+    }));
+    const unavailable = await requestReset("native-reset-provider-down@example.com");
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({
+      error: "password_reset_temporarily_unavailable",
+      retryable: true,
+    });
+
+    rootIdentity.failNextPasswordResetRequest(new RootIdentityError({
+      code: "provider_rejected_request",
+      message: "Provider validation detail that must remain private",
+      status: 422,
+    }));
+    const rejected = await requestReset("native-reset-provider-rejected@example.com");
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({ error: "password_reset_request_failed" });
+
+    rootIdentity.failNextPasswordResetRequest(
+      new Error("Socket failure detail that must remain private"),
+    );
+    const networkFailure = await requestReset("native-reset-network-failure@example.com");
+    expect(networkFailure.status).toBe(503);
+    expect(await networkFailure.json()).toEqual({
+      error: "password_reset_temporarily_unavailable",
+      retryable: true,
+    });
+  });
+
+  it("rate-limits every native auth operation and records only redacted security metadata", async () => {
+    const authorizationInput = (suffix: string) => ({
+      client_id: "rudder-desktop",
+      redirect_uri: `http://127.0.0.1:49995/${suffix}`,
+      code_challenge: createHash("sha256")
+        .update(randomBytes(48).toString("base64url"))
+        .digest("base64url"),
+      code_challenge_method: "S256",
+      audience: `native-rate-limit-${suffix}`,
+    });
+    const assertLimited = async (response: Response) => {
+      expect(response.status).toBe(429);
+      expect(await response.json()).toEqual({ error: "rate_limited" });
+      expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
+    };
+
+    const otpSendEmail = "native-limit-otp-send@example.com";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await post("/api/desktop/native-auth/email-otp/send", {
+        client_id: "rudder-desktop",
+        email: otpSendEmail,
+      })).status).toBe(200);
+    }
+    await assertLimited(await post("/api/desktop/native-auth/email-otp/send", {
+      client_id: "rudder-desktop",
+      email: otpSendEmail,
+    }));
+
+    const otpVerifyInput = {
+      ...authorizationInput("otp-verify"),
+      email: "native-limit-otp-verify@example.com",
+      token: "000000",
+    };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await post(
+        "/api/desktop/native-auth/email-otp/verify",
+        otpVerifyInput,
+      )).status).toBe(400);
+    }
+    await assertLimited(await post(
+      "/api/desktop/native-auth/email-otp/verify",
+      otpVerifyInput,
+    ));
+
+    const passwordSignInInput = {
+      ...authorizationInput("password-sign-in"),
+      email: "native-limit-password@example.com",
+      password: "redacted-password-value",
+    };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await post(
+        "/api/desktop/native-auth/password/sign-in",
+        passwordSignInInput,
+      )).status).toBe(401);
+    }
+    await assertLimited(await post(
+      "/api/desktop/native-auth/password/sign-in",
+      passwordSignInInput,
+    ));
+
+    const resetRequestEmail = "native-limit-reset-request@example.com";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await post("/api/desktop/native-auth/password/reset/request", {
+        client_id: "rudder-desktop",
+        email: resetRequestEmail,
+      })).status).toBe(200);
+    }
+    await assertLimited(await post("/api/desktop/native-auth/password/reset/request", {
+      client_id: "rudder-desktop",
+      email: resetRequestEmail,
+    }));
+
+    const resetConfirmInput = {
+      ...authorizationInput("password-reset-confirm"),
+      email: "native-limit-reset-confirm@example.com",
+      token: "000000",
+      newPassword: "redacted-replacement-password",
+    };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await post(
+        "/api/desktop/native-auth/password/reset/confirm",
+        resetConfirmInput,
+      )).status).toBe(400);
+    }
+    await assertLimited(await post(
+      "/api/desktop/native-auth/password/reset/confirm",
+      resetConfirmInput,
+    ));
+
+    const runtime = getIdentityRuntime({ rootIdentityAdapter: rootIdentity });
+    const nativeEvents = (await runtime.db
+      .select({
+        eventType: securityEvents.eventType,
+        metadata: securityEvents.metadata,
+        ipHash: securityEvents.ipHash,
+      })
+      .from(securityEvents))
+      .filter(({ eventType }) => eventType.startsWith("desktop.native_auth."));
+    expect(nativeEvents.map(({ eventType }) => eventType)).toEqual(expect.arrayContaining([
+      "desktop.native_auth.email_otp.send.succeeded",
+      "desktop.native_auth.email_otp.send.limited",
+      "desktop.native_auth.email_otp.verify.failed",
+      "desktop.native_auth.email_otp.verify.limited",
+      "desktop.native_auth.password.sign_in.failed",
+      "desktop.native_auth.password.sign_in.limited",
+      "desktop.native_auth.password.reset.request.succeeded",
+      "desktop.native_auth.password.reset.request.limited",
+      "desktop.native_auth.password.reset.confirm.failed",
+      "desktop.native_auth.password.reset.confirm.limited",
+    ]));
+    expect(nativeEvents.every(({ ipHash }) => typeof ipHash === "string" && ipHash.length > 0))
+      .toBe(true);
+    expect(nativeEvents.some(({ metadata }) => metadata.clientId === "rudder-desktop"))
+      .toBe(true);
+    for (const event of nativeEvents) {
+      expect(Object.keys(event.metadata).every((key) =>
+        key === "clientId" || key === "reason"
+      )).toBe(true);
+      expect(JSON.stringify(event.metadata)).not.toMatch(
+        /native-limit|example\.com|000000|redacted-password|replacement-password/iu,
+      );
+    }
+  });
+
   it("returns a server failure instead of invalid_grant when refresh storage is unavailable", async () => {
     const runtime = getIdentityRuntime({ rootIdentityAdapter: rootIdentity });
     const database = runtime.db as typeof runtime.db & {
@@ -1293,5 +1489,111 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
         expected_installation_id: "local",
       })).status,
     ).toBe(400);
+  });
+
+  it("resets a native Desktop password using the code from the captured mailbox", async () => {
+    const hostedEnvironmentKeys = [
+      "IDENTITY_SUPABASE_AUTH_ENVIRONMENT",
+      "IDENTITY_SUPABASE_URL",
+      "SUPABASE_URL",
+      "IDENTITY_SUPABASE_PUBLISHABLE_KEY",
+      "SUPABASE_PUBLISHABLE_KEY",
+      "SUPABASE_ANON_KEY",
+    ] as const;
+    const previousEnvironment = Object.fromEntries(
+      hostedEnvironmentKeys.map((key) => [key, process.env[key]]),
+    );
+    const previousBaseUrl = process.env.IDENTITY_BASE_URL;
+    for (const key of hostedEnvironmentKeys) delete process.env[key];
+    await resetIdentityRuntimeForTests();
+
+    const fixtureServer = createServer((req, res) => {
+      void identityHandler(req, res).catch(() => {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: "internal_server_error" }));
+      });
+    });
+    await new Promise<void>((resolve) => fixtureServer.listen(0, "127.0.0.1", resolve));
+    const fixtureAddress = fixtureServer.address();
+    if (!fixtureAddress || typeof fixtureAddress === "string") {
+      throw new Error("Fixture Identity E2E server failed");
+    }
+    const fixtureBaseUrl = `http://127.0.0.1:${fixtureAddress.port}`;
+    process.env.IDENTITY_BASE_URL = fixtureBaseUrl;
+    const fixturePost = (path: string, body: unknown) =>
+      fetch(`${fixtureBaseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: fixtureBaseUrl,
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+          "x-real-ip": "127.0.0.2",
+        },
+        body: JSON.stringify(body),
+        redirect: "manual",
+      });
+
+    try {
+      const email = "captured-native-reset@example.com";
+      expect((await fixturePost("/api/root-auth/password/sign-up", {
+        email,
+        password: "captured-mailbox-initial-password",
+      })).status).toBe(200);
+      expect((await fixturePost("/api/root-auth/email-otp/verify", {
+        email,
+        token: "234567",
+        purpose: "email-verification",
+      })).status).toBe(200);
+
+      expect((await fixturePost("/api/desktop/native-auth/password/reset/request", {
+        client_id: "rudder-desktop",
+        email,
+      })).status).toBe(200);
+      const mailbox = await fetch(`${fixtureBaseUrl}/api/dev/mailbox`, {
+        headers: { authorization: `Bearer ${CAPTURE_MAILBOX_SECRET}` },
+      });
+      expect(mailbox.status).toBe(200);
+      const mailboxBody = await mailbox.json() as {
+        messages: Array<{ to: string; category: string; text: string }>;
+      };
+      const resetMessage = mailboxBody.messages.findLast((message) =>
+        message.to === email && message.category === "password-reset"
+      );
+      const resetCode = resetMessage?.text.match(/\b\d{6,8}\b/u)?.[0];
+      expect(resetCode).toMatch(/^\d{6,8}$/u);
+
+      const verifier = randomBytes(48).toString("base64url");
+      const resetResponse = await fixturePost(
+        "/api/desktop/native-auth/password/reset/confirm",
+        {
+          client_id: "rudder-desktop",
+          redirect_uri: "http://127.0.0.1:49996/mailbox-reset",
+          code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+          code_challenge_method: "S256",
+          audience: "native-mailbox-reset-installation",
+          email,
+          token: resetCode,
+          newPassword: "captured-mailbox-replacement-password",
+        },
+      );
+      expect(resetResponse.status).toBe(200);
+      expect(resetResponse.headers.getSetCookie()).toEqual([]);
+      const resetBody = await resetResponse.json() as Record<string, unknown>;
+      expect(resetBody).toEqual({ code: expect.any(String) });
+      expect(JSON.stringify(resetBody)).not.toMatch(/access_token|refresh_token|session/iu);
+    } finally {
+      await resetIdentityRuntimeForTests();
+      await new Promise<void>((resolve, reject) => {
+        fixtureServer.close((error) => error ? reject(error) : resolve());
+      });
+      for (const key of hostedEnvironmentKeys) {
+        const value = previousEnvironment[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      if (previousBaseUrl === undefined) delete process.env.IDENTITY_BASE_URL;
+      else process.env.IDENTITY_BASE_URL = previousBaseUrl;
+    }
   });
 });
