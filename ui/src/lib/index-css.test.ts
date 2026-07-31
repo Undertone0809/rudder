@@ -29,6 +29,19 @@ function cssBlock(selector: string) {
 }
 
 describe("index.css motion rules", () => {
+  it("keeps raised control hover compatible with semantic disabled states and custom scale utilities", () => {
+    expect(indexCss).toContain(
+      '.control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
+    );
+    expect(indexCss).toContain(
+      '.control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
+    );
+    expect(indexCss).toContain("transform: translateY(-1px);");
+    expect(indexCss).toContain("scale: 1.02;");
+    expect(indexCss).toContain("transition: none !important;");
+    expect(indexCss).toContain("scale: none !important;");
+  });
+
   it("keeps editor issue done mentions as a two-layer status icon", () => {
     const doneStatusBlock = cssBlock('.rudder-mention-chip--with-status-icon[data-mention-status="done"]');
     const doneCircleMaskLine =

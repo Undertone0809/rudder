@@ -280,4 +280,26 @@ test.describe("Settings layout", () => {
       fullPage: false,
     });
   });
+
+  test("uses the shared raised hover treatment on settings actions", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const organization = await createOrganization(page, "SLH");
+    const modal = await openSettings(page, organization);
+    const aboutLink = modal.locator('a[href$="/instance/settings/about"]');
+    await aboutLink.click();
+    await expect(modal.getByRole("heading", { name: "About", level: 1 })).toBeVisible();
+
+    for (const label of ["Check for updates", "Send Feedback"]) {
+      const button = modal.getByRole("button", { name: label, exact: true });
+      await expect(button).toHaveClass(/control-hover/);
+      await button.hover();
+      const hoverStyle = await button.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { boxShadow: style.boxShadow, scale: style.scale, transform: style.transform };
+      });
+      expect(hoverStyle.boxShadow).not.toBe("none");
+      expect(hoverStyle.scale).not.toBe("none");
+      expect(hoverStyle.transform).not.toBe("none");
+    }
+  });
 });
