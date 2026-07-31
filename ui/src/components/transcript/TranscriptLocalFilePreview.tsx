@@ -260,7 +260,7 @@ function DesktopLocalTextFileEditor({
             ))}
             bordered={false}
             placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+            contentClassName="rudder-library-document-editor rudder-readable-document rudder-side-panel-library-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
           />
         </div>
       ) : (

@@ -378,7 +378,7 @@ function LibraryTextEditor({
             }}
             bordered={false}
             placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
+            contentClassName="rudder-library-document-editor rudder-readable-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
           />
         ) : (
           <WorkspaceCodeEditor
@@ -756,7 +756,7 @@ export function LibraryLiveSurface({
         className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-8 py-8"
         data-testid="library-live-surface-document"
       >
-        <MarkdownBody className="rudder-library-document-editor text-[15px] leading-7 text-foreground">
+        <MarkdownBody className="rudder-library-document-editor rudder-readable-document mx-auto w-full max-w-[880px] text-[15px] leading-7 text-foreground">
           {documentQuery.data.body}
         </MarkdownBody>
       </article>

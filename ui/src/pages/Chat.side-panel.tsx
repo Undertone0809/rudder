@@ -1197,7 +1197,7 @@ function ChatSidePanelTextFileEditor({
             ))}
             bordered={false}
             placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+            contentClassName="rudder-library-document-editor rudder-readable-document rudder-side-panel-library-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
           />
         </div>
       ) : (
@@ -1656,7 +1656,7 @@ export function ChatSidePanelSkillFileView({
       </div>
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 py-5">
         {previewAvailable && viewMode === "preview" ? (
-          <MarkdownBody className="text-sm leading-7 text-foreground">
+          <MarkdownBody className="rudder-readable-document mx-auto w-full max-w-[880px] text-sm leading-7 text-foreground">
             {markdownParts.body}
           </MarkdownBody>
         ) : (
