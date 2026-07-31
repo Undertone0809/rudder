@@ -442,6 +442,13 @@ targets the actual owning Side or Main tab and must not close the Desktop shell.
 
 ### Invariants / Non-Goals
 
+- Rudder Account authentication and Browser capability are independent. A
+  normal authenticated browser never receives Desktop Bridge or Broker access
+  from its account session alone. Formal Local Board and CLI paths require the
+  user session plus the existing Desktop/run capability checks.
+- Sign-out or global account revocation removes authenticated Board/Browser/CLI
+  admission, but it does not implicitly delete the Desktop-owned Browser
+  profile or website data.
 - Profile identity is OS user plus canonical Rudder instance, never
   organization. Shared profile data must be disclosed before import and clear.
 - `openLinksIn` controls operator link routing only. Selecting the system

@@ -551,6 +551,7 @@ contracts:
       - server/src/services/agent-run-context.ts
       - server/src/services/managed-workspace-preflight.ts
       - desktop/src/main.ts
+      - desktop/src/identity-runtime.ts
       - desktop/src/navigation-guard.ts
       - desktop/src/preload.ts
       - desktop/src/system-permissions.ts
@@ -570,6 +571,7 @@ contracts:
       - server/src/__tests__/managed-workspace-preflight.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - desktop/src/navigation-guard.test.ts
+      - desktop/src/identity-local-session.test.ts
       - desktop/src/preload.browser.test.ts
       - desktop/src/system-permissions.test.ts
       - ui/src/pages/InstanceNotificationsSettings.test.tsx
@@ -580,6 +582,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+      - doc/plans/2026-07-29-rudder-account-production-login.md
   AGENT.CONTROL.TOOLS.001:
     owner: product
     domain: agents
@@ -671,6 +674,7 @@ contracts:
       - server/src/services/browser-broker.ts
       - server/src/services/browser-capability.ts
       - server/src/middleware/auth.ts
+      - server/src/services/local-account-auth.ts
       - server/src/routes/browser.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/knowledge-portability/organization-skills.ts
@@ -709,6 +713,7 @@ contracts:
       - desktop/src/desktop-quit-flow.test.ts
       - desktop/src/navigation-guard.test.ts
       - desktop/src/preload.browser.test.ts
+      - server/src/__tests__/local-account-auth.test.ts
       - desktop/src/browser-agent-electron.test.ts
       - desktop/src/browser-agent-refs.test.ts
       - desktop/src/browser-agent-tabs.test.ts
@@ -743,6 +748,7 @@ contracts:
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-29-rudder-account-production-login.md
       - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
   AGENT.SKILLS.001:
     owner: product
@@ -2001,16 +2007,21 @@ contracts:
     related_code:
       - desktop/src/boot-screen.ts
       - desktop/src/boot-preload.ts
+      - desktop/src/identity-device-authorization.ts
+      - desktop/src/identity-offline-grant.ts
       - desktop/src/desktop-startup-failure.ts
       - desktop/src/desktop-support-mail.ts
       - desktop/src/main.ts
     related_tests:
       - desktop/src/boot-screen.test.ts
+      - desktop/src/identity-device-authorization.test.ts
+      - desktop/src/identity-offline-grant.test.ts
       - desktop/src/desktop-startup-failure.test.ts
       - desktop/src/desktop-support-mail.test.ts
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-15-desktop-startup-loading-recovery.md
+      - doc/plans/2026-07-29-rudder-account-production-login.md
   REVIEW.DECISION.001:
     owner: product
     domain: review-feedback-learning
@@ -2368,3 +2379,138 @@ contracts:
     related_plans:
       - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+  IDENTITY.AUTH.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/authentication-and-linking.md
+    related_code:
+      - identity/src/root-identity-adapter.ts
+      - identity/src/root-identity-fixture.ts
+      - identity/src/supabase-root-identity-adapter.ts
+      - identity/src/handler.ts
+      - identity/src/client-script.ts
+      - identity/src/pages.ts
+    related_tests:
+      - identity/src/root-identity-fixture.test.ts
+      - identity/src/supabase-root-identity-adapter.test.ts
+      - identity/src/pages.test.ts
+      - identity/src/identity.e2e.test.ts
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  IDENTITY.ACCOUNT.LINKING.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/authentication-and-linking.md
+    related_code:
+      - packages/identity-db/src/account-linking.ts
+      - packages/identity-db/src/supabase-auth-binding.ts
+    related_tests:
+      - packages/identity-db/src/account-linking.test.ts
+      - packages/identity-db/src/supabase-auth-binding.test.ts
+      - identity/src/identity.e2e.test.ts
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  IDENTITY.DEVICE.SESSION.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/device-session-and-local-access.md
+    related_code:
+      - identity/src/handler.ts
+      - packages/identity-db/src/desktop-authorization.ts
+      - packages/identity-db/src/device-authorization.ts
+      - desktop/src/identity-client.ts
+      - desktop/src/identity-device-authorization.ts
+      - desktop/src/identity-credential-vault.ts
+    related_tests:
+      - identity/src/identity.e2e.test.ts
+      - packages/identity-db/src/device-authorization.test.ts
+      - desktop/src/identity-client.test.ts
+      - desktop/src/identity-device-authorization.test.ts
+      - desktop/src/identity-credential-vault.test.ts
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  IDENTITY.SERVER.EXCHANGE.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/device-session-and-local-access.md
+    related_code:
+      - packages/identity-db/src/server-exchange.ts
+      - server/src/services/local-account-auth.ts
+      - server/src/routes/local-account-auth.ts
+    related_tests:
+      - identity/src/identity.e2e.test.ts
+      - server/src/__tests__/local-account-auth.test.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  IDENTITY.LOCAL.OFFLINE.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/device-session-and-local-access.md
+    related_code:
+      - packages/identity-core/src/offline-grant.ts
+      - desktop/src/identity-offline-grant.ts
+      - server/src/services/local-account-auth.ts
+    related_tests:
+      - packages/identity-core/src/offline-grant.test.ts
+      - desktop/src/identity-offline-grant.test.ts
+      - server/src/__tests__/local-account-auth.test.ts
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  CLIENT.AUTH.RELEASE.ISOLATION.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/release-isolation-and-local-data-boundary.md
+    related_code:
+      - packages/identity-core/src/release-policy.ts
+      - identity/src/config.ts
+      - identity/src/runtime.ts
+      - scripts/dev-identity-env.mjs
+      - desktop/src/identity-startup-policy.ts
+    related_tests:
+      - packages/identity-core/src/release-policy.test.ts
+      - identity/src/config.test.ts
+      - scripts/dev-identity-env.test.mjs
+      - scripts/release-workflow-contract.test.mjs
+      - desktop/src/identity-startup-policy.test.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md
+  PRIVACY.LOCAL.DATA.BOUNDARY.001:
+    owner: product
+    domain: identity-and-access
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/identity-and-access/release-isolation-and-local-data-boundary.md
+    related_code:
+      - identity/src/handler.ts
+      - desktop/src/identity-credential-vault.ts
+      - desktop/src/identity-ipc.ts
+      - server/src/routes/access.ts
+    related_tests:
+      - identity/src/identity.e2e.test.ts
+      - desktop/src/identity-credential-vault.test.ts
+      - desktop/src/identity-ipc.test.ts
+      - server/src/__tests__/cli-auth-routes.test.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-29-rudder-account-production-login.md

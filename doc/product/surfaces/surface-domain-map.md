@@ -153,6 +153,26 @@ owning domain contract.
 - Fresh organization and invite onboarding: `ORG.ONBOARDING.001`.
 - Organization export/import preview and apply: `ORG.PORTABILITY.001`.
 
+## Rudder Account And Desktop Account Gate
+
+- Root login, supported providers, Email OTP, password lifecycle, and web
+  session scopes: `IDENTITY.AUTH.001`.
+- Verified-email provider convergence and stable subject binding:
+  `IDENTITY.ACCOUNT.LINKING.001`.
+- Desktop PKCE/Device Authorization, OS-vault credentials, device list, and
+  per-device revocation: `IDENTITY.DEVICE.SESSION.001`.
+- One-time Local Server exchange and local-user projection:
+  `IDENTITY.SERVER.EXCHANGE.001`.
+- Bounded proof-of-possession Local access while offline:
+  `IDENTITY.LOCAL.OFFLINE.001`.
+- Fixture/hosted selection and Canary/Stable fail-closed behavior:
+  `CLIENT.AUTH.RELEASE.ISOLATION.001`.
+- Login-time Local content privacy: `PRIVACY.LOCAL.DATA.BOUNDARY.001`.
+- Account Gate versus managed runtime failure presentation:
+  `DESKTOP.STARTUP.RECOVERY.001`.
+- Account admission does not grant Desktop/runtime or Browser capability:
+  `AGENT.RUNTIME.PERMISSIONS.001`, `AGENT.BROWSER.001`.
+
 ## Documents And Work Products
 
 - Editable documents, revisions, legacy issue documents, and output artifacts:

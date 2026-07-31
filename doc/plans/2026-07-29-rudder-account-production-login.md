@@ -24,7 +24,7 @@ related_code:
   - ui/src/pages/Auth.tsx
   - tests/e2e
 commit_refs: []
-updated_at: 2026-07-30
+updated_at: 2026-07-31
 ---
 
 # Rudder Account production login
@@ -70,9 +70,10 @@ Source proposal:
 - A Better Auth production Canary was implemented and verified before the root
   identity decision changed. It is now migration source and rollback-only
   infrastructure, not the release target.
-- On the 2026-07-30 production snapshot, Supabase Auth is empty:
-  `auth.users = 0`, `auth.identities = 0`, and `auth.sessions = 0`. The current
-  user therefore does not yet appear in Dashboard `Authentication -> Users`.
+- The 2026-07-30 pre-cutover snapshot had no Supabase Auth users. After the
+  controlled cutover, the production owner appears once in Dashboard
+  `Authentication -> Users` with the expected linked Google and GitHub
+  identities and one stable Supabase-to-Rudder subject binding.
 - The private `rudder_identity` schema contains one verified legacy user with
   one primary normalized email, linked Google and GitHub identities, six
   unexpired Better Auth web sessions, one active Desktop device, six active
@@ -326,10 +327,13 @@ artifacts.
 
 ## Product Logic Alignment
 
-No `doc/product/**` files may be edited without explicit user authorization.
-The external proposal is not authorization.
+The user explicitly authorized this Product Logic Registry synchronization on
+2026-07-31. The contracts below are now active under
+`doc/product/domains/identity-and-access/`, with the existing Desktop startup,
+runtime-permission, and Browser contracts updated only at their owning
+boundaries.
 
-Proposed new contracts:
+Synchronized new contracts:
 
 - `IDENTITY.AUTH.001`: formal login requirement, four login methods, verified
   email/password lifecycle, and Identity data boundary.
@@ -348,7 +352,7 @@ Proposed new contracts:
   Workspace, Prompt, Transcript, Run, path, runtime credential, or provider
   credential content to Rudder Identity.
 
-Proposed updates:
+Synchronized updates:
 
 - `DESKTOP.STARTUP.RECOVERY.001`: add Identity unavailable, login failed,
   grant-expired, and local-data-safe recovery states.
@@ -481,23 +485,34 @@ production Identity database.
 
 ## Implementation Status
 
-The Better Auth vertical slice was implemented and independently verified,
-including the login UI, official Rudder logo, Google/GitHub/OTP/password,
-verified-email linking, device/session flows, packaged Desktop gate, private
-schema, and production deployment. It is now explicitly superseded as the root
-identity architecture and must not be released as the next Rudder Account
-version.
+The Supabase Auth migration and Phase 1 implementation are complete. Supabase
+Auth is the only production web root for Google, GitHub, Email OTP, password,
+reset, verified-email linking, and web-session ownership. The private
+`rudder_identity` schema continues to own Desktop authorization, devices,
+one-time Local exchange, offline grants, security events, and rate limits.
+Better Auth remains migration/rollback evidence only and cannot mint new root
+identity state.
 
-Migration audit is complete. Supabase Auth currently has no users, identities,
-or sessions; the one verified production account and its two providers remain
-in `rudder_identity`. The account has no password or provider token to migrate.
-The binding migration, Supabase adapter, managed Auth configuration, controlled
-account import/linking, session cutover, and new black-box verification are not
-yet complete.
+The controlled owner migration preserved the stable Rudder subject and linked
+the expected Google and GitHub identities to one Supabase user. Supabase-hosted
+configuration, zero-variable complete development fixture, partial-config
+failure, Canary/Stable fail-closed policy, Desktop PKCE/Device Authorization,
+Local exchange, offline grant, credential vault, account UI, and response-cache
+privacy controls are implemented and covered by automated tests.
 
-Canary publication is paused until Supabase Auth is the only web root and an
-independent reviewer and packaged black-box verifier pass every required login
-path. Stable publication has the additional paid-plan and backup gates below.
+The exact implementation commit passed macOS, Ubuntu, Windows, architecture,
+and secret-scanning CI. Independent review passed, followed by a real packaged
+macOS black-box run that completed production Google login, Board entry,
+restart persistence, account-response no-store checks, credential-file
+permission checks, and a full profile scan for identity plaintext. Production
+Google, GitHub, OTP, password/reset, and verified-email linking were exercised
+through their real providers during the controlled smoke sequence.
+
+The implementation is merged into local `main`. Existing
+`0.6.6-canary.10` is an immutable partial historical release and must not be
+retagged or republished; `0.6.6-canary.11` is the next eligible Canary. Stable
+publication retains the additional paid-plan, backup, signing, notarization,
+and fresh-install/update gates below.
 
 ## Success Criteria
 
@@ -619,11 +634,7 @@ path. Stable publication has the additional paid-plan and backup gates below.
 - The first real OTP message delivered through Resend was accepted by Gmail
   but placed in Spam. Deliverability monitoring and domain reputation warming
   remain launch operations.
-- The proposed Product Logic Contract delta requires explicit authorization
-  before `doc/product/**` can be synchronized or the product behavior change
-  can be declared complete.
-- Supabase exposes current/others/global web-session sign-out rather than an
-  arbitrary public per-session revoke API. The proposed
-  `IDENTITY.DEVICE.SESSION.001` wording must reflect that web-session model
-  while retaining per-device revocation; this specific `doc/product/**`
-  semantic delta still requires explicit authorization.
+- The user authorized the Product Logic delta on 2026-07-31. The seven
+  `identity-and-access` contracts now record Supabase current/others/global
+  web-session sign-out and independent per-device Rudder revocation without
+  promising arbitrary public per-web-session revocation.
