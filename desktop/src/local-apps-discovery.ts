@@ -1,5 +1,6 @@
 import { access, open, realpath, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { detectLocalAppLaunchFramework } from "./local-app-framework.js";
 import type { LocalAppDefinitionDraft } from "./local-apps-registry.js";
 
 const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
@@ -122,6 +123,8 @@ export async function discoverLocalAppDefinition(
     ? rudder.readiness as Record<string, unknown>
     : {};
   const documented = inferDocumentedRoutes(await readBoundedReadme(root));
+  const framework = await detectLocalAppLaunchFramework(root, scriptName);
+  const defaultReadinessPath = framework === "generic" ? "/api/health" : "/";
 
   return {
     title: typeof metadata.name === "string" && metadata.name.trim().length > 0
@@ -132,7 +135,7 @@ export async function discoverLocalAppDefinition(
     cwd: root,
     inheritedEnvNames: [],
     readiness: {
-      path: optionalRoute(readiness.path, documented.readinessPath ?? "/api/health"),
+      path: optionalRoute(readiness.path, documented.readinessPath ?? defaultReadinessPath),
       timeoutMs: optionalTimeout(readiness.timeoutMs),
     },
     openPath: optionalRoute(rudder.openPath, documented.openPath ?? "/"),

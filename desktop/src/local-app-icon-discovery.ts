@@ -1,5 +1,6 @@
 import { open, realpath, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { detectLocalAppFramework, type LocalAppFramework } from "./local-app-framework.js";
 
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_ICON_BYTES = 384 * 1024;
@@ -26,6 +27,23 @@ const CONVENTIONAL_ICON_PATHS = [
   "public/favicon.svg",
   "public/icon.png",
   "public/icon.svg",
+  "public/logo.png",
+  "public/logo.jpg",
+  "public/logo.jpeg",
+  "public/logo.webp",
+  "public/logo.svg",
+  "src/assets/logo.png",
+  "src/assets/logo.jpg",
+  "src/assets/logo.jpeg",
+  "src/assets/logo.webp",
+  "src/assets/logo.svg",
+  "src/assets/icon.png",
+  "src/assets/icon.svg",
+  "assets/logo.png",
+  "assets/logo.jpg",
+  "assets/logo.jpeg",
+  "assets/logo.webp",
+  "assets/logo.svg",
   "favicon.ico",
   "favicon.png",
   "favicon.svg",
@@ -175,6 +193,30 @@ async function iconDataUrl(root: string, base: string, value: string): Promise<s
   return mime ? `data:${mime};base64,${buffer.toString("base64")}` : null;
 }
 
+const FRAMEWORK_BADGES: Record<Exclude<LocalAppFramework, "generic">, { label: string; background: string; foreground: string }> = {
+  astro: { label: "A", background: "#17191f", foreground: "#ff5d01" },
+  next: { label: "N", background: "#111111", foreground: "#ffffff" },
+  nuxt: { label: "N", background: "#10231c", foreground: "#00dc82" },
+  "react-vite": { label: "R", background: "#10242b", foreground: "#61dafb" },
+  "react-scripts": { label: "R", background: "#10242b", foreground: "#61dafb" },
+  sveltekit: { label: "S", background: "#fff3ee", foreground: "#ff3e00" },
+  vite: { label: "V", background: "#242038", foreground: "#ffd028" },
+  "vue-cli": { label: "V", background: "#17352a", foreground: "#42b883" },
+  "vue-vite": { label: "V", background: "#17352a", foreground: "#42b883" },
+};
+
+function frameworkBadgeDataUrl(framework: LocalAppFramework): string | null {
+  if (framework === "generic") return null;
+  const badge = FRAMEWORK_BADGES[framework];
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">',
+    `<rect width="64" height="64" rx="12" fill="${badge.background}"/>`,
+    `<text x="32" y="43" text-anchor="middle" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="${badge.foreground}">${badge.label}</text>`,
+    "</svg>",
+  ].join("");
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
 export async function discoverLocalAppIcon(selectedRoot: string): Promise<string | null> {
   const root = await realpath(selectedRoot);
   const candidates: Array<{ base: string; value: string }> = [];
@@ -214,5 +256,5 @@ export async function discoverLocalAppIcon(selectedRoot: string): Promise<string
       if (publicResolved) return publicResolved;
     }
   }
-  return null;
+  return frameworkBadgeDataUrl(await detectLocalAppFramework(root));
 }

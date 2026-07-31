@@ -35,6 +35,7 @@ import {
   type DesktopLocalAppDefinition,
 } from "@/lib/desktop-shell";
 import {
+  localAppFailureHelpPrompt,
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
@@ -215,7 +216,6 @@ function LocalRuntimePane({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { pushToast } = useToast();
   const desktopShell = readDesktopShell();
   const localApps = desktopShell?.localApps;
   const handledOpenIntent = useRef(0);
@@ -293,6 +293,13 @@ function LocalRuntimePane({
   const readyToOpen = runtime?.status === "stopped"
     && !runtimeMutation.isPending
     && openIntentVersion === 0;
+  const openAiHelp = () => {
+    const search = new URLSearchParams({
+      prefill: localAppFailureHelpPrompt(definition.title),
+      localAppRecoveryDraft: crypto.randomUUID(),
+    });
+    navigate(`/messenger/chat?${search.toString()}`);
+  };
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -358,17 +365,11 @@ function LocalRuntimePane({
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      void desktopShell?.openPath(definition.cwd).catch((openError) => {
-                        pushToast({
-                          title: "Could not open App source",
-                          body: openError instanceof Error ? openError.message : undefined,
-                          tone: "error",
-                        });
-                      });
-                    }}
+                    data-testid="apps-ask-ai"
+                    onClick={openAiHelp}
                   >
-                    Open source
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                    Ask AI for help
                   </Button>
                   {managedApp?.conversationId ? (
                     <Button

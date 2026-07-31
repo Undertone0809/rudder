@@ -50,6 +50,38 @@ describe("Local App icon discovery", () => {
     );
   });
 
+  it("uses a framework badge only when the project has no own icon", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+    }));
+
+    await expect(discoverLocalAppIcon(root)).resolves.toMatch(
+      /^data:image\/svg\+xml;base64,/,
+    );
+
+    await mkdir(path.join(root, "src", "assets"), { recursive: true });
+    await writeFile(path.join(root, "src", "assets", "logo.png"), PNG);
+    await expect(discoverLocalAppIcon(root)).resolves.toBe(
+      `data:image/png;base64,${PNG.toString("base64")}`,
+    );
+  });
+
+  it("uses the app framework badge instead of the underlying Vite badge", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      scripts: { dev: "vite" },
+      dependencies: { react: "^19.0.0" },
+      devDependencies: { vite: "^6.0.0" },
+    }));
+
+    const icon = await discoverLocalAppIcon(root);
+    expect(icon).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(Buffer.from(icon!.split(",", 2)[1], "base64").toString("utf8"))
+      .toContain(">R</text>");
+  });
+
   it("rejects external, traversing, symlink-escaped, unsafe SVG, and oversized candidates", async () => {
     const root = await fixture();
     const outside = await fixture();

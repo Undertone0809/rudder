@@ -171,8 +171,21 @@ test.describe("Apps workspace", () => {
             update: async (_id: string, definition: unknown) => definition,
             delete: async () => undefined,
             start: async (id: string) => {
-              const testWindow = window as typeof window & { __startedApps?: string[] };
+              const testWindow = window as typeof window & {
+                __failNextAppStart?: boolean;
+                __startedApps?: string[];
+              };
               testWindow.__startedApps = [...(testWindow.__startedApps ?? []), id];
+              if (testWindow.__failNextAppStart) {
+                delete testWindow.__failNextAppStart;
+                const failed = {
+                  status: "failed",
+                  generation: `failed-${id}`,
+                  error: "Local App readiness check failed for /",
+                };
+                runtime.set(id, failed);
+                throw new Error(failed.error);
+              }
               const definition = definitions.find((candidate) => candidate.id === id)!;
               const next = {
                 status: "running",
@@ -377,6 +390,33 @@ test.describe("Apps workspace", () => {
       "definition-alpha",
       "definition-alpha",
     ]);
+
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await page.getByRole("menuitem", { name: "Stop App" }).click({ force: true });
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual(["definition-alpha", "definition-alpha", "definition-alpha"]);
+    await page.evaluate(() => {
+      (window as typeof window & { __failNextAppStart?: boolean }).__failNextAppStart = true;
+    });
+    await alphaEntry.click();
+    await page.evaluate(() => {
+      (window as typeof window & { __releaseAppStop?: () => void }).__releaseAppStop?.();
+    });
+    await expect(page.getByRole("heading", { name: "The App could not open" })).toBeVisible();
+    await expect(page.getByTestId("apps-ask-ai")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
+    await page.screenshot({
+      path: `/tmp/rudder-apps-e2e-failure-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+    await page.getByTestId("apps-ask-ai").click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?.*)?$/);
+    const composer = page.getByTestId("chat-composer-editor-scroll")
+      .locator("[contenteditable='true']").first();
+    await expect(composer).toContainText("A Local App could not open in Rudder Desktop.");
+    await expect(composer).toContainText("Alpha CRM");
   });
 
   test("does not expose a managed local binding in another organization", async ({

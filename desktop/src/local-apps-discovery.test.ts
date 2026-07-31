@@ -27,11 +27,32 @@ describe("Desktop Local App discovery", () => {
       cwd: await import("node:fs/promises").then(({ realpath }) => realpath(root)),
       argv: ["run", "dev"],
       inheritedEnvNames: [],
-      readiness: { path: "/api/health" },
+      readiness: { path: "/" },
       openPath: "/",
     });
     expect(result.executable).toMatch(/pnpm(?:\.cmd)?$/);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("uses the root readiness path for a recognized frontend framework", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-frontend-"));
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+    }));
+    await expect(discoverLocalAppDefinition(root)).resolves.toMatchObject({
+      readiness: { path: "/" },
+    });
+  });
+
+  it("keeps the health readiness default for an API-only project", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-api-"));
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      scripts: { dev: "node server.mjs" },
+    }));
+    await expect(discoverLocalAppDefinition(root)).resolves.toMatchObject({
+      readiness: { path: "/api/health" },
+    });
   });
 
   it("rejects oversized, malformed, and scriptless package metadata", async () => {

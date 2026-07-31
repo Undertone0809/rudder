@@ -6,6 +6,7 @@ import { access, realpath } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { localAppRuntimeArguments } from "./local-app-framework.js";
 import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 import {
   createLocalAppProcessPlatform,
@@ -585,6 +586,12 @@ export class LocalAppRuntimeManager {
       this.hostExecutablePath,
       this.processPlatform,
     );
+    const argv = await localAppRuntimeArguments(
+      record.definition.cwd,
+      record.definition.executable,
+      record.definition.argv,
+      port,
+    );
     return new Promise((resolve, reject) => {
       const watchdogEnvironment: NodeJS.ProcessEnv = {
         ELECTRON_RUN_AS_NODE: "1",
@@ -668,7 +675,7 @@ export class LocalAppRuntimeManager {
       helper.send({
         type: "start",
         executable: record.definition.executable,
-        argv: record.definition.argv,
+        argv,
         cwd: record.definition.cwd,
         env: environment,
       }, (error) => { if (error) finish(error); });
