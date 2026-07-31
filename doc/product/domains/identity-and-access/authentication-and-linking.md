@@ -151,12 +151,12 @@ emails are not account authority.
 
 - Operator, Supabase user/identity, verified email, stable Rudder subject,
   provider subject, binding, and security event.
-- States: unbound, bound, linked, conflict requiring reread, and manual repair.
+- States: unbound, bound, automatically linked, conflict, and manual repair.
 
 ### Entry Points / Inputs
 
-- First login with a provider or email, explicit link/unlink, migration of a
-  verified legacy account, and concurrent same-email first login.
+- First login with a provider or email, migration of a verified legacy account,
+  and concurrent same-email first login.
 
 ### Product Logic Flow
 
@@ -165,8 +165,8 @@ emails are not account authority.
 2. Supabase linking converges verified identities on one root user.
 3. Rudder creates one bidirectionally unique Supabase UUID to stable-subject
    binding and rereads the winner after a compatible uniqueness conflict.
-4. Explicit link/unlink requires recent reauthentication, preserves at least
-   one usable login method, and writes a security event.
+4. Rudder records automatic account creation/linking security evidence without
+   storing the provider's OAuth token.
 5. A conflicting provider subject, email, or migration marker stops for manual
    repair instead of creating a second user or rebinding Local ownership.
 
@@ -176,13 +176,14 @@ emails are not account authority.
 | --- | --- | --- | --- | --- |
 | Same verified email | Supported identities prove the same normalized address | One Supabase user and Rudder subject | Duplicate account | Linking tests |
 | Unverified/public email | Verification evidence absent | Reject auto-link | Merge by username or display name | Adapter tests |
-| Concurrent first login | Compatible unique conflict | Reread and use the committed binding | Allocate a second subject | DB tests |
-| Explicit unlink | Recent reauth and another method remains | Remove method and audit | Leave account with no login method | Identity E2E |
+| Concurrent first login | Google/GitHub prove the same verified normalized email | Advisory lock serializes creation and both providers use one subject | Allocate a second subject | Embedded-PostgreSQL Identity E2E |
 
 ### Actor-Visible Input
 
-Operators see reauthentication when managing login methods and an actionable
-recovery state when identity evidence conflicts.
+Operators can use any supported method that Supabase has automatically linked
+to the verified account and see an actionable recovery state when identity
+evidence conflicts. A separate manual provider link/unlink manager is not part
+of this contract.
 
 ### Operator-Visible Output
 
@@ -190,9 +191,10 @@ All linked methods open the same Rudder Account, devices, and Local ownership.
 
 ### Persisted Evidence
 
-Supabase persists root identities. The private schema persists the unique
-binding, verified-email projection, provider provenance needed for recovery,
-and security events without storing provider tokens.
+Supabase persists root identities and Google/GitHub provider provenance. The
+private schema persists the unique Supabase-to-Rudder binding, verified-email
+projection, and bounded account-created/identity-linked security events without
+storing provider tokens.
 
 ### Canonical Scenarios
 
@@ -204,15 +206,16 @@ and security events without storing provider tokens.
 
 - A stable Rudder subject is not replaced by a Supabase UUID.
 - Email equality never grants Organization membership or instance authority.
-- Account unlinking cannot remove the last usable login method.
+- Manual provider link/unlink management is not implemented or promised here.
 - Manual recovery tooling is not specified here, but conflicts must fail safe.
 
 ### Drift Boundaries
 
 Update this contract for normalization, verification evidence, binding
-uniqueness, link/unlink authorization, or migration takeover rules.
+uniqueness, automatic-linking behavior, or migration takeover rules.
 
 ### Traceability
 
-`account-linking` and `supabase-auth-binding` code/tests plus the production
-login plan prove convergence, conflict, and stable-subject behavior.
+`account-linking`, `supabase-auth-binding`, and the embedded-PostgreSQL Identity
+E2E prove unverified rejection, cross-provider concurrency, HTTP method
+convergence, conflict handling, and stable-subject behavior.

@@ -304,7 +304,7 @@ artifacts.
 - Google, GitHub, Email OTP, and email/password login;
 - set, change, forgot, and reset password;
 - verified-email automatic account linking;
-- account login-method management with at least one remaining method;
+- automatic convergence of supported methods by normalized verified email;
 - web and device sessions, list/revoke/other-device sign-out;
 - PKCE, Device Authorization, and security events;
 - Desktop launcher and secure credential persistence;
@@ -338,8 +338,8 @@ Synchronized new contracts:
 - `IDENTITY.AUTH.001`: formal login requirement, four login methods, verified
   email/password lifecycle, and Identity data boundary.
 - `IDENTITY.ACCOUNT.LINKING.001`: only normalized verified email may link
-  accounts; database uniqueness, concurrency, reauthentication, and audit
-  rules.
+  accounts automatically; database uniqueness, concurrency, conflict, and
+  audit rules.
 - `IDENTITY.DEVICE.SESSION.001`: web/device-session separation, PKCE, rotating
   device credentials, OS vault, device list, and revocation.
 - `IDENTITY.SERVER.EXCHANGE.001`: short-lived one-time audience-bound exchange
@@ -356,8 +356,6 @@ Synchronized updates:
 
 - `DESKTOP.STARTUP.RECOVERY.001`: add Identity unavailable, login failed,
   grant-expired, and local-data-safe recovery states.
-- `ORG.IDENTITY.001`: global subject maps to a local user before membership;
-  email does not grant authority; legacy Local claim is atomic.
 - `AGENT.RUNTIME.PERMISSIONS.001`: authentication requirement and Local
   Desktop/runtime trust are independent predicates.
 - `AGENT.BROWSER.001`: authenticated Local Desktop retains Browser capability;
@@ -370,6 +368,10 @@ semantic delta.
 Audit-only IDs such as Agent Skills, Custom Integrations, Inbox, and Messenger
 remain unchanged when stable local user mapping preserves their current
 semantics.
+
+`ORG.IDENTITY.001` remains unchanged because it owns Organization UUID, URL
+key, display name, and Issue Key. Global-subject-to-local-user mapping and the
+legacy Local claim are owned by `IDENTITY.SERVER.EXCHANGE.001` instead.
 
 ## Implementation Plan
 

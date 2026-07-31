@@ -2506,11 +2506,13 @@ contracts:
       - desktop/src/identity-credential-vault.ts
       - desktop/src/identity-ipc.ts
       - server/src/routes/access.ts
+      - server/src/services/local-account-auth.ts
     related_tests:
       - identity/src/identity.e2e.test.ts
       - desktop/src/identity-credential-vault.test.ts
       - desktop/src/identity-ipc.test.ts
       - server/src/__tests__/cli-auth-routes.test.ts
+      - server/src/__tests__/local-account-auth.test.ts
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-29-rudder-account-production-login.md
