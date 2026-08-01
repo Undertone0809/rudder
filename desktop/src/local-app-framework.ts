@@ -109,8 +109,9 @@ export async function detectLocalAppLaunchFramework(
 }
 
 function scriptNameFromArguments(argv: string[]): string | undefined {
-  const runIndex = argv.findIndex((argument) => argument === "run");
-  return runIndex >= 0 ? argv[runIndex + 1] : undefined;
+  if (argv[0] !== "run") return undefined;
+  const scriptName = argv[1]?.trim();
+  return scriptName && !scriptName.startsWith("-") ? scriptName : undefined;
 }
 
 function packageManager(executable: string): "npm" | "other" | null {

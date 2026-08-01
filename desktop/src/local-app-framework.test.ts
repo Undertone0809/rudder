@@ -104,6 +104,19 @@ describe("Local App framework launch profiles", () => {
     )).resolves.toEqual(["wrapper.mjs", "run", "dev"]);
   });
 
+  it.each(["npm", "pnpm", "yarn", "bun"])(
+    "does not rewrite %s exec commands that happen to contain a run argument",
+    async (manager) => {
+      const root = await project("vite", "vite");
+      await expect(localAppRuntimeArguments(
+        root,
+        `/usr/local/bin/${manager}`,
+        ["exec", "node", "wrapper.mjs", "run", "dev"],
+        43_123,
+      )).resolves.toEqual(["exec", "node", "wrapper.mjs", "run", "dev"]);
+    },
+  );
+
   it.each(["pnpm", "yarn", "bun"])("forwards arguments directly through %s", async (manager) => {
     const root = await project("vite", "vite");
     await expect(localAppRuntimeArguments(root, `/usr/local/bin/${manager}`, ["run", "dev"], 43_123))
