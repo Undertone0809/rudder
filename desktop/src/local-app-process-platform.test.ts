@@ -88,11 +88,16 @@ describe("Local App process platform abstraction", () => {
 
   it("parses Windows process descendants and requires an exact loopback listener", () => {
     const table = parseWindowsProcessTable(JSON.stringify([
+      { ProcessId: 0, ParentProcessId: 0 },
       { ProcessId: 42, ParentProcessId: 1 },
       { ProcessId: 43, ParentProcessId: 42 },
       { ProcessId: 99, ParentProcessId: 1 },
     ]));
-    expect(table).not.toBeNull();
+    expect(table).toEqual([
+      { pid: 42, parentPid: 1 },
+      { pid: 43, parentPid: 42 },
+      { pid: 99, parentPid: 1 },
+    ]);
     expect([...descendantProcessIds(42, table!)]).toEqual([42, 43]);
     expect(parseWindowsLoopbackListenerPids(
       "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    43",
@@ -102,6 +107,9 @@ describe("Local App process platform abstraction", () => {
       "TCP    0.0.0.0:43123    0.0.0.0:0    LISTENING    43",
       43_123,
     )).toBeNull();
+    expect(parseWindowsProcessTable(JSON.stringify([
+      { ProcessId: 0, ParentProcessId: 1 },
+    ]))).toBeNull();
   });
 
   it("verifies a Windows listener belongs to the managed root process tree", async () => {

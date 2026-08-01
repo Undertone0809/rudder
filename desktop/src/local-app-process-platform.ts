@@ -107,15 +107,16 @@ export function parseWindowsProcessTable(
   try {
     const parsed = JSON.parse(output.trim()) as unknown;
     const rows = Array.isArray(parsed) ? parsed : [parsed];
-    const result = rows.map((row) => {
+    const result = rows.flatMap((row) => {
       if (!row || typeof row !== "object") throw new Error("invalid row");
       const record = row as { ProcessId?: unknown; ParentProcessId?: unknown };
       const pid = Number(record.ProcessId);
       const parentPid = Number(record.ParentProcessId);
+      if (pid === 0 && parentPid === 0) return [];
       if (!isSafeLocalAppProcessId(pid) || !Number.isSafeInteger(parentPid) || parentPid < 0) {
         throw new Error("invalid process identity");
       }
-      return { pid, parentPid };
+      return [{ pid, parentPid }];
     });
     return result.length > 0 ? result : null;
   } catch {
