@@ -29,6 +29,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -140,12 +141,21 @@ jobs:
             command -v dbus-run-session
             command -v xvfb-run
             dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:dist
-            dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
           else
             pnpm desktop:dist
+          fi
+
+      - name: Smoke packaged App Builder
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
+          else
             node desktop/scripts/app-builder-smoke.mjs --packaged
           fi
 
+      - name: Smoke staged PostgreSQL runtime
+        if: matrix.platform != 'windows'
+        run: |
           if [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then
             runtime_platform="linux"
             if [ "$(uname -s)" = "Darwin" ]; then

@@ -640,6 +640,38 @@ describe("Desktop Local App runtime", () => {
     expect((await ownershipManager.status(unowned.definition.id)).status).toBe("failed");
   });
 
+  it("waits for a fresh process snapshot to prove listener ownership after readiness", async () => {
+    const owned = await approvedFixture({ readinessTimeoutMs: 1_000 });
+    const verifyListenerOwnership = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const manager = new LocalAppRuntimeManager({
+      registry: owned.registry,
+      platform: "darwin",
+      verifyListenerOwnership,
+    });
+    try {
+      await expect(manager.start(owned.definition.id)).resolves.toMatchObject({ status: "running" });
+      expect(verifyListenerOwnership).toHaveBeenCalledTimes(2);
+    } finally {
+      await manager.stop(owned.definition.id).catch(() => undefined);
+    }
+  });
+
+  it("bounds a listener ownership probe that never returns", async () => {
+    const owned = await approvedFixture({ readinessTimeoutMs: 250 });
+    const manager = new LocalAppRuntimeManager({
+      registry: owned.registry,
+      platform: "darwin",
+      verifyListenerOwnership: () => new Promise(() => undefined),
+    });
+    const startedAt = Date.now();
+    await expect(manager.start(owned.definition.id)).rejects.toThrow(
+      "listener ownership could not be proven",
+    );
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it("accepts an explicit watchdog stop acknowledgement before using Windows fallback cleanup", async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
     const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });

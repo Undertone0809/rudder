@@ -7,9 +7,11 @@ import {
   localAppUsesDetachedProcessGroup,
   terminateLocalAppOwner,
 } from "./local-app-process-platform-shared.mjs";
+import { runBoundedChildProcess } from "./local-app-watchdog-process.mjs";
 
 const TERM_TIMEOUT_MS = 2_000;
 const POLL_MS = 50;
+const TASKKILL_TIMEOUT_MS = 5_000;
 
 let appProcess = null;
 let appOwnerId = null;
@@ -20,26 +22,18 @@ function send(message) {
 }
 
 function runTaskkill(ownerId, force) {
-  return new Promise((resolve, reject) => {
-    const taskkillPath = path.win32.join(
-      process.env.SystemRoot ?? "C:\\Windows",
-      "System32",
-      "taskkill.exe",
-    );
-    const child = spawn(taskkillPath, [
-      "/PID",
-      String(ownerId),
-      "/T",
-      ...(force ? ["/F"] : []),
-    ], {
-      shell: false,
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => code === 0
-      ? resolve()
-      : reject(new Error(`taskkill exited with status ${code ?? "unknown"}`)));
+  const taskkillPath = path.win32.join(
+    process.env.SystemRoot ?? "C:\\Windows",
+    "System32",
+    "taskkill.exe",
+  );
+  return runBoundedChildProcess(taskkillPath, [
+    "/PID",
+    String(ownerId),
+    "/T",
+    ...(force ? ["/F"] : []),
+  ], {
+    timeoutMs: TASKKILL_TIMEOUT_MS,
   });
 }
 

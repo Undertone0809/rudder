@@ -25,6 +25,7 @@ export {
 } from "./local-app-process-platform.js";
 
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
+const LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 750;
 
 export type LocalAppRuntimeStatus =
   | "stopped"
@@ -770,6 +771,38 @@ export class LocalAppRuntimeManager {
     throw new Error(`Local App readiness check failed for ${record.definition.readiness.path}`);
   }
 
+  private async waitForListenerOwnership(record: RuntimeRecord): Promise<void> {
+    const deadline = Date.now() + Math.min(
+      record.definition.readiness.timeoutMs,
+      LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
+    );
+    while (Date.now() < deadline) {
+      if (!record.helper || record.helper.exitCode !== null || record.helper.signalCode !== null) {
+        throw new Error("Local App exited before listener ownership could be proven");
+      }
+      const remainingMs = deadline - Date.now();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const ownership = record.port !== null && record.pid !== null && record.pgid !== null
+        ? this.verifyListenerOwnership({ port: record.port, pid: record.pid, pgid: record.pgid })
+        : Promise.resolve(false);
+      const owned = await Promise.race([
+        ownership,
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => resolve(false), Math.max(1, remainingMs));
+        }),
+      ]).finally(() => {
+        if (timeout) clearTimeout(timeout);
+      });
+      if (owned) {
+        return;
+      }
+      // Windows process snapshots can briefly lag an already healthy child listener.
+      const retryDelayMs = Math.min(75, deadline - Date.now());
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+    throw new Error("Local App listener ownership could not be proven");
+  }
+
   private async failStart(
     record: RuntimeRecord,
     error: unknown,
@@ -860,8 +893,7 @@ export class LocalAppRuntimeManager {
       );
       if (!generationClaimed) throw new Error("Local App runtime generation changed during startup");
       await this.waitForReadiness(record);
-      const owned = await this.verifyListenerOwnership({ port, pid: record.pid, pgid: record.pgid });
-      if (!owned) throw new Error("Local App listener ownership could not be proven");
+      await this.waitForListenerOwnership(record);
       record.status = "running";
       record.verified = true;
       const markedRunning = await this.registry.recordRuntimeDescriptorIfMatch(
