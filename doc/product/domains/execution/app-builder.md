@@ -16,6 +16,8 @@ related_code:
   - desktop/src/app-builder-ipc.ts
   - desktop/src/app-builder-manifest.ts
   - desktop/src/app-builder-data.ts
+  - desktop/src/local-app-framework.ts
+  - desktop/src/local-app-icon-discovery.ts
   - desktop/src/local-apps-runtime.ts
   - ui/src/pages/Apps.tsx
   - ui/src/components/AppsContextSidebar.tsx
@@ -30,6 +32,8 @@ related_tests:
   - desktop/src/app-builder-data.test.ts
   - desktop/src/app-builder-runner.test.ts
   - desktop/src/app-builder-ipc.test.ts
+  - desktop/src/local-app-framework.test.ts
+  - desktop/src/local-app-icon-discovery.test.ts
   - ui/src/pages/InstanceExperimentalSettings.test.tsx
   - ui/src/components/PrimaryRail.test.tsx
   - tests/e2e/app-builder.spec.ts
@@ -114,8 +118,11 @@ non-authoritative.
 - a Rudder-owned Node/pnpm runner and structured Local App definition.
 
 The maintained stack is the default for non-technical users, not a restriction
-on independently authored Apps. V1 does not add a Rudder job scheduler, Secret
-vault/binding UI, immutable release promotion, or production rollback UI.
+on independently authored Apps. Independently authored common Web projects use
+the Desktop Local Apps compatibility baseline for direct package-manager
+scripts, loopback readiness, and project/framework icon discovery. V1 does not
+add a Rudder job scheduler, Secret vault/binding UI, immutable release
+promotion, or production rollback UI.
 
 ### Entry Points / Inputs
 
@@ -242,7 +249,8 @@ ownership-unverified failure handling.
 - Searchable registered App list, Home composer, and multiple closable tabs.
 - Normal Chat containing the explicit `$app-builder` request.
 - Full-bleed embedded webpage and same-computer browser link.
-- Causal failed/unavailable state with Continue in Chat/Open source recovery.
+- Causal failed/unavailable state with Ask AI for help recovery; source access
+  remains available from the registered row's More menu.
 - Honest status when the current Desktop lacks the matching binding or runtime.
 
 ### Persisted Evidence

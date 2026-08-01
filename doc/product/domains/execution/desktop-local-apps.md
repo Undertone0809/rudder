@@ -9,6 +9,8 @@ contract_ids:
 related_code:
   - desktop/src/local-apps-registry.ts
   - desktop/src/local-apps-discovery.ts
+  - desktop/src/local-app-framework.ts
+  - desktop/src/local-app-icon-discovery.ts
   - desktop/src/local-apps-controller.ts
   - desktop/src/local-apps-runtime.ts
   - desktop/src/local-apps-ipc.ts
@@ -27,6 +29,8 @@ related_code:
 related_tests:
   - desktop/src/local-apps-registry.test.ts
   - desktop/src/local-apps-discovery.test.ts
+  - desktop/src/local-app-framework.test.ts
+  - desktop/src/local-app-icon-discovery.test.ts
   - desktop/src/local-apps-controller.test.ts
   - desktop/src/local-apps-runtime.test.ts
   - desktop/src/local-apps-ipc.test.ts
@@ -35,6 +39,7 @@ related_tests:
   - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
   - ui/src/lib/local-apps.test.ts
   - tests/e2e/messenger-local-apps.spec.ts
+  - tests/e2e/app-builder.spec.ts
   - desktop/scripts/smoke.mjs
 related_plans:
   - doc/plans/2026-07-23-messenger-work-packages-local-apps.md
@@ -185,6 +190,27 @@ Saved View identity and group placement.
     values, readiness/open paths, ports, URLs, PIDs, partitions, or raw error
     text. The operator may add reviewed details and explicitly send the Chat.
 
+### Common Web Project Compatibility
+
+Manual Local App discovery recognizes direct development scripts for common Web
+projects, including Vite, React/Vite, Vue/Vite, Next, Astro, SvelteKit, Nuxt,
+Vue CLI, and `react-scripts`, when launched through npm, pnpm, Yarn, or Bun.
+Rudder appends its allocated loopback host and port only to a direct supported
+framework command. Custom executables, dependency-only projects, and shell
+compound scripts remain unchanged rather than receiving arguments that could be
+interpreted by the wrong process.
+
+Recognized frontend projects use `/` as the default readiness path because an
+HTML response proves the development server is serving. Generic or API-only
+projects retain `/api/health` as the fallback. An explicit `rudder.app.json`
+readiness path or a documented README health route takes precedence over either
+default.
+
+The Apps catalog prefers an App-provided favicon, manifest icon, or conventional
+project logo asset. When no project asset is available, a recognized framework
+badge is used; generic projects keep the ordinary fallback icon. The icon is
+presentation metadata only and never grants runtime authority.
+
 ### Decision Table
 
 | Situation | Required behavior | Forbidden behavior |
@@ -204,6 +230,9 @@ Saved View identity and group placement.
 | Switch Main tabs | Park/focus guest without process change | Stop or restart process |
 | Operator selects Stop | Stop the owned generation and update all attached views | Leave some views claiming it is running |
 | Readiness/listener attestation fails | Fail boundedly and report the causal state | Open an unattested origin |
+| Common frontend project is discovered | Use `/` readiness, inject the allocated loopback host/port into its direct framework command, and show its project/framework icon | Require `/api/health`, change a custom or compound script, or treat the icon as authority |
+| Generic or API-only project is discovered | Keep `/api/health` as the default unless manifest/README configuration overrides it | Assume every project serves an HTML root |
+| Project has no icon asset | Show the recognized framework badge, or the generic fallback for unknown projects | Fail discovery or infer runtime authority from branding |
 | Explicit start fails or a running generation enters `failed` | Offer Retry & open and Ask AI for help with an unsent, sanitized Chat draft | Auto-retry/start/send, create a run, or transfer raw local diagnostics into Chat |
 | Process ownership is uncertain | Quarantine as orphaned-unverified | Guess-kill a process |
 
@@ -229,6 +258,8 @@ Saved View identity and group placement.
 - A Local App tab in Side Panel or full-bleed Main Workbench.
 - A registered App opened full-bleed in the Apps main content, without a
   persistent right runtime-control column.
+- A registered App row with its discovered project icon or framework fallback
+  badge when no project icon is available.
 - A Main-tab project settings dialog that shows the reviewed configuration,
   prevents active-runtime edits, and updates the tab label after a successful
   reviewed save.
@@ -242,7 +273,9 @@ Saved View identity and group placement.
   missing binding, another device, or unsupported Web environment.
 - A failure-recovery Chat draft that contains the App label and generic request
   only; raw local diagnostics remain visible only on the Desktop failure
-  surface unless the operator deliberately adds them.
+  surface unless the operator deliberately adds them. The failure page offers
+  Ask AI for help; source access remains in the row More menu rather than as a
+  duplicate failure-page action.
 - Messenger row with a Local App icon and title, never a local path, command,
   PID, port, or live URL.
 
@@ -275,6 +308,15 @@ A Messenger row is opened on Web or a Desktop without the matching
 installation-local binding. Main keeps the row selected and displays an
 unavailable explanation. It does not expose the original path and does not
 attempt to start anything.
+
+#### Card Studio or another Vite project
+
+The operator registers an existing Vite, React/Vite, or Vue/Vite project whose
+script may assume a fixed development port. Discovery keeps its direct package
+manager command, Rudder supplies the isolated loopback host and port, readiness
+checks `/`, and the Apps row shows the project's own logo when present or its
+framework badge otherwise. A custom server wrapper or API-only project is left
+unchanged and retains its explicit or `/api/health` readiness contract.
 
 ### Invariants / Non-Goals
 
