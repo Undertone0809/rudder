@@ -29,7 +29,12 @@ export interface LocalAppProcessPlatform {
     pgid: number | null;
     port: number | null;
   }): Promise<LocalAppPersistedRuntimeLiveness>;
-  verifyListenerOwnership(input: { port: number; pid: number; pgid: number }): Promise<boolean>;
+  verifyListenerOwnership(input: {
+    port: number;
+    pid: number;
+    pgid: number;
+    timeoutMs: number;
+  }): Promise<boolean>;
 }
 
 export interface LocalAppProcessPlatformOptions {
@@ -336,9 +341,15 @@ export function createLocalAppProcessPlatform(
     port: number;
     pid: number;
     pgid: number;
+    timeoutMs: number;
   }): Promise<boolean> => {
     try {
       if (input.pid !== input.pgid) return false;
+      const deadline = Date.now() + Math.max(1, input.timeoutMs);
+      const remainingTimeout = (maximumMs: number) => Math.max(
+        1,
+        Math.min(maximumMs, deadline - Date.now()),
+      );
       const processResult = await execute(path.win32.join(
         windowsSystem32,
         "WindowsPowerShell",
@@ -349,7 +360,8 @@ export function createLocalAppProcessPlatform(
         "-NonInteractive",
         "-Command",
         "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
-      ], { timeout: WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 });
+      ], { timeout: remainingTimeout(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS), maxBuffer: 2 * 1024 * 1024 });
+      if (Date.now() >= deadline) return false;
       const processTable = parseWindowsProcessTable(String(processResult.stdout));
       if (!processTable?.some((entry) => entry.pid === input.pid)) return false;
       const ownedPids = descendantProcessIds(input.pid, processTable);
@@ -357,10 +369,11 @@ export function createLocalAppProcessPlatform(
         path.win32.join(windowsSystem32, "netstat.exe"),
         ["-ano", "-p", "tcp"],
         {
-          timeout: 5_000,
+          timeout: remainingTimeout(5_000),
           maxBuffer: 2 * 1024 * 1024,
         },
       );
+      if (Date.now() >= deadline) return false;
       const listenerPids = parseWindowsLoopbackListenerPids(String(netstatResult.stdout), input.port);
       return Boolean(listenerPids?.every((pid) => ownedPids.has(pid)));
     } catch {

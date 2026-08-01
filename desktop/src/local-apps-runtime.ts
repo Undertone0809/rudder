@@ -26,6 +26,7 @@ export {
 
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
 const LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 750;
+const WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 10_000;
 
 export type LocalAppRuntimeStatus =
   | "stopped"
@@ -86,7 +87,12 @@ type RuntimeManagerOptions = {
   hostExecutablePath?: string;
   platform?: NodeJS.Platform;
   maxLogBytes?: number;
-  verifyListenerOwnership?: (input: { port: number; pid: number; pgid: number }) => Promise<boolean>;
+  verifyListenerOwnership?: (input: {
+    port: number;
+    pid: number;
+    pgid: number;
+    timeoutMs: number;
+  }) => Promise<boolean>;
   killGroup?: (pgid: number, signal: NodeJS.Signals) => void;
   spawnWatchdog?: typeof spawn;
   watchdogRunnerPath?: string;
@@ -297,7 +303,12 @@ export class LocalAppRuntimeManager {
   private readonly hostExecutablePath: string;
   private readonly processPlatform: LocalAppProcessPlatform;
   private readonly maxLogBytes: number;
-  private readonly verifyListenerOwnership: (input: { port: number; pid: number; pgid: number }) => Promise<boolean>;
+  private readonly verifyListenerOwnership: (input: {
+    port: number;
+    pid: number;
+    pgid: number;
+    timeoutMs: number;
+  }) => Promise<boolean>;
   private readonly spawnWatchdog: typeof spawn;
   private readonly watchdogRunnerPath: string;
   private readonly watchdogStartTimeoutMs: number;
@@ -774,16 +785,28 @@ export class LocalAppRuntimeManager {
   private async waitForListenerOwnership(record: RuntimeRecord): Promise<void> {
     const deadline = Date.now() + Math.min(
       record.definition.readiness.timeoutMs,
-      LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
+      this.processPlatform.platform === "win32"
+        ? WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS
+        : LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
     );
     while (Date.now() < deadline) {
-      if (!record.helper || record.helper.exitCode !== null || record.helper.signalCode !== null) {
+      if (
+        !record.helper
+        || record.helper.exitCode !== null
+        || record.helper.signalCode !== null
+        || record.watchdog?.exited
+      ) {
         throw new Error("Local App exited before listener ownership could be proven");
       }
       const remainingMs = deadline - Date.now();
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const ownership = record.port !== null && record.pid !== null && record.pgid !== null
-        ? this.verifyListenerOwnership({ port: record.port, pid: record.pid, pgid: record.pgid })
+        ? this.verifyListenerOwnership({
+            port: record.port,
+            pid: record.pid,
+            pgid: record.pgid,
+            timeoutMs: remainingMs,
+          })
         : Promise.resolve(false);
       const owned = await Promise.race([
         ownership,
@@ -793,6 +816,14 @@ export class LocalAppRuntimeManager {
       ]).finally(() => {
         if (timeout) clearTimeout(timeout);
       });
+      if (
+        !record.helper
+        || record.helper.exitCode !== null
+        || record.helper.signalCode !== null
+        || record.watchdog?.exited
+      ) {
+        throw new Error("Local App exited before listener ownership could be proven");
+      }
       if (owned) {
         return;
       }

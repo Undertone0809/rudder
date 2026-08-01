@@ -117,14 +117,61 @@ describe("Local App process platform abstraction", () => {
       platform: "win32",
       execFileAsync: execute,
     });
-    await expect(platform.verifyListenerOwnership({ port: 43_123, pid: 42, pgid: 42 }))
+    await expect(platform.verifyListenerOwnership({
+      port: 43_123,
+      pid: 42,
+      pgid: 42,
+      timeoutMs: 1_234,
+    }))
       .resolves.toBe(true);
     expect(execute).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(/powershell\.exe$/),
       expect.any(Array),
-      expect.objectContaining({ timeout: 15_000 }),
+      expect.objectContaining({ maxBuffer: 2 * 1024 * 1024 }),
     );
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/netstat\.exe$/),
+      expect.any(Array),
+      expect.objectContaining({ maxBuffer: 2 * 1024 * 1024 }),
+    );
+    for (const call of execute.mock.calls) {
+      expect(call[2].timeout).toBeGreaterThan(0);
+      expect(call[2].timeout).toBeLessThanOrEqual(1_234);
+    }
+  });
+
+  it("rejects a Windows listener snapshot that completes after its shared deadline", async () => {
+    const execute = vi.fn(async (executable: string) => ({
+      stdout: executable.endsWith("powershell.exe")
+        ? JSON.stringify([
+            { ProcessId: 42, ParentProcessId: 1 },
+            { ProcessId: 43, ParentProcessId: 42 },
+          ])
+        : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    43",
+    }));
+    const now = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(2_234);
+    try {
+      const platform = createLocalAppProcessPlatform({
+        platform: "win32",
+        execFileAsync: execute,
+      });
+      await expect(platform.verifyListenerOwnership({
+        port: 43_123,
+        pid: 42,
+        pgid: 42,
+        timeoutMs: 1_234,
+      })).resolves.toBe(false);
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("parses only IPv4 loopback listeners from Linux procfs", () => {

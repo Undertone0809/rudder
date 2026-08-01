@@ -658,6 +658,80 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
+  it("allows a bounded slow Windows process snapshot to prove listener ownership", async () => {
+    const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
+    const verifyListenerOwnership = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return true;
+    });
+    const manager = new LocalAppRuntimeManager({
+      registry: owned.registry,
+      platform: "win32",
+      verifyListenerOwnership,
+    });
+    try {
+      await expect(manager.start(owned.definition.id)).resolves.toMatchObject({ status: "running" });
+      expect(verifyListenerOwnership).toHaveBeenCalledTimes(1);
+    } finally {
+      await manager.stop(owned.definition.id).catch(() => undefined);
+    }
+  });
+
+  it("rejects ownership proven after the watchdog exits during the snapshot", async () => {
+    const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
+    const ownership = deferred<boolean>();
+    const helper = watchdogEmitting({ type: "ignored" });
+    let healthServer: ReturnType<typeof createServer> | null = null;
+    const healthSockets = new Set<import("node:net").Socket>();
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as { type?: string; env?: NodeJS.ProcessEnv };
+      if (typed.type === "start") {
+        const port = Number.parseInt(typed.env?.PORT ?? "", 10);
+        healthServer = createServer((socket) => {
+          healthSockets.add(socket);
+          socket.once("close", () => healthSockets.delete(socket));
+          socket.end("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}");
+        });
+        healthServer.listen(port, "127.0.0.1", () => {
+          helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 });
+        });
+      }
+      callback?.(null);
+      return true;
+    });
+    const processPlatform = {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: vi.fn(async () => undefined),
+      probePersistedRuntime: vi.fn(async () => ({
+        pid: "dead" as const,
+        processGroup: "dead" as const,
+        listener: "dead" as const,
+      })),
+      verifyListenerOwnership: vi.fn(() => ownership.promise),
+    };
+    const manager = new LocalAppRuntimeManager({
+      registry: owned.registry,
+      processPlatform,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+    });
+    try {
+      const start = manager.start(owned.definition.id);
+      await vi.waitFor(() => expect(processPlatform.verifyListenerOwnership).toHaveBeenCalledOnce());
+      helper.emit("exit", 1, null);
+      ownership.resolve(true);
+      await expect(start).rejects.toThrow("exited before listener ownership could be proven");
+      expect(processPlatform.terminate).toHaveBeenCalledWith(88_881);
+    } finally {
+      if (healthServer?.listening) {
+        for (const socket of healthSockets) socket.destroy();
+        await new Promise<void>((resolve, reject) => {
+          healthServer!.close((error) => error ? reject(error) : resolve());
+        });
+      }
+    }
+  });
+
   it("bounds a listener ownership probe that never returns", async () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 250 });
     const manager = new LocalAppRuntimeManager({
