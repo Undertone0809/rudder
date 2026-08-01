@@ -202,9 +202,10 @@ interpreted by the wrong process.
 
 Recognized frontend projects use `/` as the default readiness path because an
 HTML response proves the development server is serving. Generic or API-only
-projects retain `/api/health` as the fallback. An explicit `rudder.app.json`
-readiness path or a documented README health route takes precedence over either
-default.
+projects retain `/api/health` as the fallback. An explicit
+`package.json` `rudder.readiness.path` or a documented README health route takes
+precedence over either default. App Builder's `rudder.app.json` manifest keeps
+its separate managed-runtime contract.
 
 The Apps catalog prefers an App-provided favicon, manifest icon, or conventional
 project logo asset. When no project asset is available, a recognized framework
