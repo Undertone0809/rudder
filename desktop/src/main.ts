@@ -54,6 +54,23 @@ import {
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
+import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
+import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
+import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
+import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
+import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
+import {
+  createDesktopRecoveryDiagnostic,
+  createDesktopStartupFailureView,
+  type DesktopStartupFailureView,
+} from "./desktop-startup-failure.js";
+import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
+import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
+import {
+  toWorkspaceLaunchTargetPayload,
+  type DesktopWorkspaceLaunchTargetPayload,
+} from "./desktop-workspace-launch-payload.js";
 import {
   listAvailableIdeTargets,
   listWorkspaceLaunchTargets,
@@ -104,6 +121,7 @@ import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
+import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 import {
   isDesktopSystemPermissionId,
   resolveDesktopSystemPermissions,
@@ -120,25 +138,6 @@ import {
   type DesktopUpdateChannel
 } from "./update-check.js";
 import { resolveInitialDesktopWindowSize } from "./window-size.js";
-
-import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
-import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
-import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
-import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
-import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
-import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
-import {
-  createDesktopRecoveryDiagnostic,
-  createDesktopStartupFailureView,
-  type DesktopStartupFailureView,
-} from "./desktop-startup-failure.js";
-import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
-import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
-import {
-  toWorkspaceLaunchTargetPayload,
-  type DesktopWorkspaceLaunchTargetPayload,
-} from "./desktop-workspace-launch-payload.js";
-import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_BUILDER_RUNNER_PATH = path.join(MODULE_DIR, "app-builder-runner.mjs");
 type BootState = {
