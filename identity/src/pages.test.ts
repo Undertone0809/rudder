@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { identityClientScript } from "./client-script.js";
 import {
   accountPage,
+  deviceApprovalPage,
   homePage,
   passwordRecoveryPage,
   privacyPage,
@@ -54,6 +55,21 @@ describe("Identity public pages", () => {
     expect(html).toContain("revokes Rudder Desktop cloud access");
     expect(html).toContain("local expiry or next identity sync");
     expect(html).not.toContain('name="email"');
+  });
+
+  it("renders device approval as one compact, branded decision surface", () => {
+    const html = deviceApprovalPage("ABCD-1234");
+    expect(html).toContain('class="auth-card device-card"');
+    expect(html).toContain('<img src="/rudder-logo.png" alt="">');
+    expect(html).toContain('id="device-user-code">ABCD-1234</strong>');
+    expect(html).toContain('id="device-decision"');
+    expect(html).toContain(
+      'id="device-result" role="status" aria-live="polite" aria-atomic="true" hidden',
+    );
+    expect(html).toContain('id="return-to-rudder"');
+    expect(html).toContain("Only approve if this code matches");
+    expect(html).not.toContain("<section>\n       <button");
+    expect(deviceApprovalPage("SAFE<script>")).toContain("SAFE&lt;script&gt;");
   });
 
   it("uses only the provider-neutral root-auth facade for browser authentication", () => {

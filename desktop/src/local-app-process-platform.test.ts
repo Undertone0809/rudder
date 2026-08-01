@@ -119,6 +119,12 @@ describe("Local App process platform abstraction", () => {
     });
     await expect(platform.verifyListenerOwnership({ port: 43_123, pid: 42, pgid: 42 }))
       .resolves.toBe(true);
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/powershell\.exe$/),
+      expect.any(Array),
+      expect.objectContaining({ timeout: 15_000 }),
+    );
   });
 
   it("parses only IPv4 loopback listeners from Linux procfs", () => {

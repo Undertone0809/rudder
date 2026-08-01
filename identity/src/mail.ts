@@ -76,13 +76,20 @@ export function otpMail(input: {
   };
 }
 
-export function passwordResetMail(input: { to: string; url: string }): IdentityMail {
+export function passwordResetMail(input: { to: string; url: string; code?: string }): IdentityMail {
   const url = escapeHtml(input.url);
+  const code = input.code ? escapeHtml(input.code) : null;
+  const codeText = input.code
+    ? `Use ${input.code} to reset your Rudder Account password.\n\n`
+    : "";
+  const codeHtml = code
+    ? `<p>Use <strong>${code}</strong> to reset your Rudder Account password.</p>`
+    : "";
   return {
     to: input.to,
     subject: "Reset your Rudder Account password",
-    text: `Reset your Rudder Account password: ${input.url}\n\nIf you did not request it, ignore this email.`,
-    html: `<p><a href="${url}">Reset your Rudder Account password</a></p><p>If you did not request it, ignore this email.</p>`,
+    text: `${codeText}Reset your Rudder Account password: ${input.url}\n\nIf you did not request it, ignore this email.`,
+    html: `${codeHtml}<p><a href="${url}">Reset your Rudder Account password</a></p><p>If you did not request it, ignore this email.</p>`,
     category: "password-reset",
   };
 }

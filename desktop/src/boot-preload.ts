@@ -22,6 +22,19 @@ contextBridge.exposeInMainWorld("rudderBoot", {
   openInstanceFolder: () => ipcRenderer.invoke("desktop:open-recovery-instance-folder") as Promise<void>,
   signIn: (hint: DesktopSignInHint) =>
     ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn, hint) as Promise<DesktopIdentityState>,
+  sendEmailOtp: (email: string) =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.sendEmailOtp, { email }) as Promise<void>,
+  verifyEmailOtp: (email: string, token: string) =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.verifyEmailOtp, { email, token }) as Promise<DesktopIdentityState>,
+  signInWithPassword: (email: string, password: string) =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signInWithPassword, { email, password }) as Promise<DesktopIdentityState>,
+  requestPasswordReset: (email: string) =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.requestPasswordReset, { email }) as Promise<void>,
+  resetPassword: (email: string, token: string, newPassword: string) =>
+    ipcRenderer.invoke(
+      DESKTOP_IDENTITY_IPC_CHANNELS.resetPassword,
+      { email, token, newPassword },
+    ) as Promise<DesktopIdentityState>,
   onIdentityState: (listener: (state: DesktopIdentityState) => void) => {
     const wrapped = (_event: IpcRendererEvent, state: DesktopIdentityState) => listener(state);
     ipcRenderer.on(DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged, wrapped);
@@ -43,6 +56,11 @@ declare global {
       copyDiagnostic(): Promise<void>;
       openInstanceFolder(): Promise<void>;
       signIn(hint: DesktopSignInHint): Promise<DesktopIdentityState>;
+      sendEmailOtp(email: string): Promise<void>;
+      verifyEmailOtp(email: string, token: string): Promise<DesktopIdentityState>;
+      signInWithPassword(email: string, password: string): Promise<DesktopIdentityState>;
+      requestPasswordReset(email: string): Promise<void>;
+      resetPassword(email: string, token: string, newPassword: string): Promise<DesktopIdentityState>;
       onIdentityState(listener: (state: DesktopIdentityState) => void): () => void;
       copyText(value: string): Promise<void>;
     };

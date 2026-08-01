@@ -232,7 +232,11 @@ export function createRootIdentityFixture(
       const link = new URL(config.passwordResetUrl);
       link.searchParams.set("token_hash", "345678");
       link.searchParams.set("type", "recovery");
-      await mail.send(passwordResetMail({ to: email, url: link.toString() }));
+      await mail.send(passwordResetMail({
+        to: email,
+        url: link.toString(),
+        code: "345678",
+      }));
     },
     async resetPasswordWithOtp(context, input, beforeMutation) {
       const user = verifyOtp(input.email, input.token, "recovery");
