@@ -26,7 +26,7 @@ export {
 
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
 const LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 750;
-const WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 10_000;
+const WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 30_000;
 
 export type LocalAppRuntimeStatus =
   | "stopped"

@@ -659,8 +659,9 @@ describe("Desktop Local App runtime", () => {
   });
 
   it("allows a bounded slow Windows process snapshot to prove listener ownership", async () => {
-    const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
-    const verifyListenerOwnership = vi.fn(async () => {
+    const owned = await approvedFixture({ readinessTimeoutMs: 30_000 });
+    const verifyListenerOwnership = vi.fn(async (input: { timeoutMs: number }) => {
+      expect(input.timeoutMs).toBeGreaterThan(20_000);
       await new Promise((resolve) => setTimeout(resolve, 900));
       return true;
     });
