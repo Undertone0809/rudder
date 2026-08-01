@@ -223,6 +223,7 @@ export function createLocalAppProcessPlatform(
   const systemPathEntries = platform === "win32"
     ? [windowsSystem32, systemRoot]
     : ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const reportedWindowsOwnershipFailures = new Set<string>();
 
   const verifyPosixListenerOwnership = async (input: {
     port: number;
@@ -343,8 +344,15 @@ export function createLocalAppProcessPlatform(
     pgid: number;
     timeoutMs: number;
   }): Promise<boolean> => {
+    const rejectOwnership = (reason: string): false => {
+      if (!reportedWindowsOwnershipFailures.has(reason)) {
+        reportedWindowsOwnershipFailures.add(reason);
+        console.warn(`[local-app-ownership] Windows listener ownership rejected: ${reason}`);
+      }
+      return false;
+    };
     try {
-      if (input.pid !== input.pgid) return false;
+      if (input.pid !== input.pgid) return rejectOwnership("owner identity mismatch");
       const deadline = Date.now() + Math.max(1, input.timeoutMs);
       const remainingTimeout = (maximumMs: number) => Math.max(
         1,
@@ -359,11 +367,14 @@ export function createLocalAppProcessPlatform(
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
       ], { timeout: remainingTimeout(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS), maxBuffer: 2 * 1024 * 1024 });
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) return rejectOwnership("process snapshot exceeded deadline");
       const processTable = parseWindowsProcessTable(String(processResult.stdout));
-      if (!processTable?.some((entry) => entry.pid === input.pid)) return false;
+      if (!processTable) return rejectOwnership("process snapshot was invalid");
+      if (!processTable.some((entry) => entry.pid === input.pid)) {
+        return rejectOwnership("managed root was absent from process snapshot");
+      }
       const ownedPids = descendantProcessIds(input.pid, processTable);
       const netstatResult = await execute(
         path.win32.join(windowsSystem32, "netstat.exe"),
@@ -373,11 +384,18 @@ export function createLocalAppProcessPlatform(
           maxBuffer: 2 * 1024 * 1024,
         },
       );
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) return rejectOwnership("listener snapshot exceeded deadline");
       const listenerPids = parseWindowsLoopbackListenerPids(String(netstatResult.stdout), input.port);
-      return Boolean(listenerPids?.every((pid) => ownedPids.has(pid)));
-    } catch {
-      return false;
+      if (!listenerPids) return rejectOwnership("exact loopback listener was absent");
+      if (!listenerPids.every((pid) => ownedPids.has(pid))) {
+        return rejectOwnership("listener was outside the managed process tree");
+      }
+      return true;
+    } catch (error) {
+      const reason = (error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+        ? "process inspection timed out"
+        : "process inspection failed";
+      return rejectOwnership(reason);
     }
   };
 

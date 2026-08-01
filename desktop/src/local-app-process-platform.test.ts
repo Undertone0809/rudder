@@ -127,7 +127,9 @@ describe("Local App process platform abstraction", () => {
     expect(execute).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(/powershell\.exe$/),
-      expect.any(Array),
+      expect.arrayContaining([
+        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+      ]),
       expect.objectContaining({ maxBuffer: 2 * 1024 * 1024 }),
     );
     expect(execute).toHaveBeenNthCalledWith(
@@ -139,6 +141,70 @@ describe("Local App process platform abstraction", () => {
     for (const call of execute.mock.calls) {
       expect(call[2].timeout).toBeGreaterThan(0);
       expect(call[2].timeout).toBeLessThanOrEqual(1_234);
+    }
+  });
+
+  it.each([
+    {
+      name: "process inspection timeout",
+      execute: async () => {
+        throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+      },
+      reason: "process inspection timed out",
+    },
+    {
+      name: "missing managed root",
+      execute: async () => ({
+        stdout: JSON.stringify([{ ProcessId: 99, ParentProcessId: 1 }]),
+      }),
+      reason: "managed root was absent from process snapshot",
+    },
+    {
+      name: "missing exact listener",
+      execute: async (executable: string) => ({
+        stdout: executable.endsWith("powershell.exe")
+          ? JSON.stringify([{ ProcessId: 42, ParentProcessId: 1 }])
+          : "",
+      }),
+      reason: "exact loopback listener was absent",
+    },
+    {
+      name: "listener outside managed tree",
+      execute: async (executable: string) => ({
+        stdout: executable.endsWith("powershell.exe")
+          ? JSON.stringify([
+              { ProcessId: 42, ParentProcessId: 1 },
+              { ProcessId: 99, ParentProcessId: 1 },
+            ])
+          : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    99",
+      }),
+      reason: "listener was outside the managed process tree",
+    },
+  ])("fails closed with sanitized diagnostics for $name", async ({ execute, reason }) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const platform = createLocalAppProcessPlatform({
+        platform: "win32",
+        execFileAsync: execute,
+      });
+      await expect(platform.verifyListenerOwnership({
+        port: 43_123,
+        pid: 42,
+        pgid: 42,
+        timeoutMs: 30_000,
+      })).resolves.toBe(false);
+      await expect(platform.verifyListenerOwnership({
+        port: 43_123,
+        pid: 42,
+        pgid: 42,
+        timeoutMs: 30_000,
+      })).resolves.toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        `[local-app-ownership] Windows listener ownership rejected: ${reason}`,
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
     }
   });
 
