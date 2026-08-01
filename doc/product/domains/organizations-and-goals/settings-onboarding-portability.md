@@ -57,6 +57,7 @@ related_code:
   - ui/src/pages/InstanceBrowserSettings.tsx
   - ui/src/pages/InstanceGeneralSettings.tsx
   - ui/src/pages/InstanceNotificationsSettings.tsx
+  - ui/src/pages/InstanceAccountSettings.tsx
   - ui/src/pages/InstanceProfileSettings.tsx
   - ui/src/pages/InstanceSettings.tsx
   - ui/src/pages/InstanceShortcutsSettings.tsx
@@ -103,6 +104,7 @@ related_tests:
   - ui/src/pages/InstanceBrowserSettings.test.tsx
   - ui/src/pages/InstanceGeneralSettings.test.tsx
   - ui/src/pages/InstanceNotificationsSettings.test.tsx
+  - ui/src/pages/InstanceAccountSettings.test.tsx
   - ui/src/pages/InstanceProfileSettings.test.tsx
   - ui/src/pages/InstanceSettings.test.tsx
   - ui/src/pages/InstanceShortcutsSettings.test.tsx
@@ -222,6 +224,12 @@ Product model:
   the contextual overlay and full-page fallback. Destinations are grouped as
   Personal, Desktop app, Runtime, Integrations, and Your organizations so the
   owner and effect of a setting remain legible before the operator opens it.
+- Personal settings use `Profile & account` as the canonical destination at
+  `/instance/settings/profile`. It combines operator profile editing with
+  Rudder Account security, provider, session, and device controls. The legacy
+  `/instance/settings/account` route remains a compatibility entry point and
+  redirects to the canonical Profile & account destination while preserving
+  query, hash, and navigation state.
 - The Settings shell owns grouped navigation, access and deployment gating,
   active-destination state, responsive composition, and close/return behavior.
   Each destination page owns its settings state, validation, persistence,
@@ -249,25 +257,28 @@ Flow:
 2. The shell resolves the current route, operator access, and deployment
    capabilities, builds the scope-first navigation, and visibly identifies the
    active destination.
-3. A contextual overlay preserves the prior work surface while making that
+3. Profile & account opens the canonical profile route and renders both
+   operator profile and Rudder Account sections. A legacy account route is
+   normalized to that same destination before the page renders.
+4. A contextual overlay preserves the prior work surface while making that
    background inert and unavailable to assistive technology. Focus enters the
    Settings dialog, cycles within it, and returns to the opening control when
    Settings closes. The full-page fallback exposes the same authorized routes
    and destination ownership.
-4. On narrow viewports, opening Settings navigation presents it as an
+5. On narrow viewports, opening Settings navigation presents it as an
    independent modal layer, moves focus into that layer, and makes destination
    content non-interactive until navigation is dismissed. Selecting a
    destination closes the layer; dismissing it returns focus to its trigger.
-5. UI loads current instance/operator/org configuration for the selected page.
-6. Service-backed pages save through the owning settings service and invalidate
+6. UI loads current instance/operator/org configuration for the selected page.
+7. Service-backed pages save through the owning settings service and invalidate
    relevant UI caches.
-7. Browser settings control the instance capability and default web-link
+8. Browser settings control the instance capability and default web-link
    destination. Import and clear actions execute through the trusted Desktop
    boundary and disclose that their effect is shared across organizations.
-8. Appearance choices apply immediately by setting root DOM attributes and the
+9. Appearance choices apply immediately by setting root DOM attributes and the
    resolved browser theme color, then persist to local storage so the next app
    boot can apply the same presentation before React finishes loading.
-9. Affected workflows read settings through their own domain service; workflow
+10. Affected workflows read settings through their own domain service; workflow
    behavior must not depend on presentation-only appearance values.
 
 Invariants:
@@ -277,6 +288,9 @@ Invariants:
   integration, and organization scopes visibly distinct. Viewing another
   organization's settings must not implicitly switch the operator's active
   organization.
+- `Profile & account` is the single canonical Personal destination. The legacy
+  account route must converge on `/instance/settings/profile` without dropping
+  query, hash, or navigation state.
 - Contextual overlay and full-page shells must preserve stable routes and expose
   the same authorized destinations. Responsive composition must not hide a
   capability, change its persistence owner, or alter its save/action semantics.
@@ -346,6 +360,9 @@ Evidence:
   deployment gating for Settings destinations.
 - `tests/e2e/settings-sidebar.spec.ts` covers route-backed Settings navigation,
   scope groupings, and contextual overlay return behavior.
+- `InstanceProfileSettings` composes the account sections owned by
+  `InstanceAccountSettings`; the Settings E2E proves the merged destination and
+  legacy account-route redirect.
 - `tests/e2e/settings-layout.spec.ts` covers representative Settings pages,
   active destinations, mobile navigation focus and dismissal, Escape ordering,
   and horizontal-overflow protection.
