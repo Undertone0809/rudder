@@ -148,7 +148,7 @@ function sanitizePiStdoutLine(line: string): string {
   if (!trimmed) return "";
   const event = parseJson(trimmed);
   if (!event || typeof event !== "object" || Array.isArray(event)) {
-    return truncateText(trimmed);
+    return JSON.stringify({ type: "malformed_event", redacted: true });
   }
 
   const record = event as Record<string, unknown>;

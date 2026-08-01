@@ -94,6 +94,8 @@ if (process.env.RUDDER_TEST_PI_REALISTIC_OUTPUT === "1") {
     result: { ok: true, signature: bigSignature },
     isError: false
   });
+  console.log('{"type":"agent_end","signature":"' + bigSignature);
+  console.log("unframed-secret-" + bigSignature);
   emitJson({
     type: "turn_end",
     message: {
@@ -767,6 +769,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(JSON.stringify(result.resultJson)).not.toContain("internal reasoning should not be persisted");
       expect(JSON.stringify(result.resultJson)).not.toContain("sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_");
       expect(logs.join("")).not.toContain("internal reasoning should not be persisted");
+      expect(logs.join("")).not.toContain("sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_");
+      expect(logs.join("")).toContain("\"type\":\"malformed_event\"");
       expect(logs.join("")).toContain("\"type\":\"turn_end\"");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
