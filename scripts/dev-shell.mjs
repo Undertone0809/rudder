@@ -9,6 +9,10 @@ import {
   resolveDevScriptEnvironment,
   resolveHomeDir,
 } from "./dev-local-env.mjs";
+import {
+  classifyDevDesktopExit,
+  classifyDevServerExit,
+} from "./dev-shell-lifecycle.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -18,9 +22,11 @@ const forwardedArgs = cliArgs[0] === "watch" || cliArgs[0] === "dev" ? cliArgs.s
 const runtimeLabel = runtimeMode === "watch" ? "watched dev runtime" : "dev runtime";
 const startupTimeoutMs = 120_000;
 const pollIntervalMs = 250;
+const desktopTakeoverVerificationTimeoutMs = 10_000;
 
 let shuttingDown = false;
 let desktopStarted = false;
+let desktopOwnsRuntime = false;
 let serverChild = null;
 let identityChild = null;
 let desktopChild = null;
@@ -83,6 +89,38 @@ async function waitForDevRuntimeReady(env) {
       lastError instanceof Error ? lastError.message : String(lastError ?? "Unknown error")
     }`,
   );
+}
+
+async function waitForDesktopRuntimeOwnership(env) {
+  const descriptorPath = resolveDescriptorPath(env);
+  const deadline = Date.now() + desktopTakeoverVerificationTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const descriptor = readDescriptor(descriptorPath);
+    if (descriptor?.apiUrl && descriptor?.ownerKind === "desktop") {
+      try {
+        const response = await fetch(`${String(descriptor.apiUrl).replace(/\/+$/, "")}/api/health`, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(1_500),
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          if (
+            payload?.status === "ok"
+            && payload?.runtimeOwnerKind === "desktop"
+            && payload?.instanceId === (env.RUDDER_INSTANCE_ID?.trim() || "dev")
+          ) {
+            return "desktop";
+          }
+        }
+      } catch {
+        // Desktop takeover can briefly leave the descriptor ahead of health readiness.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return null;
 }
 
 async function waitForIdentityReady(identityOrigin) {
@@ -151,7 +189,7 @@ async function runManagedCommand(name, command, args, env) {
   return result;
 }
 
-async function shutdown(exitCode = 0) {
+async function shutdown(exitCode = 0, finalSignal = null) {
   if (shuttingDown) return;
   shuttingDown = true;
 
@@ -176,6 +214,11 @@ async function shutdown(exitCode = 0) {
     ]);
   }
 
+  if (finalSignal) {
+    process.removeAllListeners(finalSignal);
+    process.kill(process.pid, finalSignal);
+    return;
+  }
   process.exit(exitCode);
 }
 
@@ -204,18 +247,35 @@ async function main() {
   );
   serverChild.once("exit", (code, signal) => {
     serverChild = null;
-    if (shuttingDown) return;
-    if (desktopChild && !desktopChild.killed) {
-      desktopChild.kill("SIGTERM");
-    }
-    if (identityChild && !identityChild.killed) {
-      identityChild.kill("SIGTERM");
-    }
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(code ?? 0);
+    void (async () => {
+      const runtimeOwnerKind = desktopStarted
+        ? await waitForDesktopRuntimeOwnership(env)
+        : null;
+      const exitDisposition = classifyDevServerExit({ runtimeOwnerKind, shuttingDown });
+      if (exitDisposition === "ignore") return;
+      if (exitDisposition === "desktop-managed") {
+        desktopOwnsRuntime = true;
+        const outcome = signal ? `via ${signal}` : `with code ${code ?? 0}`;
+        console.log(
+          `[rudder:server] ${runtimeLabel} exited ${outcome}; Desktop now manages the local runtime.`,
+        );
+        return;
+      }
+      if (desktopChild && !desktopChild.killed) {
+        desktopChild.kill("SIGTERM");
+      }
+      if (identityChild && !identityChild.killed) {
+        identityChild.kill("SIGTERM");
+      }
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      process.exit(code ?? 0);
+    })().catch((error) => {
+      console.error(`[rudder:server] failed to classify ${runtimeLabel} exit`, error);
+      void shutdown(1);
+    });
   });
 
   await waitForDevRuntimeReady(env);
@@ -275,7 +335,16 @@ async function main() {
   desktopStarted = true;
   desktopChild.once("exit", (code, signal) => {
     desktopChild = null;
-    if (shuttingDown) return;
+    const exitDisposition = classifyDevDesktopExit({ desktopOwnsRuntime, shuttingDown });
+    if (exitDisposition === "ignore") return;
+    if (exitDisposition === "exit-parent") {
+      if (signal) {
+        void shutdown(1, signal);
+        return;
+      }
+      void shutdown(code ?? 0);
+      return;
+    }
     if (signal) {
       console.warn(`[rudder:desktop] desktop shell exited via ${signal}. ${runtimeLabel} is still running.`);
       return;

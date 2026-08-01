@@ -125,6 +125,7 @@ import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopIm
 import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
 import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
 import {
   createDesktopRecoveryDiagnostic,
@@ -1961,7 +1962,7 @@ async function startLocalRudder(): Promise<void> {
       serverHandle = await serverModule.startManagedLocalServer({
         ownerKind: "desktop",
         takeoverOnVersionMismatch: true,
-        preferredOwner: true,
+        preferredOwner: shouldPreferDesktopRuntimeOwnership(app.isPackaged),
         ...(localAccountSession.localAccountAuth
           ? { localAccountAuth: localAccountSession.localAccountAuth }
           : {}),
