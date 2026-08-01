@@ -343,16 +343,61 @@ export const identityClientScript = String.raw`
   }
 
   const userCode = document.querySelector("#device-user-code")?.textContent?.trim();
+  const deviceDecision = document.querySelector("#device-decision");
+  const deviceResult = document.querySelector("#device-result");
+  const deviceResultTitle = document.querySelector("#device-result-title");
+  const deviceResultCopy = document.querySelector("#device-result-copy");
+  const approveDeviceButton = document.querySelector("#approve-device");
+  const denyDeviceButton = document.querySelector("#deny-device");
+  const deviceDecisionButtons = [approveDeviceButton, denyDeviceButton].filter(Boolean);
+  let deviceDecisionBusy = false;
+  let deviceDecisionResolved = false;
+  const setDeviceDecisionBusy = (busy, action = "") => {
+    deviceDecisionBusy = busy;
+    for (const button of deviceDecisionButtons) {
+      button.disabled = busy || deviceDecisionResolved;
+      button.dataset.loading = busy && button === (action === "approve" ? approveDeviceButton : denyDeviceButton)
+        ? "true"
+        : "false";
+      button.setAttribute?.("aria-busy", button.dataset.loading);
+      button.textContent = busy && button.dataset.loading === "true"
+        ? action === "approve" ? "Approving…" : "Denying…"
+        : button.dataset.idleLabel;
+    }
+  };
   for (const [id, action] of [["#approve-device", "approve"], ["#deny-device", "deny"]]) {
     document.querySelector(id)?.addEventListener("click", async () => {
+      if (deviceDecisionBusy || deviceDecisionResolved) return;
+      setDeviceDecisionBusy(true, action);
+      message(action === "approve" ? "Approving this device…" : "Denying this request…");
       try {
         await request("/api/desktop/device-code/" + action, { userCode });
-        message(action === "approve" ? "Device approved. You can return to Rudder." : "Device denied.");
+        deviceDecisionResolved = true;
+        deviceDecision.hidden = true;
+        deviceResult.hidden = false;
+        deviceResult.dataset.state = action === "approve" ? "approved" : "denied";
+        deviceResult.querySelector(".device-approved-icon").hidden = action !== "approve";
+        deviceResult.querySelector(".device-denied-icon").hidden = action === "approve";
+        deviceResultTitle.textContent = action === "approve" ? "Device approved" : "Request denied";
+        deviceResultCopy.textContent = action === "approve"
+          ? "Rudder Desktop is signing in. You can return to the app."
+          : "This device was not granted access. You can return to Rudder.";
+        message("");
+        document.querySelector("#return-to-rudder")?.focus?.();
       } catch {
         message("This device request is invalid or expired.", true);
+        setDeviceDecisionBusy(false);
       }
     });
   }
+  document.querySelector("#return-to-rudder")?.addEventListener("click", () => {
+    window.close();
+    setTimeout(() => {
+      if (!window.closed) {
+        message("You can close this tab and return to Rudder.");
+      }
+    }, 120);
+  });
 
   if (requestedLoginIntent && requestedDesktopBinding) {
     try {

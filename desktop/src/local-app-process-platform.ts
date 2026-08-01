@@ -10,6 +10,7 @@ import {
 } from "./local-app-process-platform-shared.mjs";
 
 const defaultExecFile = promisify(execFile);
+const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 15_000;
 
 export type LocalAppLivenessState = "alive" | "dead" | "unknown";
 
@@ -348,7 +349,7 @@ export function createLocalAppProcessPlatform(
         "-NonInteractive",
         "-Command",
         "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
-      ], { timeout: 5_000, maxBuffer: 2 * 1024 * 1024 });
+      ], { timeout: WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 });
       const processTable = parseWindowsProcessTable(String(processResult.stdout));
       if (!processTable?.some((entry) => entry.pid === input.pid)) return false;
       const ownedPids = descendantProcessIds(input.pid, processTable);

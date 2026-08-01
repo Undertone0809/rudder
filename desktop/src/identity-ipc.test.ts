@@ -34,6 +34,13 @@ function fixture() {
     account: { id: "account-1", email: "verified@example.com", name: "Rudder User", image: null },
     device: { id: "device-1", installationId: "default", displayName: "Test Mac" },
   }));
+  const nativeSignIn = vi.fn(async () => ({
+    accessToken: "not-exposed",
+    account: { id: "account-1", email: "verified@example.com", name: "Rudder User", image: null },
+    device: { id: "device-1", installationId: "default", displayName: "Test Mac" },
+  }));
+  const sendEmailOtp = vi.fn(async () => undefined);
+  const requestPasswordReset = vi.fn(async () => undefined);
   const controller = createDesktopIdentityIpcController({
     origin: "https://accounts.rudderhq.dev",
     vault: {
@@ -42,6 +49,9 @@ function fixture() {
     },
     client: {
       signIn,
+      nativeSignIn,
+      sendEmailOtp,
+      requestPasswordReset,
       signOut: async () => clear(),
       listDeviceSessions,
       revokeDeviceSession,
@@ -52,7 +62,18 @@ function fixture() {
     getMainRenderer: () => renderer,
     controller,
   });
-  return { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession, controller, signIn };
+  return {
+    handlers,
+    renderer,
+    clear,
+    listDeviceSessions,
+    revokeDeviceSession,
+    controller,
+    signIn,
+    nativeSignIn,
+    sendEmailOtp,
+    requestPasswordReset,
+  };
 }
 
 describe("Desktop Rudder Account IPC", () => {
@@ -95,16 +116,37 @@ describe("Desktop Rudder Account IPC", () => {
     )).rejects.toThrow("valid opaque device id");
   });
 
-  it("accepts only bounded login method hints and normalizes the optional email", async () => {
-    const { handlers, renderer, signIn: clientSignIn } = fixture();
+  it("separates browser OAuth hints from bounded native email credentials", async () => {
+    const {
+      handlers,
+      renderer,
+      signIn: clientSignIn,
+      nativeSignIn,
+      sendEmailOtp,
+      requestPasswordReset,
+    } = fixture();
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
     const signIn = handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.signIn);
 
-    await signIn?.(event, { method: "email_otp", email: "River@Example.com" });
-    expect(clientSignIn).toHaveBeenCalledWith({
+    await signIn?.(event, { method: "google" });
+    expect(clientSignIn).toHaveBeenCalledWith({ method: "google" });
+    await handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.sendEmailOtp)?.(event, {
+      email: "River@Example.com",
+    });
+    expect(sendEmailOtp).toHaveBeenCalledWith("river@example.com");
+    await handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.verifyEmailOtp)?.(event, {
+      email: "River@Example.com",
+      token: "123456",
+    });
+    expect(nativeSignIn).toHaveBeenCalledWith({
       method: "email_otp",
       email: "river@example.com",
+      token: "123456",
     });
+    await handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.requestPasswordReset)?.(event, {
+      email: "River@Example.com",
+    });
+    expect(requestPasswordReset).toHaveBeenCalledWith("river@example.com");
     await expect(signIn?.(event, { method: "saml" })).rejects.toThrow("valid method hint");
     await expect(signIn?.(event, {
       method: "password",
@@ -114,7 +156,11 @@ describe("Desktop Rudder Account IPC", () => {
     await expect(signIn?.(event, {
       method: "password_reset",
       email: "not-an-email",
-    })).rejects.toThrow("invalid email hint");
+    })).rejects.toThrow("valid method hint");
+    await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.verifyEmailOtp)?.(event, {
+      email: "river@example.com",
+      token: "<script>",
+    })).rejects.toThrow("valid verification code");
   });
 
   it("publishes state without exposing the access token", async () => {

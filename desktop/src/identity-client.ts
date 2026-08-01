@@ -60,6 +60,11 @@ export type IdentityDeviceSession = {
   current: boolean;
 };
 
+type DesktopNativeSignInInput =
+  | { method: "email_otp"; email: string; token: string }
+  | { method: "password"; email: string; password: string }
+  | { method: "password_reset"; email: string; token: string; newPassword: string };
+
 function normalizedIdentityOrigin(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" && !(
@@ -117,6 +122,28 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
   let accessToken: string | null = null;
   let refreshInFlight: Promise<string> | null = null;
   const offlineMaterial = () => options.offlineGrantStore?.prepareDeviceKey() ?? null;
+
+  const nativeAuthRequest = (path: string, body: Record<string, unknown>): Promise<Response> =>
+    request(new URL(path, identityOrigin), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const requireNativeAuthSuccess = async (response: Response, fallback: string): Promise<Record<string, unknown>> => {
+    const value = await response.json().catch(() => null) as Record<string, unknown> | null;
+    if (response.ok) return value ?? {};
+    const messages: Record<string, string> = {
+      invalid_credentials: "The email or password is incorrect.",
+      invalid_otp: "The verification code is incorrect or expired.",
+      otp_expired: "The verification code is incorrect or expired.",
+      over_email_send_rate_limit: "Too many email attempts. Try again later.",
+      rudder_credential_revocation_pending:
+        "The password changed, but security cleanup is still pending. Sign in again shortly.",
+    };
+    const code = typeof value?.error === "string" ? value.error : "";
+    throw new Error(messages[code] ?? `${fallback} (${response.status})`);
+  };
 
   const persistToken = (token: IdentityTokenResponse): string => {
     const now = Date.now();
@@ -245,6 +272,72 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
     return response;
   };
 
+  const nativeSignIn = async (
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<{
+    account: IdentityAccount;
+    device: IdentityDevice;
+    accessToken: string;
+  }> => {
+    const material = offlineMaterial();
+    const pkce = createIdentityPkceRequest();
+    const callback = await openIdentityLoopbackCallback({ expectedState: pkce.state })
+      .catch((error: unknown) => {
+        throw identityFallbackError(
+          "PKCE_CALLBACK_UNAVAILABLE",
+          "Unable to open the Rudder sign-in callback",
+          error,
+        );
+      });
+    try {
+      const authorizeResponse = await nativeAuthRequest(path, {
+        ...body,
+        client_id: DESKTOP_CLIENT_ID,
+        redirect_uri: callback.redirectUri,
+        code_challenge: pkce.challenge,
+        code_challenge_method: pkce.method,
+        audience: options.installationId,
+      });
+      const authorizeValue = await requireNativeAuthSuccess(
+        authorizeResponse,
+        "Rudder Identity sign-in authorization failed",
+      );
+      const code = authorizeValue.code;
+      if (typeof code !== "string" || code.length < 16) {
+        throw new Error("Rudder Identity returned an invalid sign-in authorization");
+      }
+      const response = await request(new URL("/api/desktop/token", identityOrigin), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "authorization_code",
+          code,
+          client_id: DESKTOP_CLIENT_ID,
+          redirect_uri: callback.redirectUri,
+          code_verifier: pkce.verifier,
+          installation_id: options.installationId,
+          device_name: options.deviceName,
+          sign_out_epoch: material?.localSignOutEpoch ?? 0,
+          ...(material?.thumbprint || options.devicePublicKeyThumbprint
+            ? { device_public_key_thumbprint: material?.thumbprint ?? options.devicePublicKeyThumbprint }
+            : {}),
+        }),
+      });
+      if (!response.ok) throw new Error(`Rudder Identity sign-in failed (${response.status})`);
+      const token = parseTokenResponse(await response.json());
+      persistToken(token);
+      await persistOfflineGrant(token, material);
+      return {
+        account: token.account,
+        device: token.device,
+        accessToken: token.access_token,
+      };
+    } finally {
+      await callback.close();
+    }
+  };
+
   return {
     async createServerExchange(audience: string): Promise<string> {
       if (!audience.trim() || audience.length > 256) {
@@ -276,6 +369,9 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
       device: IdentityDevice;
       accessToken: string;
     }> {
+      if (hint && hint.method !== "google" && hint.method !== "github") {
+        throw new Error("Email and password sign-in must use the native Desktop flow");
+      }
       return signInWithDesktopIdentityFallback({
         signInWithPkce: async () => {
           const material = offlineMaterial();
@@ -405,6 +501,44 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
           };
         },
       });
+    },
+
+    async sendEmailOtp(email: string): Promise<void> {
+      const response = await nativeAuthRequest("/api/desktop/native-auth/email-otp/send", {
+        client_id: DESKTOP_CLIENT_ID,
+        email,
+      });
+      await requireNativeAuthSuccess(response, "Unable to send the email code");
+    },
+
+    async requestPasswordReset(email: string): Promise<void> {
+      const response = await nativeAuthRequest("/api/desktop/native-auth/password/reset/request", {
+        client_id: DESKTOP_CLIENT_ID,
+        email,
+      });
+      await requireNativeAuthSuccess(response, "Unable to request a password reset");
+    },
+
+    async nativeSignIn(input: DesktopNativeSignInInput): Promise<{
+      account: IdentityAccount;
+      device: IdentityDevice;
+      accessToken: string;
+    }> {
+      return input.method === "email_otp"
+        ? nativeSignIn("/api/desktop/native-auth/email-otp/verify", {
+          email: input.email,
+          token: input.token,
+        })
+        : input.method === "password"
+          ? nativeSignIn("/api/desktop/native-auth/password/sign-in", {
+            email: input.email,
+            password: input.password,
+          })
+          : nativeSignIn("/api/desktop/native-auth/password/reset/confirm", {
+            email: input.email,
+            token: input.token,
+            newPassword: input.newPassword,
+          });
     },
 
     async listDeviceSessions(): Promise<IdentityDeviceSession[]> {

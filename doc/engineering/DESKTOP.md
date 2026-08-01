@@ -13,7 +13,9 @@ or manage the `rudder` command.
 Current desktop scope is intentionally narrow:
 
 - bundled local instance only
-- `local_trusted` only
+- packaged Canary and Stable require a Rudder Account before Local Board entry
+- development uses hosted Auth when fully configured and the complete local
+  Auth Fixture otherwise; the fixture is not an auth bypass
 - packaged app uses a resident shell lifecycle
 - update detection, Rudder-managed portable replacement, and layered shell
   updates are available; binary-delta patch updates are not implemented yet
@@ -76,6 +78,29 @@ That means:
 
 - `pnpm dev` and `pnpm dev:watch` share `~/.rudder/instances/dev/`
 - `pnpm rudder run`, default local CLI usage, and packaged Desktop share `~/.rudder/instances/default/`
+
+## Rudder Account boundary
+
+Desktop keeps provider OAuth and native credential entry on deliberately
+different interaction paths:
+
+- Google and GitHub open the system default browser. The Electron main process
+  owns the ephemeral loopback callback and exchanges the resulting short-lived
+  Rudder authorization code with PKCE.
+- Email OTP, email/password sign-in, forgot password, and password reset stay
+  inside the Desktop boot window. Renderer input crosses only narrow,
+  exact-key-validated IPC messages to the main process.
+- Rudder Identity verifies native email/password input server-side and returns
+  only a single-use Rudder authorization code bound to the Desktop client,
+  loopback redirect, installation audience, and S256 challenge. Supabase web
+  cookies, access tokens, and refresh tokens never cross into Desktop.
+- Desktop stores only Rudder device credentials through the credential vault.
+  It does not persist provider tokens or Supabase web-session material.
+
+Tests for this boundary must instrument the external-browser handoff and prove
+that Google/GitHub invoke it while OTP, password, forgot-password, and password
+reset flows do not. Packaged release verification must also prove the
+fixture and auth bypass remain unavailable.
 
 ## Lifecycle behavior
 

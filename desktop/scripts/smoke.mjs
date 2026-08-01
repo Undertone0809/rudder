@@ -2045,11 +2045,29 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("button", { name: "Continue with email code" }).waitFor();
     const passwordToggle = page.getByRole("button", { name: /Use password instead/ });
     await passwordToggle.click();
-    await page.getByText(
-      "Your password is entered securely in your browser, never in the Desktop app.",
-    ).waitFor();
-    await page.getByRole("button", { name: "Continue with password" }).waitFor();
+    assert.equal(
+      await page.locator("#email-code-submit-button").isVisible(),
+      false,
+      "password mode must replace the email-code primary action instead of showing both",
+    );
+    await page.locator("#account-password").waitFor();
+    await page.getByRole("button", { name: "Sign in with password" }).waitFor();
     await page.getByRole("button", { name: "Forgot or need to set a password?" }).waitFor();
+    assert.equal(
+      await page.getByText(/password is entered securely in your browser/i).count(),
+      0,
+      "packaged Desktop must keep password entry native instead of directing it to a browser",
+    );
+    assert.equal(
+      await page.locator("#account-email-code").count(),
+      1,
+      "packaged Desktop must include its native email-code input",
+    );
+    assert.equal(
+      await page.locator("#password-reset-code").count(),
+      1,
+      "packaged Desktop must include its native password-reset input",
+    );
     await page.getByText(
       "Signing in connects your identity and devices. It does not upload Local Workspace content.",
     ).waitFor();
@@ -4816,6 +4834,7 @@ async function runLocalAppsScenario(mode) {
     const company = await createCompany(run.baseUrl, "LAP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await createCeo(run.baseUrl, company.id);
+    await updateExperimentalSites(run.baseUrl, true);
     const chat = await createChat(run.baseUrl, company.id);
     const chatPath = `/${companyRouteKey}/messenger/chat/${chat.id}`;
     await run.page.evaluate((nextCompanyId) => {
@@ -4897,11 +4916,11 @@ async function runLocalAppsScenario(mode) {
     await openSmokeSidePanel(run.page);
     await initial.view.waitFor({ state: "visible", timeout: 10_000 });
 
-    const activeLocalAppTab = initial.sidePanel
-      .locator('[data-testid="chat-side-panel-tab"][aria-selected="true"]')
+    const localAppTab = initial.sidePanel
+      .getByTestId("chat-side-panel-tab")
       .filter({ hasText: definition.title });
-    await activeLocalAppTab.waitFor({ state: "visible", timeout: 15_000 });
-    const openedViewInstanceId = await activeLocalAppTab.getAttribute("data-view-instance-id");
+    await localAppTab.waitFor({ state: "visible", timeout: 15_000 });
+    const openedViewInstanceId = await localAppTab.getAttribute("data-view-instance-id");
     assert.ok(openedViewInstanceId, "opened Local App tab must expose its view instance identity");
     const expectedSavedViewTarget = {
       kind: "local_app",
@@ -5001,7 +5020,7 @@ async function runLocalAppsScenario(mode) {
       localAppTabCountBeforeShortcut,
       "Local App guest new-tab shortcut must open the picker without creating a placeholder tab",
     );
-    await activeLocalAppTab.click();
+    await localAppTab.click();
     assert.deepEqual(
       await readActiveLocalAppGuestIdentity(run.page, definition),
       guestBeforeMove,
@@ -5086,8 +5105,8 @@ async function runLocalAppsScenario(mode) {
       "Move must detach only the exact Local App tab from the Side Panel",
     );
     const mainView = run.page
-      .locator('[data-testid="local-app-view"][data-active="true"]')
-      .filter({ hasText: definition.title });
+      .locator(`[data-testid="local-app-webview"][data-local-binding-id="${definition.localBindingId}"][data-active="true"]`)
+      .locator("xpath=ancestor::section[@data-testid='local-app-view'][1]");
     await mainView.waitFor({ state: "visible", timeout: 15_000 });
     await mainView.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 15_000 });
     const guestAfterMove = await readActiveLocalAppGuestIdentity(run.page, definition);
@@ -5165,7 +5184,8 @@ async function runLocalAppsScenario(mode) {
       "Remove from Messenger must leave the open Main guest as the same session-only tab",
     );
 
-    await mainView.getByTestId("local-app-stop").click();
+    await mainView.getByTestId("local-app-more").click();
+    await run.page.getByTestId("local-app-stop").click();
     await waitForSmokeCondition("the Local App runtime status to become stopped", async () => {
       const status = await readDesktopLocalAppStatus(run.page, definition.id);
       return status.status === "stopped" ? status : null;
@@ -5176,13 +5196,14 @@ async function runLocalAppsScenario(mode) {
       markerPath: project.markerPath,
       registryPath,
     });
-    const logsButton = mainView.getByRole("button", { name: "Show logs" });
+    const stoppedMainView = run.page.locator('[data-testid="local-app-view"][data-active="true"]');
+    const logsButton = stoppedMainView.getByRole("button", { name: "Show logs" });
     await logsButton.click();
-    const logs = mainView.getByTestId("local-app-logs");
+    const logs = stoppedMainView.getByTestId("local-app-logs");
     await logs.waitFor({ state: "visible", timeout: 10_000 });
     const logText = await waitForSmokeCondition("Local App runtime logs", async () => {
       const text = (await logs.textContent())?.trim() ?? "";
-      return text && text !== "No runtime logs yet." ? text : null;
+      return text && text !== "No runtime logs yet." && text !== "Loading logs…" ? text : null;
     });
     if (!project.external) assert.match(logText, /Rudder Local Apps smoke fixture listening/);
 

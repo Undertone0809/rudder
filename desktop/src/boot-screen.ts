@@ -339,6 +339,7 @@ export function createBootScreenHtml(
         line-height: 1.5;
       }
       .password-actions { display: grid; gap: 8px; }
+      .native-auth-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .password-recovery {
         width: fit-content;
         min-height: 30px;
@@ -504,15 +505,33 @@ export function createBootScreenHtml(
           <label>Email address
             <input id="account-email" required type="email" autocomplete="email" placeholder="you@example.com">
           </label>
-          <button class="auth-primary auth-entry" type="submit">Continue with email code</button>
+          <button class="auth-primary auth-entry" id="email-code-submit-button" type="submit">Continue with email code</button>
+        </form>
+        <form class="email-form native-auth-panel" id="email-code-form" hidden>
+          <label>Verification code
+            <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="6-digit code">
+          </label>
+          <button class="auth-primary auth-entry" type="submit">Verify and sign in</button>
+          <button class="password-recovery" id="email-code-back-button" type="button">Use a different email</button>
         </form>
         <button class="mode-toggle" id="password-mode-toggle" type="button" aria-controls="password-panel" aria-expanded="false">Use password instead</button>
         <div class="password-panel" id="password-panel" hidden>
-          <p>Your password is entered securely in your browser, never in the Desktop app.</p>
-          <div class="password-actions">
-            <button class="auth-button auth-entry" id="password-sign-in-button" type="button"><span>Continue with password</span></button>
-            <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
-          </div>
+          <form class="email-form" id="password-sign-in-form">
+            <label>Password
+              <input id="account-password" required type="password" minlength="8" maxlength="128" autocomplete="current-password" placeholder="Your password">
+            </label>
+            <button class="auth-primary auth-entry" type="submit">Sign in with password</button>
+          </form>
+          <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
+          <form class="email-form native-auth-panel" id="password-reset-form" hidden>
+            <label>Reset code
+              <input id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="6-digit code">
+            </label>
+            <label>New password
+              <input id="new-password" required type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="At least 8 characters">
+            </label>
+            <button class="auth-primary auth-entry" type="submit">Reset password and sign in</button>
+          </form>
         </div>
         <p class="inline-status" id="account-status" role="status" aria-live="polite"></p>
         <div class="device-approval" id="device-approval" hidden>
@@ -584,11 +603,19 @@ export function createBootScreenHtml(
       const googleSignInButton = document.getElementById("google-sign-in-button");
       const githubSignInButton = document.getElementById("github-sign-in-button");
       const emailSignInForm = document.getElementById("email-sign-in-form");
+      const emailCodeSubmitButton = document.getElementById("email-code-submit-button");
+      const emailCodeForm = document.getElementById("email-code-form");
       const accountEmail = document.getElementById("account-email");
+      const accountEmailCode = document.getElementById("account-email-code");
+      const emailCodeBackButton = document.getElementById("email-code-back-button");
       const passwordModeToggle = document.getElementById("password-mode-toggle");
       const passwordPanel = document.getElementById("password-panel");
-      const passwordSignInButton = document.getElementById("password-sign-in-button");
+      const passwordSignInForm = document.getElementById("password-sign-in-form");
+      const accountPassword = document.getElementById("account-password");
       const passwordResetButton = document.getElementById("password-reset-button");
+      const passwordResetForm = document.getElementById("password-reset-form");
+      const passwordResetCode = document.getElementById("password-reset-code");
+      const newPassword = document.getElementById("new-password");
       const accountStatus = document.getElementById("account-status");
       const deviceApproval = document.getElementById("device-approval");
       const deviceCode = document.getElementById("device-code");
@@ -682,9 +709,8 @@ export function createBootScreenHtml(
         }
       }
 
-      function optionalEmailHint() {
+      function requiredEmail() {
         const email = accountEmail.value.trim();
-        if (!email) return undefined;
         if (!accountEmail.checkValidity()) {
           accountEmail.reportValidity();
           return null;
@@ -715,6 +741,29 @@ export function createBootScreenHtml(
         }
       }
 
+      function setAuthBusy(busy) {
+        for (const button of authEntryButtons) button.disabled = busy;
+      }
+
+      async function completeNativeSignIn(request, pendingMessage) {
+        if (authEntryButtons.some((button) => button.disabled)) return;
+        setAuthBusy(true);
+        deviceApproval.hidden = true;
+        accountStatus.textContent = pendingMessage;
+        try {
+          const state = await request();
+          if (state?.status === "error") {
+            accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
+            setAuthBusy(false);
+          } else {
+            accountStatus.textContent = "Signed in. Opening your Local Workspace…";
+          }
+        } catch (error) {
+          accountStatus.textContent = error?.message || "Rudder Account sign-in could not start.";
+          setAuthBusy(false);
+        }
+      }
+
       googleSignInButton.addEventListener("click", () => {
         void startSignIn("google", "Opening Google sign-in in your browser…");
       });
@@ -723,25 +772,85 @@ export function createBootScreenHtml(
       });
       emailSignInForm.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (passwordModeToggle.getAttribute("aria-expanded") === "true") {
+          accountPassword.focus();
+          return;
+        }
         if (!emailSignInForm.reportValidity()) return;
-        void startSignIn("email_otp", "Opening email code sign-in in your browser…", accountEmail.value.trim());
+        if (authEntryButtons.some((button) => button.disabled)) return;
+        setAuthBusy(true);
+        accountStatus.textContent = "Sending a verification code…";
+        void window.rudderBoot.sendEmailOtp(accountEmail.value.trim()).then(() => {
+          emailSignInForm.hidden = true;
+          emailCodeForm.hidden = false;
+          accountStatus.textContent = "Enter the code sent to " + accountEmail.value.trim() + ".";
+          setAuthBusy(false);
+          accountEmailCode.focus();
+        }).catch((error) => {
+          accountStatus.textContent = error?.message || "Rudder could not send the verification code.";
+          setAuthBusy(false);
+        });
+      });
+      emailCodeForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!emailCodeForm.reportValidity()) return;
+        void completeNativeSignIn(
+          () => window.rudderBoot.verifyEmailOtp(accountEmail.value.trim(), accountEmailCode.value.trim()),
+          "Verifying your email code…",
+        );
+      });
+      emailCodeBackButton.addEventListener("click", () => {
+        emailCodeForm.hidden = true;
+        emailSignInForm.hidden = false;
+        accountEmailCode.value = "";
+        accountStatus.textContent = "";
+        accountEmail.focus();
       });
       passwordModeToggle.addEventListener("click", () => {
         const expanded = passwordModeToggle.getAttribute("aria-expanded") === "true";
         passwordModeToggle.setAttribute("aria-expanded", String(!expanded));
         passwordModeToggle.textContent = expanded ? "Use password instead" : "Use email code instead";
+        emailCodeSubmitButton.hidden = !expanded;
         passwordPanel.hidden = expanded;
-        if (!expanded) passwordSignInButton.focus();
+        if (!expanded) accountPassword.focus();
       });
-      passwordSignInButton.addEventListener("click", () => {
-        const email = optionalEmailHint();
-        if (email === null) return;
-        void startSignIn("password", "Opening password sign-in in your browser…", email);
+      passwordSignInForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = requiredEmail();
+        if (email === null || !passwordSignInForm.reportValidity()) return;
+        void completeNativeSignIn(
+          () => window.rudderBoot.signInWithPassword(email, accountPassword.value),
+          "Signing in…",
+        );
       });
       passwordResetButton.addEventListener("click", () => {
-        const email = optionalEmailHint();
-        if (email === null) return;
-        void startSignIn("password_reset", "Opening password recovery in your browser…", email);
+        const email = requiredEmail();
+        if (email === null || authEntryButtons.some((button) => button.disabled)) return;
+        setAuthBusy(true);
+        accountStatus.textContent = "Sending a password reset code…";
+        void window.rudderBoot.requestPasswordReset(email).then(() => {
+          passwordResetForm.hidden = false;
+          passwordResetButton.hidden = true;
+          accountStatus.textContent = "If an account exists, a reset code was sent to " + email + ".";
+          setAuthBusy(false);
+          passwordResetCode.focus();
+        }).catch((error) => {
+          accountStatus.textContent = error?.message || "Rudder could not request a password reset.";
+          setAuthBusy(false);
+        });
+      });
+      passwordResetForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = requiredEmail();
+        if (email === null || !passwordResetForm.reportValidity()) return;
+        void completeNativeSignIn(
+          () => window.rudderBoot.resetPassword(
+            email,
+            passwordResetCode.value.trim(),
+            newPassword.value,
+          ),
+          "Resetting your password…",
+        );
       });
       copyDeviceButton.addEventListener("click", async () => {
         if (!latestDeviceApproval) return;

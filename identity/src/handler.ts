@@ -1,6 +1,7 @@
 import {
   hashOpaqueSecret,
   issueOfflineGrant,
+  normalizeVerifiedEmail,
   opaqueSecretMatches,
 } from "@rudderhq/identity-core";
 import {
@@ -9,6 +10,7 @@ import {
   beginSupabaseAuthMigration,
   bindSupabaseAuthUser,
   completeCredentialRevocationIntent,
+  consumeIdentityEmailRateLimit,
   consumeIdentityOperationRateLimit,
   consumeServerExchangeCode,
   denyDeviceAuthorization,
@@ -142,6 +144,16 @@ function rootIdentityContext(
   };
 }
 
+function nativeDesktopRootIdentityContext(req: IncomingMessage): RootIdentityRequestContext {
+  return {
+    requestHeaders: nodeHeaders(req),
+    // Supabase may emit a web session while verifying credentials. Native
+    // Desktop auth deliberately discards it and returns only a Rudder-owned,
+    // single-use PKCE authorization code.
+    setCookies() {},
+  };
+}
+
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let body = "";
   for await (const chunk of req) {
@@ -208,6 +220,189 @@ function securityRequestMetadata(
     ipHashKey: secret,
     userAgent: req.headers["user-agent"] ?? null,
   };
+}
+
+type NativeAuthOperation =
+  | "email_otp.send"
+  | "email_otp.verify"
+  | "password.sign_in"
+  | "password.reset.request"
+  | "password.reset.confirm";
+
+type NativeAuthFailureReason =
+  | "invalid_code"
+  | "invalid_credentials"
+  | "invalid_request"
+  | "provider_unavailable"
+  | "rate_limited";
+
+async function recordNativeAuthSecurityEvent(
+  runtime: ReturnType<typeof getIdentityRuntime>,
+  req: IncomingMessage,
+  operation: NativeAuthOperation,
+  outcome: "succeeded" | "failed" | "limited",
+  input: {
+    clientId?: string;
+    reason?: NativeAuthFailureReason;
+    userId?: string;
+  } = {},
+): Promise<void> {
+  const metadata: Record<string, string> = {};
+  if (input.clientId) metadata.clientId = input.clientId;
+  if (input.reason) metadata.reason = input.reason;
+  await recordSecurityEvent(runtime.db, {
+    userId: input.userId,
+    eventType: `desktop.native_auth.${operation}.${outcome}`,
+    ...securityRequestMetadata(req, runtime.config.secret),
+    metadata,
+  });
+}
+
+async function consumeNativeAuthRateLimits(
+  runtime: ReturnType<typeof getIdentityRuntime>,
+  req: IncomingMessage,
+  input: {
+    email: string;
+    operation: NativeAuthOperation;
+    sendAction?: "otp-send" | "password-reset";
+  },
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  const email = normalizeVerifiedEmail(input.email);
+  const requestMetadata = securityRequestMetadata(req, runtime.config.secret);
+  const retryAfterSeconds: number[] = [];
+
+  if (input.sendAction) {
+    const emailLimit = await consumeIdentityEmailRateLimit(runtime.db, {
+      email,
+      action: input.sendAction,
+      maxAttempts: 3,
+      windowSeconds: 10 * 60,
+      blockSeconds: 15 * 60,
+    });
+    if (!emailLimit.allowed) retryAfterSeconds.push(emailLimit.retryAfterSeconds);
+  }
+
+  const sendOperation = Boolean(input.sendAction);
+  const accountLimit = await consumeIdentityOperationRateLimit(runtime.db, {
+    key: `native-auth:${input.operation}:account:${hashOpaqueSecret(
+      `${runtime.config.secret}:${email}`,
+    )}`,
+    limit: sendOperation ? 6 : 10,
+    windowMs: 10 * 60 * 1_000,
+  });
+  if (!accountLimit.allowed) {
+    retryAfterSeconds.push(Math.ceil(accountLimit.retryAfterMs / 1_000));
+  }
+
+  const ipLimit = await consumeIdentityOperationRateLimit(runtime.db, {
+    key: `native-auth:${input.operation}:ip:${hashOpaqueSecret(
+      `${requestMetadata.ipHashKey}:${requestMetadata.ipAddress ?? "unknown"}`,
+    )}`,
+    limit: sendOperation ? 20 : 30,
+    windowMs: sendOperation ? 60 * 60 * 1_000 : 10 * 60 * 1_000,
+  });
+  if (!ipLimit.allowed) retryAfterSeconds.push(Math.ceil(ipLimit.retryAfterMs / 1_000));
+
+  if (retryAfterSeconds.length === 0) return { allowed: true, retryAfterSeconds: 0 };
+  return { allowed: false, retryAfterSeconds: Math.max(...retryAfterSeconds, 1) };
+}
+
+function nativeAuthFailureReason(
+  operation: NativeAuthOperation,
+  error: unknown,
+): NativeAuthFailureReason {
+  if (!(error instanceof RootIdentityError)) return "invalid_request";
+  if (error.status === 429) return "rate_limited";
+  if (error.status >= 500 || error.status <= 0) return "provider_unavailable";
+  if (operation === "password.sign_in") return "invalid_credentials";
+  if (operation === "email_otp.verify" || operation === "password.reset.confirm") {
+    return "invalid_code";
+  }
+  return "invalid_request";
+}
+
+function isMissingPasswordResetAccount(error: RootIdentityError): boolean {
+  return new Set([
+    "email_not_found",
+    "identity_not_found",
+    "user_not_found",
+  ]).has(error.code);
+}
+
+function isUnavailableRootIdentityError(error: RootIdentityError): boolean {
+  return (
+    error.status >= 500 ||
+    error.status <= 0 ||
+    new Set([
+      "bad_json",
+      "configuration_error",
+      "email_provider_disabled",
+      "fetch_error",
+      "hook_timeout",
+      "hook_timeout_after_retry",
+      "identity_provider_error",
+      "identity_provider_unavailable",
+      "network_error",
+      "provider_disabled",
+      "request_timeout",
+      "unexpected_failure",
+    ]).has(error.code)
+  );
+}
+
+async function enforceNativeAuthRateLimits(
+  runtime: ReturnType<typeof getIdentityRuntime>,
+  req: IncomingMessage,
+  res: ServerResponse,
+  input: {
+    clientId: string;
+    email: string;
+    operation: NativeAuthOperation;
+    sendAction?: "otp-send" | "password-reset";
+  },
+): Promise<boolean> {
+  try {
+    const result = await consumeNativeAuthRateLimits(runtime, req, input);
+    if (result.allowed) return true;
+    res.setHeader("retry-after", result.retryAfterSeconds);
+    await recordNativeAuthSecurityEvent(runtime, req, input.operation, "limited", {
+      clientId: input.clientId,
+      reason: "rate_limited",
+    }).catch(() => undefined);
+    sendJson(res, 429, { error: "rate_limited" });
+    return false;
+  } catch (error) {
+    const invalidEmail = error instanceof Error && error.message === "Invalid verified email";
+    await recordNativeAuthSecurityEvent(runtime, req, input.operation, "failed", {
+      clientId: input.clientId,
+      reason: invalidEmail ? "invalid_request" : "provider_unavailable",
+    }).catch(() => undefined);
+    if (invalidEmail) {
+      sendJson(res, 400, { error: "invalid_request" });
+      return false;
+    }
+    sendJson(res, 503, {
+      error: "authentication_temporarily_unavailable",
+      retryable: true,
+    });
+    return false;
+  }
+}
+
+function sendNativeAuthProviderError(res: ServerResponse, error: RootIdentityError): void {
+  if (error.status === 429) {
+    res.setHeader("retry-after", 60);
+    sendJson(res, 429, { error: "rate_limited" });
+    return;
+  }
+  if (isUnavailableRootIdentityError(error)) {
+    sendJson(res, 503, {
+      error: "authentication_temporarily_unavailable",
+      retryable: true,
+    });
+    return;
+  }
+  sendRootIdentityError(res, error);
 }
 
 function validLoopbackRedirect(value: string): boolean {
@@ -508,6 +703,40 @@ export async function identityHandler(
   // Static legal and bootstrap pages above intentionally remain deployable
   // before production OAuth and database credentials exist.
   const runtime = getIdentityRuntime(options);
+  const validateNativeDesktopAuthorization = (body: Record<string, unknown>): void => {
+    const clientId = stringField(body, "client_id");
+    const redirectUri = stringField(body, "redirect_uri");
+    const codeChallenge = stringField(body, "code_challenge");
+    const codeChallengeMethod = stringField(body, "code_challenge_method");
+    const audience = stringField(body, "audience");
+    if (
+      !runtime.config.deviceClientIds.has(clientId)
+      || !validLoopbackRedirect(redirectUri)
+      || codeChallengeMethod !== "S256"
+      || !/^[A-Za-z0-9_-]{43,128}$/u.test(codeChallenge)
+      || audience.length < 1
+      || audience.length > 256
+    ) throw new Error("invalid_request");
+  };
+  const issueNativeDesktopCode = async (
+    body: Record<string, unknown>,
+    principal: RootIdentityPrincipal,
+  ): Promise<string> => {
+    validateNativeDesktopAuthorization(body);
+    const clientId = stringField(body, "client_id");
+    const redirectUri = stringField(body, "redirect_uri");
+    const codeChallenge = stringField(body, "code_challenge");
+    const audience = stringField(body, "audience");
+    const binding = await bindRootPrincipal(runtime, principal);
+    const authorization = await issueDesktopAuthorizationCode(runtime.db, {
+      userId: binding.userId,
+      clientId,
+      redirectUri,
+      codeChallenge,
+      audience,
+    });
+    return authorization.code;
+  };
   const recovery = recoverCredentialRevocationIntents(runtime.db, {
     claimOwner: credentialRecoveryWorkerId,
     maxClaims: 1,
@@ -605,6 +834,297 @@ export async function identityHandler(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/email-otp/send") {
+    const operation = "email_otp.send" as const;
+    let clientId: string | undefined;
+    try {
+      const body = await readJson(req);
+      const requestedClientId = stringField(body, "client_id");
+      if (!runtime.config.deviceClientIds.has(requestedClientId)) {
+        throw new Error("invalid_request");
+      }
+      clientId = requestedClientId;
+      const email = stringField(body, "email");
+      if (!await enforceNativeAuthRateLimits(runtime, req, res, {
+        clientId,
+        email,
+        operation,
+        sendAction: "otp-send",
+      })) return;
+      await runtime.rootIdentity.sendEmailOtp(nativeDesktopRootIdentityContext(req), {
+        email,
+      });
+      await recordNativeAuthSecurityEvent(runtime, req, operation, "succeeded", {
+        clientId,
+      }).catch(() => undefined);
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      const reason = nativeAuthFailureReason(operation, error);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        reason === "rate_limited" ? "limited" : "failed",
+        { clientId, reason },
+      ).catch(() => undefined);
+      if (error instanceof RootIdentityError) sendNativeAuthProviderError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/email-otp/verify") {
+    const operation = "email_otp.verify" as const;
+    let clientId: string | undefined;
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      clientId = stringField(body, "client_id");
+      const email = stringField(body, "email");
+      if (!await enforceNativeAuthRateLimits(runtime, req, res, {
+        clientId,
+        email,
+        operation,
+      })) return;
+      const principal = await runtime.rootIdentity.verifyEmailOtp(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email,
+          token: stringField(body, "token"),
+          purpose: "sign-in",
+        },
+      );
+      const binding = await bindRootPrincipal(runtime, principal);
+      const code = await issueNativeDesktopCode(body, principal);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        "succeeded",
+        { clientId, userId: binding.userId },
+      ).catch(() => undefined);
+      sendJson(res, 200, { code });
+    } catch (error) {
+      const reason = nativeAuthFailureReason(operation, error);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        reason === "rate_limited" ? "limited" : "failed",
+        { clientId, reason },
+      ).catch(() => undefined);
+      if (error instanceof RootIdentityError) sendNativeAuthProviderError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/sign-in") {
+    const operation = "password.sign_in" as const;
+    let clientId: string | undefined;
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      clientId = stringField(body, "client_id");
+      const email = stringField(body, "email");
+      if (!await enforceNativeAuthRateLimits(runtime, req, res, {
+        clientId,
+        email,
+        operation,
+      })) return;
+      const principal = await runtime.rootIdentity.signInWithPassword(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email,
+          password: stringField(body, "password"),
+        },
+      );
+      const binding = await bindRootPrincipal(runtime, principal);
+      const code = await issueNativeDesktopCode(body, principal);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        "succeeded",
+        { clientId, userId: binding.userId },
+      ).catch(() => undefined);
+      sendJson(res, 200, { code });
+    } catch (error) {
+      const reason = nativeAuthFailureReason(operation, error);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        reason === "rate_limited" ? "limited" : "failed",
+        { clientId, reason },
+      ).catch(() => undefined);
+      if (error instanceof RootIdentityError) sendNativeAuthProviderError(res, error);
+      else sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/reset/request") {
+    const operation = "password.reset.request" as const;
+    let clientId: string | undefined;
+    let providerInvoked = false;
+    try {
+      const body = await readJson(req);
+      const requestedClientId = stringField(body, "client_id");
+      if (!runtime.config.deviceClientIds.has(requestedClientId)) {
+        throw new Error("invalid_request");
+      }
+      clientId = requestedClientId;
+      const email = stringField(body, "email");
+      if (!await enforceNativeAuthRateLimits(runtime, req, res, {
+        clientId,
+        email,
+        operation,
+        sendAction: "password-reset",
+      })) return;
+      providerInvoked = true;
+      await runtime.rootIdentity.requestPasswordReset(nativeDesktopRootIdentityContext(req), {
+        email,
+      });
+      await recordNativeAuthSecurityEvent(runtime, req, operation, "succeeded", {
+        clientId,
+      }).catch(() => undefined);
+    } catch (error) {
+      if (error instanceof RootIdentityError && isMissingPasswordResetAccount(error)) {
+        // Explicit missing-account errors stay indistinguishable from a sent
+        // message, while operational provider failures remain actionable.
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "succeeded", {
+          clientId,
+        }).catch(() => undefined);
+      } else if (error instanceof RootIdentityError && error.status === 429) {
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "limited", {
+          clientId,
+          reason: "rate_limited",
+        }).catch(() => undefined);
+        res.setHeader("retry-after", 60);
+        sendJson(res, 429, { error: "rate_limited" });
+        return;
+      } else if (
+        (error instanceof RootIdentityError && isUnavailableRootIdentityError(error)) ||
+        (providerInvoked && !(error instanceof RootIdentityError))
+      ) {
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "failed", {
+          clientId,
+          reason: "provider_unavailable",
+        }).catch(() => undefined);
+        sendJson(res, 503, {
+          error: "password_reset_temporarily_unavailable",
+          retryable: true,
+        });
+        return;
+      } else if (error instanceof RootIdentityError) {
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "failed", {
+          clientId,
+          reason: "invalid_request",
+        }).catch(() => undefined);
+        sendJson(res, 400, { error: "password_reset_request_failed" });
+        return;
+      } else {
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "failed", {
+          clientId,
+          reason: "invalid_request",
+        }).catch(() => undefined);
+        sendJson(res, 400, { error: "invalid_request" });
+        return;
+      }
+    }
+    sendJson(res, 200, { success: true });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/native-auth/password/reset/confirm") {
+    const operation = "password.reset.confirm" as const;
+    let clientId: string | undefined;
+    let intent:
+      | Awaited<ReturnType<typeof beginCredentialRevocationIntent>>
+      | undefined;
+    try {
+      const body = await readJson(req);
+      validateNativeDesktopAuthorization(body);
+      clientId = stringField(body, "client_id");
+      const email = stringField(body, "email");
+      if (!await enforceNativeAuthRateLimits(runtime, req, res, {
+        clientId,
+        email,
+        operation,
+      })) return;
+      const principal = await runtime.rootIdentity.resetPasswordWithOtp(
+        nativeDesktopRootIdentityContext(req),
+        {
+          email,
+          token: stringField(body, "token"),
+          newPassword: stringField(body, "newPassword"),
+        },
+        async (verifiedPrincipal) => {
+          const binding = await bindRootPrincipal(runtime, verifiedPrincipal);
+          intent = await beginCredentialRevocationIntent(runtime.db, {
+            userId: binding.userId,
+            rootIdentityUserId: verifiedPrincipal.id,
+            operation: "password-reset",
+            deviceScope: "all",
+          });
+        },
+      );
+      const binding = await bindRootPrincipal(runtime, principal);
+      if (!intent) throw new Error("credential_revocation_intent_missing");
+      await markCredentialProviderMutationComplete(runtime.db, intent.id);
+      const result = await finishPasswordSecurityMutation(
+        runtime,
+        req,
+        intent.id,
+        binding.userId,
+        "password.reset",
+        "all",
+      );
+      if (!result.intentCompleted) {
+        await recordNativeAuthSecurityEvent(runtime, req, operation, "failed", {
+          clientId,
+          reason: "provider_unavailable",
+          userId: binding.userId,
+        }).catch(() => undefined);
+        sendJson(res, 503, {
+          error: "rudder_credential_revocation_pending",
+          passwordUpdated: true,
+        });
+        return;
+      }
+      intent = undefined;
+      const code = await issueNativeDesktopCode(body, principal);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        "succeeded",
+        { clientId, userId: binding.userId },
+      ).catch(() => undefined);
+      sendJson(res, 200, { code });
+    } catch (error) {
+      if (intent) {
+        await markCredentialRevocationFailed(runtime.db, {
+          intentId: intent.id,
+          stage: "provider",
+          error: error instanceof Error ? error.message : "unknown_error",
+        }).catch(() => undefined);
+      }
+      const reason = nativeAuthFailureReason(operation, error);
+      await recordNativeAuthSecurityEvent(
+        runtime,
+        req,
+        operation,
+        reason === "rate_limited" ? "limited" : "failed",
+        { clientId, reason },
+      ).catch(() => undefined);
+      if (error instanceof RootIdentityError) sendNativeAuthProviderError(res, error);
+      else sendCredentialMutationError(res, error);
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/root-auth/oauth") {
     try {
       const body = await readJson(req);
@@ -632,7 +1152,7 @@ export async function identityHandler(
     try {
       const principal = await runtime.rootIdentity.completePkceCallback(
         rootIdentityContext(req, res),
-        { code },
+        { code, flowId: url.searchParams.get("sb_flow_id") ?? undefined },
       );
       await bindRootPrincipal(runtime, principal);
       res.statusCode = 302;

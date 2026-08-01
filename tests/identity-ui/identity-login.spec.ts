@@ -1,4 +1,26 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { identityClientScript } from "../../identity/src/client-script.js";
+import { deviceApprovalPage } from "../../identity/src/pages.js";
+
+async function openSignedInDeviceApproval(
+  page: Page,
+  userCode: string,
+): Promise<string> {
+  await page.route("**/identity.js*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/javascript",
+      body: identityClientScript,
+    }));
+  await page.route("**/device?user_code=*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: deviceApprovalPage(userCode),
+    }));
+  await page.goto(`/device?user_code=${encodeURIComponent(userCode)}`);
+  return userCode;
+}
 
 test.describe("Rudder Account login UI", () => {
   test("shows one focused login task at a time and remains responsive", async ({ page }) => {
@@ -37,7 +59,7 @@ test.describe("Rudder Account login UI", () => {
 
   test("switches to the verification step once and supports changing email", async ({ page }) => {
     let sendCount = 0;
-    await page.route("**/api/auth/email-otp/send-verification-otp", async (route) => {
+    await page.route("**/api/root-auth/email-otp/send", async (route) => {
       sendCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 100));
       await route.fulfill({
@@ -67,7 +89,7 @@ test.describe("Rudder Account login UI", () => {
   });
 
   test("keeps email entry recoverable when code delivery fails", async ({ page }) => {
-    await page.route("**/api/auth/email-otp/send-verification-otp", (route) =>
+    await page.route("**/api/root-auth/email-otp/send", (route) =>
       route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -86,10 +108,10 @@ test.describe("Rudder Account login UI", () => {
   });
 
   test("verifies an email code and rejects an unsafe next redirect", async ({ page }) => {
-    let verificationBody: { email?: string; otp?: string } = {};
-    await page.route("**/api/auth/email-otp/send-verification-otp", (route) =>
+    let verificationBody: { email?: string; token?: string; purpose?: string } = {};
+    await page.route("**/api/root-auth/email-otp/send", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
-    await page.route("**/api/auth/sign-in/email-otp", async (route) => {
+    await page.route("**/api/root-auth/email-otp/verify", async (route) => {
       verificationBody = route.request().postDataJSON();
       await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
@@ -101,13 +123,17 @@ test.describe("Rudder Account login UI", () => {
     await page.getByRole("button", { name: "Verify and continue" }).click();
 
     await expect(page).toHaveURL("/");
-    expect(verificationBody).toEqual({ email: "owner@rudderhq.dev", otp: "123456" });
+    expect(verificationBody).toEqual({
+      email: "owner@rudderhq.dev",
+      token: "123456",
+      purpose: "sign-in",
+    });
   });
 
   test("keeps an invalid email code recoverable", async ({ page }) => {
-    await page.route("**/api/auth/email-otp/send-verification-otp", (route) =>
+    await page.route("**/api/root-auth/email-otp/send", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
-    await page.route("**/api/auth/sign-in/email-otp", (route) =>
+    await page.route("**/api/root-auth/email-otp/verify", (route) =>
       route.fulfill({
         status: 401,
         contentType: "application/json",
@@ -127,7 +153,7 @@ test.describe("Rudder Account login UI", () => {
 
   test("signs in with a password from the mutually exclusive password mode", async ({ page }) => {
     let signInBody: { email?: string; password?: string } = {};
-    await page.route("**/api/auth/sign-in/email", async (route) => {
+    await page.route("**/api/root-auth/password/sign-in", async (route) => {
       signInBody = route.request().postDataJSON();
       await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
@@ -146,14 +172,13 @@ test.describe("Rudder Account login UI", () => {
   });
 
   test("moves password registration into the single email verification step", async ({ page }) => {
-    await page.route("**/api/auth/sign-up/email", (route) =>
+    await page.route("**/api/root-auth/password/sign-up", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
     await page.goto("/");
     await page.locator("#password-mode-toggle").click();
     await page.getByText("Create a password account").click();
 
     const signup = page.locator("#password-signup-form");
-    await signup.getByLabel("Name").fill("Rudder Owner");
     await signup.getByLabel("Email address").fill("new-owner@rudderhq.dev");
     await signup.getByLabel("Password").fill("correct horse battery");
     await signup.getByRole("button", { name: "Create account with password" }).click();
@@ -166,7 +191,7 @@ test.describe("Rudder Account login UI", () => {
 
   for (const responseStatus of [200, 503]) {
     test(`keeps password recovery account-private after a ${responseStatus} response`, async ({ page }) => {
-      await page.route("**/api/auth/email-otp/request-password-reset", (route) =>
+      await page.route("**/api/root-auth/password/reset/request", (route) =>
         route.fulfill({
           status: responseStatus,
           contentType: "application/json",
@@ -190,9 +215,9 @@ test.describe("Rudder Account login UI", () => {
   }
 
   test("submits a reset code and leaves an invalid attempt recoverable", async ({ page }) => {
-    await page.route("**/api/auth/email-otp/request-password-reset", (route) =>
+    await page.route("**/api/root-auth/password/reset/request", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
-    await page.route("**/api/auth/email-otp/reset-password", (route) =>
+    await page.route("**/api/root-auth/password/reset/confirm", (route) =>
       route.fulfill({ status: 401, contentType: "application/json", body: "{}" }));
     await page.goto("/");
     await page.locator("#password-mode-toggle").click();
@@ -213,14 +238,14 @@ test.describe("Rudder Account login UI", () => {
   for (const provider of ["Google", "GitHub"] as const) {
     test(`starts ${provider} OAuth from the visible provider control`, async ({ page }) => {
       let requestProvider = "";
-      await page.route("**/api/auth/sign-in/social", async (route) => {
+      await page.route("**/api/root-auth/oauth", async (route) => {
         const body = route.request().postDataJSON() as { provider?: string };
         requestProvider = body.provider ?? "";
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({
-            url: `http://127.0.0.1:3211/?oauth=${requestProvider}`,
+            redirectUrl: `http://127.0.0.1:3211/?oauth=${requestProvider}`,
           }),
         });
       });
@@ -232,4 +257,87 @@ test.describe("Rudder Account login UI", () => {
       expect(requestProvider).toBe(provider.toLowerCase());
     });
   }
+});
+
+test.describe("Rudder Account device approval UI", () => {
+  test("locks both actions while approving, then replaces them with the success state", async ({
+    page,
+  }) => {
+    const userCode = await openSignedInDeviceApproval(
+      page,
+      "APRV-2F9K",
+    );
+    let approveRequests = 0;
+    await page.route("**/api/desktop/device-code/approve", async (route) => {
+      approveRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, status: "approved" }),
+      });
+    });
+
+    await expect(page.getByRole("heading", { name: "Confirm this device" })).toBeVisible();
+    await expect(page.locator("#device-user-code")).toHaveText(userCode);
+    const approve = page.getByRole("button", { name: "Approve device" });
+    const deny = page.getByRole("button", { name: "Deny request" });
+    await approve.click();
+
+    await expect(page.getByRole("button", { name: "Approving…" })).toBeDisabled();
+    await expect(deny).toBeDisabled();
+    await expect(page.getByRole("status")).toHaveText("Approving this device…");
+    await expect(page.locator("#device-decision")).toBeHidden();
+    await expect(page.locator("#device-result")).toHaveAttribute("data-state", "approved");
+    await expect(page.locator("#device-result")).toHaveAttribute("role", "status");
+    await expect(page.locator("#device-result")).toHaveAttribute("aria-live", "polite");
+    await expect(page.locator("#device-result")).toHaveAttribute("aria-atomic", "true");
+    await expect(page.getByRole("heading", { name: "Device approved" })).toBeVisible();
+    const returnToRudder = page.getByRole("button", { name: "Return to Rudder" });
+    await expect(returnToRudder).toBeFocused();
+    expect(approveRequests).toBe(1);
+
+    await page.evaluate(() => {
+      window.close = () => undefined;
+    });
+    await returnToRudder.click();
+    await expect(page.locator("#auth-status")).toHaveText(
+      "You can close this tab and return to Rudder.",
+    );
+  });
+
+  test("shows a denied result without leaving reusable decision controls", async ({ page }) => {
+    await openSignedInDeviceApproval(page, "DENY-7M3Q");
+    await page.route("**/api/desktop/device-code/deny", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, status: "denied" }),
+      }));
+
+    await page.getByRole("button", { name: "Deny request" }).click();
+
+    await expect(page.locator("#device-decision")).toBeHidden();
+    await expect(page.locator("#device-result")).toHaveAttribute("data-state", "denied");
+    await expect(page.getByRole("heading", { name: "Request denied" })).toBeVisible();
+    await expect(page.getByText("This device was not granted access.")).toBeVisible();
+  });
+
+  test("restores both actions after an expired-request error", async ({ page }) => {
+    await openSignedInDeviceApproval(page, "EXPR-4T8V");
+    await page.route("**/api/desktop/device-code/approve", (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "expired_token" }),
+      }));
+
+    await page.getByRole("button", { name: "Approve device" }).click();
+
+    await expect(page.getByRole("status")).toHaveText("This device request is invalid or expired.");
+    await expect(page.getByRole("status")).toHaveAttribute("data-state", "error");
+    await expect(page.getByRole("button", { name: "Approve device" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Deny request" })).toBeEnabled();
+    await expect(page.locator("#device-result")).toBeHidden();
+  });
 });
