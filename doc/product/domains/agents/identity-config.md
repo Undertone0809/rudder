@@ -30,6 +30,7 @@ related_code:
   - ui/src/components/AgentAvatar.tsx
   - ui/src/components/AgentIconPicker.tsx
   - ui/src/components/NewIssueDialog.tsx
+  - ui/src/pages/NewAgent.tsx
   - ui/src/lib/agent-avatar.ts
   - ui/src/lib/runtime-models.ts
   - ui/src/lib/runtime-thinking-effort.ts
@@ -53,6 +54,7 @@ related_tests:
   - ui/src/lib/runtime-models.test.ts
   - tests/e2e/agent-config-advanced-options.spec.ts
   - tests/e2e/agent-avatar.spec.ts
+  - tests/e2e/agent-auto-name.spec.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/onboarding.spec.ts
   - server/src/__tests__/bundled-rudder-skill-docs.test.ts
@@ -77,6 +79,11 @@ Product model:
 - An agent belongs to one organization.
 - Agent identity includes name, role, title, capabilities, status, runtime
   type/config, desired skills, budget, and permission/config state.
+- The board's New Agent form derives the role from the organization's current
+  agent list: the first agent is submitted with role `ceo`, and later agents
+  are submitted with role `general`. This form does not expose a role picker;
+  other explicit creation or hire callers still provide a server-validated
+  role.
 - Agent avatar identity uses the existing `agents.icon` field. Supported
   persisted generated references are deterministic Oreo
   `oreo:<shape>:<palette>:<uuid>` values and DiceBear Notionists values;
@@ -112,6 +119,8 @@ Flow:
 Invariants:
 
 - Agent identity does not cross the organization boundary.
+- New Agent role derivation is organization-scoped and deterministic: an empty
+  agent list selects `ceo`, while a non-empty list selects `general`.
 - Terminated or pending-approval agents are not ordinary invokable agents.
 - Runtime config is not only UI preference; it is execution contract.
 - Oreo shape, palette, and UUID segments must match the IDs and UUID grammar
@@ -126,6 +135,8 @@ Invariants:
 Evidence:
 
 - Agent management routes enforce org-scoped updates.
+- The New Agent form and its E2E workflow prove the first-agent `ceo` default
+  and later-agent `general` default.
 - Agent Detail shows the config surface used by operators to inspect an agent.
 - Shared validation, server creation tests, renderer/picker component tests,
   and the Agent avatar E2E workflow prove strict references, Oreo defaults,

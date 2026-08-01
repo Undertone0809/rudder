@@ -457,6 +457,7 @@ contracts:
       - ui/src/lib/agent-avatar.ts
       - ui/src/components/AgentAvatar.tsx
       - ui/src/components/AgentIconPicker.tsx
+      - ui/src/pages/NewAgent.tsx
     related_tests:
       - server/src/__tests__/agent-permissions-routes.test.ts
       - server/src/__tests__/agent-shortname-collision.test.ts
@@ -467,6 +468,7 @@ contracts:
       - packages/shared/src/validators/agent.test.ts
       - ui/src/components/AgentAvatar.test.tsx
       - ui/src/components/AgentIconPicker.test.tsx
+      - tests/e2e/agent-auto-name.spec.ts
       - tests/e2e/agent-avatar.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
@@ -1759,6 +1761,8 @@ contracts:
     related_code:
       - desktop/src/local-apps-registry.ts
       - desktop/src/local-apps-discovery.ts
+      - desktop/src/local-app-framework.ts
+      - desktop/src/local-app-icon-discovery.ts
       - desktop/src/local-apps-controller.ts
       - desktop/src/local-apps-runtime.ts
       - desktop/src/local-apps-ipc.ts
@@ -1776,6 +1780,8 @@ contracts:
     related_tests:
       - desktop/src/local-apps-registry.test.ts
       - desktop/src/local-apps-discovery.test.ts
+      - desktop/src/local-app-framework.test.ts
+      - desktop/src/local-app-icon-discovery.test.ts
       - desktop/src/local-apps-controller.test.ts
       - desktop/src/local-apps-runtime.test.ts
       - desktop/src/local-apps-ipc.test.ts
@@ -1784,6 +1790,7 @@ contracts:
       - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
       - ui/src/lib/local-apps.test.ts
       - tests/e2e/messenger-local-apps.spec.ts
+      - tests/e2e/app-builder.spec.ts
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-23-messenger-work-packages-local-apps.md
@@ -1823,6 +1830,8 @@ contracts:
       - desktop/src/app-builder-ipc.ts
       - desktop/src/app-builder-manifest.ts
       - desktop/src/app-builder-data.ts
+      - desktop/src/local-app-framework.ts
+      - desktop/src/local-app-icon-discovery.ts
       - desktop/src/local-apps-runtime.ts
       - ui/src/pages/Apps.tsx
       - ui/src/pages/InstanceExperimentalSettings.tsx
@@ -1836,6 +1845,8 @@ contracts:
       - desktop/src/app-builder-data.test.ts
       - desktop/src/app-builder-runner.test.ts
       - desktop/src/app-builder-ipc.test.ts
+      - desktop/src/local-app-framework.test.ts
+      - desktop/src/local-app-icon-discovery.test.ts
       - ui/src/pages/InstanceExperimentalSettings.test.tsx
       - ui/src/components/PrimaryRail.test.tsx
       - tests/e2e/app-builder.spec.ts
@@ -2152,6 +2163,7 @@ contracts:
       - ui/src/pages/InstanceBrowserSettings.tsx
       - ui/src/pages/InstanceGeneralSettings.tsx
       - ui/src/pages/InstanceNotificationsSettings.tsx
+      - ui/src/pages/InstanceAccountSettings.tsx
       - ui/src/pages/InstanceProfileSettings.tsx
       - ui/src/pages/InstanceSettings.tsx
       - ui/src/pages/InstanceShortcutsSettings.tsx
@@ -2175,6 +2187,7 @@ contracts:
       - ui/src/pages/InstanceBrowserSettings.test.tsx
       - ui/src/pages/InstanceGeneralSettings.test.tsx
       - ui/src/pages/InstanceNotificationsSettings.test.tsx
+      - ui/src/pages/InstanceAccountSettings.test.tsx
       - ui/src/pages/InstanceProfileSettings.test.tsx
       - ui/src/pages/InstanceSettings.test.tsx
       - ui/src/pages/InstanceShortcutsSettings.test.tsx
