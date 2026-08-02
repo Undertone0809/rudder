@@ -22,7 +22,9 @@ vi.mock("../api/orgs", () => ({
 }));
 
 vi.mock("./MarkdownBody", () => ({
-  MarkdownBody: ({ children }: { children: string }) => <div data-testid="mock-markdown">{children}</div>,
+  MarkdownBody: ({ children, className }: { children: string; className?: string }) => (
+    <div className={className} data-testid="mock-markdown">{children}</div>
+  ),
 }));
 
 vi.mock("./WorkspaceCodeEditor", () => ({
@@ -124,7 +126,12 @@ describe("WorkspaceFilePreview", () => {
     }));
 
     expect(container.querySelector("[data-testid='test-file-markdown-preview']")).not.toBeNull();
-    expect(container.querySelector("[data-testid='mock-markdown']")?.textContent).toContain("Rendered report");
+    const markdown = container.querySelector("[data-testid='mock-markdown']");
+    expect(markdown?.textContent).toContain("Rendered report");
+    expect(markdown?.classList.contains("rudder-readable-document")).toBe(true);
+    expect(markdown?.classList.contains("mx-auto")).toBe(true);
+    expect(markdown?.classList.contains("w-full")).toBe(true);
+    expect(markdown?.classList.contains("max-w-[880px]")).toBe(true);
   });
 
   it("renders HTML by default and keeps a read-only source mode", async () => {

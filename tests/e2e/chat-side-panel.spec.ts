@@ -998,6 +998,134 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText(libraryFileName, { timeout: 15_000 });
   });
 
+  test("keeps a read-only Markdown preview readable across narrow and wide panels", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Readable-Markdown-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
+
+    const libraryFilePath = `artifacts/readable-markdown-${Date.now()}.md`;
+    const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: libraryFilePath,
+        content: [
+          "# Read-only research brief",
+          "",
+          "Wide application windows should not force a document into edge-to-edge lines that are difficult to scan and easy to lose while reading.",
+          "",
+          "## Reading layout",
+          "",
+          "The document column stays centered and stops growing at a comfortable reading width. The surrounding workspace can still expand for navigation, tools, and other context.",
+          "",
+          "- Narrow panels use all available content width.",
+          "- Wide panels preserve balanced whitespace.",
+          "- Code, tables, images, and media keep their existing layouts.",
+        ].join("\n"),
+      },
+    });
+    expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
+    const libraryFile = await libraryFileRes.json() as { markdownLink: string };
+    const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Read-only Markdown width host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open the read-only Markdown preview beside this chat." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open ${libraryFile.markdownLink} beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.route(`**/api/orgs/${organization.id}/workspace/file?*`, async (route) => {
+      const response = await route.fetch();
+      const file = await response.json() as Record<string, unknown>;
+      await route.fulfill({
+        response,
+        json: {
+          ...file,
+          message: "Preview truncated to a safe read-only size.",
+          truncated: true,
+        },
+      });
+    });
+
+    await page.goto("/");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(libraryFileName, { timeout: 15_000 });
+    await assistantMessage.getByRole("link", { name: libraryFileName }).click();
+    const documentViewport = page.getByTestId("library-live-surface-markdown-preview");
+    const readableDocument = documentViewport.locator(".rudder-readable-document");
+    await expect(readableDocument.getByRole("heading", { name: "Read-only research brief" })).toBeVisible();
+
+    const narrowGeometry = await documentViewport.evaluate((viewport) => {
+      const document = viewport.querySelector<HTMLElement>(".rudder-readable-document");
+      if (!document) return null;
+      const viewportRect = viewport.getBoundingClientRect();
+      const documentRect = document.getBoundingClientRect();
+      const viewportStyle = window.getComputedStyle(viewport);
+      return {
+        availableWidth: viewportRect.width
+          - Number.parseFloat(viewportStyle.paddingLeft)
+          - Number.parseFloat(viewportStyle.paddingRight),
+        documentWidth: documentRect.width,
+      };
+    });
+    expect(narrowGeometry).not.toBeNull();
+    expect(Math.abs(narrowGeometry!.availableWidth - narrowGeometry!.documentWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-read-only-readable-width-narrow.png"),
+    });
+
+    await page.setViewportSize({ width: 3000, height: 1000 });
+    await expect.poll(async () => documentViewport.boundingBox().then((box) => box?.width ?? 0)).toBeGreaterThan(1_100);
+    const wideGeometry = await documentViewport.evaluate((viewport) => {
+      const document = viewport.querySelector<HTMLElement>(".rudder-readable-document");
+      if (!document) return null;
+      const viewportRect = viewport.getBoundingClientRect();
+      const documentRect = document.getBoundingClientRect();
+      const viewportStyle = window.getComputedStyle(viewport);
+      return {
+        documentWidth: documentRect.width,
+        leftGap: documentRect.left - viewportRect.left - Number.parseFloat(viewportStyle.paddingLeft),
+        maxWidth: window.getComputedStyle(document).maxWidth,
+        rightGap: viewportRect.right - Number.parseFloat(viewportStyle.paddingRight) - documentRect.right,
+      };
+    });
+    expect(wideGeometry).not.toBeNull();
+    expect(wideGeometry!.maxWidth).toBe("880px");
+    expect(wideGeometry!.documentWidth).toBeLessThanOrEqual(880.5);
+    expect(Math.abs(wideGeometry!.leftGap - wideGeometry!.rightGap)).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-read-only-readable-width-wide.png"),
+    });
+  });
+
   test("edits and annotates a saved Library code file in the Side Panel", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

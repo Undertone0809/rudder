@@ -209,7 +209,7 @@ export function WorkspaceFilePreview({
           aria-label={`${file.filePath || "Library file"} preview`}
         >
           <MarkdownBody
-            className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
+            className="rudder-library-document-editor rudder-readable-document rudder-side-panel-library-document mx-auto w-full max-w-[880px] text-[15px] leading-7 text-foreground"
             enableCodeBlockCopy
           >
             {file.content}
