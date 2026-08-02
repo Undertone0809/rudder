@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
+import { normalizeMarkdownDocumentValue } from "../lib/markdown-document-value";
+import type { MarkdownEditorEngine } from "../lib/markdown-editor-engine";
 import { cn } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import {
+  MarkdownEditor,
+  type MarkdownEditorRef,
+  type MentionOption,
+} from "./MarkdownEditor";
 
 interface InlineEditorProps {
   value: string;
@@ -14,7 +20,8 @@ interface InlineEditorProps {
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
-  editorEngine?: "legacy" | "milkdown";
+  editorEngine?: MarkdownEditorEngine;
+  documentIdentity?: string;
   alwaysEdit?: boolean;
   variant?: "default" | "issue-description";
 }
@@ -45,6 +52,7 @@ export function InlineEditor({
   mentions,
   onMentionQueryChange,
   editorEngine,
+  documentIdentity,
   alwaysEdit = false,
   variant = "default",
 }: InlineEditorProps) {
@@ -60,21 +68,16 @@ export function InlineEditor({
   const explicitSaveValueRef = useRef<string | null>(null);
   const hasDraftChangeRef = useRef(false);
   const previousValueRef = useRef(value);
+  const draftDirtyRef = useRef(false);
+  const pendingExternalValueRef = useRef<string | null>(null);
+  const suppressNextBlurSaveRef = useRef(false);
+  const [hasExternalUpdate, setHasExternalUpdate] = useState(false);
   const {
     state: autosaveState,
     markDirty,
     reset,
     runSave,
   } = useAutosaveIndicator();
-
-  useEffect(() => {
-    const valueChanged = previousValueRef.current !== value;
-    previousValueRef.current = value;
-    if (!valueChanged) return;
-    if (multiline && multilineFocused) return;
-    hasDraftChangeRef.current = false;
-    setDraft(value);
-  }, [value, multiline, multilineFocused]);
 
   const clearAutosaveDebounce = useCallback(() => {
     if (!autosaveDebounceRef.current) return;
@@ -83,6 +86,40 @@ export function InlineEditor({
   }, []);
 
   useEffect(() => clearAutosaveDebounce, [clearAutosaveDebounce]);
+
+  useEffect(() => {
+    const valueChanged = previousValueRef.current !== value;
+    previousValueRef.current = value;
+    if (!valueChanged) return;
+    const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+    const normalizedDraft = editorEngine === "codemirror"
+      ? normalizeMarkdownDocumentValue(currentDraft)
+      : currentDraft.trim();
+    if (
+      editorEngine === "codemirror"
+      && multiline
+      && multilineFocused
+      && draftDirtyRef.current
+      && normalizedDraft !== value
+    ) {
+      pendingExternalValueRef.current = value;
+      setHasExternalUpdate(true);
+      clearAutosaveDebounce();
+      return;
+    }
+    draftDirtyRef.current = false;
+    hasDraftChangeRef.current = false;
+    pendingExternalValueRef.current = null;
+    setHasExternalUpdate(false);
+    setDraft(value);
+  }, [
+    clearAutosaveDebounce,
+    draft,
+    editorEngine,
+    multiline,
+    multilineFocused,
+    value,
+  ]);
 
   const autoSize = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -115,32 +152,35 @@ export function InlineEditor({
 
   useEffect(() => {
     if (!editing || !multiline) return;
+    if (editorEngine === "codemirror" && alwaysEdit) return;
     const frame = requestAnimationFrame(() => {
       markdownRef.current?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [editing, multiline]);
+  }, [alwaysEdit, editing, editorEngine, multiline]);
 
   const commit = useCallback(async (nextValue = draft) => {
-    const trimmed = nextValue.trim();
+    const normalized = editorEngine === "codemirror"
+      ? normalizeMarkdownDocumentValue(nextValue)
+      : nextValue.trim();
     const hasPendingSave = pendingSaveCountRef.current > 0;
-    if (trimmed !== value || hasPendingSave) {
-      if (hasPendingSave && latestQueuedValueRef.current === trimmed) {
+    if (normalized !== value || hasPendingSave) {
+      if (hasPendingSave && latestQueuedValueRef.current === normalized) {
         await saveQueueRef.current;
       } else {
-        latestQueuedValueRef.current = trimmed;
+        latestQueuedValueRef.current = normalized;
         pendingSaveCountRef.current += 1;
         const queuedSave = saveQueueRef.current
           .catch(() => undefined)
           .then(async () => {
-            await Promise.resolve(onSave(trimmed));
+            await Promise.resolve(onSave(normalized));
           });
         saveQueueRef.current = queuedSave;
         try {
           await queuedSave;
         } finally {
           pendingSaveCountRef.current -= 1;
-          if (pendingSaveCountRef.current === 0 && latestQueuedValueRef.current === trimmed) {
+          if (pendingSaveCountRef.current === 0 && latestQueuedValueRef.current === normalized) {
             latestQueuedValueRef.current = null;
           }
         }
@@ -151,7 +191,7 @@ export function InlineEditor({
     if (!multiline) {
       setEditing(false);
     }
-  }, [draft, multiline, onSave, value]);
+  }, [draft, editorEngine, multiline, onSave, value]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !multiline) {
@@ -161,6 +201,11 @@ export function InlineEditor({
     if (e.key === "Escape") {
       clearAutosaveDebounce();
       reset();
+      suppressNextBlurSaveRef.current = true;
+      draftDirtyRef.current = false;
+      hasDraftChangeRef.current = false;
+      pendingExternalValueRef.current = null;
+      setHasExternalUpdate(false);
       setDraft(value);
       if (multiline) {
         setMultilineFocused(false);
@@ -179,12 +224,18 @@ export function InlineEditor({
   useEffect(() => {
     if (!multiline) return;
     if (!multilineFocused) return;
-    const trimmed = draft.trim();
-    if (explicitSaveValueRef.current === trimmed) {
+    if (pendingExternalValueRef.current !== null) {
+      clearAutosaveDebounce();
+      return;
+    }
+    const normalized = editorEngine === "codemirror"
+      ? normalizeMarkdownDocumentValue(draft)
+      : draft.trim();
+    if (explicitSaveValueRef.current === normalized) {
       explicitSaveValueRef.current = null;
       return;
     }
-    if (trimmed === value) {
+    if (normalized === value) {
       if (autosaveState !== "saved") {
         reset();
       }
@@ -194,13 +245,13 @@ export function InlineEditor({
     clearAutosaveDebounce();
     autosaveDebounceRef.current = setTimeout(() => {
       autosaveDebounceRef.current = null;
-      settleSave(runSave(() => commit(trimmed)));
+      settleSave(runSave(() => commit(normalized)));
     }, AUTOSAVE_DEBOUNCE_MS);
 
     return clearAutosaveDebounce;
-  }, [autosaveState, clearAutosaveDebounce, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
+  }, [autosaveState, clearAutosaveDebounce, commit, draft, editorEngine, markDirty, multiline, multilineFocused, reset, runSave, value]);
 
-  if (multiline && editing) {
+  if (multiline && (editing || editorEngine === "codemirror")) {
     return (
       <div
         className={cn(
@@ -215,12 +266,22 @@ export function InlineEditor({
           if (!alwaysEdit) {
             setEditing(false);
           }
+          if (suppressNextBlurSaveRef.current) {
+            suppressNextBlurSaveRef.current = false;
+            return;
+          }
           const currentDraft = hasDraftChangeRef.current
             ? markdownRef.current?.getMarkdown?.() ?? draft
             : draft;
-          const trimmed = currentDraft.trim();
-          explicitSaveValueRef.current = trimmed;
-          if (trimmed === value) {
+          const normalized = editorEngine === "codemirror"
+            ? normalizeMarkdownDocumentValue(currentDraft)
+            : currentDraft.trim();
+          if (pendingExternalValueRef.current !== null) {
+            reset();
+            return;
+          }
+          explicitSaveValueRef.current = normalized;
+          if (normalized === value) {
             reset();
             settleSave(commit(currentDraft));
             return;
@@ -236,6 +297,14 @@ export function InlineEditor({
           onChange={(nextDraft) => {
             explicitSaveValueRef.current = null;
             hasDraftChangeRef.current = true;
+            const normalized = editorEngine === "codemirror"
+              ? normalizeMarkdownDocumentValue(nextDraft)
+              : nextDraft.trim();
+            draftDirtyRef.current = normalized !== value;
+            if (!draftDirtyRef.current) {
+              pendingExternalValueRef.current = null;
+              setHasExternalUpdate(false);
+            }
             setDraft(nextDraft);
           }}
           placeholder={placeholder}
@@ -245,14 +314,19 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
+          documentIdentity={documentIdentity}
           activateInlineTokensOnPlainClick={variant === "issue-description"}
           submitShortcut="mod-enter"
           onSubmit={() => {
             clearAutosaveDebounce();
             const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
-            const trimmed = currentDraft.trim();
-            explicitSaveValueRef.current = trimmed;
-            if (trimmed === value) {
+            const normalized = editorEngine === "codemirror"
+              ? normalizeMarkdownDocumentValue(currentDraft)
+              : currentDraft.trim();
+            pendingExternalValueRef.current = null;
+            setHasExternalUpdate(false);
+            explicitSaveValueRef.current = normalized;
+            if (normalized === value) {
               reset();
               settleSave(commit(currentDraft));
               return;
@@ -265,11 +339,13 @@ export function InlineEditor({
             className={cn(
               "text-[11px] transition-opacity duration-150",
               autosaveState === "error" ? "text-destructive" : "text-muted-foreground",
-              autosaveState === "idle" ? "opacity-0" : "opacity-100",
+              autosaveState === "idle" && !hasExternalUpdate ? "opacity-0" : "opacity-100",
             )}
           >
             {autosaveState === "saving"
               ? "Autosaving..."
+              : hasExternalUpdate
+                ? "Updated elsewhere — submit to overwrite"
               : autosaveState === "saved"
                 ? "Saved"
                 : autosaveState === "error"

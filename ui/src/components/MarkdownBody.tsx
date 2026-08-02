@@ -3,7 +3,6 @@ import { Check, Copy, File, FileArchive, FileCode2, FileImage, FileSpreadsheet, 
 import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { websiteMetadataApi } from "../api/websiteMetadata";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
@@ -21,6 +20,10 @@ import {
   resolveSkillReferenceOpenHref,
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
+import {
+  __clearWebsiteMetadataCacheForTests,
+  getWebsiteMetadata,
+} from "../lib/website-metadata-cache";
 import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
@@ -461,8 +464,42 @@ type WebsiteMetadataIconState =
   | { status: "idle" | "loading" | "none" | "error"; iconUrl: null }
   | { status: "ready"; iconUrl: string };
 
-const websiteMetadataIconCache = new Map<string, WebsiteMetadataIconState>();
-const websiteMetadataIconInflight = new Map<string, Promise<WebsiteMetadataIconState>>();
+interface CachedWebsiteMetadataIcon {
+  expiresAt: number;
+  state: WebsiteMetadataIconState;
+}
+
+const WEBSITE_ICON_CACHE_TTL_MS = 10 * 60 * 1000;
+const MAX_WEBSITE_ICON_CACHE_ENTRIES = 256;
+const websiteMetadataIconCache = new Map<string, CachedWebsiteMetadataIcon>();
+
+function readWebsiteMetadataIconCache(href: string) {
+  const cached = websiteMetadataIconCache.get(href);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    websiteMetadataIconCache.delete(href);
+    return null;
+  }
+  websiteMetadataIconCache.delete(href);
+  websiteMetadataIconCache.set(href, cached);
+  return cached.state;
+}
+
+function writeWebsiteMetadataIconCache(
+  href: string,
+  state: WebsiteMetadataIconState,
+) {
+  websiteMetadataIconCache.delete(href);
+  websiteMetadataIconCache.set(href, {
+    expiresAt: Date.now() + WEBSITE_ICON_CACHE_TTL_MS,
+    state,
+  });
+  while (websiteMetadataIconCache.size > MAX_WEBSITE_ICON_CACHE_ENTRIES) {
+    const oldest = websiteMetadataIconCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    websiteMetadataIconCache.delete(oldest);
+  }
+}
 
 export function resolvedWebsiteIconUrl(value: string | URL) {
   let url: URL;
@@ -476,7 +513,7 @@ export function resolvedWebsiteIconUrl(value: string | URL) {
   if (knownIcon) return knownIcon.iconDataUrl;
 
   const cached = websiteMetadataIconCache.get(url.href);
-  return cached?.status === "ready" ? cached.iconUrl : null;
+  return cached?.state.status === "ready" ? cached.state.iconUrl : null;
 }
 
 function useWebsiteMetadataIcon(url: URL) {
@@ -485,28 +522,28 @@ function useWebsiteMetadataIcon(url: URL) {
   const [state, setState] = useState<WebsiteMetadataIconState>(
     () => knownIcon
       ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
-      : websiteMetadataIconCache.get(href) ?? { status: "idle", iconUrl: null },
+      : readWebsiteMetadataIconCache(href) ?? { status: "idle", iconUrl: null },
   );
 
   useEffect(() => {
     if (knownIcon) {
       const nextState: WebsiteMetadataIconState = { status: "ready", iconUrl: knownIcon.iconDataUrl };
-      websiteMetadataIconCache.set(href, nextState);
+      writeWebsiteMetadataIconCache(href, nextState);
       setState(nextState);
       return;
     }
 
-    const cached = websiteMetadataIconCache.get(href);
+    const cached = readWebsiteMetadataIconCache(href);
     if (cached && cached.status !== "loading") {
       setState(cached);
       return;
     }
 
     const loadingState: WebsiteMetadataIconState = { status: "loading", iconUrl: null };
-    websiteMetadataIconCache.set(href, loadingState);
+    writeWebsiteMetadataIconCache(href, loadingState);
 
     let cancelled = false;
-    const request = websiteMetadataIconInflight.get(href) ?? Promise.resolve(websiteMetadataApi.get(href))
+    const request = Promise.resolve(getWebsiteMetadata(href, "preview"))
       .then((metadata) => {
         const nextState: WebsiteMetadataIconState = metadata?.iconUrl
           ? { status: "ready", iconUrl: metadata.iconUrl }
@@ -515,15 +552,11 @@ function useWebsiteMetadataIcon(url: URL) {
       })
       .catch((): WebsiteMetadataIconState => {
         return { status: "error", iconUrl: null };
-      })
-      .finally(() => {
-        websiteMetadataIconInflight.delete(href);
       });
-    websiteMetadataIconInflight.set(href, request);
 
     request
       .then((nextState) => {
-        websiteMetadataIconCache.set(href, nextState);
+        writeWebsiteMetadataIconCache(href, nextState);
         if (!cancelled) setState(nextState);
       });
 
@@ -573,7 +606,7 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
 
 export function __clearWebsiteMetadataIconCacheForTests() {
   websiteMetadataIconCache.clear();
-  websiteMetadataIconInflight.clear();
+  __clearWebsiteMetadataCacheForTests();
 }
 
 function extractMermaidSource(children: ReactNode): string | null {

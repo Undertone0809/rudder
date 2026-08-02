@@ -15,6 +15,7 @@ import {
   resolveChatAnnotationRange,
   restoreChatAnnotationRange,
 } from "../lib/chat-response-annotation-selection";
+import { getWebsiteMetadata } from "../lib/website-metadata-cache";
 import {
   __clearWebsiteMetadataIconCacheForTests,
   MarkdownBody,
@@ -210,6 +211,7 @@ beforeEach(() => {
   entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
     url: "https://example.com/",
     siteName: null,
+    pageTitle: null,
     iconUrl: null,
   });
 });
@@ -1974,6 +1976,8 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('class="rudder-skill-token"');
+    expect(html).toContain('data-markdown-source-start="0"');
+    expect(html).toContain('data-markdown-source-end="106"');
     expect(html).toContain("rudder-docs");
     expect(html).not.toContain("rudder/rudder-docs");
     expect(html).not.toContain("href=");
@@ -2253,6 +2257,7 @@ describe("MarkdownBody", () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValueOnce({
       url: "https://policy.example.test/terms-of-use/",
       siteName: "Policy Example",
+      pageTitle: null,
       iconUrl: null,
     });
 
@@ -2272,7 +2277,10 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://policy.example.test/terms-of-use/");
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(
+          "https://policy.example.test/terms-of-use/",
+          "preview",
+        );
       });
     });
 
@@ -2325,6 +2333,7 @@ describe("MarkdownBody", () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
       siteName: "Example",
+      pageTitle: null,
       iconUrl: "https://static.example.com/favicon.ico",
     });
 
@@ -2342,7 +2351,7 @@ describe("MarkdownBody", () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url, "preview");
       });
     });
     await act(async () => {
@@ -2362,6 +2371,7 @@ describe("MarkdownBody", () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
       siteName: "Example",
+      pageTitle: null,
       iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fstatic.example.com%2Ffavicon.png",
     });
 
@@ -2376,10 +2386,33 @@ describe("MarkdownBody", () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url, "preview");
       });
     });
 
+    expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses preview metadata already resolved through the shared cache", async () => {
+    const url = "https://shared-cache.example.test/post";
+    entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
+      url,
+      siteName: "Shared Cache",
+      pageTitle: "Shared cache article",
+      iconUrl: "https://static.example.test/favicon.ico",
+    });
+    await getWebsiteMetadata(url, "preview");
+
+    render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [post](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
   });
 
@@ -2401,7 +2434,7 @@ describe("MarkdownBody", () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url, "preview");
       });
     });
 
@@ -2418,8 +2451,6 @@ describe("MarkdownBody", () => {
     "http://service.internal/post",
     "http://intranet/post",
   ])("does not request origin or provider favicons for private or internal origins: %s", async (url) => {
-    entityPreviewApiMocks.getWebsiteMetadata.mockRejectedValueOnce(new Error("Private network URLs cannot be inspected"));
-
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -2433,11 +2464,10 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
 
     await act(async () => {
-      await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
-      });
+      await Promise.resolve();
     });
 
+    expect(entityPreviewApiMocks.getWebsiteMetadata).not.toHaveBeenCalled();
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
   });
@@ -2447,6 +2477,7 @@ describe("MarkdownBody", () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
       siteName: "Broken Icon",
+      pageTitle: null,
       iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fbroken-icon.example.org%2Fbroken.ico",
     });
 
@@ -2461,7 +2492,7 @@ describe("MarkdownBody", () => {
     const link = container.querySelector("a");
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url, "preview");
       });
     });
     await act(async () => {
@@ -2524,6 +2555,29 @@ describe("MarkdownBody", () => {
     expect(tableScroll).toBeTruthy();
     expect(tableScroll?.querySelector("table")).toBeTruthy();
     expect(tableScroll?.textContent).toContain("OpenClaw official docs");
+  });
+
+  it("renders compact multilingual GFM table delimiters as one three-column table", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "| 来源 | 可靠性 | 支撑内容 |",
+            "|---|---|---|",
+            "| OpenClaw 文档: https://docs.openclaw.ai/concepts/dreaming | 官方文档 | 阶段模型、默认启用方式与 CLI/UI 入口。 |",
+            "| OpenClaw 源码, `openclaw/openclaw` | 开源实现 | scoring 和 promotion 阈值。 |",
+          ].join("\n")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelectorAll("table")).toHaveLength(1);
+    expect(Array.from(container.querySelectorAll("th")).map((cell) => cell.textContent)).toEqual([
+      "来源",
+      "可靠性",
+      "支撑内容",
+    ]);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(2);
   });
 
   it("keeps app-relative markdown links in the current window", () => {

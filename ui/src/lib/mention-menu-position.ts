@@ -7,8 +7,14 @@ const MENTION_MENU_OFFSET = 4;
 const MENTION_PANEL_OFFSET = 10;
 
 export interface MentionMenuPositionOptions {
+  boundaryBottom?: number;
+  boundaryTop?: number;
   width?: number;
   maxHeight?: number;
+}
+
+export interface MentionPanelPositionOptions {
+  maxWidth?: number;
 }
 
 export interface MentionMenuAnchor {
@@ -40,13 +46,21 @@ export function getMentionMenuPositionForViewport(
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
   );
   const width = Math.min(options.width ?? MENTION_MENU_DEFAULT_WIDTH, availableWidth);
+  const boundaryBottom = Math.min(
+    viewportHeight - MENTION_MENU_VIEWPORT_PADDING,
+    options.boundaryBottom ?? Number.POSITIVE_INFINITY,
+  );
+  const boundaryTop = Math.max(
+    MENTION_MENU_VIEWPORT_PADDING,
+    options.boundaryTop ?? Number.NEGATIVE_INFINITY,
+  );
   const availableBelow = Math.max(
     0,
-    viewportHeight - state.viewportBottom - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_OFFSET,
+    boundaryBottom - state.viewportBottom - MENTION_MENU_OFFSET,
   );
   const availableAbove = Math.max(
     0,
-    state.viewportTop - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_OFFSET,
+    state.viewportTop - boundaryTop - MENTION_MENU_OFFSET,
   );
   const openUpward = availableBelow < 140 && availableAbove > availableBelow;
   const maxHeight = Math.min(
@@ -80,15 +94,20 @@ export function getMentionPanelPositionForViewport(
   state: MentionMenuContainerAnchor,
   viewportWidth: number,
   viewportHeight: number,
+  options: MentionPanelPositionOptions = {},
 ) {
   const availableWidth = Math.max(
     MENTION_MENU_MIN_WIDTH,
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
   );
+  const maxWidth = Math.max(
+    MENTION_MENU_MIN_WIDTH,
+    Math.min(options.maxWidth ?? availableWidth, availableWidth),
+  );
   const desiredWidth = clamp(
     state.viewportRight - state.viewportLeft,
     MENTION_MENU_MIN_WIDTH,
-    availableWidth,
+    maxWidth,
   );
   const left = clamp(
     state.viewportLeft,

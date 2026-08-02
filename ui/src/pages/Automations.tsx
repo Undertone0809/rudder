@@ -68,6 +68,7 @@ import {
   concurrencyPolicyDescriptions,
 } from "../lib/automation-localization";
 import { getAutomationRunDisplay } from "../lib/automation-run-display";
+import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -355,6 +356,7 @@ export function Automations() {
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
@@ -373,6 +375,7 @@ export function Automations() {
   });
 
   const resetDraft = useCallback(() => {
+    setDocumentSessionId((current) => current + 1);
     setDraft({
       title: "",
       description: "",
@@ -388,6 +391,7 @@ export function Automations() {
   }, []);
 
   const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
+    setDocumentSessionId((current) => current + 1);
     setDraft((current) => ({
       ...current,
       title: localizeText(template.title, locale),
@@ -501,7 +505,7 @@ export function Automations() {
       const currentInstructions = descriptionEditorRef.current?.getMarkdown?.() ?? draft.description;
       const automation = await automationsApi.create(selectedOrganizationId!, {
         title: draft.title,
-        instructions: currentInstructions.trim() || null,
+        instructions: markdownDocumentOrNull(currentInstructions),
         projectId: draft.projectId || null,
         assigneeAgentId: draft.assigneeAgentId,
         priority: draft.priority,
@@ -789,12 +793,13 @@ export function Automations() {
                 <div ref={descriptionComposerRef} data-testid="automation-instructions-composer">
                   <MarkdownEditor
                     ref={descriptionEditorRef}
+                    engine="codemirror"
+                    documentIdentity={`new-automation:${documentSessionId}`}
                     value={draft.description}
                     onChange={(description) => setDraft((current) => ({ ...current, description }))}
                     mentions={mentionOptions}
                     mentionMenuAnchorRef={descriptionComposerRef}
                     mentionMenuPlacement="container"
-                    plainText
                     placeholder="Add instructions e.g. look for crashes in Sentry"
                     bordered={false}
                     contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"

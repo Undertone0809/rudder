@@ -664,7 +664,7 @@ describe("IssueDetail", () => {
     );
     expect(descriptionEditorProps).toMatchObject({
       multiline: true,
-      editorEngine: "milkdown",
+      editorEngine: "codemirror",
       alwaysEdit: true,
       variant: "issue-description",
     });

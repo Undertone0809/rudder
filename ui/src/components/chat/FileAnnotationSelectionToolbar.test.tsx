@@ -236,6 +236,77 @@ describe("FileAnnotationSelectionToolbar", () => {
     expect(details[0]!.annotation.sourceHash).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("keeps the pending DOM selection through the toolbar mouseup so click can add it", async () => {
+    const container = document.createElement("div");
+    const paragraph = document.createElement("p");
+    paragraph.textContent = "alpha beta gamma";
+    container.appendChild(paragraph);
+    document.body.appendChild(container);
+    const containerRef = createRef<HTMLElement>();
+    Object.defineProperty(containerRef, "current", { value: container });
+    const details: ChatFileAnnotationRequestDetail[] = [];
+    window.addEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, (event) => {
+      details.push((event as CustomEvent<ChatFileAnnotationRequestDetail>).detail);
+    }, { once: true });
+
+    await act(async () => {
+      root.render(
+        <FileAnnotationSelectionToolbar
+          containerRef={containerRef}
+          conversationId="conversation-1"
+          saved
+          source="alpha beta gamma"
+          sourceIdentity={{
+            surface: "workspace_file",
+            sourceFilePath: "notes/example.md",
+            sourceLibraryEntryId: "entry-1",
+          }}
+          sourceRenderMode="markdown"
+        />,
+      );
+    });
+
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild!, 6);
+    range.setEnd(paragraph.firstChild!, 10);
+    Object.defineProperty(range, "getBoundingClientRect", {
+      value: () => ({
+        left: 10,
+        right: 60,
+        top: 20,
+        bottom: 40,
+        width: 50,
+        height: 20,
+      }),
+    });
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const addButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Add to chat")!;
+    expect(addButton).toBeTruthy();
+    act(() => {
+      addButton.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    expect(document.body.contains(addButton)).toBe(true);
+    act(() => addButton.click());
+
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({
+      action: "add_to_chat",
+      annotation: {
+        selectedText: "beta",
+        start: 6,
+        end: 10,
+      },
+    });
+  });
+
   it("does not offer annotation actions while the file has unsaved changes", async () => {
     const containerRef = createRef<HTMLElement>();
     Object.defineProperty(containerRef, "current", { value: host });

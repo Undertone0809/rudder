@@ -82,6 +82,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-21-responsive-issue-detail-layout.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   RUN.WAKEUP.001:
     owner: product
     domain: execution
@@ -900,6 +901,7 @@ contracts:
       - tests/e2e/goal-detail-lifecycle.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   ORG.PROJECT.001:
     owner: product
     domain: organizations-and-goals
@@ -916,6 +918,7 @@ contracts:
       - server/src/__tests__/project-routes.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   CONTEXT.RESOURCES.001:
     owner: product
     domain: library-and-context
@@ -990,6 +993,7 @@ contracts:
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
       - doc/plans/2026-07-20-library-unsupported-file-launcher.md
       - doc/plans/2026-07-21-library-media-preview.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   LIBRARY.WEB.PREVIEW.001:
     owner: product
     domain: library-and-context
@@ -1085,6 +1089,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-10-automation-three-column-detail.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   AUTOMATION.TRIGGER.001:
     owner: product
     domain: automations
@@ -1446,6 +1451,52 @@ contracts:
       - doc/plans/2026-07-19-side-chat.md
       - doc/plans/2026-07-21-side-chat-title-and-fork-grouping.md
       - doc/plans/2026-07-23-chat-response-annotations.md
+  MARKDOWN.DOCUMENT.LIVE.PREVIEW.001:
+    owner: product
+    domain: collaboration
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/collaboration/markdown-document-live-preview.md
+    related_code:
+      - packages/shared/src/website-icons.ts
+      - server/src/routes/website-metadata.ts
+      - server/src/services/website-metadata.ts
+      - ui/src/api/websiteMetadata.ts
+      - ui/src/components/CodeMirrorMarkdownEditor.tsx
+      - ui/src/components/InlineEditor.tsx
+      - ui/src/components/MarkdownBody.tsx
+      - ui/src/components/MarkdownEditor.tsx
+      - ui/src/components/NewGoalDialog.tsx
+      - ui/src/components/NewIssueDialog.tsx
+      - ui/src/components/NewProjectDialog.tsx
+      - ui/src/components/ProjectProperties.tsx
+      - ui/src/components/workbench/LibraryLiveSurface.tsx
+      - ui/src/lib/markdown-live-preview.ts
+      - ui/src/lib/website-metadata-cache.ts
+      - ui/src/pages/AutomationDetail.tsx
+      - ui/src/pages/Automations.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/GoalDetail.tsx
+      - ui/src/pages/IssueDetail.tsx
+      - ui/src/pages/OrganizationWorkspaces.tsx
+    related_tests:
+      - server/src/__tests__/website-metadata.test.ts
+      - server/src/__tests__/website-metadata-routes.test.ts
+      - ui/src/components/CodeMirrorMarkdownEditor.test.tsx
+      - ui/src/components/InlineEditor.test.tsx
+      - ui/src/components/MarkdownEditor.test.tsx
+      - ui/src/components/MilkdownMarkdownEditor.test.ts
+      - ui/src/lib/markdown-live-preview-surfaces.test.ts
+      - ui/src/lib/markdown-live-preview.test.ts
+      - ui/src/lib/website-metadata-cache.test.ts
+      - tests/e2e/automation-detail-layout.spec.ts
+      - tests/e2e/goal-detail-lifecycle.spec.ts
+      - tests/e2e/issue-comment-mention-boundary.spec.ts
+      - tests/e2e/markdown-live-preview.spec.ts
+      - tests/e2e/markdown-website-link-rendering.spec.ts
+    related_plans:
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   CHAT.RICH.REFERENCE.RENDERING.001:
     owner: product
     domain: collaboration
@@ -1469,6 +1520,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-21-chat-local-file-side-panel.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   CHAT.WEBSITE.LINK.ICON.001:
     owner: product
     domain: collaboration
@@ -1492,6 +1544,7 @@ contracts:
       - tests/e2e/markdown-website-link-rendering.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
   CHAT.THREAD.MANIFEST.001:
     owner: product
     domain: collaboration
@@ -1619,6 +1672,7 @@ contracts:
       - doc/plans/2026-07-20-messenger-saved-views.md
       - doc/plans/2026-07-21-chat-local-file-side-panel.md
       - doc/plans/2026-07-21-library-media-preview.md
+      - doc/plans/2026-07-23-codemirror-markdown-live-preview.md
       - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
       - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md
   MESSENGER.ATTENTION.001:

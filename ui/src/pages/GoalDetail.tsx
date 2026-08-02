@@ -24,6 +24,7 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
+import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDate, issueUrl, projectUrl } from "../lib/utils";
 
@@ -420,11 +421,15 @@ export function GoalDetail() {
 
         <InlineEditor
           value={goal.description ?? ""}
-          onSave={(description) => updateGoal.mutate({ description })}
+          onSave={(description) => updateGoal.mutate({
+            description: markdownDocumentOrNull(description),
+          })}
           as="p"
           className="text-sm text-muted-foreground"
           placeholder="Add a description..."
           multiline
+          editorEngine="codemirror"
+          documentIdentity={`goal:${goal.id}`}
           imageUploadHandler={async (file) => {
             const asset = await uploadImage.mutateAsync(file);
             return asset.contentPath;

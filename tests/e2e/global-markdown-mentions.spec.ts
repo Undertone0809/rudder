@@ -8,16 +8,22 @@ async function selectOrganization(page: import("@playwright/test").Page, orgId: 
 }
 
 test("Library markdown editor can mention global Rudder entities", async ({ page }) => {
+  test.setTimeout(120_000);
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Global-Markdown-Mentions-${suffix}` },
   });
   expect(orgRes.ok()).toBe(true);
-  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const organization = await orgRes.json() as {
+    id: string;
+    issuePrefix: string;
+    urlKey?: string | null;
+  };
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
 
   const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
     data: {
-      name: `Mention Agent ${suffix}`,
+      name: `MentionAgent${suffix}`,
       role: "engineer",
       agentRuntimeType: "process",
       agentRuntimeConfig: {
@@ -31,7 +37,7 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
 
   const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
-      title: `Mention Issue ${suffix}`,
+      title: `MentionIssue${suffix}`,
       description: "Mention target issue.",
       status: "todo",
       priority: "medium",
@@ -43,7 +49,7 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
-      title: `Mention Chat ${suffix}`,
+      title: `MentionChat${suffix}`,
       summary: "Mention target chat.",
     },
   });
@@ -83,14 +89,19 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
   const editorDocRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
     data: {
       filePath: editorDocPath,
-      content: "# Global mention editor\n",
+      content: [
+        `[${agent.name}](agent://${agent.id})`,
+        "",
+        `[${skill.slug}](skill://org/${skill.id}?ref=${skill.slug})`,
+        "",
+      ].join("\n"),
     },
   });
   expect(editorDocRes.ok()).toBe(true);
 
   await selectOrganization(page, organization.id);
-  await page.goto(`/${organization.issuePrefix}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=docs%2Fstale-reference.md`);
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(workspaceDocPath)}$`));
+  await page.goto(`/${organizationRouteKey}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=docs%2Fstale-reference.md`);
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(workspaceDocPath)}$`));
   await expect(page.locator("#main-content")).toContainText("global-mention-reference.md");
 
   const renameRes = await page.request.patch(`/api/orgs/${organization.id}/workspace/entry?path=${encodeURIComponent(workspaceDocPath)}`, {
@@ -100,33 +111,81 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
   });
   expect(renameRes.ok()).toBe(true);
   const renamedWorkspaceDocPath = "docs/global-mention-reference-renamed.md";
-  await page.goto(`/${organization.issuePrefix}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=${encodeURIComponent(workspaceDocPath)}`);
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
+  await page.goto(`/${organizationRouteKey}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=${encodeURIComponent(workspaceDocPath)}`);
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
   await expect(page.locator("#main-content")).toContainText("global-mention-reference-renamed.md");
 
-  await page.goto(`/${organization.issuePrefix}/issues/${issue.id}`);
-  const strongLibraryCommentLink = page.locator(`a[href="/library?entry=${workspaceDoc.libraryEntryId}"]`).first();
+  await page.goto(`/${organizationRouteKey}/issues/${issue.id}`);
+  const strongLibraryCommentLink = page.locator(
+    `a[href*="entry=${workspaceDoc.libraryEntryId}"]`,
+    { hasText: "global-mention-reference-renamed.md" },
+  ).first();
   await expect(strongLibraryCommentLink).toBeVisible({ timeout: 15_000 });
   await strongLibraryCommentLink.click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
 
-  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(editorDocPath)}`);
+  await page.goto(`/${organizationRouteKey}/library?path=${encodeURIComponent(editorDocPath)}`);
 
-  const editor = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
+  const livePreviewEditor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const editor = livePreviewEditor.locator(".cm-content");
   await expect(editor).toBeVisible({ timeout: 15_000 });
-  await editor.click();
 
-  async function expectMention(query: string, optionTestId: string, visibleText: string) {
+  const agentToken = livePreviewEditor
+    .locator(`a[href="/${organizationRouteKey}/agents/${agent.id}"]`)
+    .filter({ hasText: agent.name })
+    .first();
+  await expect(agentToken).toBeVisible();
+  await agentToken.click();
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/agents/${agent.id}$`));
+
+  await page.goBack({ waitUntil: "commit", timeout: 15_000 });
+  await expect(page).toHaveURL(
+    new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(editorDocPath)}$`),
+  );
+  const skillToken = livePreviewEditor
+    .locator(`a[href*="skill=${skill.id}"]`)
+    .filter({ hasText: skill.slug })
+    .first();
+  await expect(skillToken).toBeVisible();
+  await skillToken.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/${organizationRouteKey}/library\\?skill=${skill.id}&skillFile=SKILL\\.md$`),
+  );
+
+  await page.goBack({ waitUntil: "commit", timeout: 15_000 });
+  await expect(page).toHaveURL(
+    new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(editorDocPath)}$`),
+  );
+  await expect(editor).toBeVisible({ timeout: 15_000 });
+  await editor.focus();
+
+  async function expectMention(
+    trigger: "@" | "$",
+    query: string,
+    optionTestId: string,
+    visibleText: string,
+  ) {
     await editor.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.type(`@${query}`);
-    const menu = page.getByTestId("markdown-mention-menu");
-    await expect(menu).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId(optionTestId)).toContainText(visibleText, { timeout: 15_000 });
+    await page.keyboard.type(`${trigger}${query}`);
+    const option = page.getByTestId(optionTestId);
+    await expect(option).toContainText(visibleText, { timeout: 15_000 });
+    await option.dispatchEvent("mousedown", { button: 0 });
+    await expect(option).toHaveCount(0);
   }
 
-  await expectMention(String(suffix), `markdown-mention-option-agent:${agent.id}`, agent.name);
-  await expectMention(String(suffix), `markdown-mention-option-issue:${issue.id}`, issue.title);
-  await expectMention(String(suffix), `markdown-mention-option-chat:${chat.id}`, chat.title);
-  await expectMention("global-mention-reference", `markdown-mention-option-library-file:${renamedWorkspaceDocPath}`, "global-mention-reference-renamed.md");
-  await expectMention(String(suffix), `markdown-mention-option-skill:org:${skill.id}`, skill.slug);
+  await expectMention("@", "MentionAgent", `markdown-mention-option-agent:${agent.id}`, agent.name);
+  await expectMention("@", "MentionIssue", `markdown-mention-option-issue:${issue.id}`, issue.title);
+  await expectMention("@", "MentionChat", `markdown-mention-option-chat:${chat.id}`, chat.title);
+  await expectMention(
+    "@",
+    "global-mention-reference",
+    `markdown-mention-option-library-file:${renamedWorkspaceDocPath}`,
+    "global-mention-reference-renamed.md",
+  );
+  await expectMention("$", skill.slug, `markdown-mention-option-skill:org:${skill.id}`, skill.slug);
+  await expect(livePreviewEditor.locator('[data-skill-token="true"]').filter({
+    hasText: skill.slug,
+  })).toBeVisible();
 });

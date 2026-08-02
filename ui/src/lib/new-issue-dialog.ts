@@ -1,3 +1,4 @@
+import { markdownDocumentOrUndefined } from "./markdown-document-value";
 import { getOrganizationRouteKey, toOrganizationRelativePath } from "./organization-routes";
 import { projectRouteRef } from "./utils";
 
@@ -426,7 +427,7 @@ export function resolveCreatedIssueNavigation(input: {
 export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInput): Record<string, unknown> {
   return {
     title: input.title.trim(),
-    description: input.description.trim() || undefined,
+    description: markdownDocumentOrUndefined(input.description),
     ...(input.parentId ? { parentId: input.parentId } : {}),
     status: input.status,
     priority: input.priority || "medium",

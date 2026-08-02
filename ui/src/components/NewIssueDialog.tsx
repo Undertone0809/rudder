@@ -1,8 +1,5 @@
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -217,11 +214,11 @@ export function NewIssueDialog() {
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const [activeSavedIssueDraftId, setActiveSavedIssueDraftId] = useState<string | null>(null);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const [redirectingIssueRef, setRedirectingIssueRef] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
-
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
   const dialogCompany = organizations.find((c) => c.id === effectiveCompanyId) ?? selectedOrganization;
   const requestedSavedIssueDraftId = newIssueDefaults.draftId ?? null;
@@ -709,7 +706,6 @@ export function NewIssueDialog() {
     }
   }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort, effectiveAssigneeModel]);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       flushPendingDraftSave();
@@ -717,6 +713,7 @@ export function NewIssueDialog() {
   }, [flushPendingDraftSave]);
 
   function reset() {
+    setDocumentSessionId((current) => current + 1);
     setTitle("");
     setDescription("");
     setStatus("todo");
@@ -1163,6 +1160,7 @@ export function NewIssueDialog() {
           }
         }}
       >
+        <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
         {redirectingIssueRef ? (
           <div
             className="motion-new-issue-created-banner absolute left-1/2 top-4 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-md border border-[color:color-mix(in_oklab,var(--accent-base)_42%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_82%,var(--surface-elevated))] px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-sm)]"
@@ -1524,7 +1522,7 @@ export function NewIssueDialog() {
           >
             <MarkdownEditor
               ref={descriptionEditorRef}
-              engine="milkdown"
+              engine="codemirror" documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
               value={description}
               onChange={setDescription}
               placeholder="Add description..."

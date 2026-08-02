@@ -17,6 +17,9 @@ const mockState = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
   navigate: vi.fn(),
 }));
+const markdownEditorState = vi.hoisted(() => ({
+  engine: null as string | null,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [] }),
@@ -81,17 +84,21 @@ vi.mock("../api/assets", () => ({
 }));
 
 vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ value, onChange, placeholder }: {
+  MarkdownEditor: ({ value, onChange, engine, placeholder }: {
     value: string;
     onChange: (value: string) => void;
+    engine?: string;
     placeholder?: string;
-  }) => (
-    <textarea
-      aria-label={placeholder}
-      value={value}
-      onChange={(event) => onChange(event.currentTarget.value)}
-    />
-  ),
+  }) => {
+    markdownEditorState.engine = engine ?? null;
+    return (
+      <textarea
+        aria-label={placeholder}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    );
+  },
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -291,5 +298,36 @@ describe("NewProjectDialog", () => {
     );
     expect(mockState.closeNewProject).toHaveBeenCalledTimes(1);
     expect(mockState.navigate).toHaveBeenCalledWith("/issues?projectId=project-created-1");
+  });
+
+  it("uses CodeMirror and preserves the exact non-empty project description", async () => {
+    const container = renderDialog();
+    const nameInput = container.querySelector<HTMLInputElement>("input[placeholder='Project name']");
+    const descriptionInput = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Add description...']");
+    const createButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Create project");
+
+    expect(descriptionInput).not.toBeNull();
+    expect(markdownEditorState.engine).toBe("codemirror");
+
+    await act(async () => {
+      setInputValue(nameInput!, "Exact source");
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!;
+      valueSetter.call(descriptionInput, "\n  *exact*  \n");
+      descriptionInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      createButton!.click();
+    });
+
+    expect(mockState.createProject).toHaveBeenCalledWith(
+      "org-1",
+      expect.objectContaining({
+        description: "\n  *exact*  \n",
+      }),
+    );
   });
 });

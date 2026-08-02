@@ -200,11 +200,13 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.goto(`/${organization.issuePrefix}/issues/${primaryIssue.identifier ?? primaryIssue.id}`);
 
   await page.getByText("The comment composer should handle @ mentions like new chat.").click();
-  const descriptionEditor = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
+  const descriptionEditor = page
+    .locator(".rudder-issue-description-surface")
+    .locator('[data-editor-engine="codemirror-live-preview"] .cm-content');
   await expect(descriptionEditor).toBeVisible({ timeout: 15_000 });
   await page.keyboard.press("Escape");
 
-  const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
+  const composer = page.locator('.chat-composer .rudder-milkdown-content [contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await composer.evaluate((node) => {
     node.scrollIntoView({ block: "end", inline: "nearest" });

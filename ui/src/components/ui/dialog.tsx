@@ -48,6 +48,7 @@ function DialogOverlay({
 function DialogContent({
   className,
   children,
+  onEscapeKeyDown,
   overlayClassName,
   showCloseButton = true,
   ...props
@@ -64,6 +65,21 @@ function DialogContent({
         "glass-modal motion-modal fixed top-[max(0.75rem,env(safe-area-inset-top))] md:top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-1.5rem)] translate-x-[-50%] translate-y-0 gap-4 rounded-md border bg-card p-6 shadow-[0_32px_90px_-46px_rgb(20_20_20/0.34)] outline-none md:translate-y-[-50%] sm:max-w-lg dark:shadow-[0_36px_96px_-48px_rgb(0_0_0/0.58)]",
           className
         )}
+        onEscapeKeyDown={(event) => {
+          const target = event.target;
+          const markdownEditor = target instanceof HTMLElement
+            ? target.closest<HTMLElement>('[data-editor-engine="codemirror-live-preview"]')
+            : null;
+          if (
+            markdownEditor?.querySelector(
+              '[data-markdown-source-editor="true"][aria-expanded="true"]',
+            )
+          ) {
+            event.preventDefault();
+            return;
+          }
+          onEscapeKeyDown?.(event);
+        }}
         {...props}
       >
         {children}

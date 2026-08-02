@@ -24,6 +24,7 @@ describe("website metadata routes", () => {
     const resolveWebsiteMetadata = vi.fn().mockResolvedValue({
       url: "https://example.com/post",
       siteName: "Metadata Fixture",
+      pageTitle: null,
       iconUrl: "https://static.example.com/favicon.ico",
     });
     const app = createApp({ resolveWebsiteMetadata });
@@ -33,18 +34,54 @@ describe("website metadata routes", () => {
       .query({ url: "https://example.com/post#section" });
 
     expect(metadataRes.status).toBe(200);
-    expect(resolveWebsiteMetadata).toHaveBeenCalledWith("https://example.com/post");
+    expect(resolveWebsiteMetadata).toHaveBeenCalledWith("https://example.com/post", "preview");
     expect(metadataRes.body).toMatchObject({
       url: "https://example.com/post",
       siteName: "Metadata Fixture",
+      pageTitle: null,
       iconUrl: `/api/website-metadata/icon?url=${encodeURIComponent("https://static.example.com/favicon.ico")}`,
     });
+  });
+
+  it("forwards authoring metadata requests explicitly", async () => {
+    const resolveWebsiteMetadata = vi.fn().mockResolvedValue({
+      url: "https://example.com/post",
+      siteName: "Example",
+      pageTitle: "Example article",
+      iconUrl: null,
+    });
+    const app = createApp({ resolveWebsiteMetadata });
+
+    const metadataRes = await request(app)
+      .get("/api/website-metadata")
+      .query({ url: "https://example.com/post", purpose: "authoring" });
+
+    expect(metadataRes.status).toBe(200);
+    expect(resolveWebsiteMetadata).toHaveBeenCalledWith("https://example.com/post", "authoring");
+    expect(metadataRes.body).toMatchObject({
+      url: "https://example.com/post",
+      pageTitle: "Example article",
+    });
+  });
+
+  it("rejects unsupported metadata purposes before fetching", async () => {
+    const resolveWebsiteMetadata = vi.fn();
+    const app = createApp({ resolveWebsiteMetadata });
+
+    const metadataRes = await request(app)
+      .get("/api/website-metadata")
+      .query({ url: "https://example.com/post", purpose: "export" });
+
+    expect(metadataRes.status).toBe(400);
+    expect(metadataRes.body.error).toBe("Invalid website metadata purpose");
+    expect(resolveWebsiteMetadata).not.toHaveBeenCalled();
   });
 
   it("returns local data-url icons without wrapping them in the icon proxy", async () => {
     const resolveWebsiteMetadata = vi.fn().mockResolvedValue({
       url: "https://x.com/example/status/1",
       siteName: "X",
+      pageTitle: null,
       iconUrl: "data:image/svg+xml,%3Csvg%2F%3E",
     });
     const app = createApp({ resolveWebsiteMetadata });
@@ -91,6 +128,24 @@ describe("website metadata routes", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Private network URLs cannot be inspected");
     expect(resolveWebsiteMetadata).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "/api/website-metadata",
+    "/api/website-metadata/icon",
+  ])("rejects credentialed URLs before calling the handler: %s", async (route) => {
+    const resolveWebsiteMetadata = vi.fn();
+    const fetchWebsiteIcon = vi.fn();
+    const app = createApp({ resolveWebsiteMetadata, fetchWebsiteIcon });
+
+    const res = await request(app)
+      .get(route)
+      .query({ url: "https://user:password@example.com/private" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Credentialed URLs cannot be inspected");
+    expect(resolveWebsiteMetadata).not.toHaveBeenCalled();
+    expect(fetchWebsiteIcon).not.toHaveBeenCalled();
   });
 
   it("maps private redirect validation failures to bad request", async () => {

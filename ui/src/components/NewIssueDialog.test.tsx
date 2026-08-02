@@ -8,6 +8,7 @@ import { NewIssueDialog } from "./NewIssueDialog";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedMarkdownEditorProps: {
+  engine?: string;
   mentionMenuPlacement?: string;
 } | null = null;
 const dialogState = vi.hoisted(() => ({
@@ -167,6 +168,9 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
+  DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <h2 data-slot="dialog-title" className={className}>{children}</h2>
+  ),
 }));
 
 vi.mock("@/components/ui/popover", () => ({
@@ -181,14 +185,17 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: ({
     mentions,
     contentClassName,
+    engine,
     mentionMenuPlacement,
   }: {
     mentions?: Array<Record<string, unknown>>;
     contentClassName?: string;
+    engine?: string;
     mentionMenuPlacement?: string;
   }) => {
     capturedMentions = mentions ?? [];
     capturedMarkdownEditorProps = {
+      engine,
       mentionMenuPlacement,
     };
     return <textarea aria-label="Description" className={contentClassName} />;
@@ -377,10 +384,24 @@ describe("NewIssueDialog", () => {
     expect(html).not.toContain("min-h-[120px]");
   });
 
+  it("gives the dialog an accessible title", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-slot="dialog-title"');
+    expect(html).toContain('class="sr-only"');
+    expect(html).toContain(">New issue</h2>");
+  });
+
   it("uses caret anchored description mention suggestions", () => {
     renderToStaticMarkup(<NewIssueDialog />);
 
     expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBeUndefined();
+  });
+
+  it("uses CodeMirror live preview for the issue description", () => {
+    renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(capturedMarkdownEditorProps?.engine).toBe("codemirror");
   });
 
   it("does not render the run workspace controls", () => {

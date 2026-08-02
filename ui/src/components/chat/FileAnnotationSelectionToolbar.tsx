@@ -195,6 +195,16 @@ export function FileAnnotationSelectionToolbar({
   useEffect(() => {
     if (explicitSelection !== undefined) return undefined;
     const updateSelection = (event: MouseEvent | TouchEvent | KeyboardEvent) => {
+      const eventTarget = event.target instanceof Element ? event.target : null;
+      if (
+        eventTarget?.closest(
+          '[role="toolbar"][aria-label="Response annotation actions"], '
+          + '[data-testid="chat-response-annotation-editor"], '
+          + '[data-testid="chat-response-annotation-card"]',
+        )
+      ) {
+        return;
+      }
       const root = containerRef.current;
       const selection = window.getSelection();
       if (!conversationId || !saved || !root || !selection || selection.rangeCount !== 1 || selection.isCollapsed) {

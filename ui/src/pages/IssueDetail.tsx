@@ -2178,12 +2178,12 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
         <InlineEditor
           value={issue.description ?? ""}
-          onSave={(description) => updateIssue.mutateAsync({ description })}
+          onSave={(description) => updateIssue.mutateAsync({ description: description.trim() ? description : null })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
           placeholder="Add a description..."
           multiline
-          editorEngine="milkdown"
+          editorEngine="codemirror" documentIdentity={`issue:${issue.id}`}
           alwaysEdit
           variant="issue-description"
           mentions={mentionOptions}

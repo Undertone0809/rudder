@@ -45,6 +45,10 @@ Product model:
 - Output mode is either tracked issue or chat output.
 - The create composer defaults custom automations to chat output and lets the
   operator explicitly switch between chat output and tracked issue output.
+- Automation instructions in create, detail, and embedded Side Panel surfaces
+  follow `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`. The persisted instruction string
+  remains the only content truth while inactive blocks render and active blocks
+  expose exact Markdown source.
 - The first-use gallery and the open composer's `Use template` picker expose
   the same localized built-in presets. Applying a preset to an open draft
   replaces its title, instructions, schedule, output mode, and chat
@@ -92,6 +96,9 @@ Invariants:
 - Built-in presets are editable composer defaults, not separate persisted
   Automation definitions. Template selection must preserve explicit assignee
   and project choices while replacing the fields owned by the selected preset.
+- Live-preview focus, decoration, or metadata enrichment must not rewrite an
+  Automation definition by itself. Preset application and explicit operator
+  edits remain the only authoring actions that replace instruction content.
 - The template picker must remain usable in English and Chinese and must stay
   within the visible viewport on narrow screens.
 - Archived automations are historical records, not active dispatch sources.

@@ -47,13 +47,19 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
+    documentIdentity,
+    engine,
     onChange,
     value,
   }: {
+    documentIdentity?: string;
+    engine?: string;
     onChange: (value: string) => void;
     value: string;
   }) => (
     <textarea
+      data-document-identity={documentIdentity}
+      data-editor-engine={engine}
       data-testid="mock-markdown-editor"
       value={value}
       onChange={(event) => onChange(event.currentTarget.value)}
@@ -236,6 +242,10 @@ describe("LibraryLiveSurface", () => {
     expect(
       host!.querySelector('[data-testid="mock-markdown-editor"]'),
     ).toBe(editor);
+    expect(editor.dataset.editorEngine).toBe("codemirror");
+    expect(editor.dataset.documentIdentity).toBe(
+      "library-file:reports/growth.md",
+    );
 
     await act(async () => vi.advanceTimersByTimeAsync(700));
 

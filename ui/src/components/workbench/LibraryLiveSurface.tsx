@@ -36,7 +36,9 @@ import {
 } from "@/lib/workspace-preferences";
 import {
   clearChatSidePanelMarkdownDraft,
+  joinChatSidePanelYamlFrontmatter,
   restoreChatSidePanelMarkdownDraft,
+  splitChatSidePanelYamlFrontmatter,
   storeChatSidePanelMarkdownDraft,
 } from "@/pages/Chat.side-panel.helpers";
 import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
@@ -348,6 +350,10 @@ function LibraryTextEditor({
     enqueueSave(draftContentRef.current);
   };
 
+  const markdownParts = markdown
+    ? splitChatSidePanelYamlFrontmatter(draft)
+    : { frontmatter: null, separator: "", body: draft };
+
   return (
     <div
       className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden"
@@ -366,20 +372,57 @@ function LibraryTextEditor({
         )}
       >
         {markdown ? (
-          <MarkdownEditor
-            key={filePath}
-            engine="milkdown"
-            value={draft}
-            onChange={(content) => {
-              draftContentRef.current = content;
-              setDraft(content);
-              setStatus(conflictRef.current ? "error" : "saving");
-              if (!conflictRef.current) setErrorMessage(null);
-            }}
-            bordered={false}
-            placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor rudder-readable-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
-          />
+          <>
+            {markdownParts.frontmatter !== null ? (
+              <details
+                className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+                data-chat-annotation-ignore
+                data-testid="library-live-surface-frontmatter-editor"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <span>Frontmatter</span>
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                </summary>
+                <textarea
+                  value={markdownParts.frontmatter}
+                  onChange={(event) => {
+                    const content = joinChatSidePanelYamlFrontmatter(
+                      event.currentTarget.value,
+                      markdownParts.separator,
+                      markdownParts.body,
+                    );
+                    draftContentRef.current = content;
+                    setDraft(content);
+                    setStatus(conflictRef.current ? "error" : "saving");
+                    if (!conflictRef.current) setErrorMessage(null);
+                  }}
+                  spellCheck={false}
+                  className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                  aria-label="Frontmatter"
+                />
+              </details>
+            ) : null}
+            <MarkdownEditor
+              key={filePath}
+              engine="codemirror"
+              documentIdentity={`library-file:${filePath}`}
+              value={markdownParts.body}
+              onChange={(body) => {
+                const content = joinChatSidePanelYamlFrontmatter(
+                  markdownParts.frontmatter,
+                  markdownParts.separator,
+                  body,
+                );
+                draftContentRef.current = content;
+                setDraft(content);
+                setStatus(conflictRef.current ? "error" : "saving");
+                if (!conflictRef.current) setErrorMessage(null);
+              }}
+              bordered={false}
+              placeholder="Write in Markdown..."
+              contentClassName="rudder-library-document-editor rudder-readable-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
+            />
+          </>
         ) : (
           <WorkspaceCodeEditor
             data-testid="library-live-surface-text-source-editor"
@@ -416,6 +459,8 @@ function LibraryTextEditor({
           sourceLibraryEntryId: file.libraryEntryId,
         }}
         sourceRenderMode={markdown ? "markdown" : "text"}
+        renderedSource={markdown ? markdownParts.body : draft}
+        renderedSourceOffset={markdown ? draft.length - markdownParts.body.length : 0}
       />
       <div
         className={cn(

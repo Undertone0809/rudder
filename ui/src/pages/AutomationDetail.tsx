@@ -266,7 +266,7 @@ export function AutomationDetail({
   const editDraftKey = useMemo(
     () => JSON.stringify({
       title: editDraft.title,
-      description: editDraft.description.trim() || null,
+      description: editDraft.description.trim() ? editDraft.description : null,
       projectId: editDraft.projectId || null,
       assigneeAgentId: editDraft.assigneeAgentId,
       priority: editDraft.priority,
@@ -329,7 +329,7 @@ export function AutomationDetail({
       return automationsApi.update(automationId!, {
         ...draft,
         projectId: draft.projectId || null,
-        instructions: draft.description.trim() || null,
+        instructions: draft.description.trim() ? draft.description : null,
         chatConversationId: null,
       });
     },
@@ -1207,9 +1207,9 @@ export function AutomationDetail({
                 ) : null}
               </div>
             </div>
-
             <MarkdownEditor
               ref={descriptionEditorRef}
+              engine="codemirror" documentIdentity={`automation:${automation.id}`}
               value={editDraft.description}
               onChange={(description) => setEditDraft((current) => ({ ...current, description }))}
               mentions={mentionOptions}

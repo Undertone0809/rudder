@@ -1,30 +1,39 @@
 import { resolveKnownWebsiteIcon } from "@rudderhq/shared";
+import ipaddr from "ipaddr.js";
 import { JSDOM } from "jsdom";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
+import { Agent, type Dispatcher } from "undici";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
 
 export interface WebsiteMetadata {
   url: string;
   siteName: string | null;
+  pageTitle: string | null;
   iconUrl: string | null;
 }
+
+export type WebsiteMetadataPurpose = "preview" | "authoring";
 
 export interface WebsiteMetadataOptions {
   allowPrivateHosts?: boolean;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+  purpose?: WebsiteMetadataPurpose;
 }
 
 const MAX_HTML_BYTES = 256 * 1024;
 const MAX_ICON_BYTES = 512 * 1024;
+const MAX_PAGE_TITLE_CHARACTERS = 160;
 const FETCH_TIMEOUT_MS = 5_000;
 const MAX_REDIRECTS = 5;
 const SUCCESS_CACHE_TTL_MS = 30 * 60_000;
 const FAILURE_CACHE_TTL_MS = 5 * 60_000;
+const MAX_METADATA_CACHE_ENTRIES = 128;
 const ICON_DISK_CACHE_TTL_MS = 7 * 24 * 60 * 60_000;
+const MAX_ICON_DISK_CACHE_ENTRIES = 128;
 const FALLBACK_FAVICON_SIZE = "64";
 const IMAGE_CONTENT_TYPES = new Set([
   "image/gif",
@@ -39,8 +48,6 @@ const IMAGE_CONTENT_TYPES = new Set([
 
 function isBenchmarkNetworkIpAddress(value: string) {
   const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
-  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
-  if (ipv4Mapped) return isBenchmarkNetworkIpAddress(ipv4Mapped[1]);
 
   const parts = normalized.split(".");
   if (parts.length !== 4) return false;
@@ -52,27 +59,17 @@ function isBenchmarkNetworkIpAddress(value: string) {
 
 function isPrivateIpAddress(value: string) {
   const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
-  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
-  if (ipv4Mapped) return isPrivateIpAddress(ipv4Mapped[1]);
-  if (normalized === "::1" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
+  if (!ipaddr.isValid(normalized)) return false;
+  const address = ipaddr.process(normalized);
+  if (address.kind() === "ipv4") {
+    return address.range() !== "unicast"
+      || isBenchmarkNetworkIpAddress(address.toString());
+  }
 
-  const parts = normalized.split(".");
-  if (parts.length !== 4) return false;
-  const octets = parts.map((part) => Number(part));
-  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
-  const [a, b] = octets;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (isBenchmarkNetworkIpAddress(normalized)) return true;
-  return false;
-}
-
-function isBlockedResolvedIpAddress(value: string) {
-  return isPrivateIpAddress(value) && !isBenchmarkNetworkIpAddress(value);
+  const bytes = address.toByteArray();
+  const isDeprecatedSiteLocal = bytes[0] === 0xfe
+    && ((bytes[1] ?? 0) & 0xc0) === 0xc0;
+  return address.range() !== "unicast" || isDeprecatedSiteLocal;
 }
 
 function isPrivateHostname(hostname: string) {
@@ -103,6 +100,9 @@ export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOption
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only http and https URLs can be inspected");
   }
+  if (parsed.username || parsed.password) {
+    throw new Error("Credentialed URLs cannot be inspected");
+  }
   if (!options.allowPrivateHosts && isPrivateHostname(parsed.hostname)) {
     throw new Error("Private network URLs cannot be inspected");
   }
@@ -114,31 +114,142 @@ function resolveWebsiteIconCacheDir() {
   return path.resolve(resolveRudderInstanceRoot(), "data", "website-icons");
 }
 
-async function assertPublicResolvedHost(url: URL, options: WebsiteMetadataOptions) {
-  if (options.allowPrivateHosts || options.fetchImpl || isIP(url.hostname.replace(/^\[|\]$/gu, ""))) return;
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  const allowBenchmarkNetworkResolution = isPublicDnsHostname(url.hostname);
-  if (addresses.some((address) => isPrivateIpAddress(address.address) && (!allowBenchmarkNetworkResolution || !isBenchmarkNetworkIpAddress(address.address)))) {
+interface ResolvedHostAddress {
+  address: string;
+  family: number;
+}
+
+async function awaitWithAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  onLateValue?: (value: T) => void | Promise<void>,
+): Promise<T> {
+  const disposeLateValue = (value: T) => {
+    if (!onLateValue) return;
+    void Promise.resolve(onLateValue(value)).catch(() => undefined);
+  };
+  if (signal.aborted) {
+    void promise.then(disposeLateValue, () => undefined);
+    throw signal.reason;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        if (settled) {
+          disposeLateValue(value);
+          return;
+        }
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function resolveValidatedHostAddress(
+  url: URL,
+  options: WebsiteMetadataOptions,
+  signal: AbortSignal,
+): Promise<ResolvedHostAddress | null> {
+  const hostname = url.hostname.replace(/^\[|\]$/gu, "");
+  if (options.fetchImpl || isIP(hostname)) return null;
+  const addresses = await awaitWithAbort(
+    lookup(url.hostname, { all: true, verbatim: true }),
+    signal,
+  );
+  if (addresses.length === 0) throw new Error("Website hostname did not resolve");
+  if (
+    !options.allowPrivateHosts
+    && addresses.some((address) => isPrivateIpAddress(address.address))
+  ) {
     throw new Error("Private network URLs cannot be inspected");
+  }
+  return addresses[0] ?? null;
+}
+
+function createPinnedDispatcher(resolvedHost: ResolvedHostAddress | null) {
+  if (!resolvedHost) return null;
+  return new Agent({
+    connect: {
+      autoSelectFamily: false,
+      lookup: (_hostname, _options, callback) => {
+        callback(null, resolvedHost.address, resolvedHost.family);
+      },
+    },
+  });
+}
+
+async function cancelResponseBody(response: Response | null) {
+  const body = response?.body;
+  if (!body || body.locked) return;
+  try {
+    await body.cancel();
+  } catch {
+    // Fetch aborts and peer disconnects can close the body before cancellation settles.
+  }
+}
+
+async function closeDispatcher(dispatcher: Dispatcher | null, aborted: boolean) {
+  if (!dispatcher) return;
+  try {
+    if (aborted) await dispatcher.destroy();
+    else await dispatcher.close();
+  } catch {
+    // Cleanup must not replace the request result with a connection teardown error.
   }
 }
 
 interface FetchResult {
   response: Response;
   url: URL;
+  signal: AbortSignal;
+  release: () => Promise<void>;
 }
 
 async function fetchWithTimeout(url: URL, options: WebsiteMetadataOptions, init?: RequestInit): Promise<FetchResult> {
   let currentUrl = parsePublicHttpUrl(url.href, options);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("Website metadata request timed out"));
+  }, FETCH_TIMEOUT_MS);
+  timeout.unref?.();
+  let activeResponse: Response | null = null;
+  let activeDispatcher: Dispatcher | null = null;
+  let released = false;
 
-  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    await assertPublicResolvedHost(currentUrl, options);
+  const release = async () => {
+    if (released) return;
+    released = true;
+    clearTimeout(timeout);
+    await cancelResponseBody(activeResponse);
+    activeResponse = null;
+    await closeDispatcher(activeDispatcher, controller.signal.aborted);
+    activeDispatcher = null;
+  };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const response = await fetchImpl(currentUrl.href, {
+  try {
+    for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+      const resolvedHost = await resolveValidatedHostAddress(currentUrl, options, controller.signal);
+      if (controller.signal.aborted) throw controller.signal.reason;
+      activeDispatcher = createPinnedDispatcher(resolvedHost);
+      const requestInit = {
         redirect: "manual",
         ...init,
         signal: controller.signal,
@@ -147,37 +258,86 @@ async function fetchWithTimeout(url: URL, options: WebsiteMetadataOptions, init?
           "user-agent": "RudderWebsiteMetadata/1.0",
           ...(init?.headers ?? {}),
         },
-      });
+        ...(activeDispatcher ? { dispatcher: activeDispatcher } : {}),
+      } as RequestInit & { dispatcher?: Dispatcher };
+      const response = await awaitWithAbort(
+        fetchImpl(currentUrl.href, { ...requestInit }),
+        controller.signal,
+        cancelResponseBody,
+      );
+      activeResponse = response;
 
-      if (response.status < 300 || response.status >= 400) return { response, url: currentUrl };
+      if (response.status < 300 || response.status >= 400) {
+        return {
+          response,
+          url: currentUrl,
+          signal: controller.signal,
+          release,
+        };
+      }
       const location = response.headers.get("location");
-      if (!location) return { response, url: currentUrl };
+      if (!location) {
+        return {
+          response,
+          url: currentUrl,
+          signal: controller.signal,
+          release,
+        };
+      }
+      await cancelResponseBody(activeResponse);
+      activeResponse = null;
+      await closeDispatcher(activeDispatcher, controller.signal.aborted);
+      activeDispatcher = null;
       currentUrl = parsePublicHttpUrl(new URL(location, currentUrl).href, options);
-    } finally {
-      clearTimeout(timeout);
     }
-  }
 
-  throw new Error("Website metadata redirect limit exceeded");
+    throw new Error("Website metadata redirect limit exceeded");
+  } catch (error) {
+    await release();
+    throw error;
+  }
 }
 
-function metadataCacheKey(url: URL) {
-  return url.href;
+function metadataCacheKey(url: URL, purpose: WebsiteMetadataPurpose) {
+  return `${purpose}:${url.href}`;
 }
 
 const metadataCache = new Map<string, { expiresAt: number; value: WebsiteMetadata }>();
 const metadataInflight = new Map<string, Promise<WebsiteMetadata>>();
 
-async function readLimitedBuffer(response: Response, maxBytes: number, options: { truncate?: boolean } = {}) {
+function pruneMetadataCache(now = Date.now()) {
+  for (const [key, entry] of metadataCache) {
+    if (entry.expiresAt <= now) metadataCache.delete(key);
+  }
+}
+
+function makeRoomInMetadataCache() {
+  while (metadataCache.size >= MAX_METADATA_CACHE_ENTRIES) {
+    const oldestKey = metadataCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    metadataCache.delete(oldestKey);
+  }
+}
+
+async function readLimitedBuffer(
+  response: Response,
+  maxBytes: number,
+  options: { signal?: AbortSignal; truncate?: boolean } = {},
+) {
   const body = response.body;
   if (!body) return Buffer.alloc(0);
 
   const reader = body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
+  const onAbort = () => {
+    void reader.cancel(options.signal?.reason).catch(() => undefined);
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     while (true) {
       const { value, done } = await reader.read();
+      if (options.signal?.aborted) throw options.signal.reason;
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
@@ -188,11 +348,13 @@ async function readLimitedBuffer(response: Response, maxBytes: number, options: 
           await reader.cancel();
           break;
         }
+        await reader.cancel();
         throw new Error("Response exceeds metadata size limit");
       }
       chunks.push(Buffer.from(value));
     }
   } finally {
+    options.signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
   return Buffer.concat(chunks);
@@ -205,6 +367,7 @@ function contentTypeBase(value: string | null) {
 function isInspectableUrlFailure(error: unknown) {
   if (!(error instanceof Error)) return false;
   return error.message === "Only http and https URLs can be inspected"
+    || error.message === "Credentialed URLs cannot be inspected"
     || error.message === "Private network URLs cannot be inspected"
     || error.message === "Website metadata redirect limit exceeded";
 }
@@ -242,6 +405,31 @@ function readSiteName(document: Document) {
   return title || null;
 }
 
+function normalizePageTitle(document: Document, value: string | null | undefined) {
+  if (!value) return null;
+  const template = document.createElement("template");
+  template.innerHTML = value;
+  template.content.querySelectorAll("script, style, template, noscript").forEach((element) => element.remove());
+  const plainText = (template.content.textContent ?? "")
+    .replace(/[\s\p{Cc}\p{Cf}]+/gu, " ")
+    .trim();
+  if (!plainText) return null;
+  return Array.from(plainText).slice(0, MAX_PAGE_TITLE_CHARACTERS).join("");
+}
+
+function readPageTitle(document: Document) {
+  const candidates = [
+    document.querySelector('meta[property="og:title"]')?.getAttribute("content"),
+    document.querySelector('meta[name="twitter:title"]')?.getAttribute("content"),
+    document.querySelector("title")?.textContent,
+  ];
+  for (const candidate of candidates) {
+    const title = normalizePageTitle(document, candidate);
+    if (title) return title;
+  }
+  return null;
+}
+
 function iconPriority(element: Element) {
   const rel = new Set(linkRelTokens(element));
   if (rel.has("icon") && rel.has("shortcut")) return 0;
@@ -271,15 +459,19 @@ function findDeclaredIcon(document: Document, baseUrl: URL, options: WebsiteMeta
 }
 
 async function validateIconUrl(iconHref: string, options: WebsiteMetadataOptions) {
+  let result: FetchResult | null = null;
   try {
-    const { response, url } = await fetchWithTimeout(parsePublicHttpUrl(iconHref, options), options, { method: "GET" });
+    result = await fetchWithTimeout(parsePublicHttpUrl(iconHref, options), options, { method: "GET" });
+    const { response, signal, url } = result;
     if (!response.ok) return null;
     const contentType = contentTypeBase(response.headers.get("content-type"));
     if (!IMAGE_CONTENT_TYPES.has(contentType)) return null;
-    await readLimitedBuffer(response, MAX_ICON_BYTES);
+    await readLimitedBuffer(response, MAX_ICON_BYTES, { signal });
     return url.href;
   } catch {
     return null;
+  } finally {
+    await result?.release();
   }
 }
 
@@ -305,8 +497,15 @@ async function findProviderFavicon(pageUrl: URL, options: WebsiteMetadataOptions
 async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMetadataOptions): Promise<WebsiteMetadata> {
   const pageUrl = parsePublicHttpUrl(value, options);
   const knownIcon = resolveKnownWebsiteIcon(pageUrl);
-  if (knownIcon) {
-    return { url: pageUrl.href, siteName: knownIcon.siteName, iconUrl: knownIcon.iconDataUrl };
+  const emptyMetadata: WebsiteMetadata = {
+    url: pageUrl.href,
+    siteName: knownIcon?.siteName ?? null,
+    pageTitle: null,
+    iconUrl: knownIcon?.iconDataUrl ?? null,
+  };
+  // Preview rendering keeps bundled icons zero-fetch; authoring falls through to resolve a title.
+  if (knownIcon && (options.purpose ?? "preview") === "preview") {
+    return emptyMetadata;
   }
 
   let pageResult: FetchResult;
@@ -314,27 +513,44 @@ async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMet
     pageResult = await fetchWithTimeout(pageUrl, options);
   } catch (error) {
     if (isInspectableUrlFailure(error)) throw error;
-    return { url: pageUrl.href, siteName: null, iconUrl: null };
+    return emptyMetadata;
   }
   const { response, url: finalPageUrl } = pageResult;
-  if (!response.ok) {
-    return { url: finalPageUrl.href, siteName: null, iconUrl: null };
+  let html: string;
+  try {
+    if (!response.ok) return emptyMetadata;
+    const contentType = contentTypeBase(response.headers.get("content-type"));
+    if (contentType && contentType !== "text/html" && contentType !== "application/xhtml+xml") {
+      return emptyMetadata;
+    }
+    html = (await readLimitedBuffer(response, MAX_HTML_BYTES, {
+      signal: pageResult.signal,
+      truncate: true,
+    })).toString("utf8");
+  } catch {
+    return emptyMetadata;
+  } finally {
+    await pageResult.release();
   }
 
-  const contentType = contentTypeBase(response.headers.get("content-type"));
-  if (contentType && contentType !== "text/html" && contentType !== "application/xhtml+xml") {
-    return { url: finalPageUrl.href, siteName: null, iconUrl: null };
-  }
-
-  const html = (await readLimitedBuffer(response, MAX_HTML_BYTES, { truncate: true })).toString("utf8");
   const dom = new JSDOM(html, { url: finalPageUrl.href });
   try {
     const document = dom.window.document;
+    if ((options.purpose ?? "preview") === "authoring") {
+      return {
+        url: pageUrl.href,
+        siteName: knownIcon?.siteName ?? readSiteName(document),
+        pageTitle: readPageTitle(document),
+        iconUrl: knownIcon?.iconDataUrl ?? null,
+      };
+    }
     const declaredIcon = findDeclaredIcon(document, finalPageUrl, options);
     return {
-      url: finalPageUrl.href,
-      siteName: readSiteName(document),
-      iconUrl: (declaredIcon ? await validateIconUrl(declaredIcon, options) : null)
+      url: pageUrl.href,
+      siteName: knownIcon?.siteName ?? readSiteName(document),
+      pageTitle: readPageTitle(document),
+      iconUrl: knownIcon?.iconDataUrl
+        ?? (declaredIcon ? await validateIconUrl(declaredIcon, options) : null)
         ?? await findImplicitFavicon(finalPageUrl, options)
         ?? await findProviderFavicon(finalPageUrl, options),
     };
@@ -345,17 +561,28 @@ async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMet
 
 export async function resolveWebsiteMetadata(value: string, options: WebsiteMetadataOptions = {}): Promise<WebsiteMetadata> {
   const pageUrl = parsePublicHttpUrl(value, options);
-  const key = metadataCacheKey(pageUrl);
+  const key = metadataCacheKey(pageUrl, options.purpose ?? "preview");
   if (!options.allowPrivateHosts && !options.fetchImpl) {
+    pruneMetadataCache();
     const cached = metadataCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached) {
+      metadataCache.delete(key);
+      metadataCache.set(key, cached);
+      return cached.value;
+    }
     const inflight = metadataInflight.get(key);
     if (inflight) return inflight;
 
     const request = resolveWebsiteMetadataUncached(pageUrl.href, options)
       .then((metadata) => {
+        pruneMetadataCache();
+        makeRoomInMetadataCache();
         metadataCache.set(key, {
-          expiresAt: Date.now() + (metadata.iconUrl ? SUCCESS_CACHE_TTL_MS : FAILURE_CACHE_TTL_MS),
+          expiresAt: Date.now() + (
+            metadata.iconUrl || metadata.pageTitle || metadata.siteName
+              ? SUCCESS_CACHE_TTL_MS
+              : FAILURE_CACHE_TTL_MS
+          ),
           value: metadata,
         });
         return metadata;
@@ -376,17 +603,22 @@ export async function fetchWebsiteIcon(value: string, options: WebsiteMetadataOp
     const cached = await readCachedWebsiteIcon(iconUrl.href);
     if (cached) return cached;
   }
-  const { response } = await fetchWithTimeout(iconUrl, options);
-  if (!response.ok) return null;
-  const contentType = contentTypeBase(response.headers.get("content-type"));
-  if (!IMAGE_CONTENT_TYPES.has(contentType)) return null;
-  const body = await readLimitedBuffer(response, MAX_ICON_BYTES);
-  if (body.length <= 0) return null;
-  const icon = { contentType, body };
-  if (!options.allowPrivateHosts && !options.fetchImpl) {
-    await writeCachedWebsiteIcon(iconUrl.href, icon).catch(() => undefined);
+  const result = await fetchWithTimeout(iconUrl, options);
+  try {
+    const { response, signal } = result;
+    if (!response.ok) return null;
+    const contentType = contentTypeBase(response.headers.get("content-type"));
+    if (!IMAGE_CONTENT_TYPES.has(contentType)) return null;
+    const body = await readLimitedBuffer(response, MAX_ICON_BYTES, { signal });
+    if (body.length <= 0) return null;
+    const icon = { contentType, body };
+    if (!options.allowPrivateHosts && !options.fetchImpl) {
+      await writeCachedWebsiteIcon(iconUrl.href, icon).catch(() => undefined);
+    }
+    return icon;
+  } finally {
+    await result.release();
   }
-  return icon;
 }
 
 interface CachedWebsiteIcon {
@@ -414,7 +646,13 @@ async function readCachedWebsiteIcon(iconUrl: string): Promise<CachedWebsiteIcon
       readFile(metadataPath, "utf8"),
       stat(bodyPath),
     ]);
-    if (Date.now() - bodyStats.mtimeMs > ICON_DISK_CACHE_TTL_MS) return null;
+    if (Date.now() - bodyStats.mtimeMs > ICON_DISK_CACHE_TTL_MS) {
+      await Promise.all([
+        rm(metadataPath, { force: true }),
+        rm(bodyPath, { force: true }),
+      ]);
+      return null;
+    }
     const metadata = JSON.parse(rawMetadata) as { contentType?: unknown; url?: unknown };
     if (metadata.url !== iconUrl || typeof metadata.contentType !== "string") return null;
     if (!IMAGE_CONTENT_TYPES.has(metadata.contentType)) return null;
@@ -426,13 +664,51 @@ async function readCachedWebsiteIcon(iconUrl: string): Promise<CachedWebsiteIcon
   }
 }
 
+async function pruneWebsiteIconDiskCache(dir: string, protectedBasename: string) {
+  const filenames = await readdir(dir);
+  const basenames = filenames
+    .filter((filename) => /^[a-f0-9]{64}\.json$/u.test(filename))
+    .map((filename) => filename.slice(0, -".json".length));
+  const entries = await Promise.all(basenames.map(async (basename) => {
+    try {
+      const [metadataStats, bodyStats] = await Promise.all([
+        stat(path.join(dir, `${basename}.json`)),
+        stat(path.join(dir, `${basename}.bin`)),
+      ]);
+      return {
+        basename,
+        mtimeMs: Math.min(metadataStats.mtimeMs, bodyStats.mtimeMs),
+      };
+    } catch {
+      return { basename, mtimeMs: 0 };
+    }
+  }));
+  const now = Date.now();
+  const retained = entries
+    .filter((entry) => now - entry.mtimeMs <= ICON_DISK_CACHE_TTL_MS)
+    .sort((left, right) => {
+      if (left.basename === protectedBasename) return -1;
+      if (right.basename === protectedBasename) return 1;
+      return right.mtimeMs - left.mtimeMs;
+    })
+    .slice(0, MAX_ICON_DISK_CACHE_ENTRIES);
+  const retainedBasenames = new Set(retained.map((entry) => entry.basename));
+  const discarded = entries.filter((entry) => !retainedBasenames.has(entry.basename));
+  await Promise.all(discarded.flatMap((entry) => [
+    rm(path.join(dir, `${entry.basename}.json`), { force: true }),
+    rm(path.join(dir, `${entry.basename}.bin`), { force: true }),
+  ]));
+}
+
 async function writeCachedWebsiteIcon(iconUrl: string, icon: CachedWebsiteIcon) {
   const { metadataPath, bodyPath } = cachedWebsiteIconPaths(iconUrl);
-  await mkdir(path.dirname(bodyPath), { recursive: true });
+  const dir = path.dirname(bodyPath);
+  await mkdir(dir, { recursive: true });
   await Promise.all([
     writeFile(bodyPath, icon.body),
     writeFile(metadataPath, `${JSON.stringify({ url: iconUrl, contentType: icon.contentType })}\n`, "utf8"),
   ]);
+  await pruneWebsiteIconDiskCache(dir, path.basename(metadataPath, ".json"));
 }
 
 export function __clearWebsiteMetadataCacheForTests() {

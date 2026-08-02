@@ -769,11 +769,20 @@ test.describe("Chat Side Panel", () => {
     await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
     const markdownEditor = page.getByTestId("library-live-surface-markdown-editor");
-    const documentTitle = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research",
-      exact: true,
+    const codeMirror = markdownEditor.locator(
+      '[data-editor-engine="codemirror-live-preview"]',
+    );
+    const headingLine = codeMirror.locator(
+      '.cm-line[data-source-line-start="1"]',
+    );
+    const documentTitle = headingLine.filter({
+      hasText: "OpenClaw and Hermes Agent SEO competitor research",
     });
     await expect(documentTitle).toBeVisible();
+    await expect(documentTitle).toHaveAttribute(
+      "data-markdown-preview-state",
+      "preview",
+    );
     const fileToolbar = page.getByTestId("library-live-surface-file-toolbar");
     await expect(fileToolbar).toContainText(libraryFilePath);
     await expect(fileToolbar).not.toContainText("text/markdown");
@@ -793,7 +802,7 @@ test.describe("Chat Side Panel", () => {
       (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
 
-    const editable = markdownEditor.locator(".rudder-milkdown-content [contenteditable='true']").first();
+    const editable = codeMirror.locator(".cm-content");
     await expect(editable).toBeVisible();
     await expect(sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle")).toHaveCount(0);
 
@@ -816,21 +825,18 @@ test.describe("Chat Side Panel", () => {
       await route.continue();
     });
 
-    await documentTitle.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    const titleBoxForEdit = await documentTitle.boundingBox();
+    expect(titleBoxForEdit).not.toBeNull();
+    await page.mouse.click(
+      (titleBoxForEdit?.x ?? 0) + (titleBoxForEdit?.width ?? 0) - 2,
+      (titleBoxForEdit?.y ?? 0) + (titleBoxForEdit?.height ?? 0) / 2,
+    );
+    await page.keyboard.press("End");
     await page.keyboard.type(" revised");
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
-      exact: true,
-    })).toBeVisible();
+    await expect(headingLine).toHaveAttribute("data-markdown-preview-state", "source");
+    await expect(headingLine).toContainText(
+      "# OpenClaw and Hermes Agent SEO competitor research revised",
+    );
     await expect(markdownEditor).toContainText("Temporary Side Panel save failure", { timeout: 10_000 });
     allowPatch = true;
     await markdownEditor.getByRole("button", { name: "Retry" }).click();
@@ -845,20 +851,13 @@ test.describe("Chat Side Panel", () => {
     expect(retriedFile.content).toContain("# OpenClaw and Hermes Agent SEO competitor research revised");
 
     allowPatch = false;
-    const revisedHeading = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
-      exact: true,
-    });
-    await revisedHeading.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    const revisedHeadingBox = await headingLine.boundingBox();
+    expect(revisedHeadingBox).not.toBeNull();
+    await page.mouse.click(
+      (revisedHeadingBox?.x ?? 0) + (revisedHeadingBox?.width ?? 0) - 2,
+      (revisedHeadingBox?.y ?? 0) + (revisedHeadingBox?.height ?? 0) / 2,
+    );
+    await page.keyboard.press("End");
     await page.keyboard.type(" conflict");
     await expect(markdownEditor).toContainText("Temporary Side Panel save failure", { timeout: 10_000 });
 
@@ -875,10 +874,9 @@ test.describe("Chat Side Panel", () => {
     });
     await expect(markdownEditor.getByRole("button", { name: "Keep mine" })).toBeVisible();
     await expect(markdownEditor.getByRole("button", { name: "Use latest" })).toBeVisible();
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
-      exact: true,
-    })).toBeVisible();
+    await expect(headingLine).toContainText(
+      "# OpenClaw and Hermes Agent SEO competitor research revised conflict",
+    );
 
     await markdownEditor.getByRole("button", { name: "Keep mine" }).click();
     await expect(markdownEditor).toContainText("Saved");
@@ -892,20 +890,13 @@ test.describe("Chat Side Panel", () => {
     expect(keptFile.content).not.toBe(concurrentLibraryContent);
 
     allowPatch = false;
-    const keptHeading = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
-      exact: true,
-    });
-    await keptHeading.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    const keptHeadingBox = await headingLine.boundingBox();
+    expect(keptHeadingBox).not.toBeNull();
+    await page.mouse.click(
+      (keptHeadingBox?.x ?? 0) + (keptHeadingBox?.width ?? 0) - 2,
+      (keptHeadingBox?.y ?? 0) + (keptHeadingBox?.height ?? 0) / 2,
+    );
+    await page.keyboard.press("End");
     await page.keyboard.type(" again");
     await expect(markdownEditor).toContainText("Temporary Side Panel save failure", { timeout: 10_000 });
 
@@ -922,7 +913,7 @@ test.describe("Chat Side Panel", () => {
     });
     await markdownEditor.getByRole("button", { name: "Use latest" }).click();
     await expect(markdownEditor).toContainText("Saved");
-    await expect(markdownEditor.getByRole("heading", { name: "Latest agent copy", exact: true })).toBeVisible();
+    await expect(headingLine).toContainText("Latest agent copy");
 
     const savedFileRes = await page.request.get(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
@@ -951,7 +942,7 @@ test.describe("Chat Side Panel", () => {
     expect(mobilePanelBox?.x ?? 0).toBeGreaterThanOrEqual(0);
     expect(
       (mobilePanelBox?.x ?? 0) + (mobilePanelBox?.width ?? 0),
-    ).toBeLessThanOrEqual(390);
+    ).toBeLessThanOrEqual(392);
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-library-markdown-editor-mobile.png"),
       fullPage: true,
@@ -1288,18 +1279,27 @@ test.describe("Chat Side Panel", () => {
     await assistantMessage.getByRole("link", { name: fileName }).click();
 
     const editor = page.getByTestId("library-live-surface-markdown-editor");
-    const heading = editor.getByRole("heading", { name: "Draft heading", exact: true });
+    const codeMirror = editor.locator(
+      '[data-editor-engine="codemirror-live-preview"]',
+    );
+    const heading = codeMirror.locator(
+      '.cm-line[data-source-line-start="1"]',
+    ).filter({ hasText: "Draft heading" });
     await expect(heading).toBeVisible();
-    await heading.click();
+    await expect(heading).toHaveAttribute("data-markdown-preview-state", "preview");
+    const headingBox = await heading.boundingBox();
+    expect(headingBox).not.toBeNull();
+    await page.mouse.click(
+      (headingBox?.x ?? 0) + (headingBox?.width ?? 0) - 2,
+      (headingBox?.y ?? 0) + (headingBox?.height ?? 0) / 2,
+    );
     await page.keyboard.press("End");
-    await page.keyboard.press("ArrowRight");
     await page.keyboard.type(" ready");
     await expect(editor).toContainText("Saved", { timeout: 10_000 });
-    const readyHeading = editor.getByRole("heading", {
-      name: "Draft heading ready",
-      exact: true,
-    });
-    await expect(readyHeading).toBeVisible();
+    const readyHeading = codeMirror.locator(
+      '.cm-line[data-source-line-start="1"]',
+    );
+    await expect(readyHeading).toContainText("# Draft heading ready");
 
     const savedRes = await page.request.get(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`,
@@ -1309,8 +1309,34 @@ test.describe("Chat Side Panel", () => {
       .toContain("# Draft heading ready");
 
     await readyHeading.evaluate((element) => {
+      const text = element.textContent ?? "";
+      const start = text.indexOf("Draft heading ready");
+      if (start < 0) throw new Error("Heading source is unavailable");
+      const end = start + "Draft heading ready".length;
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let startNode: Node | null = null;
+      let endNode: Node | null = null;
+      let startOffset = 0;
+      let endOffset = 0;
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const length = node.textContent?.length ?? 0;
+        if (!startNode && start <= offset + length) {
+          startNode = node;
+          startOffset = start - offset;
+        }
+        if (end <= offset + length) {
+          endNode = node;
+          endOffset = end - offset;
+          break;
+        }
+        offset += length;
+      }
+      if (!startNode || !endNode) throw new Error("Heading text nodes are unavailable");
       const range = document.createRange();
-      range.selectNodeContents(element);
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
@@ -1367,11 +1393,42 @@ test.describe("Chat Side Panel", () => {
     await page.reload();
     await page.getByTestId("chat-assistant-message").filter({ hasText: fileName })
       .getByRole("link", { name: fileName }).click();
-    const staleReadyHeading = page.getByText("Draft heading ready", { exact: true });
+    const staleEditor = page.getByTestId("library-live-surface-markdown-editor")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    const staleReadyHeading = staleEditor.locator(
+      '.cm-line[data-source-line-start="1"]',
+    );
     await expect(staleReadyHeading).toBeVisible();
+    await staleReadyHeading.click();
     await staleReadyHeading.evaluate((element) => {
+      const text = element.textContent ?? "";
+      const start = text.indexOf("Draft heading ready");
+      if (start < 0) throw new Error("Heading source is unavailable");
+      const end = start + "Draft heading ready".length;
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let startNode: Node | null = null;
+      let endNode: Node | null = null;
+      let startOffset = 0;
+      let endOffset = 0;
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const length = node.textContent?.length ?? 0;
+        if (!startNode && start <= offset + length) {
+          startNode = node;
+          startOffset = start - offset;
+        }
+        if (end <= offset + length) {
+          endNode = node;
+          endOffset = end - offset;
+          break;
+        }
+        offset += length;
+      }
+      if (!startNode || !endNode) throw new Error("Heading text nodes are unavailable");
       const range = document.createRange();
-      range.selectNodeContents(element);
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);

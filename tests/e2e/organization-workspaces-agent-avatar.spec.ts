@@ -311,7 +311,7 @@ test.describe("Organization workspaces agent avatar", () => {
     await expect(fileRow).toHaveCount(0);
   });
 
-  test("renders Milkdown workspace mentions as single inline tokens", async ({ page, request }) => {
+  test("renders CodeMirror workspace mentions as single inline tokens", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Mention-Tokens-${Date.now()}`,
@@ -360,22 +360,25 @@ test.describe("Organization workspaces agent avatar", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(sourceFilePath)}`);
-    await expect(page.locator(".rudder-milkdown-content [data-mention-kind='agent']")).toBeVisible();
-    await expect(page.locator(".rudder-milkdown-content [data-mention-kind='library_file']")).toBeVisible();
-    await expect(page.locator(".rudder-milkdown-content [data-skill-token='true']")).toBeVisible();
+    const editor = page
+      .getByTestId("org-workspaces-markdown-editor")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    await expect(editor.locator("[data-mention-kind='agent']")).toBeVisible();
+    await expect(editor.locator("[data-mention-kind='library_file']")).toBeVisible();
+    await expect(editor.locator("[data-skill-token='true']")).toBeVisible();
 
-    const tokenStyles = await page.evaluate(() => {
-      const tokenSelector = ".rudder-milkdown-content [data-mention-kind], .rudder-milkdown-content [data-skill-token='true']";
-      const linkSelector = ".rudder-milkdown-content a:has(> [data-mention-kind]), .rudder-milkdown-content a:has(> [data-skill-token='true'])";
+    const tokenStyles = await editor.evaluate((editorRoot) => {
+      const tokenSelector = "[data-mention-kind], [data-skill-token='true']";
+      const linkSelector = "a:has(> [data-mention-kind]), a:has(> [data-skill-token='true'])";
       return {
-        tokens: Array.from(document.querySelectorAll<HTMLElement>(tokenSelector)).map((element) => ({
+        tokens: Array.from(editorRoot.querySelectorAll<HTMLElement>(tokenSelector)).map((element) => ({
           text: element.textContent,
           display: getComputedStyle(element).display,
           style: element.getAttribute("style") ?? "",
           beforeContent: getComputedStyle(element, "::before").content,
           beforeMask: getComputedStyle(element, "::before").maskImage || getComputedStyle(element, "::before").webkitMaskImage,
         })),
-        wrapperLinks: Array.from(document.querySelectorAll<HTMLElement>(linkSelector)).map((element) => ({
+        wrapperLinks: Array.from(editorRoot.querySelectorAll<HTMLElement>(linkSelector)).map((element) => ({
           text: element.textContent,
           display: getComputedStyle(element).display,
           beforeContent: getComputedStyle(element, "::before").content,

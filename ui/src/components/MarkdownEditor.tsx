@@ -60,6 +60,7 @@ import {
   removeAtomicInlineTokenFromMarkdown,
   type AtomicInlineTokenElement,
 } from "../lib/inline-token-dom";
+import { resolveMarkdownEditorEngine } from "../lib/markdown-editor-engine";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import {
   applyMentionChipDecoration,
@@ -75,6 +76,7 @@ import {
   getMentionPanelPositionForViewport
 } from "../lib/mention-menu-position";
 import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
+import { normalizePlainTextComposerMarkdown } from "../lib/plain-text-composer-markdown";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -83,6 +85,7 @@ import {
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
 import {
   ImageContextMenu,
   getImageContextMenuTarget,
@@ -184,8 +187,8 @@ export interface MarkdownEditorProps {
   onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   /** Opt into activating inline tokens on plain click for document surfaces where tokens behave like links. */
   activateInlineTokensOnPlainClick?: boolean;
-  /** Experimental editor engine for true Markdown surfaces. */
-  engine?: "legacy" | "milkdown";
+  documentIdentity?: string;
+  engine?: "legacy" | "milkdown" | "codemirror";
 }
 
 export interface MarkdownEditorRef {
@@ -196,8 +199,8 @@ export interface MarkdownEditorRef {
   redo?: () => boolean;
   canUndo?: () => boolean;
   canRedo?: () => boolean;
+  revealLine?: (line: number) => void;
 }
-
 function isCjkBoundaryCharacter(value: string) {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}。！？；：，、]/u.test(value);
 }
@@ -232,14 +235,11 @@ export function formatComposerCursorInsertion(
     caretOffset: before.length + insertedText.length,
   };
 }
-
 type CaretTarget =
   | { kind: "text"; node: Text; offset: number }
   | { kind: "after"; node: Node }
   | { kind: "inside"; node: Node; offset: number };
-
 const INLINE_CARET_BOUNDARY = "\u200B";
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -248,12 +248,6 @@ function isSafeMarkdownLinkUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return true;
   return !/^(javascript|data|vbscript):/i.test(trimmed);
-}
-
-function normalizePlainTextComposerMarkdown(value: string) {
-  return value
-    .replaceAll(INLINE_CARET_BOUNDARY, "")
-    .replace(/\\([\\`*_[\]{}()#+\-.!|>])/g, "$1");
 }
 
 function findCanonicalReferenceCandidates(markdown: string) {
@@ -1574,7 +1568,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     getMarkdown: () => {
       const editorMarkdown = ref.current?.getMarkdown();
       if (typeof editorMarkdown !== "string") return latestValueRef.current;
-      return plainText ? normalizePlainTextComposerMarkdown(editorMarkdown) : editorMarkdown;
+      return plainText
+        ? normalizePlainTextComposerMarkdown(editorMarkdown, latestValueRef.current)
+        : editorMarkdown;
     },
   }), [focusEditorAtEnd, insertTextAtRememberedSelection, plainText]);
 
@@ -2354,7 +2350,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         markdown={value}
         placeholder={translatedPlaceholder}
         onChange={(next) => {
-          const normalizedNext = plainText ? normalizePlainTextComposerMarkdown(next) : next;
+          const normalizedNext = plainText
+            ? normalizePlainTextComposerMarkdown(next)
+            : next;
           const editable = containerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
           latestValueRef.current = normalizedNext;
           onChange(normalizedNext);
@@ -2589,8 +2587,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     mentions: mergedMentions,
     onMentionQueryChange: handleMentionQueryChange,
   };
-  if (props.engine === "milkdown" && !props.plainText) {
-    return <MilkdownMarkdownEditor {...editorProps} ref={forwardedRef} />;
-  }
+  const resolvedEngine = resolveMarkdownEditorEngine(props);
+  if (resolvedEngine === "codemirror") return <CodeMirrorMarkdownEditor {...editorProps} ref={forwardedRef} />;
+  if (resolvedEngine === "milkdown") return <MilkdownMarkdownEditor {...editorProps} ref={forwardedRef} />;
   return <LegacyMarkdownEditor {...editorProps} ref={forwardedRef} />;
 });

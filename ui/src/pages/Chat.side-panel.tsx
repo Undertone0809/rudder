@@ -1188,7 +1188,7 @@ function ChatSidePanelTextFileEditor({
           <MarkdownEditor
             ref={editorRef}
             key={filePath}
-            engine="milkdown"
+            engine="codemirror" documentIdentity={`library-file:${filePath}`}
             value={markdownParts.body}
             onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
               markdownParts.frontmatter,
