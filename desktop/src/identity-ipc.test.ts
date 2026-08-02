@@ -185,6 +185,68 @@ describe("Desktop Rudder Account IPC", () => {
     );
   });
 
+  it("blocks credential-issuing sign-in before any client side effect when secure storage is unavailable", async () => {
+    const renderer = {
+      mainFrame: {},
+      isDestroyed: () => false,
+      send: vi.fn(),
+    };
+    const signIn = vi.fn();
+    const nativeSignIn = vi.fn();
+    const sendEmailOtp = vi.fn(async () => undefined);
+    const requestPasswordReset = vi.fn(async () => undefined);
+    const controller = createDesktopIdentityIpcController({
+      origin: "https://accounts.rudderhq.dev",
+      vault: {
+        status: () => ({
+          available: false as const,
+          backend: "unavailable",
+          reason: "encryption_unavailable" as const,
+        }),
+        read: vi.fn(() => null),
+      },
+      client: {
+        signIn,
+        nativeSignIn,
+        sendEmailOtp,
+        requestPasswordReset,
+        signOut: vi.fn(async () => undefined),
+        listDeviceSessions: vi.fn(async () => []),
+        revokeDeviceSession: vi.fn(async () => undefined),
+      },
+      getMainRenderer: () => renderer,
+    });
+
+    await expect(controller.signIn({ method: "google" })).resolves.toMatchObject({
+      status: "error",
+      recoverable: false,
+    });
+    await expect(controller.nativeSignIn({
+      method: "password",
+      email: "river@example.com",
+      password: "correct horse battery staple",
+    })).resolves.toMatchObject({ status: "error", recoverable: false });
+    await expect(controller.nativeSignIn({
+      method: "email_otp",
+      email: "river@example.com",
+      token: "123456",
+    })).resolves.toMatchObject({ status: "error", recoverable: false });
+    await expect(controller.nativeSignIn({
+      method: "password_reset",
+      email: "river@example.com",
+      token: "123456",
+      newPassword: "correct horse battery staple",
+    })).resolves.toMatchObject({ status: "error", recoverable: false });
+
+    expect(signIn).not.toHaveBeenCalled();
+    expect(nativeSignIn).not.toHaveBeenCalled();
+
+    await expect(controller.sendEmailOtp("river@example.com")).resolves.toBeUndefined();
+    await expect(controller.requestPasswordReset("river@example.com")).resolves.toBeUndefined();
+    expect(sendEmailOtp).toHaveBeenCalledOnce();
+    expect(requestPasswordReset).toHaveBeenCalledOnce();
+  });
+
   it("publishes only safe device approval details while fallback polling continues", () => {
     const { controller, renderer } = fixture();
     controller.showDeviceAuthorizationPrompt({

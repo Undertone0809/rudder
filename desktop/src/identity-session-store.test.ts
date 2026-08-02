@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { IdentityDeviceCredential } from "./identity-credential-vault.js";
-import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
+import {
+  createDesktopIdentitySessionStore,
+  desktopIdentityMemoryFallbackAllowed,
+} from "./identity-session-store.js";
 
 const credential: IdentityDeviceCredential = {
   version: 1,
@@ -14,6 +17,17 @@ const credential: IdentityDeviceCredential = {
 };
 
 describe("Desktop Identity session store", () => {
+  it.each([
+    { isPackaged: false, platform: "darwin" as const, expected: true },
+    { isPackaged: false, platform: "win32" as const, expected: true },
+    { isPackaged: false, platform: "linux" as const, expected: true },
+    { isPackaged: true, platform: "linux" as const, expected: true },
+    { isPackaged: true, platform: "darwin" as const, expected: false },
+    { isPackaged: true, platform: "win32" as const, expected: false },
+  ])("selects the platform memory fallback policy (%o)", ({ expected, ...input }) => {
+    expect(desktopIdentityMemoryFallbackAllowed(input)).toBe(expected);
+  });
+
   it("delegates to secure persistence when the vault is available", () => {
     const read = vi.fn(() => credential);
     const write = vi.fn();
@@ -110,5 +124,32 @@ describe("Desktop Identity session store", () => {
     expect(write).not.toHaveBeenCalled();
     store.clear();
     expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it("recovers formal persistence when the platform vault becomes available", () => {
+    let available = false;
+    const read = vi.fn(() => credential);
+    const write = vi.fn();
+    const store = createDesktopIdentitySessionStore({
+      status: () => available
+        ? { available: true, backend: "keychain" }
+        : {
+          available: false,
+          backend: "unavailable",
+          reason: "encryption_unavailable",
+        },
+      read,
+      write,
+      clear: vi.fn(),
+    }, { allowMemoryFallback: false });
+
+    expect(store.read()).toBeNull();
+    expect(() => store.write(credential)).toThrow("Secure credential storage is unavailable");
+
+    available = true;
+    expect(store.read()).toEqual(credential);
+    store.write(credential);
+    expect(read).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(credential);
   });
 });

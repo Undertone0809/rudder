@@ -23,7 +23,10 @@ import {
   type DesktopOfflineGrantCredential,
 } from "./identity-offline-grant.js";
 import { resolveDesktopIdentitySafeStorage } from "./identity-safe-storage-policy.js";
-import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
+import {
+  createDesktopIdentitySessionStore,
+  desktopIdentityMemoryFallbackAllowed,
+} from "./identity-session-store.js";
 import { desktopAccountBypassAllowed } from "./identity-startup-policy.js";
 
 export type DesktopLocalAccountAuth = {
@@ -108,10 +111,10 @@ export function createDesktopIdentityRuntime(options: {
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-session-store");
   const vault = createDesktopIdentitySessionStore(credentialVault, {
-    // Formal builds must never report a successful sign-in that only survives
-    // for the current process. Development keeps the explicit memory fallback
-    // so zero-configuration Auth Fixture flows do not depend on an OS vault.
-    allowMemoryFallback: !app.isPackaged,
+    allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+    }),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");
   const offlineGrantStore = createDesktopOfflineGrantStore({

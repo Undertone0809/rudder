@@ -17,6 +17,13 @@ export type DesktopIdentitySessionStore = {
   clear(): void;
 };
 
+export function desktopIdentityMemoryFallbackAllowed(options: {
+  isPackaged: boolean;
+  platform: NodeJS.Platform;
+}): boolean {
+  return !options.isPackaged || options.platform === "linux";
+}
+
 /**
  * Keeps online sign-in usable when Electron cannot provide a secure store.
  * The fallback deliberately has no filesystem path and therefore cannot
@@ -41,9 +48,12 @@ export function createDesktopIdentitySessionStore(
     return {
       persistence: "unavailable",
       status: () => vault.status(),
-      read: () => null,
-      write: () => {
-        throw new Error("Secure credential storage is unavailable on this device");
+      read: () => vault.status().available ? vault.read() : null,
+      write: (credential) => {
+        if (!vault.status().available) {
+          throw new Error("Secure credential storage is unavailable on this device");
+        }
+        vault.write(credential);
       },
       clear: () => vault.clear(),
     };

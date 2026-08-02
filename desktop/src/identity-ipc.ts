@@ -281,6 +281,13 @@ export function createDesktopIdentityIpcController(options: {
     request: () => Promise<{ account: IdentityAccount; device: IdentityDevice; accessToken: string }>,
   ): Promise<DesktopIdentityState> => {
     if (signInInFlight) return signInInFlight;
+    if (!options.vault.status().available) {
+      return Promise.resolve(publish({
+        status: "error",
+        message: "Secure credential storage is unavailable on this device.",
+        recoverable: false,
+      }));
+    }
     publish({ status: "signing-in" });
     const pending = request()
       .then(async ({ account, device }) => {
