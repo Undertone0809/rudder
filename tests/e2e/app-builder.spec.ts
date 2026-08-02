@@ -61,6 +61,42 @@ test.describe("Apps workspace", () => {
     await expect(page.locator('[data-testid="apps-home"] svg.lucide-sparkles')).toHaveCount(0);
     await expect(page.getByTestId("primary-rail").getByText("Apps", { exact: true }))
       .toBeVisible();
+
+    const contextCard = page.getByTestId("workspace-context-card");
+    const collapseButton = page.getByRole("button", { name: "Collapse workspace sidebar" });
+    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
+    const reopenButton = page.getByTestId("workspace-sidebar-reopen-button");
+
+    await collapseButton.click();
+    await expect(contextCard).toHaveAttribute("aria-hidden", "true");
+    await expect.poll(async () => contextCard.evaluate((element) => element.offsetWidth)).toBe(0);
+    await expect(reopenButton).toHaveCSS("opacity", "0");
+    await expect(reopenButton).toHaveCSS("pointer-events", "none");
+    await page.screenshot({
+      path: `/tmp/rudder-apps-e2e-collapsed-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+
+    await reopenZone.hover();
+    await expect(reopenButton).toBeVisible();
+    await page.screenshot({
+      path: `/tmp/rudder-apps-e2e-hover-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+    await reopenButton.click();
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+    await reopenButton.focus();
+    await expect(reopenButton).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+    await reopenButton.focus();
+    await page.keyboard.press("Space");
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+
     await page.setViewportSize({ width: 1680, height: 1000 });
     await page.waitForTimeout(400);
     await page.screenshot({

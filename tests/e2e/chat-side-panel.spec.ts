@@ -3030,12 +3030,14 @@ test.describe("Chat Side Panel", () => {
     await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
 
     await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
-    await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
+    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
+    await reopenZone.hover();
+    await expect(page.getByTestId("workspace-sidebar-reopen-button")).toBeVisible();
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
 
-    const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
+    const openSidebarButton = page.getByTestId("workspace-sidebar-reopen-button");
     const chatActionsButton = page.getByTestId("chat-actions-trigger");
     const assistantMessage = page.getByTestId("chat-assistant-message");
     const transcriptLine = assistantMessage.getByText(

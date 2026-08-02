@@ -880,6 +880,33 @@ function SidePanelRouteContextBinder({
   return null;
 }
 
+function CollapsedWorkspaceSidebarReveal({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div
+      data-testid="workspace-sidebar-reopen-zone"
+      className="group absolute inset-y-0 left-0 z-30 flex w-8 items-center"
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            data-testid="workspace-sidebar-reopen-button"
+            className="desktop-window-no-drag pointer-events-none h-10 w-7 shrink-0 -translate-x-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
+            onClick={onOpen}
+            aria-label="Open workspace sidebar"
+            title="Open workspace sidebar"
+          >
+            <PanelLeft className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">Open workspace sidebar</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 export function Layout() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -1609,7 +1636,7 @@ export function Layout() {
                             "flex min-h-0 shrink-0 overflow-hidden",
                             "workspace-context-card",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
+                            sidebarOpen ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
                           )}
                           style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
                         >
@@ -1638,23 +1665,8 @@ export function Layout() {
                         </div>
                       </>
                     ) : null}
-                    {isLibraryRoute && !sidebarOpen ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="absolute left-[3px] top-1/2 z-20 h-11 w-7 -translate-y-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                            onClick={() => setSidebarOpen(true)}
-                            aria-label="Show Library sidebar"
-                            data-testid="org-workspaces-show-sidebar-button"
-                          >
-                            <PanelLeft className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">Show Library sidebar</TooltipContent>
-                      </Tooltip>
+                    {showIntegratedShellSidebar && !sidebarOpen && useFramelessWorkspaceMain ? (
+                      <CollapsedWorkspaceSidebarReveal onOpen={() => setSidebarOpen(true)} />
                     ) : null}
                     <div className="workspace-main-panel-stack relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
                       <div

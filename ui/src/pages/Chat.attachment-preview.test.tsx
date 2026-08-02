@@ -133,8 +133,6 @@ const mockState = vi.hoisted(() => ({
   sendFirstMessageStream: vi.fn(),
   sendMessageStream: vi.fn(),
   setStreamDraftForChat: vi.fn(),
-  setSidebarOpen: vi.fn(),
-  sidebarOpen: true,
   setQueriesData: vi.fn(),
   setQueryData: vi.fn(),
   setBreadcrumbs: vi.fn(),
@@ -521,8 +519,6 @@ vi.mock("@/context/DialogContext", () => ({
 vi.mock("@/context/SidebarContext", () => ({
   useSidebar: () => ({
     isMobile: false,
-    setSidebarOpen: mockState.setSidebarOpen,
-    sidebarOpen: mockState.sidebarOpen,
   }),
 }));
 
@@ -1627,9 +1623,7 @@ beforeEach(() => {
   mockState.preflightDraft.mockResolvedValue(mockState.draftPreflight);
   mockState.sendFirstMessageStream.mockReset();
   mockState.sendMessageStream.mockReset();
-  mockState.setSidebarOpen.mockReset();
   mockState.setStreamDraftForChat.mockReset();
-  mockState.sidebarOpen = true;
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
   mockState.stopMessageStream.mockReset();
@@ -1718,35 +1712,6 @@ afterEach(() => {
   document.body.innerHTML = "";
   HTMLElement.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
   vi.unstubAllGlobals();
-});
-
-describe("Messenger sidebar controls", () => {
-  it("shows an opener on the chat canvas when the Messenger sidebar is collapsed", async () => {
-    mockState.sidebarOpen = false;
-
-    const { container } = renderChat();
-    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Messenger sidebar"]');
-
-    expect(openButton).not.toBeNull();
-    expect(openButton?.title).toBe("Open Messenger sidebar");
-    expect(openButton?.querySelector(".lucide-panel-left")).not.toBeNull();
-
-    await act(async () => {
-      openButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(true);
-  });
-
-  it("does not label the legacy Chat sidebar as Messenger", () => {
-    mockState.routeBase = "/chat";
-    mockState.sidebarOpen = false;
-
-    const { container } = renderChat();
-
-    expect(container.querySelector('button[aria-label="Open Messenger sidebar"]')).toBeNull();
-  });
 });
 
 describe("Chat mention sources", () => {
@@ -7206,19 +7171,15 @@ describe("Chat attachment previews", () => {
     expect(mainCard?.contains(loadError ?? null)).toBe(true);
   });
 
-  it("clears the collapsed Messenger opener when a new-chat load fails", () => {
+  it("keeps a new-chat load error in the main card", () => {
     mockState.conversationId = null;
     mockState.failAgents = true;
-    mockState.sidebarOpen = false;
     const { container } = renderChat();
 
     const mainCard = container.querySelector("main[data-testid='chat-main-workspace-card']");
     const loadError = container.querySelector("[data-testid='chat-load-error']");
-    const sidebarOpener = container.querySelector("[aria-label='Open Messenger sidebar']");
 
-    expect(sidebarOpener).not.toBeNull();
     expect(mainCard?.contains(loadError)).toBe(true);
-    expect(loadError?.className).toContain("md:mt-14");
   });
 
   it("opens message image previews while a pending proposal hides the composer and clears on conversation change", () => {

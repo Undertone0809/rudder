@@ -512,7 +512,9 @@ test.describe("Workspace shell", () => {
     await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
 
     await expect(contextCard).toHaveAttribute("aria-hidden", "true");
-    const openButton = page.getByRole("button", { name: "Open Messenger sidebar" });
+    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
+    const openButton = page.getByTestId("workspace-sidebar-reopen-button");
+    await reopenZone.hover();
     await expect(openButton).toBeVisible();
 
     await openButton.click();
@@ -912,7 +914,7 @@ test.describe("Workspace shell", () => {
     }).toBe(0);
   });
 
-  test("hides and reveals the Library sidebar from the left-edge handle", async ({ page }) => {
+  test("hides and reveals the Library sidebar from the left-edge hover handle", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Library-Sidebar-${Date.now()}`,
@@ -926,19 +928,23 @@ test.describe("Workspace shell", () => {
 
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
     await expect(page.getByTestId("workspace-sidebar")).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-sidebar-reopen-button")).toHaveCount(0);
 
     await page.getByTestId("org-workspaces-hide-sidebar-button").click();
 
     await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
-    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toBeVisible();
+    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
+    const reopenButton = page.getByTestId("workspace-sidebar-reopen-button");
+    await expect(reopenButton).toHaveCSS("opacity", "0");
+    await reopenZone.hover();
+    await expect(reopenButton).toBeVisible();
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
 
-    await page.getByTestId("org-workspaces-show-sidebar-button").click();
+    await reopenButton.click();
 
     await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "false");
     await expect(page.getByTestId("workspace-sidebar")).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-sidebar-reopen-button")).toHaveCount(0);
   });
 
   test("surfaces organization navigation without Structure in the shared three-column shell", async ({ page }, testInfo) => {
