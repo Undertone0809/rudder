@@ -82,4 +82,33 @@ describe("Desktop Identity session store", () => {
     expect(firstProcess.read()).toBeNull();
     expect(clear).toHaveBeenCalledOnce();
   });
+
+  it("fails closed instead of accepting a process-only formal session", () => {
+    const clear = vi.fn();
+    const write = vi.fn();
+    const store = createDesktopIdentitySessionStore({
+      status: () => ({
+        available: false,
+        backend: "unavailable",
+        reason: "encryption_unavailable",
+      }),
+      read: vi.fn(() => null),
+      write,
+      clear,
+    }, { allowMemoryFallback: false });
+
+    expect(store.persistence).toBe("unavailable");
+    expect(store.status()).toEqual({
+      available: false,
+      backend: "unavailable",
+      reason: "encryption_unavailable",
+    });
+    expect(store.read()).toBeNull();
+    expect(() => store.write(credential)).toThrow(
+      "Secure credential storage is unavailable on this device",
+    );
+    expect(write).not.toHaveBeenCalled();
+    store.clear();
+    expect(clear).toHaveBeenCalledOnce();
+  });
 });

@@ -5,7 +5,7 @@ import type {
 } from "./identity-credential-vault.js";
 
 export type DesktopIdentitySessionStore = {
-  persistence: "secure" | "memory";
+  persistence: "secure" | "memory" | "unavailable";
   status(): IdentityCredentialVaultStatus | {
     available: true;
     backend: "memory";
@@ -24,6 +24,7 @@ export type DesktopIdentitySessionStore = {
  */
 export function createDesktopIdentitySessionStore(
   vault: Pick<IdentityCredentialVault, "status" | "read" | "write" | "clear">,
+  options: { allowMemoryFallback?: boolean } = {},
 ): DesktopIdentitySessionStore {
   const vaultStatus = vault.status();
   if (vaultStatus.available) {
@@ -32,6 +33,18 @@ export function createDesktopIdentitySessionStore(
       status: () => vault.status(),
       read: () => vault.read(),
       write: (credential) => vault.write(credential),
+      clear: () => vault.clear(),
+    };
+  }
+
+  if (options.allowMemoryFallback === false) {
+    return {
+      persistence: "unavailable",
+      status: () => vault.status(),
+      read: () => null,
+      write: () => {
+        throw new Error("Secure credential storage is unavailable on this device");
+      },
       clear: () => vault.clear(),
     };
   }

@@ -107,7 +107,12 @@ export function createDesktopIdentityRuntime(options: {
     credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-session-store");
-  const vault = createDesktopIdentitySessionStore(credentialVault);
+  const vault = createDesktopIdentitySessionStore(credentialVault, {
+    // Formal builds must never report a successful sign-in that only survives
+    // for the current process. Development keeps the explicit memory fallback
+    // so zero-configuration Auth Fixture flows do not depend on an OS vault.
+    allowMemoryFallback: !app.isPackaged,
+  });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");
   const offlineGrantStore = createDesktopOfflineGrantStore({
     safeStorage,
