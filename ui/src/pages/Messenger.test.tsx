@@ -48,15 +48,18 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 vi.mock("@/components/ApprovalCard", () => ({
   ApprovalCard: ({
     approval,
+    requesterAgent,
     supportingText,
     detailLabel,
   }: {
     approval: { type: string };
+    requesterAgent?: { name: string } | null;
     supportingText?: string | null;
     detailLabel?: string;
   }) => (
     <div data-testid="mock-approval-card">
       <div>{approval.type}</div>
+      {requesterAgent ? <div>requested-by: {requesterAgent.name}</div> : null}
       <div>{supportingText}</div>
       <div>{detailLabel}</div>
     </div>
@@ -367,6 +370,7 @@ describe("Messenger page headers", () => {
     expect(html).toContain("budget_override_required");
     expect(html).toContain("Open full approval");
     expect(html).toContain("Noah");
+    expect(html).toContain("requested-by: Noah");
     expect(html).not.toContain("Approvals assistant");
     expect(html).not.toContain("2 pending");
     expect(html).not.toContain("1 total");

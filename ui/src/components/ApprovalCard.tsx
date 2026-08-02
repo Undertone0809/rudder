@@ -31,7 +31,7 @@ export function ApprovalCard({
   approveDisabled = false,
 }: {
   approval: Approval;
-  requesterAgent: Agent | null;
+  requesterAgent: Pick<Agent, "name" | "icon" | "role"> | null;
   onApprove: () => void;
   onReject: () => void;
   onRequestRevision?: () => void;

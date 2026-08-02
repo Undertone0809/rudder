@@ -27,6 +27,7 @@ import {
 import {
   formatMessengerPreview,
   formatMessengerTitle,
+  isUuidLike,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
   type AgentRole,
@@ -599,6 +600,15 @@ function approvalRequesterLabel(approval: ApprovalRow, currentUserId: string | n
   if (approval.requestedByUserId) return "User";
   if (approval.requestedByAgentId) return "Agent";
   return "System";
+}
+
+function approvalRequesterAgentId(approval: Pick<ApprovalRow, "requestedByAgentId" | "type" | "payload">) {
+  if (approval.requestedByAgentId) return approval.requestedByAgentId;
+  if (approval.type !== "chat_issue_creation" && approval.type !== "chat_operation") return null;
+  const proposedByAgentId = approval.payload?.proposedByAgentId;
+  return typeof proposedByAgentId === "string" && isUuidLike(proposedByAgentId)
+    ? proposedByAgentId.trim()
+    : null;
 }
 
 function approvalActions(approval: ApprovalRow) {
@@ -2286,7 +2296,7 @@ export function messengerService(db: Db) {
 
     const typedApprovalRows = approvalRows as ApprovalRow[];
     const requesterAgentIds = typedApprovalRows
-      .map((approval) => approval.requestedByAgentId)
+      .map((approval) => approvalRequesterAgentId(approval))
       .filter((agentId): agentId is string => Boolean(agentId));
     const requesterAgents = requesterAgentIds.length > 0
       ? await db
@@ -2311,8 +2321,9 @@ export function messengerService(db: Db) {
     const unsortedItems = typedApprovalRows.map((approval) => {
       const latestComment = latestCommentByApproval.get(approval.id) ?? null;
       const latestActivityAt = maxDate(approval.updatedAt, latestComment?.createdAt) ?? approval.updatedAt;
-      const requesterAgent = approval.requestedByAgentId
-        ? requesterAgentById.get(approval.requestedByAgentId) ?? null
+      const requesterAgentId = approvalRequesterAgentId(approval);
+      const requesterAgent = requesterAgentId
+        ? requesterAgentById.get(requesterAgentId) ?? null
         : null;
       return approvalCard(approval, requesterAgent, latestComment, userId, latestActivityAt);
     });

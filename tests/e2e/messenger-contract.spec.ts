@@ -3205,6 +3205,7 @@ test.describe("Messenger unified threads contract", () => {
       data: {
         title: "Label approval intake",
         issueCreationMode: "manual_approval",
+        initialMessage: { body: "Prepare this chat for approval intake." },
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -3220,6 +3221,7 @@ test.describe("Messenger unified threads contract", () => {
             title: "Classify proposed work",
             description: "This agent-created issue needs an operator-selected label.",
             priority: "medium",
+            assigneeUnassignedReason: "The operator will choose ownership after review.",
           },
         },
       },
@@ -3228,8 +3230,12 @@ test.describe("Messenger unified threads contract", () => {
     const approval = await approvalRes.json();
 
     await page.goto(`/${organization.issuePrefix}/messenger/approvals`, { waitUntil: "commit" });
+    const approvalMessage = page.getByTestId(`messenger-approval-message-${approval.id}`);
+    await expect(approvalMessage).toContainText("Labeling Agent", { timeout: 30_000 });
+    await expect(approvalMessage.locator("img").first()).toBeVisible();
     const approvalCard = page.getByTestId(`messenger-approval-card-${approval.id}`);
     await expect(approvalCard).toContainText("Classify proposed work");
+    await expect(approvalCard).toContainText("requested by Labeling Agent");
     await expect(approvalCard).toContainText("Required before approval");
     await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
     await expect(approvalCard.getByTestId("chat-issue-approval-label-picker")).toHaveCount(0);

@@ -747,7 +747,7 @@ function MessengerApprovalCard({
       <div data-testid={`messenger-approval-card-${item.id}`}>
         <ApprovalCard
           approval={item.approval}
-          requesterAgent={null}
+          requesterAgent={requesterAgent}
           onApprove={() => decisionMutation.mutate("approve")}
           onReject={() => decisionMutation.mutate("reject")}
           onRequestRevision={pending ? () => decisionMutation.mutate("requestRevision") : undefined}
