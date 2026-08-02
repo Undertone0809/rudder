@@ -18,6 +18,33 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+## v0.6.6
+
+发布时间：2026-08-03
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.6)
+
+这个版本带来 Rudder Account 登录与设备安全能力，同时确保 Local Workspace 隐私数据继续留在本机；还增加了 App Builder、更完整的文件审阅能力，以及更清晰的 Agent 工作状态。
+
+### 新功能
+
+- 增加 Rudder Account 登录：Stable Desktop 现在要求先完成一次账号登录才能进入 Board。可在系统浏览器中使用 Google 或 GitHub OAuth，也可使用 Rudder Desktop 原生的邮箱 OTP 验证码、密码登录和密码重置流程。
+- 增加设备会话管理，可以查看并撤销已登录的 Desktop 设备。设备凭据保存在操作系统安全存储中，已授权的 Local Workspace 在完成在线验证后最多可离线使用 30 天。
+- 增加实验性的 App Builder 工作区，可从 Chat 创建、验证并预览本地全栈应用。应用源码保留在设备上，预览仅在当前电脑本地可用。
+- 侧边面板支持编辑兼容的文本文件并添加行级批注；Chat 工作清单可查看进行中和已完成的子 Agent。
+
+### 改进
+
+- 合并个人资料与账号设置，在 Chat 标题中显示 Agent 身份，并在现有 Local Workspace 连接账号时保留 Messenger 分组、已保存视图、已读状态和本地偏好。
+- 改进 Apps 工作区，支持直接打开更多常见前端项目、加强本地进程安全，并在应用启动失败时提供“询问 AI”入口。
+- 提升持续活跃场景下 Messenger 滚动和分组展开的流畅度。
+- 移除项目级预算控制。升级时，待处理的项目预算审批会被拒绝，未关闭的预算事件会被解决，项目预算策略会被停用，仅因这些策略暂停的项目会恢复运行。
+
+### 问题修复
+
+- 修复历史 Chat 操作、子 Agent 终止状态、Side Chat 用户消息可见性、图片文件预览，以及添加 Library 引用后 Chat 输入框不可编辑的问题。
+- 修复无实际修改时 Issue 活动时间变化的问题，并修复多项 Desktop 启动、应用重启、品牌图标和本地文件桥接问题。
+
 ## v0.6.5
 
 发布时间：2026-07-29

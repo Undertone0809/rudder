@@ -18,6 +18,33 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+## v0.6.6
+
+Released: 2026-08-03
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.6)
+
+This release introduces Rudder Account sign-in and device security while keeping your Local Workspace private on your machine, and expands Rudder with App Builder, richer file review, and clearer agent-work visibility.
+
+### New
+
+- Added Rudder Account sign-in: Stable Desktop now requires one account sign-in before Board entry. Continue with Google or GitHub OAuth in your system browser, or use native Rudder Desktop email OTP, password, and password-reset flows.
+- Added device-session controls so you can review and revoke signed-in Desktop devices. Device credentials use secure OS storage, and authorized Local Workspaces can continue offline for up to 30 days after online verification.
+- Added the experimental App Builder workspace for creating, verifying, and previewing local full-stack apps from Chat. App source stays on your device, and previews remain local to your computer.
+- Added editing and line-level annotations for supported text files in the Side Panel, plus a Chat Work manifest view for active and completed subagents.
+
+### Improved
+
+- Unified profile and account settings, added agent identity to Chat headers, and preserved Messenger groups, saved views, read state, and local preferences when an existing Local Workspace is connected to an account.
+- Improved the Apps workspace with direct opening, broader frontend-project support, safer local process handling, and an Ask AI for help path when an app fails to start.
+- Smoothed Messenger scrolling and group expansion under sustained activity.
+- Removed project-level budget controls. During upgrade, pending project-budget approvals are rejected, open budget incidents are resolved, project budget policies are disabled, and projects paused only by those policies resume.
+
+### Fixed
+
+- Fixed historical Chat actions, terminal subagent status, Side Chat turn visibility, image-file previews, and Chat input after adding Library references.
+- Fixed issue activity timestamps changing after no-op edits and several Desktop startup, app restart, branding, and local-file bridge problems.
+
 ## v0.6.5
 
 Released: 2026-07-29
