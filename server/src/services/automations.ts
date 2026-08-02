@@ -458,6 +458,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         requestedByUserId: null,
         payload: {
           chatConversationId: input.conversation.id,
+          proposedByAgentId: input.reply.replyingAgentId ?? input.conversation.preferredAgentId ?? null,
           operationProposal:
             input.reply.structuredPayload &&
             typeof input.reply.structuredPayload.operationProposal === "object" &&

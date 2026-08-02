@@ -936,6 +936,7 @@ export function chatRoutes(
         requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
         payload: {
           chatConversationId: conversation.id,
+          proposedByAgentId: replyingAgentId,
           operationProposal:
             assistantReply.structuredPayload &&
             typeof assistantReply.structuredPayload.operationProposal === "object" &&

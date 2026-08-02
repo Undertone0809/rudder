@@ -9172,7 +9172,6 @@ describe("messengerService and issue follows", () => {
         },
       },
     });
-
     const thread = await messengerSvc.getApprovalsThread(orgId, "board-user");
     const item = thread.detail.items.find((approvalItem) => approvalItem.id === approvalId);
 
@@ -9182,6 +9181,78 @@ describe("messengerService and issue follows", () => {
       icon: "bot",
       role: "engineer",
     });
+  });
+
+  it("resolves chat proposal requester identity from the payload for legacy approvals", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const approvalId = randomUUID();
+    const invalidApprovalId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Legacy Chat Approval Requester Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Legacy Chat Approval Requester Org"),
+      issuePrefix: `LC${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Chat Proposal Agent",
+      role: "engineer",
+      icon: "bot",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      requestedByAgentId: null,
+      requestedByUserId: "board-user",
+      status: "pending",
+      payload: {
+        proposedByAgentId: agentId,
+        proposedIssue: {
+          title: "Restore legacy requester identity",
+          description: "Chat approvals retain their proposing agent in the payload.",
+          priority: "medium",
+          assigneeUnassignedReason: "Routing will be selected during review.",
+        },
+      },
+    });
+    await db.insert(approvals).values({
+      id: invalidApprovalId,
+      orgId,
+      type: "chat_issue_creation",
+      requestedByAgentId: null,
+      requestedByUserId: "board-user",
+      status: "pending",
+      payload: {
+        proposedByAgentId: "not-a-uuid",
+        proposedIssue: {
+          title: "Ignore invalid requester identity",
+          description: "Malformed historical attribution must not break Messenger.",
+          priority: "low",
+          assigneeUnassignedReason: "Local regression test.",
+        },
+      },
+    });
+
+    const thread = await messengerSvc.getApprovalsThread(orgId, "board-user");
+    const item = thread.detail.items.find((approvalItem) => approvalItem.id === approvalId);
+
+    expect(item?.requesterAgent).toEqual({
+      id: agentId,
+      name: "Chat Proposal Agent",
+      icon: "bot",
+      role: "engineer",
+    });
+    expect(thread.detail.items.find((approvalItem) => approvalItem.id === invalidApprovalId)?.requesterAgent).toBeNull();
   });
 
   it("returns Messenger failed-run detail items in chronological order while keeping the summary pinned to latest activity", async () => {
