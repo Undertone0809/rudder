@@ -218,6 +218,42 @@ describe("desktop quit flow update handoff", () => {
     }
   });
 
+  it("uses the Electron session fetch with credentials for authenticated blocker inspection", async () => {
+    const fetchApi = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      expect(init?.credentials).toBe("include");
+      if (pathName === "/api/orgs") {
+        return jsonResponse([{ id: "org-auth", name: "Authenticated Org" }]);
+      }
+      if (pathName === "/api/orgs/org-auth/live-runs") {
+        return jsonResponse([]);
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3200", runtime: { mode: "owned" } }),
+        fetchApi,
+        stopLocalRudder: vi.fn(),
+        destroyResidentTray: vi.fn(),
+      });
+
+      await expect(quitFlow.listRunningRunsForUpdate()).resolves.toEqual({
+        totalRuns: 0,
+        organizations: [],
+        blockers: [],
+      });
+      expect(fetchApi).toHaveBeenCalledTimes(2);
+      expect(globalFetch).not.toHaveBeenCalled();
+    } finally {
+      globalFetch.mockRestore();
+    }
+  });
+
   it("allows update quit when only queued or terminal records remain", async () => {
     const stopLocalRudder = vi.fn(async () => undefined);
     const fetchMock = vi.fn(async (url: string) => {

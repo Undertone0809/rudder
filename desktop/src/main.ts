@@ -564,6 +564,7 @@ const desktopQuitFlow = createDesktopQuitFlow({
   getMainWindow: () => mainWindow,
   setMainWindow: (value) => { mainWindow = value; },
   getServerHandle: () => serverHandle,
+  fetchApi: (input, init) => session.defaultSession.fetch(input, init),
   prepareForQuit: async () => {
     await Promise.all([
       browserProfileController?.shutdown() ?? Promise.resolve(),
@@ -2034,6 +2035,7 @@ async function startLocalRudder(): Promise<void> {
       await openAppWindow(loadUrl);
       schedulePostUpdateRendererReloadIfNeeded();
       await captureDesktopWindowIfRequested();
+      void maybeShowStartupUpdateNotice();
     } catch (error) {
       console.error("[rudder-desktop] managed local server startup failed", error);
       const failure = createDesktopStartupFailureView({
@@ -2662,7 +2664,6 @@ async function bootstrap(): Promise<void> {
     console.info("[rudder-desktop] bootstrap:start-runtime");
   }
   await startLocalRudder();
-  void maybeShowStartupUpdateNotice();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:ready");
   }

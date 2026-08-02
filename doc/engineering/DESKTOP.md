@@ -62,7 +62,7 @@ Low-frequency escape hatches:
 
 Smoke scenarios:
 
-- `pnpm --filter @rudderhq/desktop smoke` runs startup-recovery, renderer-recovery, and clean-instance Desktop smoke paths.
+- `pnpm --filter @rudderhq/desktop smoke` runs the development Desktop scenarios, authenticated update-session fetch smoke, and App Builder smoke.
 - `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema before relaunching.
 - Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
