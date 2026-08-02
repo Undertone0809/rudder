@@ -116,6 +116,10 @@ export function createDesktopUpdateFlow(context: {
     version: string;
     promise: Promise<DesktopUpdateInstallResult>;
   } | null = null;
+
+  function isLocalRuntimeReadyForUpdate(): boolean {
+    return Boolean(context.getServerHandle()) && context.getBootState()?.stage === "ready";
+  }
   let startupUpdateNoticeShown = false;
 
   type DesktopUpdateInstallResult =
@@ -487,7 +491,7 @@ export function createDesktopUpdateFlow(context: {
   }
 
   async function maybeShowStartupUpdateNotice(): Promise<void> {
-    if (startupUpdateNoticeShown || !app.isPackaged) return;
+    if (startupUpdateNoticeShown || !app.isPackaged || !isLocalRuntimeReadyForUpdate()) return;
     startupUpdateNoticeShown = true;
 
     const result = await checkForUpdates();
@@ -498,6 +502,24 @@ export function createDesktopUpdateFlow(context: {
 
   async function showManualUpdateCheckDialog(): Promise<void> {
     context.showMainWindow();
+    if (!isLocalRuntimeReadyForUpdate()) {
+      const signedOut = !context.getServerHandle();
+      await showMessageBox({
+        type: "info",
+        title: context.appName,
+        buttons: ["OK"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        message: signedOut
+          ? "Sign in before checking for updates."
+          : "Wait for the Local Workspace to become ready.",
+        detail: signedOut
+          ? "Rudder will start the Local Workspace after sign-in. Check for updates again when the workspace is ready."
+          : "The account session is still connecting. Check for updates again when startup finishes.",
+      });
+      return;
+    }
     const result = await checkForUpdates();
 
     if (result.status === "update-available") {
@@ -546,6 +568,12 @@ export function createDesktopUpdateFlow(context: {
       return {
         status: "unavailable",
         message: "The update check did not return a target version.",
+      };
+    }
+    if (!isLocalRuntimeReadyForUpdate()) {
+      return {
+        status: "blocked",
+        message: "Sign in and wait for the Local Workspace to become ready, then start the update again.",
       };
     }
 

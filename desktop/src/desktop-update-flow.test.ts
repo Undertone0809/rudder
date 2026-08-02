@@ -8,6 +8,7 @@ import {
 } from "./postgres-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
+const showMessageBoxMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
@@ -22,7 +23,7 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: vi.fn(),
   dialog: {
-    showMessageBox: vi.fn(),
+    showMessageBox: showMessageBoxMock,
   },
   shell: {
     openExternal: vi.fn(),
@@ -94,7 +95,7 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
     appName: "Rudder",
     getMainWindow: () => mainWindow,
     getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
-    getBootState: () => ({ runtime: { localEnv: "prod_local", version: "0.3.3" } }),
+    getBootState: () => ({ stage: "ready", runtime: { localEnv: "prod_local", version: "0.3.3" } }),
     listRunningRunsForUpdate: async () => createRunSummary(),
     formatUpdateRunDetail: (summary) => summary.blockers
       .map((blocker) => `${blocker.organizationName}: ${blocker.agentName} (run ${blocker.runId})`)
@@ -109,7 +110,68 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
 describe("desktop update flow", () => {
   beforeEach(() => {
     spawnMock.mockReset();
+    showMessageBoxMock.mockReset();
     fs.rmSync("/tmp/rudder-desktop-test/post-update-reload.json", { force: true });
+  });
+
+  it("does not show the startup update notice before the local runtime is ready", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const { flow } = createFlow({ getServerHandle: () => null });
+
+      await flow.maybeShowStartupUpdateNotice();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("keeps manual and direct update entry points recoverable while signed out", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const { flow } = createFlow({ getServerHandle: () => null });
+
+      await flow.showManualUpdateCheckDialog();
+      await expect(flow.installUpdate("0.3.4")).resolves.toEqual({
+        status: "blocked",
+        message: "Sign in and wait for the Local Workspace to become ready, then start the update again.",
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ message: "Sign in before checking for updates." }),
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("blocks update entry points until the account session is ready", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const { flow } = createFlow({
+        getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
+        getBootState: () => ({ stage: "account_exchange" }),
+      });
+
+      await flow.showManualUpdateCheckDialog();
+      await expect(flow.installUpdate("0.3.4")).resolves.toEqual({
+        status: "blocked",
+        message: "Sign in and wait for the Local Workspace to become ready, then start the update again.",
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ message: "Wait for the Local Workspace to become ready." }),
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it("uses the Node-mode CLI runner for macOS update children", () => {
