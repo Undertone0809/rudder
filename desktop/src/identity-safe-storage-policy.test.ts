@@ -20,11 +20,11 @@ function poisonSafeStorage() {
 }
 
 describe("Desktop Identity safe storage policy", () => {
-  it("keeps the unsigned macOS development shell memory-only", () => {
+  it.each([false, true])("keeps the current unsigned macOS shell memory-only (packaged=%s)", (isPackaged) => {
     const nativeStorage = poisonSafeStorage();
     const selectedStorage = resolveDesktopIdentitySafeStorage({
       safeStorage: nativeStorage,
-      isPackaged: false,
+      isPackaged,
       platform: "darwin",
     });
 
@@ -40,7 +40,6 @@ describe("Desktop Identity safe storage policy", () => {
   });
 
   it.each([
-    { isPackaged: true, platform: "darwin" as const },
     { isPackaged: true, platform: "linux" as const },
     { isPackaged: true, platform: "win32" as const },
   ])("preserves native secure storage for packaged apps (%o)", (input) => {
