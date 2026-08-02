@@ -181,6 +181,32 @@ async function installLocalAppsStub(page: Page) {
   });
 }
 
+async function seedLocalAppBinding(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("e2e.localApps.definitions", JSON.stringify([{
+      id: "definition-a",
+      desktopInstallationId: "installation-a",
+      appPublicId: "public-a",
+      localBindingId: "binding-a",
+      title: "MKT dashboard",
+      executable: "/opt/homebrew/bin/npm",
+      argv: ["run", "dev"],
+      cwd: "/Users/zeeland/projects/uranus/rudder/mkt/dashboard",
+      inheritedEnvNames: [],
+      readiness: { path: "/api/health", timeoutMs: 30_000 },
+      openPath: "/outreach",
+      trustFingerprint: "fingerprint-a",
+      approvedFingerprint: "fingerprint-a",
+      createdAt: "2026-07-23T00:00:00.000Z",
+      updatedAt: "2026-07-23T00:00:00.000Z",
+    }]));
+    window.localStorage.setItem(
+      "e2e.localApps.status",
+      JSON.stringify({ status: "stopped", generation: null }),
+    );
+  });
+}
+
 async function calls(page: Page) {
   return page.evaluate(() => JSON.parse(
     window.localStorage.getItem("e2e.localApps.calls") ?? "{}",
@@ -221,6 +247,73 @@ async function closeActiveMainTab(page: Page) {
 }
 
 test.describe("Messenger Local Apps", () => {
+  test("opens a pinned stopped Local App as a restorable top-level workspace", async ({ page }) => {
+    const organization = await createOrganization(page.request);
+    await setExperimentalSitesEnabled(page.request, true);
+    await selectOrganization(page, organization.id);
+    await installLocalAppsStub(page);
+    await seedLocalAppBinding(page);
+    const keepResponse = await page.request.post(
+      `/api/orgs/${organization.id}/messenger/saved-views/keep`,
+      {
+        data: {
+          title: "MKT dashboard",
+          target: {
+            kind: "local_app",
+            desktopInstallationId: "installation-a",
+            appPublicId: "public-a",
+            localBindingId: "binding-a",
+            viewInstanceId: "pinned-local-view-a",
+          },
+          clientMutationId: randomUUID(),
+          placement: { kind: "loose" },
+        },
+      },
+    );
+    expect(keepResponse.ok(), await keepResponse.text()).toBe(true);
+    const kept = await keepResponse.json() as { savedView: { id: string } };
+    const pinResponse = await page.request.patch(
+      `/api/orgs/${organization.id}/messenger/saved-views/${kept.savedView.id}`,
+      { data: { primaryRailPinned: true } },
+    );
+    expect(pinResponse.ok(), await pinResponse.text()).toBe(true);
+
+    await page.setViewportSize({ width: 1500, height: 920 });
+    await page.goto(
+      `/${organization.issuePrefix}/apps/saved/${kept.savedView.id}`,
+    );
+
+    const rail = page.getByTestId("primary-rail");
+    const pin = rail.getByRole("link", { name: "MKT dashboard", exact: true });
+    await expect(pin).toHaveAttribute("aria-current", "page");
+    await expect(rail.getByRole("link", { name: "Apps", exact: true }))
+      .not.toHaveAttribute("aria-current", "page");
+    await expect(rail.getByTestId("primary-rail-active-indicator")).toBeVisible();
+    await expect(rail.getByTestId("primary-rail-pinned-active-indicator")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
+    const workbench = page.getByTestId("messenger-main-workbench");
+    await expect(workbench).toBeVisible();
+    const localView = page.getByTestId("local-app-view").filter({ hasText: "MKT dashboard" });
+    await expect(localView.getByTestId("local-app-start")).toContainText("Start & open");
+    expect((await calls(page)).start ?? 0).toBe(0);
+
+    await page.reload();
+    await expect(page).toHaveURL(
+      new RegExp(`/${organization.issuePrefix}/apps/saved/${kept.savedView.id}$`, "i"),
+    );
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
+    await expect(page.getByTestId("local-app-view").getByTestId("local-app-start"))
+      .toContainText("Start & open");
+    expect((await calls(page)).start ?? 0).toBe(0);
+
+    await page.goto(
+      `/${organization.issuePrefix}/messenger/saved/${kept.savedView.id}`,
+    );
+    await expect(page.getByTestId("workspace-context-card")).toBeVisible();
+    await expect(page.getByTestId("messenger-main-workbench")).toBeVisible();
+    expect((await calls(page)).start ?? 0).toBe(0);
+  });
+
   test("prepares a redacted AI recovery draft until the operator explicitly sends it", async ({ page }) => {
     const organization = await createOrganization(page.request);
     const chat = await createChat(page, organization.id);
@@ -526,7 +619,7 @@ test.describe("Messenger Local Apps", () => {
     await runningSettings.getByTestId("local-app-advanced-toggle").click();
     await expect(runningSettings.getByLabel("Name", { exact: true })).toBeDisabled();
     await expect(runningSettings).toContainText(
-      "Stop this Local App to edit project settings.",
+      "Stop this Local App to edit its launch settings.",
     );
     await runningSettings.getByRole("button", { name: "Cancel" }).click();
     expect((await calls(page)).stop ?? 0).toBe(0);
@@ -593,10 +686,23 @@ test.describe("Messenger Local Apps", () => {
     await expect(savedRow).toBeVisible();
     expect((await calls(page)).stop ?? 0).toBe(0);
     await primaryRailPin.click();
+    await expect(page).toHaveURL(
+      new RegExp(`/apps/saved/${savedEntry.savedView.id}$`),
+    );
+    await expect(primaryRailPin).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
     await expect(main.locator(
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
     )).toBeVisible();
     expect((await calls(page)).start).toBe(startCallsBeforeMove);
+
+    await page.goto(
+      `/${organization.issuePrefix}/messenger/saved/${savedEntry.savedView.id}`,
+    );
+    await expect(page).toHaveURL(
+      new RegExp(`/messenger/saved/${savedEntry.savedView.id}$`),
+    );
+    await expect(page.getByTestId("workspace-context-card")).toBeVisible();
 
     await savedRowContainer.hover();
     await savedRowContainer.getByRole("button", {
@@ -741,7 +847,7 @@ test.describe("Messenger Local Apps", () => {
     );
     await expect(settings.getByLabel("Name", { exact: true })).toBeDisabled();
     await expect(settings).toContainText(
-      "Stop this Local App to edit project settings.",
+      "Stop this Local App to edit its launch settings.",
     );
     await settings.getByRole("button", { name: "Cancel" }).click();
     expect((await calls(page)).stop ?? 0).toBe(0);

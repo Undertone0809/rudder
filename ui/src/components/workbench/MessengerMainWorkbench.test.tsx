@@ -557,17 +557,19 @@ function detachingPromotionState(
   });
 }
 
-function Harness() {
+function Harness({ routeMode = "messenger" }: { routeMode?: "messenger" | "local_app" }) {
   controls = useOrganizationMainWorkbench("org-a");
-  return <MessengerMainWorkbench organizationId="org-a" />;
+  return <MessengerMainWorkbench organizationId="org-a" routeMode={routeMode} />;
 }
 
 function renderWorkbench({
   initialState,
+  routeMode = "messenger",
   runtimeLayer = false,
   sideTarget,
 }: {
   initialState?: MainWorkbenchState;
+  routeMode?: "messenger" | "local_app";
   runtimeLayer?: boolean;
   sideTarget?: Extract<MainWorkbenchTarget, { kind: "browser" }>;
 } = {}) {
@@ -599,7 +601,7 @@ function renderWorkbench({
                 target={sideTarget}
               />
             ) : null}
-            <Harness />
+            <Harness routeMode={routeMode} />
             {runtimeLayer ? <LiveSurfaceRuntimeLayer /> : null}
           </LiveSurfaceRuntimeProvider>
         </MainWorkbenchProvider>
@@ -677,6 +679,24 @@ describe("MessengerMainWorkbench", () => {
       "/messenger/workbench",
       { replace: true },
     );
+  });
+
+  it("keeps Local App Saved View tabs in the top-level Apps route mode", () => {
+    renderWorkbench({ routeMode: "local_app" });
+    const localApp = target("local_app", "saved-local-app");
+    act(() => controls!.openSavedTab("saved-local-a", tabDraft(localApp)));
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/apps/saved/saved-local-a",
+      { replace: true },
+    );
+
+    act(() => {
+      host!
+        .querySelector<HTMLButtonElement>("[aria-label='Close MKT dashboard tab']")
+        ?.click();
+    });
+    expect(navigate).toHaveBeenLastCalledWith("/apps", { replace: true });
   });
 
   it("reorders Main tabs without changing their durable bindings", () => {

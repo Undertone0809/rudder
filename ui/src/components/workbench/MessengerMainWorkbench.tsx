@@ -37,6 +37,7 @@ import {
 } from "@/lib/local-apps";
 import type { MainWorkbenchTab, MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
+  localAppSavedViewRoute,
   messengerSavedViewRoute,
   savedViewKeepInputFromSidePanelTarget,
 } from "@/lib/messenger-saved-views";
@@ -131,8 +132,13 @@ function panelDomId(organizationId: string, viewInstanceId: string) {
   return `messenger-workbench-panel-${encodeURIComponent(organizationId)}-${encodeURIComponent(viewInstanceId)}`;
 }
 
-function routeForTab(tab: MainWorkbenchTab | null) {
-  if (!tab) return "/messenger";
+type MainWorkbenchRouteMode = "messenger" | "local_app";
+
+function routeForTab(tab: MainWorkbenchTab | null, routeMode: MainWorkbenchRouteMode) {
+  if (!tab) return routeMode === "local_app" ? "/apps" : "/messenger";
+  if (routeMode === "local_app" && tab.savedViewId && tab.target.kind === "local_app") {
+    return localAppSavedViewRoute(tab.savedViewId);
+  }
   return tab.savedViewId
     ? messengerSavedViewRoute(tab.savedViewId)
     : "/messenger/workbench";
@@ -791,9 +797,11 @@ function nextTabAfterClose(
 export function MessengerMainWorkbench({
   className,
   organizationId,
+  routeMode = "messenger",
 }: {
   className?: string;
   organizationId: string;
+  routeMode?: MainWorkbenchRouteMode;
 }) {
   const navigate = useNavigate();
   const workbench = useOrganizationMainWorkbench(organizationId);
@@ -815,7 +823,7 @@ export function MessengerMainWorkbench({
   const [bindingAnnouncement, setBindingAnnouncement] = useState("");
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastActiveRouteRef = useRef<string | null>(
-    workbench.activeTab ? routeForTab(workbench.activeTab) : null,
+    workbench.activeTab ? routeForTab(workbench.activeTab, routeMode) : null,
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -835,7 +843,7 @@ export function MessengerMainWorkbench({
         target: Extract<MainWorkbenchTarget, { kind: "browser" }>;
       }
     : null;
-  const activeRoute = workbench.activeTab ? routeForTab(workbench.activeTab) : null;
+  const activeRoute = workbench.activeTab ? routeForTab(workbench.activeTab, routeMode) : null;
   const movingViewInstanceIds = useMemo(
     () => new Set(
       Object.values(workbench.promotionsById)
@@ -849,7 +857,7 @@ export function MessengerMainWorkbench({
     if (!activeRoute) {
       if (lastActiveRouteRef.current !== null) {
         lastActiveRouteRef.current = null;
-        navigate("/messenger", { replace: true });
+        navigate(routeForTab(null, routeMode), { replace: true });
         return;
       }
       lastActiveRouteRef.current = null;
@@ -858,7 +866,7 @@ export function MessengerMainWorkbench({
     if (lastActiveRouteRef.current === activeRoute) return;
     lastActiveRouteRef.current = activeRoute;
     navigate(activeRoute, { replace: true });
-  }, [activeRoute, navigate]);
+  }, [activeRoute, navigate, routeMode]);
 
   useEffect(() => {
     if (workbench.activeViewInstanceId) {
@@ -874,10 +882,10 @@ export function MessengerMainWorkbench({
 
   const activateTab = useCallback((tab: MainWorkbenchTab) => {
     workbench.focusTab(tab.viewInstanceId);
-    const route = routeForTab(tab);
+    const route = routeForTab(tab, routeMode);
     lastActiveRouteRef.current = route;
     navigate(route, { replace: true });
-  }, [navigate, workbench.focusTab]);
+  }, [navigate, routeMode, workbench.focusTab]);
 
   const focusRelativeTab = useCallback((
     currentViewInstanceId: string,
@@ -942,7 +950,7 @@ export function MessengerMainWorkbench({
     );
     workbench.closeTab(tab.viewInstanceId);
     disposeSurface(tab.runtimeId);
-    const route = routeForTab(nextTab);
+    const route = routeForTab(nextTab, routeMode);
     lastActiveRouteRef.current = nextTab ? route : null;
     navigate(route, { replace: true });
   }, [
@@ -950,6 +958,7 @@ export function MessengerMainWorkbench({
     flushBrowserSavedViewTarget,
     navigate,
     movingViewInstanceIds,
+    routeMode,
     workbench.activeViewInstanceId,
     workbench.closeTab,
     workbench.tabOrder,

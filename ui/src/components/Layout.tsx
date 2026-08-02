@@ -927,7 +927,8 @@ export function Layout() {
   );
   const useMiddleContextColumn = useMemo(
     () =>
-      /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+      !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativeBoardPath)
+      && /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isWorkspaceBackupsRoute = useMemo(

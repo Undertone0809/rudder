@@ -15,9 +15,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 export function MessengerSavedViewWorkspace({
   organizationId,
+  routeMode = "messenger",
   savedViewId,
 }: {
   organizationId: string;
+  routeMode?: "messenger" | "local_app";
   savedViewId: string;
 }) {
   const workbench = useOrganizationMainWorkbench(organizationId);
@@ -140,6 +142,7 @@ export function MessengerSavedViewWorkspace({
       <MessengerMainWorkbench
         className="min-h-0 flex-1"
         organizationId={organizationId}
+        routeMode={routeMode}
       />
     </div>
   );

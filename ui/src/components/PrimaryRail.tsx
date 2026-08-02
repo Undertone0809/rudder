@@ -20,6 +20,7 @@ import {
 } from "@/lib/desktop-notification-permission";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
+import { localAppSavedViewRoute } from "@/lib/messenger-saved-views";
 import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";
@@ -107,6 +108,7 @@ function RailNavItem({
   onDoubleClick,
   onContextMenu,
   localAppIdentity,
+  end,
 }: {
   to: string;
   label: string;
@@ -119,10 +121,12 @@ function RailNavItem({
   onDoubleClick?: () => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
+  end?: boolean;
 }) {
   return (
     <NavLink
       to={to}
+      end={end}
       aria-current={active ? "page" : undefined}
       data-tour-target={tourTarget}
       data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
@@ -132,9 +136,7 @@ function RailNavItem({
         cn(
           "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
           (active ?? isActive)
-            ? localAppIdentity
-              ? "text-[color:var(--sidebar-foreground)] dark:text-[#def4eb]"
-              : "text-white"
+            ? "text-white"
             : [
               "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
               "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
@@ -144,13 +146,6 @@ function RailNavItem({
         )
       }
     >
-      {localAppIdentity && active ? (
-        <span
-          className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-full bg-[#6ee7b7]"
-          data-testid="primary-rail-pinned-active-indicator"
-          aria-hidden="true"
-        />
-      ) : null}
       <span className="relative">
         {localAppIdentity ? (
           <LocalAppIdentityIcon
@@ -276,7 +271,8 @@ export function PrimaryRail({
           to: appsEntryPath,
           label: "Apps",
           icon: AppWindow,
-          active: /^\/apps(?:\/|$)/.test(relativePath),
+          active: /^\/apps(?:\/|$)/.test(relativePath)
+            && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
         }]
       : []),
     {
@@ -299,20 +295,27 @@ export function PrimaryRail({
     .filter((savedView) => savedView.targetPayload.kind === "local_app")
     .map((savedView) => ({
       key: `saved-view:${savedView.id}`,
-      to: `/messenger/saved/${encodeURIComponent(savedView.id)}`,
+      to: localAppSavedViewRoute(savedView.id),
       label: savedView.title,
       icon: MessageSquare,
       localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
-      active: relativePath === `/messenger/saved/${encodeURIComponent(savedView.id)}`,
+      active: relativePath === localAppSavedViewRoute(savedView.id),
     }))
     : [];
-  if (pinnedLocalAppItems.some((item) => item.active)) {
-    const messengerItem = railItems.find((item) => item.key === "messenger");
-    if (messengerItem) messengerItem.active = false;
-  }
-  const activeRailIndex = railItems.findIndex((item) => item.active);
+  const activeFixedRailIndex = railItems.findIndex((item) => item.active);
+  const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
+  const activeRailIndex = activeFixedRailIndex >= 0
+    ? activeFixedRailIndex
+    : activePinnedRailIndex >= 0
+      ? railItems.length + activePinnedRailIndex
+      : -1;
   const activeRailStyle = activeRailIndex >= 0
-    ? ({ "--motion-rail-active-index": activeRailIndex } as CSSProperties)
+    ? ({
+        "--motion-rail-active-index": activeRailIndex,
+        "--motion-rail-active-offset": activePinnedRailIndex >= 0
+          ? `calc(${activeRailIndex} * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)) + 0.6875rem)`
+          : `calc(${activeRailIndex} * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))`,
+      } as CSSProperties)
     : undefined;
   const handleMessengerDoubleClick = useCallback(() => {
     if ((inboxBadge.inbox ?? 0) <= 0) return;
@@ -537,6 +540,7 @@ export function PrimaryRail({
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
             onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
             localAppIdentity={item.localAppIdentity}
+            end={item.key === "apps" ? true : undefined}
           />
         ))}
         {pinnedLocalAppItems.length > 0 ? (
