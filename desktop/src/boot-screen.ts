@@ -509,7 +509,7 @@ export function createBootScreenHtml(
         </form>
         <form class="email-form native-auth-panel" id="email-code-form" hidden>
           <label>Verification code
-            <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="6-digit code">
+            <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Email code">
           </label>
           <button class="auth-primary auth-entry" type="submit">Verify and sign in</button>
           <button class="password-recovery" id="email-code-back-button" type="button">Use a different email</button>
@@ -525,7 +525,7 @@ export function createBootScreenHtml(
           <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
           <form class="email-form native-auth-panel" id="password-reset-form" hidden>
             <label>Reset code
-              <input id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="6-digit code">
+              <input id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Reset code">
             </label>
             <label>New password
               <input id="new-password" required type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="At least 8 characters">

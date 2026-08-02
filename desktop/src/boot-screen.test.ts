@@ -31,6 +31,13 @@ describe("desktop boot screen", () => {
     expect(html).toContain("window.rudderBoot.signInWithPassword");
     expect(html).toContain("window.rudderBoot.requestPasswordReset");
     expect(html).toContain("window.rudderBoot.resetPassword");
+    expect(html).toContain(
+      'id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Email code"',
+    );
+    expect(html).toContain(
+      'id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Reset code"',
+    );
+    expect(html).not.toContain("6-digit code");
     expect(html).not.toContain("Opening email code sign-in in your browser");
     expect(html).not.toContain("Opening password sign-in in your browser");
     expect(html).not.toContain("Opening password recovery in your browser");
