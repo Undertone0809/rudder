@@ -135,6 +135,42 @@ function selectionIsOnMarkdownListItem(view: EditorView) {
     return true;
   });
 }
+
+function moveMarkdownCursorVertically(view: EditorView, forward: boolean) {
+  const selection = view.state.selection;
+  if (selection.ranges.length !== 1 || !selection.main.empty) return false;
+
+  const current = selection.main;
+  const currentLine = view.state.doc.lineAt(current.head);
+  const adjacentLineNumber = currentLine.number + (forward ? 1 : -1);
+  if (adjacentLineNumber < 1 || adjacentLineNumber > view.state.doc.lines) return false;
+
+  const nativeTarget = view.moveVertically(current, forward);
+  const nativeLine = view.state.doc.lineAt(nativeTarget.head);
+  const skippedSourceLine = forward
+    ? nativeLine.number > adjacentLineNumber
+    : nativeLine.number < adjacentLineNumber;
+
+  if (!skippedSourceLine) {
+    view.dispatch({
+      selection: nativeTarget,
+      scrollIntoView: true,
+      userEvent: "select",
+    });
+    return true;
+  }
+
+  const adjacentLine = view.state.doc.line(adjacentLineNumber);
+  const sourceColumn = current.head - currentLine.from;
+  view.dispatch({
+    selection: EditorSelection.cursor(
+      adjacentLine.from + Math.min(sourceColumn, adjacentLine.length),
+    ),
+    scrollIntoView: true,
+    userEvent: "select",
+  });
+  return true;
+}
 const testEditorViews = new WeakMap<Element, EditorView>();
 
 function sourceLineSeparator(source: string) {
@@ -1211,24 +1247,28 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         },
         {
           key: "ArrowDown",
-          run: () => {
+          run: (view) => {
             const options = filteredMentionsRef.current;
-            if (!mentionStateRef.current || options.length === 0) return false;
-            setActiveMentionIndex(
-              (mentionIndexRef.current + 1) % options.length,
-            );
-            return true;
+            if (mentionStateRef.current && options.length > 0) {
+              setActiveMentionIndex(
+                (mentionIndexRef.current + 1) % options.length,
+              );
+              return true;
+            }
+            return moveMarkdownCursorVertically(view, true);
           },
         },
         {
           key: "ArrowUp",
-          run: () => {
+          run: (view) => {
             const options = filteredMentionsRef.current;
-            if (!mentionStateRef.current || options.length === 0) return false;
-            setActiveMentionIndex(
-              (mentionIndexRef.current - 1 + options.length) % options.length,
-            );
-            return true;
+            if (mentionStateRef.current && options.length > 0) {
+              setActiveMentionIndex(
+                (mentionIndexRef.current - 1 + options.length) % options.length,
+              );
+              return true;
+            }
+            return moveMarkdownCursorVertically(view, false);
           },
         },
         {

@@ -149,3 +149,37 @@ test("Library preview reveals exact Markdown without moving surrounding source l
   expect(saved.ok(), await saved.text()).toBe(true);
   expect((await saved.json() as { content: string }).content).toBe(markdown);
 });
+
+test("Library vertical cursor movement visits every adjacent Markdown source line", async ({
+  page,
+  request,
+}) => {
+  const organization = await createOrganization(request);
+  const filePath = "docs/vertical-cursor-navigation.md";
+  const markdown = "# Heading\n\nParagraph\n";
+  const createFile = await request.post(
+    `${E2E_BASE_URL}/api/orgs/${organization.id}/workspace/file`,
+    { data: { filePath, content: markdown } },
+  );
+  expect(createFile.ok(), await createFile.text()).toBe(true);
+  await selectOrganization(page, organization.id);
+  await page.goto(
+    `${E2E_BASE_URL}/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`,
+  );
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const activeLine = editor.locator(".cm-activeLine");
+  await editor.locator('[data-source-line-start="1"]').click();
+  await expect(activeLine).toHaveAttribute("data-source-line-start", "1");
+
+  await page.keyboard.press("ArrowDown");
+  await expect(activeLine).toHaveAttribute("data-source-line-start", "2");
+  await page.keyboard.press("ArrowDown");
+  await expect(activeLine).toHaveAttribute("data-source-line-start", "3");
+  await page.keyboard.press("ArrowDown");
+  await expect(activeLine).toHaveAttribute("data-source-line-start", "4");
+  await page.keyboard.press("ArrowUp");
+  await expect(activeLine).toHaveAttribute("data-source-line-start", "3");
+});

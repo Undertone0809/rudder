@@ -2,7 +2,7 @@
 
 import { isolateHistory } from "@codemirror/commands";
 import { highlightingFor } from "@codemirror/language";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import {
@@ -2024,5 +2024,46 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(editorView().state.doc.line(3).text).toBe("X## Three");
     expect(editorView().state.selection.main.head).toBe(revealPosition + 1);
+  });
+
+  it("clamps vertical cursor movement when preview widgets skip source lines", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"# Heading\n\nParagraph\n"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const view = editorView();
+    act(() => {
+      view.focus();
+      view.dispatch({ selection: { anchor: view.state.doc.line(2).from } });
+    });
+    const verticalMove = vi.spyOn(view, "moveVertically");
+    verticalMove.mockImplementation((_range, forward) => EditorSelection.cursor(
+      view.state.doc.line(forward ? 4 : 1).from,
+    ));
+
+    act(() => {
+      view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3);
+
+    act(() => {
+      view.dispatch({ selection: { anchor: view.state.doc.line(4).from } });
+      view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowUp",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3);
   });
 });
