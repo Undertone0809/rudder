@@ -1080,6 +1080,10 @@ type IssueDetailProps = {
   embedded?: boolean;
 };
 
+export function linkedIssueRunsRefetchInterval(hasLiveRuns: boolean) {
+  return hasLiveRuns ? 5000 : false;
+}
+
 export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueDetailProps = {}) {
   const params = useParams<{ issueId: string }>();
   const issueId = embeddedIssueId ?? params.issueId;
@@ -1147,13 +1151,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     enabled: !!issueId,
   });
 
-  const { data: linkedRuns } = useQuery({
-    queryKey: queryKeys.issues.runs(issueId!),
-    queryFn: () => activityApi.runsForIssue(issueId!),
-    enabled: !!issueId,
-    refetchInterval: 5000,
-  });
-
   const { data: attachments } = useQuery({
     queryKey: queryKeys.issues.attachments(issueId!),
     queryFn: () => issuesApi.listAttachments(issueId!),
@@ -1175,6 +1172,19 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   });
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
+  const { data: linkedRuns } = useQuery({
+    queryKey: queryKeys.issues.runs(issueId!),
+    queryFn: () => activityApi.runsForIssue(issueId!),
+    enabled: !!issueId,
+    refetchInterval: linkedIssueRunsRefetchInterval(hasLiveRuns),
+  });
+  const hadLiveRunsRef = useRef(false);
+  useEffect(() => {
+    if (hadLiveRunsRef.current && !hasLiveRuns && issueId) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) });
+    }
+    hadLiveRunsRef.current = hasLiveRuns;
+  }, [hasLiveRuns, issueId, queryClient]);
   const sourceBreadcrumb = useMemo(
     () => readIssueDetailBreadcrumb(location.state) ?? (
       issueRouteBasePath === "/messenger/issues"

@@ -27,6 +27,26 @@ describe("summarizeHeartbeatRunResultJson", () => {
     });
   });
 
+  it("preserves bounded provider and billing metadata for summary projections", () => {
+    const summary = summarizeHeartbeatRunResultJson({
+      summary: "Completed.",
+      provider: "openai",
+      biller: "chatgpt",
+      model: "gpt-5.6",
+      billingType: "subscription_included",
+      internalAdapterState: "x".repeat(100_000),
+    });
+
+    expect(summary).toEqual({
+      summary: "Completed.",
+      provider: "openai",
+      biller: "chatgpt",
+      model: "gpt-5.6",
+      billingType: "subscription_included",
+    });
+    expect(JSON.stringify(summary)).not.toContain("internalAdapterState");
+  });
+
   it("preserves recoverable chat failure user messages for list summaries", () => {
     const summary = summarizeHeartbeatRunResultJson({
       outcome: "failed",

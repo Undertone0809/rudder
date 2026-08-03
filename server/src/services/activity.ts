@@ -954,9 +954,39 @@ export function activityService(db: Db) {
           createdAt: heartbeatRuns.createdAt,
           invocationSource: heartbeatRuns.invocationSource,
           triggerDetail: heartbeatRuns.triggerDetail,
-          contextSnapshot: heartbeatRuns.contextSnapshot,
+          contextSnapshot: sql<Record<string, unknown> | null>`nullif(jsonb_strip_nulls(jsonb_build_object(
+            'issueId', ${heartbeatRuns.contextSnapshot} -> 'issueId',
+            'resumeFromRunId', ${heartbeatRuns.contextSnapshot} -> 'resumeFromRunId',
+            'passiveFollowup', case
+              when jsonb_typeof(${heartbeatRuns.contextSnapshot} -> 'passiveFollowup') = 'object'
+                then jsonb_strip_nulls(jsonb_build_object(
+                  'attempt', ${heartbeatRuns.contextSnapshot} -> 'passiveFollowup' -> 'attempt',
+                  'maxAttempts', ${heartbeatRuns.contextSnapshot} -> 'passiveFollowup' -> 'maxAttempts'
+                ))
+              else null
+            end
+          )), '{}'::jsonb)`.as("contextSnapshot"),
           usageJson: heartbeatRuns.usageJson,
-          resultJson: heartbeatRuns.resultJson,
+          resultJson: heartbeatRuns.resultSummaryJson,
+          resultFallbackJson: sql<Record<string, unknown> | null>`case
+            when ${heartbeatRuns.resultSummaryJson} is null then jsonb_strip_nulls(jsonb_build_object(
+              'summary', left(${heartbeatRuns.resultJson} ->> 'summary', 500),
+              'result', left(${heartbeatRuns.resultJson} ->> 'result', 500),
+              'message', left(${heartbeatRuns.resultJson} ->> 'message', 500),
+              'error', left(${heartbeatRuns.resultJson} ->> 'error', 500),
+              'userMessage', left(${heartbeatRuns.resultJson} ->> 'userMessage', 500),
+              'body', left(${heartbeatRuns.resultJson} ->> 'body', 500),
+              'stdout', left(${heartbeatRuns.resultJson} ->> 'stdout', 32768),
+              'provider', left(${heartbeatRuns.resultJson} ->> 'provider', 500),
+              'biller', left(${heartbeatRuns.resultJson} ->> 'biller', 500),
+              'model', left(${heartbeatRuns.resultJson} ->> 'model', 500),
+              'billingType', left(${heartbeatRuns.resultJson} ->> 'billingType', 100),
+              'total_cost_usd', ${heartbeatRuns.resultJson} -> 'total_cost_usd',
+              'cost_usd', ${heartbeatRuns.resultJson} -> 'cost_usd',
+              'costUsd', ${heartbeatRuns.resultJson} -> 'costUsd'
+            ))
+            else null
+          end`.as("resultFallbackJson"),
         })
         .from(heartbeatRuns)
         .where(
@@ -976,10 +1006,30 @@ export function activityService(db: Db) {
           ),
         )
         .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
-      return runs.map((run) => ({
-        ...run,
-        contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
-      }));
+      return runs.map((run) => {
+        const { resultFallbackJson, ...publicRun } = run;
+        const usage = run.usageJson && typeof run.usageJson === "object" && !Array.isArray(run.usageJson)
+          ? run.usageJson
+          : {};
+        const usageMetadata = Object.fromEntries(
+          (["provider", "biller", "model", "billingType"] as const).flatMap((key) => {
+            const value = usage[key];
+            if (typeof value !== "string" || value.length === 0) return [];
+            const maxLength = key === "billingType" ? 100 : 500;
+            return [[key, value.slice(0, maxLength)]];
+          }),
+        );
+        const resultJson = {
+          ...(resultFallbackJson ?? {}),
+          ...usageMetadata,
+          ...(run.resultJson ?? {}),
+        };
+        return {
+          ...publicRun,
+          resultJson: Object.keys(resultJson).length > 0 ? resultJson : null,
+          contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
+        };
+      });
     },
 
     issuesForRun: async (runId: string) => {

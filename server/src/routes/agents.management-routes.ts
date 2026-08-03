@@ -1195,6 +1195,16 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json(toAgentRuns(runs));
   });
 
+  router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const overview = await heartbeat.overview(orgId);
+    res.json({
+      latestByAgent: toAgentRuns(overview.latestByAgent),
+      recent: toAgentRuns(overview.recent),
+    });
+  });
+
   async function listRunsForRequest(req: Request, orgId: string) {
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;

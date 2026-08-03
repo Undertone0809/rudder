@@ -116,6 +116,40 @@ const runs = [
     createdAt: new Date("2026-04-18T10:01:00.000Z"),
     updatedAt: new Date("2026-04-18T10:01:00.000Z"),
   },
+  {
+    id: "run-inactive-agent",
+    orgId: "org-1",
+    agentId: "agent-off",
+    invocationSource: "on_demand",
+    triggerDetail: "manual",
+    status: "succeeded",
+    startedAt: new Date("2025-01-01T09:00:00.000Z"),
+    finishedAt: new Date("2025-01-01T09:01:00.000Z"),
+    error: null,
+    wakeupRequestId: null,
+    exitCode: 0,
+    signal: null,
+    usageJson: null,
+    resultJson: { summary: "Inactive agent history remains visible." },
+    sessionIdBefore: null,
+    sessionIdAfter: null,
+    logStore: null,
+    logRef: null,
+    logBytes: null,
+    logSha256: null,
+    logCompressed: false,
+    stdoutExcerpt: null,
+    stderrExcerpt: null,
+    errorCode: null,
+    externalRunId: null,
+    processPid: null,
+    processStartedAt: null,
+    retryOfRunId: null,
+    processLossRetryCount: 0,
+    contextSnapshot: null,
+    createdAt: new Date("2025-01-01T09:00:00.000Z"),
+    updatedAt: new Date("2025-01-01T09:01:00.000Z"),
+  },
 ];
 
 const liveRuns = [
@@ -139,8 +173,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents") {
       return { data: agents, isLoading: false, error: null };
     }
-    if (queryKey[0] === "heartbeats") {
-      return { data: runs, isLoading: false, error: null };
+    if (queryKey[0] === "agent-runs" && queryKey[2] === "overview") {
+      return { data: { latestByAgent: runs, recent: [runs[0]] }, isLoading: false, error: null };
     }
     if (queryKey[0] === "live-runs") {
       return { data: liveRuns, isLoading: false, error: null };
@@ -195,6 +229,7 @@ describe("OrganizationHeartbeats", () => {
     expect(html).toContain("Live now");
     expect(html).toContain("Configured, inactive");
     expect(html).toContain("Disabled");
+    expect(html).toContain("Inactive agent history remains visible.");
     expect(html).toMatch(
       /Timer heartbeat state for Blake[\s\S]*?aria-pressed="false"[^>]*>On<\/button>[\s\S]*?aria-pressed="true"[^>]*>Off<\/button>/,
     );
