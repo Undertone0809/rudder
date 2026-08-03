@@ -711,6 +711,102 @@ test.describe("Chat Side Panel", () => {
     });
   });
 
+  test("keeps adjacent issue links clickable while a hover preview is open", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Hover-Links-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Hover preview must not block the next issue link",
+        description: "The preview is intentionally tall enough to overlap the next paragraph.",
+        status: "todo",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    const issueRef = issue.identifier ?? issue.id;
+    const secondIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "The adjacent issue must open after one click",
+        description: "The second link identifies the issue that the click must open.",
+        status: "backlog",
+        priority: "medium",
+      },
+    });
+    expect(secondIssueRes.ok(), await secondIssueRes.text()).toBe(true);
+    const secondIssue = await secondIssueRes.json() as { id: string; identifier: string | null };
+    const secondIssueRef = secondIssue.identifier ?? secondIssue.id;
+    const mentionHref = buildIssueMentionHref(issue.id, issueRef);
+    const secondMentionHref = buildIssueMentionHref(secondIssue.id, secondIssueRef);
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Adjacent issue link hover regression",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open either issue reference beside this chat." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `First [${issueRef}](${mentionHref}).\n\nSecond [${secondIssueRef}](${secondMentionHref}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("First", { timeout: 15_000 });
+    const issueLinks = assistantMessage.locator('a[data-mention-kind="issue"]');
+    await expect(issueLinks).toHaveCount(2);
+
+    await issueLinks.nth(0).hover();
+    const previewCard = page.locator(".rudder-entity-preview-card");
+    await expect(previewCard).toBeVisible({ timeout: 5_000 });
+    const previewBox = await previewCard.boundingBox();
+    const secondLinkBox = await issueLinks.nth(1).boundingBox();
+    expect(previewBox).not.toBeNull();
+    expect(secondLinkBox).not.toBeNull();
+    expect(previewBox!.x).toBeLessThan(secondLinkBox!.x + secondLinkBox!.width);
+    expect(previewBox!.x + previewBox!.width).toBeGreaterThan(secondLinkBox!.x);
+    expect(previewBox!.y).toBeLessThan(secondLinkBox!.y + secondLinkBox!.height);
+    expect(previewBox!.y + previewBox!.height).toBeGreaterThan(secondLinkBox!.y);
+    await issueLinks.nth(1).click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
+    await expect(sidePanel).toContainText("The adjacent issue must open after one click");
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-adjacent-issue-link-click.png"),
+      fullPage: true,
+    });
+  });
+
   test("opens a Library document with Desktop app, Finder, and Terminal targets", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

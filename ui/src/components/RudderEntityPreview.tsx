@@ -638,11 +638,16 @@ export function RudderEntityPreview({ mention, label, children }: RudderEntityPr
   const [activated, setActivated] = useState(false);
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<PreviewState>({ status: "idle" });
-  const loadStartedRef = useRef(false);
+  const loadStartedKeyRef = useRef<string | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerWrapRef = useRef<HTMLSpanElement>(null);
   const orgId = useMemo(readSelectedOrgId, []);
+  const mentionRef = useRef(mention);
+  const labelRef = useRef(label);
+  mentionRef.current = mention;
+  labelRef.current = label;
+  const previewKey = orgId ? entityPreviewCacheKey(mention, orgId) : null;
 
   useEffect(() => {
     if (mention.kind !== "library_entry") return;
@@ -662,20 +667,23 @@ export function RudderEntityPreview({ mention, label, children }: RudderEntityPr
   };
 
   useEffect(() => {
-    if (!activated || loadStartedRef.current) return;
-    loadStartedRef.current = true;
+    if (!activated) return;
     if (!orgId) {
       setState({ status: "error", message: "Preview unavailable outside an organization." });
       return;
     }
+    if (!previewKey || loadStartedKeyRef.current === previewKey) return;
+    loadStartedKeyRef.current = previewKey;
 
     let cancelled = false;
-    if (mention.kind === "agent") {
-      setState({ status: "ready", preview: buildAgentFallbackPreview(mention, label) });
+    const activeMention = mentionRef.current;
+    const activeLabel = labelRef.current;
+    if (activeMention.kind === "agent") {
+      setState({ status: "ready", preview: buildAgentFallbackPreview(activeMention, activeLabel) });
     } else {
       setState({ status: "loading" });
     }
-    void loadPreview(mention, label, orgId)
+    void loadPreview(activeMention, activeLabel, orgId)
       .then((preview) => {
         if (!cancelled) setState({ status: "ready", preview });
       })
@@ -686,7 +694,7 @@ export function RudderEntityPreview({ mention, label, children }: RudderEntityPr
     return () => {
       cancelled = true;
     };
-  }, [activated, label, mention, orgId]);
+  }, [activated, orgId, previewKey]);
 
   useEffect(() => {
     return () => {
@@ -704,8 +712,17 @@ export function RudderEntityPreview({ mention, label, children }: RudderEntityPr
         clearCloseTimer();
         return;
       }
-      const insidePreviewCard = Array.from(document.querySelectorAll(".rudder-entity-preview-card"))
-        .some((card) => card.contains(target));
+      // The preview surface is visually above the document but lets ordinary
+      // document clicks pass through. Use coordinates so the close timer does
+      // not fire while the pointer is crossing that surface.
+      const insidePreviewCard = Array.from(document.querySelectorAll<HTMLElement>(".rudder-entity-preview-card"))
+        .some((card) => {
+          const rect = card.getBoundingClientRect();
+          return event.clientX >= rect.left
+            && event.clientX <= rect.right
+            && event.clientY >= rect.top
+            && event.clientY <= rect.bottom;
+        });
       if (insidePreviewCard) {
         clearCloseTimer();
         return;

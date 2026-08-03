@@ -26,6 +26,7 @@ import type { MentionOption } from "./MarkdownEditor";
 import {
   __clearRudderEntityPreviewCachesForTests,
   RUDDER_ENTITY_PREVIEW_HOVER_DELAY_MS,
+  RudderEntityPreview,
 } from "./RudderEntityPreview";
 
 (
@@ -1433,6 +1434,69 @@ describe("MarkdownBody", () => {
       expect(row.querySelector(".rudder-entity-preview-row-value > span[aria-hidden='true']")).toBeTruthy();
     }
     expect(document.body.querySelector(".rudder-entity-preview-card")?.classList.contains("motion-entity-preview-pop")).toBe(true);
+  });
+
+  it("keeps a pending preview load alive when the mention object is recreated", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    const mention = {
+      kind: "issue",
+      issueId: "issue-789",
+      ref: "PAP-123",
+      commentId: null,
+      status: "in_review",
+    } as const;
+    const previewIssue = {
+      id: "issue-789",
+      orgId: "org-1",
+      title: "Auth flow polish",
+      identifier: "PAP-123",
+      status: "in_review",
+      priority: "high",
+      projectId: null,
+      project: null,
+      assigneeAgentId: null,
+      reviewerAgentId: null,
+      description: "Tighten the markdown renderable link behavior.",
+    };
+    let resolvePreview: ((issue: typeof previewIssue) => void) | null = null;
+    entityPreviewApiMocks.getIssue.mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePreview = resolve;
+      }),
+    );
+    function PreviewParent() {
+      const [, setVersion] = useState(0);
+      return (
+        <>
+          <button type="button" data-testid="force-preview-parent-rerender" onClick={() => setVersion((version) => version + 1)}>
+            Rerender
+          </button>
+          <RudderEntityPreview mention={{ ...mention }} label="PAP-123 auth flow">
+            <a href={buildIssueMentionHref("issue-789", "PAP-123", null, "in_review")}>PAP-123 auth flow</a>
+          </RudderEntityPreview>
+        </>
+      );
+    }
+    const container = render(<PreviewParent />);
+
+    await hoverPreviewLink(container.querySelector("a"));
+    await advanceTimersAndFlush(RUDDER_ENTITY_PREVIEW_HOVER_DELAY_MS);
+    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledWith("issue-789");
+    expect(document.body.textContent).toContain("Loading preview...");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='force-preview-parent-rerender']")?.click();
+    });
+    expect(resolvePreview).not.toBeNull();
+    await act(async () => {
+      resolvePreview!(previewIssue);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Auth flow polish");
+    expect(document.body.textContent).not.toContain("Loading preview...");
   });
 
   it("does not load or render entity previews during quick hover passes", async () => {

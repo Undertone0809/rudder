@@ -4751,6 +4751,8 @@ a.rudder-skill-token::before {
   position: relative;
   isolation: isolate;
   display: block;
+  /* Informational previews must not steal clicks from links underneath them. */
+  pointer-events: none;
   width: min(32rem, calc(100vw - 2rem));
   max-width: calc(100vw - 2rem);
   max-height: min(32rem, calc(100vh - 3rem));
