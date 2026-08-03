@@ -2112,7 +2112,7 @@ async function runAccountGateScenario(mode) {
       "verification-code mode must not show the password page",
     );
     await interactionPage.screenshot({ path: emailCodeScreenshotPath, fullPage: true });
-    await interactionPage.getByRole("button", { name: "换一个登录方式" }).click();
+    await interactionPage.getByRole("button", { name: "Use another sign-in method" }).click();
     await interactionPage.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     assert.equal(
       await interactionPage.getByRole("button", { name: "Continue with Google" }).isVisible(),

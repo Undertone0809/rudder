@@ -222,7 +222,7 @@ export function createBootScreenHtml(
       }
       .account-sheet {
         width: min(440px, calc(100vw - 40px));
-        padding: 34px;
+        padding: 32px;
         background: var(--paper);
         border: 1px solid var(--border);
         border-radius: 22px;
@@ -232,7 +232,7 @@ export function createBootScreenHtml(
         width: 44px;
         height: 44px;
         display: grid;
-        margin: 0 auto 20px;
+        margin: 0 auto 24px;
         place-items: center;
         overflow: hidden;
         border: 1px solid var(--border-strong);
@@ -243,13 +243,14 @@ export function createBootScreenHtml(
       .account-brand img { width: 32px; height: 32px; object-fit: contain; }
       .account-brand .brand-fallback { width: 32px; height: 32px; border-radius: 0; font-size: 17px; }
       .account-sheet h1 {
+        margin: 0 0 24px;
         text-align: center;
         font-size: 28px;
         letter-spacing: -0.035em;
         line-height: 1.15;
       }
       #account-title:focus { outline: none; }
-      .social-stack { display: grid; gap: 10px; }
+      .social-stack { display: grid; gap: 12px; }
       .auth-button {
         position: relative;
         width: 100%;
@@ -271,7 +272,7 @@ export function createBootScreenHtml(
         grid-template-columns: 1fr auto 1fr;
         gap: 12px;
         align-items: center;
-        margin: 22px 0;
+        margin: 4px 0;
         color: var(--faint);
         font-size: 11px;
         font-weight: 760;
@@ -279,12 +280,12 @@ export function createBootScreenHtml(
         text-transform: uppercase;
       }
       .divider::before, .divider::after { content: ""; height: 1px; background: var(--border); }
-      .email-form { display: grid; gap: 8px; }
+      .email-form { display: grid; gap: 12px; }
       .email-form label { color: var(--text); font-size: 13px; font-weight: 650; }
       .email-form input {
         width: 100%;
         min-height: 48px;
-        margin-top: 7px;
+        margin-top: 8px;
         padding: 11px 13px;
         border: 1px solid var(--border-strong);
         border-radius: 10px;
@@ -302,7 +303,7 @@ export function createBootScreenHtml(
       .auth-primary {
         width: 100%;
         min-height: 48px;
-        margin-top: 8px;
+        margin-top: 4px;
         border-radius: 10px;
         background: var(--accent);
         color: var(--paper-solid);
@@ -316,7 +317,7 @@ export function createBootScreenHtml(
         display: block;
         width: fit-content;
         min-height: 32px;
-        margin: 12px auto 0;
+        margin: 0 auto;
         padding: 0;
         border: 0;
         background: transparent;
@@ -328,13 +329,13 @@ export function createBootScreenHtml(
       .mode-toggle:hover:not(:disabled) { color: var(--text); transform: none; }
       .back-toggle::before { content: "← "; }
       .back-toggle::after { content: none; }
-      .auth-page { display: grid; }
-      .password-panel { gap: 8px; }
+      .auth-page { display: grid; gap: 16px; }
+      .password-panel { gap: 16px; }
       .password-actions { display: grid; gap: 8px; }
       .native-auth-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .password-recovery {
         width: fit-content;
-        min-height: 30px;
+        min-height: 32px;
         margin: 0 auto;
         padding: 0;
         border: 0;
@@ -498,7 +499,7 @@ export function createBootScreenHtml(
             <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Email code">
           </label>
           <button class="auth-primary auth-entry" type="submit">Verify and sign in</button>
-          <button class="password-recovery auth-navigation" id="email-code-back-button" type="button">换一个登录方式</button>
+          <button class="password-recovery auth-navigation" id="email-code-back-button" type="button">Use another sign-in method</button>
         </form>
         <div class="password-panel auth-page" id="password-panel" hidden>
           <form class="email-form" id="password-sign-in-form">
