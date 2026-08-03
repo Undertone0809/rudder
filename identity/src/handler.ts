@@ -2052,7 +2052,7 @@ export async function identityHandler(
       const pseudonymousInstallationId = stringField(body, "pseudonymous_installation_id");
       if (
         installationId !== access.installationId
-        || mode !== "account_linked"
+        || (mode !== "anonymous" && mode !== "account_linked")
         || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
       ) throw new Error("invalid_request");
       const consent = await assertIdentityProductAnalyticsConsent(runtime.db, {

@@ -98,9 +98,9 @@ revocable and retryable without losing the local evidence ledger.
    advances the consent epoch and removes unsent older-epoch outbox rows.
 5. A consent-matched event is copied to the local outbox. Desktop claims a
    homogeneous batch with a lease, sends pseudonymized payloads to the private
-   collector using a telemetry-scoped assertion for account-linked mode, and
-   acknowledges delivery or retry/dead-letter state using the installation
-   secret.
+   collector using a subject-free telemetry-scoped assertion for anonymous mode
+   or a subject-bound assertion for account-linked mode, and acknowledges
+   delivery or retry/dead-letter state using the installation secret.
 6. The summary endpoint exposes local human activity, meaningful/productive
    installations, completed loops, invalidations, run/output/review facts, and
    data-quality context.
@@ -138,9 +138,11 @@ and epochs, installation secret hash, and outbox delivery state. Identity
 funnel reads return aggregate counts without email, provider subject, or device
 identifiers. The private collector stores raw facts, subject consent state,
 quality counters, daily rollups, revision projections, and thresholded privacy
-aggregates in the isolated `rudder_analytics` schema. Account-linked uploads use
-a signed short-lived `aud=telemetry-collector` assertion issued only after the
-Identity consent ledger confirms the current grant and epoch.
+aggregates in the isolated `rudder_analytics` schema. Anonymous and
+account-linked uploads use signed short-lived `aud=telemetry-collector`
+assertions; account-linked assertions include only the collector-scoped subject
+and both modes require the corresponding current Identity consent grant and
+epoch when an Identity session is used.
 
 ### Canonical Scenarios
 

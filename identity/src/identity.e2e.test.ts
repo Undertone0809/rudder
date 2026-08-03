@@ -1166,6 +1166,34 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     const assertion = await assertionResponse.json() as { assertion?: string };
     expect(assertion.assertion).toEqual(expect.any(String));
     expect(collectorRequests).toHaveLength(2);
+
+    const anonymousConsent = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "anonymous",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(anonymousConsent.status).toBe(201);
+    expect(await anonymousConsent.json()).toMatchObject({ mode: "anonymous", decision: "granted", consentEpoch: 1 });
+    const anonymousAssertionResponse = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "anonymous",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(anonymousAssertionResponse.status).toBe(200);
+    expect(await anonymousAssertionResponse.json()).toMatchObject({ analytics_subject: null, audience: "telemetry-collector" });
+    expect(collectorRequests).toHaveLength(4);
+    expect(collectorRequests[2]).toMatchObject({
+      path: "/api/analytics/v1/internal/consent/sync",
+      body: {
+        installationId: "desktop-pkce-installation",
+        analyticsSubject: null,
+        consentVersion: "v1",
+        consentEpoch: 1,
+        revoked: false,
+      },
+    });
     const revoked = await telemetryRequest("/api/desktop/telemetry/consent", {
       installation_id: "desktop-pkce-installation",
       mode: "account_linked",
@@ -1174,8 +1202,8 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     });
     expect(revoked.status).toBe(201);
     expect(await revoked.json()).toMatchObject({ decision: "revoked", consentEpoch: 2 });
-    expect(collectorRequests).toHaveLength(3);
-    expect(collectorRequests[2]).toMatchObject({
+    expect(collectorRequests).toHaveLength(5);
+    expect(collectorRequests[4]).toMatchObject({
       path: "/api/analytics/v1/internal/consent/sync",
       body: {
         installationId: "desktop-pkce-installation",

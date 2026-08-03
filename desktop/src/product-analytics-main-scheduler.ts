@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { createDesktopProductAnalyticsScheduler, type DesktopProductAnalyticsScheduler } from "./product-analytics-scheduler.js";
+import { updateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.js";
 
 type DesktopAnalyticsIdentityRuntime = {
@@ -26,6 +27,11 @@ type DesktopAnalyticsIdentityRuntime = {
   }): Promise<string>;
 };
 
+/** Must match the local exporter HMAC used for collector event payloads. */
+export function deriveDesktopProductAnalyticsInstallationId(installationSecret: string, installationId: string): string {
+  return createHmac("sha256", installationSecret).update(installationId).digest("hex");
+}
+
 export async function startDesktopProductAnalyticsScheduler(
   apiUrl: string,
   options: {
@@ -33,25 +39,45 @@ export async function startDesktopProductAnalyticsScheduler(
     identityRuntime: DesktopAnalyticsIdentityRuntime;
     scheduler: DesktopProductAnalyticsScheduler | null;
     setScheduler: (scheduler: DesktopProductAnalyticsScheduler) => void;
+    fetchImpl?: typeof fetch;
   },
 ): Promise<void> {
   if (!options.collectorUrl || options.scheduler) return;
+  const fetchImpl = options.fetchImpl ?? fetch;
   const telemetry = await options.identityRuntime.telemetryStatePromise;
-  if (telemetry.state.mode === "off") return;
-  if (telemetry.state.mode === "account_linked") {
-    try {
-      await options.identityRuntime.recordProductAnalyticsConsent({
-        mode: "account_linked",
-        decision: "granted",
-        consentVersion: telemetry.state.consentVersion,
-      });
-    } catch (error) {
-      console.warn("[rudder-desktop] Identity telemetry consent unavailable", error);
+  let mode = telemetry.state.mode;
+  let consentVersion = telemetry.state.consentVersion;
+  let consentEpoch = telemetry.state.consentEpoch;
+  let identityConsentAuthorized = false;
+  try {
+    const settingsResponse = await fetchImpl(new URL("/api/instance/settings/product-analytics", apiUrl));
+    if (settingsResponse.ok) {
+      const settings = await settingsResponse.json() as Record<string, unknown>;
+      if (settings.mode === "off" || settings.mode === "anonymous" || settings.mode === "account_linked") mode = settings.mode;
+      if (typeof settings.consentVersion === "string" && settings.consentVersion.length > 0) consentVersion = settings.consentVersion;
+      if (Number.isSafeInteger(settings.consentEpoch) && Number(settings.consentEpoch) >= 1) consentEpoch = Number(settings.consentEpoch);
+      await updateDesktopTelemetryState(telemetry.statePath, { mode, consentVersion, consentEpoch });
     }
+  } catch (error) {
+    console.warn("[rudder-desktop] Unable to read local telemetry settings", error);
+  }
+  if (mode === "off") return;
+  try {
+    const consent = await options.identityRuntime.recordProductAnalyticsConsent({
+      mode,
+      decision: "granted",
+      consentVersion,
+    });
+    consentEpoch = consent.consentEpoch;
+    identityConsentAuthorized = true;
+    await updateDesktopTelemetryState(telemetry.statePath, { consentEpoch });
+  } catch (error) {
+    console.warn("[rudder-desktop] Identity telemetry consent unavailable", error);
+    if (mode === "account_linked") return;
   }
   let orgId: string | null = null;
   try {
-    const organizationsResponse = await fetch(new URL("/api/orgs", apiUrl));
+    const organizationsResponse = await fetchImpl(new URL("/api/orgs", apiUrl));
     if (organizationsResponse.ok) {
       const payload = await organizationsResponse.json() as unknown;
       const first = Array.isArray(payload) ? payload[0] : (payload && typeof payload === "object" && Array.isArray((payload as { organizations?: unknown }).organizations) ? (payload as { organizations: unknown[] }).organizations[0] : null);
@@ -64,15 +90,15 @@ export async function startDesktopProductAnalyticsScheduler(
   const localApiUrl = apiUrl.replace(/\/$/, "");
   const registrationPath = `/api/orgs/${encodeURIComponent(orgId)}/analytics/product/installation`;
   try {
-    await fetch(`${localApiUrl}${registrationPath}`, {
+    await fetchImpl(`${localApiUrl}${registrationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ installationId: telemetry.installationId, installationSecret: telemetry.installationSecret, mode: "off" }),
     });
-    await fetch(`${localApiUrl}${registrationPath}/${encodeURIComponent(telemetry.installationId)}/consent`, {
+    await fetchImpl(`${localApiUrl}${registrationPath}/${encodeURIComponent(telemetry.installationId)}/consent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ installationSecret: telemetry.installationSecret, scope: telemetry.state.mode === "account_linked" ? "account_linked_user" : "anonymous_installation", decision: "granted", policyVersion: telemetry.state.consentVersion }),
+      body: JSON.stringify({ installationSecret: telemetry.installationSecret, scope: mode === "account_linked" ? "account_linked_user" : "anonymous_installation", decision: "granted", policyVersion: consentVersion }),
     });
   } catch (error) {
     console.warn("[rudder-desktop] Product analytics registration failed", error);
@@ -88,12 +114,20 @@ export async function startDesktopProductAnalyticsScheduler(
     deliveryMode,
     collectorAuthorization: async () => {
       if (deliveryMode === "account_linked") {
-        const pseudonymousInstallationId = createHash("sha256").update(telemetry.installationSecret).update(telemetry.installationId).digest("hex");
+        const pseudonymousInstallationId = deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId);
         return options.identityRuntime.issueProductAnalyticsAssertion({
           mode: deliveryMode,
-          consentVersion: telemetry.state.consentVersion,
-          consentEpoch: telemetry.state.consentEpoch,
+          consentVersion,
+          consentEpoch,
           pseudonymousInstallationId,
+        });
+      }
+      if (identityConsentAuthorized) {
+        return options.identityRuntime.issueProductAnalyticsAssertion({
+          mode: deliveryMode,
+          consentVersion,
+          consentEpoch,
+          pseudonymousInstallationId: deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId),
         });
       }
       const authorization = process.env.RUDDER_TELEMETRY_ANONYMOUS_AUTHORIZATION?.trim();

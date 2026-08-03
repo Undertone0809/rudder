@@ -47,6 +47,12 @@ reflected in `ANALYTICS.TELEMETRY.001`.
 - Desktop Main has a one-shot uploader orchestration path. Renderer code never
   receives the installation secret; collector failures only leave the local outbox
   retryable.
+- Desktop Main reads the local Privacy & Telemetry mode before starting the
+  uploader, synchronizes either anonymous or account-linked consent with
+  Identity, and uses the same installation-secret HMAC as the exporter for the
+  signed collector assertion. Anonymous assertions remain subject-free; a
+  deployment-level anonymous authorization remains the fallback for installs
+  that do not have an Identity session.
 - Identity owns an append-only per-user/per-installation consent ledger. The
   telemetry assertion endpoint derives its epoch from the latest granted row;
   request-body consent flags cannot authorize an upload. The central collector
