@@ -141,15 +141,15 @@ export const en = {
   "browser.import.result.failures": "Failures",
   "experimental.title": "Experimental",
   "experimental.description": "Try early Rudder features on this device.",
-  "experimental.sites.section": "Sites",
-  "experimental.sites.title": "Enable Sites",
+  "experimental.sites.section": "Apps",
+  "experimental.sites.title": "Enable Apps",
   "experimental.sites.enabledDescription":
     "Adds Apps to the Primary Rail, enables the App Builder skill, and lets this device load and run registered Apps.",
   "experimental.sites.disabledDescription":
     "Stops running Apps, hides the workspace, and disables new App Builder work. Existing App source and data stay on this device.",
-  "experimental.sites.toggle": "Enable Sites",
+  "experimental.sites.toggle": "Enable Apps",
   "experimental.sites.notice":
-    "Sites is experimental. Apps run project code on this device and are reachable only from this computer unless you configure networking yourself.",
+    "Apps are experimental. Apps run project code on this device and are reachable only from this computer unless you configure networking yourself.",
   "experimental.loadFailed": "Failed to load experimental settings.",
   "experimental.updateFailed": "Failed to save experimental settings.",
   "chat.emptyState.heading": "What can I help with?",

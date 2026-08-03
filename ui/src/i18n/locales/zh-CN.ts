@@ -139,15 +139,15 @@ export const zhCN: Messages = {
   "browser.import.result.failures": "失败详情",
   "experimental.title": "实验性功能",
   "experimental.description": "在此设备上试用 Rudder 的早期功能。",
-  "experimental.sites.section": "Sites",
-  "experimental.sites.title": "启用 Sites",
+  "experimental.sites.section": "Apps",
+  "experimental.sites.title": "启用 Apps",
   "experimental.sites.enabledDescription":
     "在主导航中显示 Apps，启用 App Builder skill，并允许此设备装载和运行已注册的应用。",
   "experimental.sites.disabledDescription":
     "停止正在运行的 App、隐藏工作区并停用新的 App Builder 工作；已有应用源码和数据仍保留在此设备。",
-  "experimental.sites.toggle": "启用 Sites",
+  "experimental.sites.toggle": "启用 Apps",
   "experimental.sites.notice":
-    "Sites 仍处于实验阶段。应用会在此设备上运行项目代码；除非你自行配置网络，否则只能从本机访问。",
+    "Apps 仍处于实验阶段。应用会在此设备上运行项目代码；除非你自行配置网络，否则只能从本机访问。",
   "experimental.loadFailed": "加载实验性设置失败。",
   "experimental.updateFailed": "保存实验性设置失败。",
   "chat.emptyState.heading": "想聊点什么？",

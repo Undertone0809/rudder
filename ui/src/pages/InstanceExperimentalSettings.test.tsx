@@ -33,11 +33,11 @@ vi.mock("@/context/I18nContext", () => ({
       "common.experimental": "Experimental",
       "experimental.title": "Experimental",
       "experimental.description": "Try early Rudder features.",
-      "experimental.sites.section": "Sites",
-      "experimental.sites.title": "Enable Sites",
+      "experimental.sites.section": "Apps",
+      "experimental.sites.title": "Enable Apps",
       "experimental.sites.enabledDescription": "Apps are enabled.",
       "experimental.sites.disabledDescription": "Apps are disabled.",
-      "experimental.sites.toggle": "Enable Sites",
+      "experimental.sites.toggle": "Enable Apps",
       "experimental.sites.notice": "Runs Apps on this device.",
       "experimental.loadFailed": "Load failed.",
       "experimental.updateFailed": "Update failed.",
@@ -112,7 +112,7 @@ describe("InstanceExperimentalSettings", () => {
       });
     });
 
-    expect(container.textContent).toContain("Enable Sites");
+    expect(container.textContent).toContain("Enable Apps");
     expect(mocks.setBreadcrumbs).toHaveBeenCalled();
   });
 

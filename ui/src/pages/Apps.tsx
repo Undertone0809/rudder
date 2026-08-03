@@ -1011,9 +1011,9 @@ export function Apps() {
       <div className="flex h-full items-center justify-center bg-[color:var(--surface-panel)] px-6">
         <div className="max-w-md text-center">
           <Settings className="mx-auto h-9 w-9 text-muted-foreground" aria-hidden />
-          <h1 className="mt-4 text-lg font-semibold text-foreground">Enable Sites to use Apps</h1>
+          <h1 className="mt-4 text-lg font-semibold text-foreground">Enable Apps to open this workspace</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Sites enables App Builder, registered local Apps, and the Apps workspace.
+            Enabling Apps adds App Builder, registered local Apps, and the Apps workspace.
           </p>
           <Button
             className="mt-5"
