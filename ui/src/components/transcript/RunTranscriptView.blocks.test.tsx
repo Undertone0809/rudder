@@ -229,6 +229,49 @@ describe("TranscriptRunAnnotationBlock", () => {
     });
     expect(onAnnotate).not.toHaveBeenCalled();
   });
+
+  it("bounds the editor to the transcript container instead of the block height", () => {
+    const onAnnotate = vi.fn();
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    const container = render(
+      <TranscriptRunAnnotationBlock
+        block={{
+          type: "message",
+          role: "assistant",
+          ts: "2026-07-23T12:00:00.000Z",
+          text: "A transcript block with enough context for the editor.",
+          streaming: false,
+          sourceEntryIds: ["event-3"],
+        }}
+        presentation="detail"
+        context={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+      >
+        <span>A transcript block with enough context for the editor.</span>
+      </TranscriptRunAnnotationBlock>,
+    );
+    container.setAttribute("data-testid", "agent-runs-detail-pane");
+    container.getBoundingClientRect = () => ({
+      left: 100,
+      right: 500,
+      top: 100,
+      bottom: 600,
+      width: 400,
+      height: 500,
+    } as DOMRect);
+    const trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    trigger!.getBoundingClientRect = () => new DOMRect(180, 220, 28, 28);
+
+    act(() => {
+      trigger?.click();
+    });
+
+    const editor = document.querySelector<HTMLElement>("[data-testid='chat-response-annotation-editor']");
+    expect(editor).not.toBeNull();
+    expect(editor?.style.maxHeight).toBe("484px");
+    expect(editor?.querySelector("textarea")).not.toBeNull();
+  });
 });
 
 describe("TranscriptEventRow", () => {

@@ -248,6 +248,14 @@ export function TranscriptRunAnnotationBlock({
     && (block.sourceEntryIds?.length ?? 0) > 0;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const blockRootRef = useRef<HTMLDivElement | null>(null);
+  const getAnnotationBoundaryRect = useCallback(() => (
+    blockRootRef.current
+      ?.closest<HTMLElement>(
+        '.transcript-modal-body, [data-testid="agent-runs-detail-pane"]',
+      )
+      ?.getBoundingClientRect()
+      ?? null
+  ), []);
   const [pendingSelection, setPendingSelection] = useState<{
     text: string;
     range: Range;
@@ -409,8 +417,8 @@ export function TranscriptRunAnnotationBlock({
               ? pendingSelection.range.getBoundingClientRect()
               : pendingSelection.anchorRect
           )}
-          boundaryRect={blockRootRef.current?.getBoundingClientRect() ?? null}
-          getBoundaryRect={() => blockRootRef.current?.getBoundingClientRect() ?? null}
+          boundaryRect={getAnnotationBoundaryRect()}
+          getBoundaryRect={getAnnotationBoundaryRect}
           anchorObservationRoot={blockRootRef.current}
           onAddToChat={commitPendingSelection}
           onAskInSideChat={commitPendingSelection}
@@ -433,8 +441,8 @@ export function TranscriptRunAnnotationBlock({
                 ? triggerRef.current.getBoundingClientRect()
                 : pendingAnnotation.anchorRect
           )}
-          boundaryRect={blockRootRef.current?.getBoundingClientRect() ?? null}
-          getBoundaryRect={() => blockRootRef.current?.getBoundingClientRect() ?? null}
+          boundaryRect={getAnnotationBoundaryRect()}
+          getBoundaryRect={getAnnotationBoundaryRect}
           returnFocusRef={triggerRef}
           autoFocus={pendingAnnotation.autoFocus}
           showSelectedTextContext
