@@ -95,9 +95,9 @@ test("keeps the language switcher, sidebar, and footer aligned with the current 
 test("renders representative English and Chinese pages on desktop and mobile", async ({ page }) => {
   const cases = [
     { route: "/concepts/agents", title: "Agents, Runs, and Runtimes", language: "en", width: 1440, height: 900 },
-    { route: "/zh/concepts/agents", title: "Agent、运行记录和运行工具", language: /^(?:cn|zh-Hans)$/, width: 1440, height: 900 },
+    { route: "/zh/concepts/agents", title: "Agent、运行记录和运行工具", language: /^zh$/, width: 1440, height: 900 },
     { route: "/reference/workspace-boundaries", title: "Where Rudder Stores and Uses Files", language: "en", width: 390, height: 844 },
-    { route: "/zh/reference/workspace-boundaries", title: "Rudder 在哪里保存和使用文件", language: /^(?:cn|zh-Hans)$/, width: 390, height: 844 },
+    { route: "/zh/reference/workspace-boundaries", title: "Rudder 在哪里保存和使用文件", language: /^zh$/, width: 390, height: 844 },
   ];
 
   for (const item of cases) {

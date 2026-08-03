@@ -68,7 +68,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   ].join("");
 
   const englishPath = writePage(exportDir, "/", fixturePage("/index.md", englishFooter));
-  const chinesePath = writePage(exportDir, "/zh", fixturePage("/zh.md", chineseFooter, "cn"));
+  const chinesePath = writePage(exportDir, "/zh", fixturePage("/zh.md", chineseFooter, "zh"));
   const englishGuidePath = writePage(
     exportDir,
     "/get-started/installation",
@@ -77,7 +77,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   const chineseGuidePath = writePage(
     exportDir,
     "/zh/get-started/installation",
-    fixturePage("/zh/get-started/installation.md", chineseFooter, "cn"),
+    fixturePage("/zh/get-started/installation.md", chineseFooter, "zh"),
   );
   const unpairedPath = writePage(
     exportDir,
@@ -127,7 +127,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   }
 
   assert.match(english, /<html lang="en">/);
-  assert.match(chinese, /<html lang="cn">/);
+  assert.match(chinese, /<html lang="zh">/);
   assert.doesNotMatch(chinese, /document\.documentElement\.lang/);
   assert.match(englishGuide, /hreflang="zh-CN" href="https:\/\/docs\.rudderhq\.dev\/zh\/get-started\/installation"/);
   assert.match(chineseGuide, /hreflang="en" href="https:\/\/docs\.rudderhq\.dev\/get-started\/installation"/);
@@ -242,7 +242,7 @@ test("docs config declares the shared social preview image", () => {
   assert.equal(config.seo.metatags["twitter:image"], "https://docs.rudderhq.dev/images/rudder-social-card.png");
   assert.deepEqual(
     config.navigation.languages.map(({ language }) => language),
-    ["en", "cn"],
+    ["en", "zh"],
   );
 });
 
