@@ -437,6 +437,68 @@ describe("SideChatPanelView streaming reconciliation", () => {
     releaseStream();
   });
 
+  it("marks a stream that reaches EOF without final as failed and stops the sending state", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000010";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000010",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Recover from an incomplete Side Chat stream.",
+      structuredPayload: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "90000000-0000-4000-8000-000000000010",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "Partial answer before disconnect.",
+        generationId,
+      });
+    });
+
+    await renderView({
+      viewTarget: {
+        ...target,
+        conversationId: sideConversation.id,
+        inlineAnnotations: [],
+      },
+    });
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, userMessage.body);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(host.textContent).toContain(
+      "Side Chat stream ended before a final response.",
+    ));
+    expect(host.querySelector('[aria-label="Sending Side Chat message"]')).toBeNull();
+  });
+
   it("renders one live reply when the persisted streaming assistant message is refreshed", async () => {
     const generationId = "80000000-0000-4000-8000-000000000001";
     const userMessage = {

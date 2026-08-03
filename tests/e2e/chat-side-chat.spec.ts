@@ -52,6 +52,7 @@ async function seedSideChatSource(page: Page, name: string) {
   await enableSideChatSkill(page, organization.id, [agent.id, alternateAgent.id]);
   const conversationId = randomUUID();
   const assistantMessageId = randomUUID();
+  const secondAssistantMessageId = randomUUID();
   await e2eDb.insert(chatConversations).values({
     id: conversationId,
     orgId: organization.id,
@@ -82,13 +83,23 @@ async function seedSideChatSource(page: Page, name: string) {
       body: "Launch with a narrow cohort and keep a rollback path.",
       replyingAgentId: agent.id,
     },
+    {
+      id: secondAssistantMessageId,
+      orgId: organization.id,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Keep this second answer available for another Side Chat.",
+      replyingAgentId: agent.id,
+    },
   ]);
   await page.goto("/");
   await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
   await page.setViewportSize({ width: 1500, height: 940 });
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible({ timeout: 15_000 });
-  return { organization, agent, alternateAgent, conversationId, assistantMessageId };
+  return { organization, agent, alternateAgent, conversationId, assistantMessageId, secondAssistantMessageId };
 }
 
 async function openFromAssistantAction(page: Page, assistantMessageId: string) {
@@ -103,7 +114,11 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
 }
 
 function sideComposerEditor(panel: Locator) {
-  return panel.getByTestId("side-chat-composer").locator(".rudder-mdxeditor-content").first();
+  return panel.locator('[data-testid="side-chat-composer"]:visible .rudder-mdxeditor-content').first();
+}
+
+function sideComposerSendButton(panel: Locator) {
+  return panel.locator('[data-testid="side-chat-composer"]:visible button[aria-label="Send Side Chat message"]');
 }
 
 async function openSideChatTabContextMenu(page: Page, panel: Locator) {
@@ -125,7 +140,7 @@ async function sendFirstSideChatMessage(
     && response.url().includes(`/api/chats/${sourceConversationId}/side-chats`)
   ));
   await sideComposerEditor(panel).fill("What is the rollback trigger?");
-  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  await sideComposerSendButton(panel).click();
   const userMessage = panel.getByTestId("chat-user-message-bubble").filter({
     hasText: "What is the rollback trigger?",
   });
@@ -343,6 +358,115 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await page.screenshot({ path: testInfo.outputPath("05-side-chat-destroyed.png"), fullPage: true });
 });
 
+test("keeps an in-flight Side Chat stream visible after the panel is collapsed and reopened", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Reopen-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+
+  await sideComposerEditor(panel).fill("Keep this Side Chat stream alive while hidden.");
+  await sideComposerSendButton(panel).click();
+  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 15_000,
+  });
+
+  await panel.getByTestId("chat-side-panel-collapse").click();
+  await expect(panel).toBeHidden();
+  await page.getByTestId("chat-side-panel-trigger").click();
+
+  const reopenedPanel = page.getByTestId("chat-side-panel");
+  await expect(reopenedPanel).toBeVisible();
+  await expect(reopenedPanel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 5_000,
+  });
+  await expect(
+    reopenedPanel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.screenshot({ path: testInfo.outputPath("side-chat-stream-survives-reopen.png"), fullPage: true });
+
+  const { menu } = await openSideChatTabContextMenu(page, reopenedPanel);
+  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await expect(reopenedPanel).toBeHidden();
+});
+
+test("keeps concurrent Side Chat streams isolated when switching tabs", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Tabs-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+
+  const firstPrompt = "FIRST_SIDE_CHAT_STREAM";
+  const secondPrompt = "SECOND_SIDE_CHAT_STREAM";
+  const activeMessages = () => panel.locator('[data-testid="side-chat-messages"]:visible');
+  const activeStreamingReply = () => panel.locator('[data-testid="side-chat-streaming-reply"]:visible');
+
+  await sideComposerEditor(panel).fill(firstPrompt);
+  await sideComposerSendButton(panel).click();
+  await expect(activeMessages()).toContainText(firstPrompt, {
+    timeout: 15_000,
+  });
+  await expect(activeStreamingReply()).toContainText("Streaming reply", {
+    timeout: 15_000,
+  });
+
+  await openFromAssistantAction(page, source.secondAssistantMessageId);
+  await expect(panel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+  const sideChatTabs = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await expect(sideChatTabs.nth(1).getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  await panel.locator('[data-testid="side-chat-composer"]:visible [data-testid="chat-agent-selector"]').click();
+  await expect(page.getByTestId("side-chat-agent-menu")).toBeVisible();
+  await sideChatTabs.first().click();
+  await expect(page.getByTestId("side-chat-agent-menu")).toHaveCount(0);
+  await sideChatTabs.nth(1).click();
+  await expect(sideChatTabs.nth(1).getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  await sideComposerEditor(panel).fill(secondPrompt);
+  await sideComposerSendButton(panel).click();
+  await expect(activeMessages()).toContainText(secondPrompt, {
+    timeout: 15_000,
+  });
+  await expect(activeStreamingReply()).toContainText("Streaming reply", {
+    timeout: 15_000,
+  });
+
+  await sideChatTabs.first().click();
+  await expect(sideChatTabs.first().getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  await expect(activeMessages()).toContainText(firstPrompt, {
+    timeout: 5_000,
+  });
+  await expect(activeMessages()).not.toContainText(secondPrompt);
+  await expect(activeStreamingReply()).toContainText("Streaming reply", { timeout: 5_000 });
+
+  await sideChatTabs.nth(1).click();
+  await expect(sideChatTabs.nth(1).getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  await expect(activeMessages()).toContainText(secondPrompt, {
+    timeout: 5_000,
+  });
+  await expect(activeMessages()).not.toContainText(firstPrompt);
+  await expect(activeStreamingReply()).toContainText("Streaming reply", { timeout: 5_000 });
+  await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }).last()).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.screenshot({ path: testInfo.outputPath("side-chat-concurrent-tabs-isolated.png"), fullPage: true });
+});
+
+test("aborts and destroys a Side Chat when its tab closes during streaming", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Close-In-Flight-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+
+  await sideComposerEditor(panel).fill("Close this Side Chat before its answer finishes.");
+  await sideComposerSendButton(panel).click();
+  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 15_000,
+  });
+
+  const destroyResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "DELETE"
+    && response.url().includes("/side-chat")
+  ));
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Close" }).click();
+  const destroyResponse = await destroyResponsePromise;
+  expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
+  await expect(panel).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath("side-chat-close-in-flight.png"), fullPage: true });
+});
+
 test("starts Side Chat from a completed historical turn variant after its replacement was stopped", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("rudder.theme", "dark");
@@ -445,7 +569,7 @@ test("starts Side Chat from a completed historical turn variant after its replac
     && response.url().includes(`/api/chats/${conversationId}/side-chats`)
   ));
   await sideComposerEditor(panel).fill("Use the completed historical answer.");
-  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  await sideComposerSendButton(panel).click();
   await expect(
     panel.getByTestId("chat-user-message-bubble").filter({
       hasText: "Use the completed historical answer.",
@@ -731,7 +855,7 @@ test("an elapsed Side Chat becomes non-editable and can still be destroyed", asy
     && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
   ));
   await sideComposerEditor(panel).fill("Expire this focused exploration.");
-  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  await sideComposerSendButton(panel).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };

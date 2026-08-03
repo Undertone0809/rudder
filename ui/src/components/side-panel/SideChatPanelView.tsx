@@ -117,12 +117,14 @@ function noop() {}
 export function SideChatPanelView({
   organizationId,
   target,
+  active = true,
   onRegisterCloseHandler,
   onReplaceTarget,
   onSelectResponseAnnotation,
 }: {
   organizationId: string;
   target: SideChatTarget;
+  active?: boolean;
   onRegisterCloseHandler: (clientMutationId: string, handler: (() => Promise<string | null>) | null) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
@@ -196,9 +198,12 @@ export function SideChatPanelView({
   }, [destroyForClose, onRegisterCloseHandler, target.clientMutationId]);
 
   useEffect(() => {
+    const streamActive = stream !== null;
+    if (!active && !streamActive) return undefined;
+    setNow(new Date());
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active, stream !== null]);
 
   const sourceConversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.sourceConversationId),
@@ -425,6 +430,7 @@ export function SideChatPanelView({
     })) return;
     const createdAt = new Date();
     let acknowledged = false;
+    let receivedFinal = false;
     setSending(true);
     setSendError(null);
     setDraft("");
@@ -526,6 +532,7 @@ export function SideChatPanelView({
             });
           }
           if (event.type === "final") {
+            receivedFinal = true;
             for (const message of event.messages) upsertMessage(conversationId!, message);
             setStream(null);
           }
@@ -551,6 +558,9 @@ export function SideChatPanelView({
           }
         },
       });
+      if (!receivedFinal) {
+        throw new Error("Side Chat stream ended before a final response.");
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
@@ -595,6 +605,11 @@ export function SideChatPanelView({
     setSkillMenuOpen(false);
     setSkillSearchQuery("");
   }, []);
+  useEffect(() => {
+    if (active) return;
+    closeComposerContextMenus();
+    setComposerMenuPosition(null);
+  }, [active, closeComposerContextMenus]);
   const openComposerContextMenu = useCallback((kind: "agent" | "skill") => {
     const anchor = kind === "agent"
       ? runtimeSelectorRef.current ?? composerSurfaceRef.current
