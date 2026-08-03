@@ -7,16 +7,23 @@ const identity = { orgId: "org-1", agentId: "agent-1", runId: "run-1" };
 function createHarness(options: {
   closeAllFails?: boolean;
   registrationFails?: boolean;
+  registrationFailures?: number;
   unregisterFails?: boolean;
   registrationGate?: Promise<void>;
+  registrationGates?: Array<Promise<void> | undefined>;
   initialServerEnabled?: boolean;
 } = {}) {
-  const broker = {
-    endpoint: "http://127.0.0.1:43123/browser",
-    token: "a".repeat(64),
+  const createBroker = (index: number) => ({
+    endpoint: `http://127.0.0.1:${43123 + index}/browser`,
+    token: `${String(index + 1).padStart(2, "0")}${"a".repeat(62)}`,
     stop: vi.fn(async () => undefined),
-  };
+  });
+  const broker = createBroker(0);
+  const brokers = [broker];
+  let brokerIndex = 0;
   let enabled = true;
+  let remainingRegistrationFailures = options.registrationFailures ?? 0;
+  let registrationCallCount = 0;
   const tabs = {
     execute: vi.fn(async () => ({ ok: true })),
     closeAll: options.closeAllFails
@@ -27,8 +34,13 @@ function createHarness(options: {
     }),
   };
   const registerBroker = vi.fn(async () => {
-    await options.registrationGate;
-    if (options.registrationFails) throw new Error("registration failed");
+    const registrationGate = options.registrationGates?.[registrationCallCount] ?? options.registrationGate;
+    registrationCallCount += 1;
+    await registrationGate;
+    if (options.registrationFails || remainingRegistrationFailures > 0) {
+      remainingRegistrationFailures -= 1;
+      throw new Error("registration failed");
+    }
   });
   const unregisterBroker = options.unregisterFails
     ? vi.fn(async () => { throw new Error("unregister failed"); })
@@ -44,19 +56,23 @@ function createHarness(options: {
     getProfileEnabled: () => enabled,
     setProfileEnabled,
     execute: tabs.execute,
-    startBroker: vi.fn(async (input) => {
-      brokerExecute = input.execute;
-      return broker;
-    }),
     registerBroker,
     unregisterBroker,
     readSettings,
     isRunActive,
     sweepIntervalMs: 1_000,
     onWarning,
+    startBroker: vi.fn(async (input) => {
+      const nextBroker = brokers[brokerIndex] ?? createBroker(brokerIndex);
+      if (!brokers[brokerIndex]) brokers.push(nextBroker);
+      brokerIndex += 1;
+      brokerExecute = input.execute;
+      return nextBroker;
+    }),
   });
   return {
     broker,
+    brokers,
     executeBrokerCommand: (command: any) => {
       if (!brokerExecute) throw new Error("Broker was not started");
       return brokerExecute(command);
@@ -147,12 +163,12 @@ describe("Desktop Browser runtime lifecycle", () => {
 
     await harness.lifecycle.connect("http://127.0.0.1:3200/api");
     expect(harness.unregisterBroker).toHaveBeenCalledWith("http://127.0.0.1:3100/api", harness.broker.token);
-    expect(harness.broker.stop).toHaveBeenCalledTimes(1);
+    expect(harness.brokers[0].stop).toHaveBeenCalledTimes(1);
     expect(harness.tabs.closeAll).toHaveBeenCalledTimes(2);
 
     await harness.lifecycle.disconnect();
-    expect(harness.unregisterBroker).toHaveBeenLastCalledWith("http://127.0.0.1:3200/api", harness.broker.token);
-    expect(harness.broker.stop).toHaveBeenCalledTimes(2);
+    expect(harness.unregisterBroker).toHaveBeenLastCalledWith("http://127.0.0.1:3200/api", harness.brokers[1].token);
+    expect(harness.brokers[1].stop).toHaveBeenCalledTimes(1);
     expect(harness.tabs.closeAll).toHaveBeenCalledTimes(3);
   });
 
@@ -166,6 +182,65 @@ describe("Desktop Browser runtime lifecycle", () => {
       harness.broker.token,
     );
     expect(harness.broker.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed initial registration and restores Browser control", async () => {
+    const harness = createHarness({ registrationFailures: 3 });
+
+    await expect(harness.lifecycle.connect("http://127.0.0.1:3100/api"))
+      .rejects.toThrow("registration failed");
+    expect(harness.registerBroker).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(harness.registerBroker).toHaveBeenCalledTimes(4));
+    await expect(harness.executeBrokerCommand({
+      identity,
+      action: "tabs",
+      args: {},
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it("stops and cancels a retry Broker when disconnect starts during registration", async () => {
+    let releaseRetryRegistration!: () => void;
+    const retryRegistrationGate = new Promise<void>((resolve) => { releaseRetryRegistration = resolve; });
+    const harness = createHarness({
+      registrationFailures: 1,
+      registrationGates: [undefined, retryRegistrationGate],
+    });
+
+    await expect(harness.lifecycle.connect("http://127.0.0.1:3100/api"))
+      .rejects.toThrow("registration failed");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.registerBroker).toHaveBeenCalledTimes(2));
+
+    const disconnecting = harness.lifecycle.disconnect();
+    releaseRetryRegistration();
+    await disconnecting;
+
+    expect(harness.brokers[1].stop).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.registerBroker).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels an initial registration retry when disconnected", async () => {
+    const harness = createHarness({ registrationFails: true });
+
+    await expect(harness.lifecycle.connect("http://127.0.0.1:3100/api"))
+      .rejects.toThrow("registration failed");
+    await harness.lifecycle.disconnect();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(harness.registerBroker).toHaveBeenCalledTimes(1);
   });
 
   it("continues Broker shutdown when native tab cleanup fails", async () => {

@@ -40,15 +40,45 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
   let registeredApiUrl: string | null = null;
   let registeredGeneration: number | undefined;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let sweepInFlight: Promise<void> | null = null;
   let lifecycleQueue: Promise<void> = Promise.resolve();
   let lifecycleEpoch = 0;
   let acceptingCommands = false;
   let reconcileRequested = false;
   let supersededRequested = false;
+  let reconnectAttempt = 0;
 
   const warn = (message: string, error: unknown) => {
     options.onWarning?.(message, error);
+  };
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const scheduleReconnect = (apiUrl: string, expectedEpoch: number, error: unknown) => {
+    if (expectedEpoch !== lifecycleEpoch) return;
+    clearReconnectTimer();
+    // Startup can finish the local UI before the server can accept the Broker
+    // registration. Keep the Browser surface recoverable without requiring a
+    // Desktop restart, while the epoch check prevents stale lifecycles from
+    // reconnecting after an instance switch or explicit disconnect.
+    warn("Rudder Browser Broker connection failed; retrying.", error);
+    const baseIntervalMs = options.sweepIntervalMs ?? 15_000;
+    const intervalMs = Math.min(baseIntervalMs * 2 ** reconnectAttempt, 60_000);
+    reconnectAttempt += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (expectedEpoch !== lifecycleEpoch) return;
+      void connect(apiUrl, true).catch((retryError) => {
+        warn("Rudder Browser Broker reconnect failed.", retryError);
+      });
+    }, intervalMs);
+    reconnectTimer.unref?.();
   };
 
   const syncProfileSetting = async (apiUrl: string, expectedEpoch: number) => {
@@ -118,6 +148,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     registeredApiUrl = null;
     registeredGeneration = undefined;
     supersededRequested = false;
+    clearReconnectTimer();
     if (sweepTimer) {
       clearInterval(sweepTimer);
       sweepTimer = null;
@@ -155,63 +186,73 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     sweepTimer.unref?.();
   };
 
-  const connect = (apiUrl: string): Promise<void> => {
+  const connect = (apiUrl: string, isReconnect = false): Promise<void> => {
     acceptingCommands = false;
     supersededRequested = false;
+    clearReconnectTimer();
+    if (!isReconnect) reconnectAttempt = 0;
     const registrationGeneration = options.allocateRegistrationGeneration?.();
     const expectedEpoch = ++lifecycleEpoch;
-    return enqueue(async () => {
-    await disconnectCurrent();
-    const settings = await syncProfileSetting(apiUrl, expectedEpoch);
-    if (expectedEpoch !== lifecycleEpoch) return;
-    registeredApiUrl = apiUrl;
-    if (!settings?.enabled) {
+    const operation = enqueue(async () => {
+      await disconnectCurrent();
+      const settings = await syncProfileSetting(apiUrl, expectedEpoch);
+      if (expectedEpoch !== lifecycleEpoch) return;
+      registeredApiUrl = apiUrl;
+      if (!settings?.enabled) {
+        reconnectAttempt = 0;
+        startSweepTimer(apiUrl, expectedEpoch);
+        return;
+      }
+      const nextBroker = await options.startBroker({
+        execute: async (command) => {
+          if (!acceptingCommands || expectedEpoch !== lifecycleEpoch) {
+            throw new BrowserAgentError("browser_unavailable", "Rudder Browser Broker is not accepting commands.");
+          }
+          return options.execute(command);
+        },
+      });
+      if (expectedEpoch !== lifecycleEpoch) {
+        registeredApiUrl = null;
+        await nextBroker.stop().catch((error) => {
+          warn("Rudder Browser stale Broker shutdown failed.", error);
+        });
+        return;
+      }
+      try {
+        await options.registerBroker(apiUrl, nextBroker, registrationGeneration);
+      } catch (error) {
+        registeredApiUrl = null;
+        await options.unregisterBroker(apiUrl, nextBroker.token).catch((unregisterError) => {
+          warn("Rudder Browser Broker registration rollback failed.", unregisterError);
+        });
+        await nextBroker.stop().catch((stopError) => {
+          warn("Rudder Browser Broker rollback failed.", stopError);
+        });
+        throw error;
+      }
+      if (expectedEpoch !== lifecycleEpoch) {
+        await options.unregisterBroker(apiUrl, nextBroker.token).catch((error) => {
+          warn("Rudder Browser stale Broker unregister failed.", error);
+        });
+        await nextBroker.stop().catch(() => undefined);
+        return;
+      }
+      broker = nextBroker;
+      registeredGeneration = registrationGeneration;
+      acceptingCommands = true;
+      reconnectAttempt = 0;
       startSweepTimer(apiUrl, expectedEpoch);
-      return;
-    }
-    const nextBroker = await options.startBroker({
-      execute: async (command) => {
-        if (!acceptingCommands || expectedEpoch !== lifecycleEpoch) {
-          throw new BrowserAgentError("browser_unavailable", "Rudder Browser Broker is not accepting commands.");
-        }
-        return options.execute(command);
-      },
     });
-    if (expectedEpoch !== lifecycleEpoch) {
-      registeredApiUrl = null;
-      await nextBroker.stop().catch((error) => {
-        warn("Rudder Browser stale Broker shutdown failed.", error);
-      });
-      return;
-    }
-    try {
-      await options.registerBroker(apiUrl, nextBroker, registrationGeneration);
-    } catch (error) {
-      registeredApiUrl = null;
-      await options.unregisterBroker(apiUrl, nextBroker.token).catch((unregisterError) => {
-        warn("Rudder Browser Broker registration rollback failed.", unregisterError);
-      });
-      await nextBroker.stop().catch((stopError) => {
-        warn("Rudder Browser Broker rollback failed.", stopError);
-      });
-      throw error;
-    }
-    if (expectedEpoch !== lifecycleEpoch) {
-      await options.unregisterBroker(apiUrl, nextBroker.token).catch((error) => {
-        warn("Rudder Browser stale Broker unregister failed.", error);
-      });
-      await nextBroker.stop().catch(() => undefined);
-      return;
-    }
-    broker = nextBroker;
-    registeredGeneration = registrationGeneration;
-    acceptingCommands = true;
-    startSweepTimer(apiUrl, expectedEpoch);
+    void operation.catch((error) => {
+      scheduleReconnect(apiUrl, expectedEpoch, error);
     });
+    return operation;
   };
 
   const disconnect = (): Promise<void> => {
     acceptingCommands = false;
+    clearReconnectTimer();
+    reconnectAttempt = 0;
     lifecycleEpoch += 1;
     return enqueue(disconnectCurrent);
   };
