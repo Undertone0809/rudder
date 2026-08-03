@@ -4,6 +4,7 @@ import {
   productAnalyticsEvents,
   productAnalyticsInstallations,
   productAnalyticsOutbox,
+  productAnalyticsWorkCycleRevisions,
   productAnalyticsWorkCycles,
 } from "@rudderhq/db";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
@@ -67,7 +68,9 @@ const ACTOR_TYPE_SET = new Set<ProductAnalyticsActorType>(["human", "agent", "sy
 // focused on content-bearing names so safe dimensions such as creation_path do
 // not get rejected by a substring match.
 const SENSITIVE_PROPERTY_KEY = /(prompt|transcript|title|description|body|content|url|token|secret|password|credential|email|hostname|username)/i;
-const EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalyticsEventName, ReadonlySet<string>> = {
+const PRODUCT_ANALYTICS_OUTBOX_MAX_ROWS = 10_000;
+const PRODUCT_ANALYTICS_OUTBOX_MAX_BYTES = 32 * 1024 * 1024;
+export const PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalyticsEventName, ReadonlySet<string>> = {
   organization_created: new Set([
     "creation_path",
     "template_kind",
@@ -134,7 +137,7 @@ function assertBoundedText(value: string, field: string, maxLength: number) {
 }
 
 function validateProperties(eventName: ProductAnalyticsEventName, properties: AnalyticsProperties): AnalyticsProperties {
-  const allowed = EVENT_PROPERTY_ALLOWLIST[eventName];
+  const allowed = PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST[eventName];
   for (const [key, value] of Object.entries(properties)) {
     if (!allowed.has(key) || SENSITIVE_PROPERTY_KEY.test(key)) {
       throw unprocessable(`Product analytics property is not allowed: ${key}`);
@@ -234,9 +237,21 @@ export async function recordProductAnalyticsEvent(
 }
 
 export async function enqueueProductAnalyticsEvent(db: Db, input: { eventId: string; installationId: string; localUserId?: string | null }) {
-  const [installation] = await db.select({ mode: productAnalyticsInstallations.mode }).from(productAnalyticsInstallations)
+  const [event] = await db.select({ environment: productAnalyticsEvents.environment }).from(productAnalyticsEvents)
+    .where(eq(productAnalyticsEvents.id, input.eventId)).limit(1);
+  if (!event || event.environment !== "production") return null;
+  const [installation] = await db.select({ mode: productAnalyticsInstallations.mode, state: productAnalyticsInstallations.state }).from(productAnalyticsInstallations)
     .where(eq(productAnalyticsInstallations.installationId, input.installationId)).limit(1);
   if (!installation || installation.mode === "off") return null;
+  const [backlog] = await db.select({ count: sql<number>`count(*)`, bytes: sql<number>`coalesce(sum(length(${productAnalyticsEvents.properties}::text)), 0)` })
+    .from(productAnalyticsOutbox)
+    .innerJoin(productAnalyticsEvents, eq(productAnalyticsOutbox.eventId, productAnalyticsEvents.id))
+    .where(and(eq(productAnalyticsOutbox.installationId, input.installationId), inArray(productAnalyticsOutbox.state, ["pending", "claimed", "retry_wait"])));
+  if (Number(backlog?.count ?? 0) >= PRODUCT_ANALYTICS_OUTBOX_MAX_ROWS || Number(backlog?.bytes ?? 0) >= PRODUCT_ANALYTICS_OUTBOX_MAX_BYTES) {
+    await db.update(productAnalyticsInstallations).set({ state: { ...(installation.state ?? {}), coverageGap: true }, updatedAt: new Date() })
+      .where(eq(productAnalyticsInstallations.installationId, input.installationId));
+    return null;
+  }
   const scope = installation.mode === "account_linked" ? "account_linked_user" : "anonymous_installation";
   const conditions = [eq(productAnalyticsConsentLedger.installationId, input.installationId), eq(productAnalyticsConsentLedger.scope, scope), eq(productAnalyticsConsentLedger.decision, "granted")];
   conditions.push(scope === "account_linked_user" && input.localUserId ? eq(productAnalyticsConsentLedger.localUserId, input.localUserId) : isNull(productAnalyticsConsentLedger.localUserId));
@@ -351,8 +366,16 @@ export async function completeProductAnalyticsWorkCycle(
     });
     await tx
       .update(productAnalyticsWorkCycles)
-      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, updatedAt: new Date() })
+      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, rootRunIds: input.rootRunId ? [...new Set([...(lockedCycle.rootRunIds ?? []), input.rootRunId])] : lockedCycle.rootRunIds, updatedAt: new Date() })
       .where(and(eq(productAnalyticsWorkCycles.orgId, input.orgId), eq(productAnalyticsWorkCycles.workCycleId, input.workCycleId)));
+    await tx.insert(productAnalyticsWorkCycleRevisions).values({
+      orgId: input.orgId,
+      workCycleId: input.workCycleId,
+      completionRevision: revision,
+      completionEventId: event?.id as string,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    }).onConflictDoNothing();
     return { event, revision };
   });
 }
@@ -382,6 +405,16 @@ export async function invalidateProductAnalyticsWorkCycle(
       dedupeKey: `work_loop_invalidated:${input.workCycleId}:${input.completionRevision}:${input.reasonCode}`,
       properties: { reason_code: input.reasonCode },
     });
+    await tx.update(productAnalyticsWorkCycleRevisions).set({
+      invalidatedAt: input.occurredAt ?? new Date(),
+      invalidationReasonCode: input.reasonCode,
+      invalidationEventId: event?.id as string,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(productAnalyticsWorkCycleRevisions.orgId, input.orgId),
+      eq(productAnalyticsWorkCycleRevisions.workCycleId, input.workCycleId),
+      eq(productAnalyticsWorkCycleRevisions.completionRevision, input.completionRevision),
+    ));
     await tx.update(productAnalyticsWorkCycles).set({ state: "invalidated", invalidatedAt: input.occurredAt ?? new Date(), updatedAt: new Date() })
       .where(and(eq(productAnalyticsWorkCycles.orgId, input.orgId), eq(productAnalyticsWorkCycles.workCycleId, input.workCycleId)));
     return event;
@@ -605,7 +638,7 @@ export async function acknowledgeProductAnalyticsOutbox(db: Db, input: { install
     attemptCount: sql`${productAnalyticsOutbox.attemptCount} + 1`,
     deliveredAt: delivered ? now : null,
     deadLetteredAt: deadLettered ? now : null,
-    nextAttemptAt: delivered || deadLettered ? now : new Date(now.getTime() + Math.min(60 * 60_000, 2 ** Math.min(maxAttemptCount, 6) * 60_000)),
+    nextAttemptAt: delivered || deadLettered ? now : new Date(now.getTime() + Math.round(Math.min(60 * 60_000, 2 ** Math.min(maxAttemptCount, 6) * 60_000) * (0.8 + Math.random() * 0.4))),
     lastErrorCode: input.errorCode ?? null,
     claimToken: null,
     leaseExpiresAt: null,
@@ -643,6 +676,26 @@ export async function acknowledgeProductAnalyticsOutboxClaim(
     consentEpoch: first.consentEpoch,
     consentedLocalUserId: first.consentedLocalUserId,
   });
+}
+
+export async function cleanupProductAnalyticsRetention(
+  db: Db,
+  input: { installationId: string; retentionDays?: number; now?: Date },
+) {
+  const now = input.now ?? new Date();
+  const retentionDays = Math.min(Math.max(Math.trunc(input.retentionDays ?? 90), 1), 3650);
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+  const delivered = await db.select({ eventId: productAnalyticsOutbox.eventId }).from(productAnalyticsOutbox)
+    .where(and(eq(productAnalyticsOutbox.installationId, input.installationId), eq(productAnalyticsOutbox.state, "delivered"), lt(productAnalyticsOutbox.updatedAt, cutoff)));
+  if (delivered.length === 0) return { deletedEvents: 0, droppedDueToRetention: 0, cutoff: cutoff.toISOString() };
+  const eventIds = delivered.map((row) => row.eventId);
+  await db.delete(productAnalyticsOutbox).where(inArray(productAnalyticsOutbox.eventId, eventIds));
+  const deleted = await db.delete(productAnalyticsEvents).where(and(eq(productAnalyticsEvents.installationId, input.installationId), inArray(productAnalyticsEvents.id, eventIds))).returning({ id: productAnalyticsEvents.id });
+  await db.update(productAnalyticsInstallations).set({
+    state: { retentionCleanupAt: now.toISOString(), droppedDueToRetention: 0 },
+    updatedAt: now,
+  }).where(eq(productAnalyticsInstallations.installationId, input.installationId));
+  return { deletedEvents: deleted.length, droppedDueToRetention: 0, cutoff: cutoff.toISOString() };
 }
 
 export function pseudonymizeProductAnalyticsId(secret: string, value: string) {
@@ -727,10 +780,11 @@ export function productAnalyticsService(db: Db) {
             eq(productAnalyticsEvents.origin, "human"),
             eq(productAnalyticsEvents.environment, "production"),
             sql`not exists (
-              select 1 from ${productAnalyticsWorkCycles} invalidated
+              select 1 from ${productAnalyticsWorkCycleRevisions} invalidated
               where invalidated.org_id = ${productAnalyticsEvents.orgId}
                 and invalidated.work_cycle_id = ${productAnalyticsEvents.workCycleId}
-                and invalidated.state = 'invalidated'
+                and invalidated.completion_revision = ${productAnalyticsEvents.completionRevision}
+                and invalidated.invalidated_at is not null
             )`,
           )),
         db

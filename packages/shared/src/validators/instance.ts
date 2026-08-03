@@ -23,6 +23,8 @@ export const instanceGeneralSettingsSchema = z.object({
   showDeveloperDiagnostics: z.boolean().default(false),
   experimentalSitesEnabled: z.boolean().default(false),
   locale: instanceLocaleSchema.default("en"),
+  productAnalyticsMode: z.enum(["off", "anonymous", "account_linked"]).default("off"),
+  productAnalyticsConsentEpoch: z.number().int().min(1).default(1),
 }).strict();
 
 export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.partial();

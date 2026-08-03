@@ -19,7 +19,7 @@ import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Map, SlidersHorizontal } from "lucide-react";
+import { Map, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
@@ -66,6 +66,11 @@ export function InstanceGeneralSettings() {
     queryFn: () => instanceSettingsApi.getGeneral(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
+  const telemetryQuery = useQuery({
+    queryKey: ["instance", "product-analytics"],
+    queryFn: () => instanceSettingsApi.getProductAnalytics(),
+    staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -107,6 +112,14 @@ export function InstanceGeneralSettings() {
     onError: (error) => {
       setActionError(error instanceof Error ? error.message : t("general.updateFailed"));
     },
+  });
+  const telemetryMutation = useMutation({
+    mutationFn: (mode: "off" | "anonymous" | "account_linked") => instanceSettingsApi.updateProductAnalytics(mode),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["instance", "product-analytics"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
+    },
+    onError: (error) => setActionError(error instanceof Error ? error.message : "Unable to update telemetry settings"),
   });
 
   if (generalQuery.isLoading) {
@@ -236,6 +249,40 @@ export function InstanceGeneralSettings() {
           </SettingsGroup>
         </SettingsSection>
       ) : null}
+
+      <SettingsSection title="Privacy & Telemetry">
+        <SettingsPageHeader
+          icon={ShieldCheck}
+          title="Privacy-safe product analytics"
+          description="Rudder records milestone counts to understand activation and completed work. Workspace content stays local."
+        />
+        <SettingsGroup>
+          <div className="text-sm text-muted-foreground">
+            Collected: event names, coarse app dimensions, and pseudonymous identifiers. Never collected: prompts, transcripts, paths, titles, output content, URLs, or credentials.
+          </div>
+          <SettingsChoiceGrid>
+            {([
+              ["off", "Off", "Keep facts local and send no telemetry."],
+              ["anonymous", "Anonymous", "Share pseudonymous installation milestones."],
+              ["account_linked", "Account linked", "Associate milestones with your Rudder Account after explicit consent."],
+            ] as const).map(([mode, label, description]) => (
+              <SettingsChoiceCard
+                key={mode}
+                label={label}
+                description={description}
+                selected={(telemetryQuery.data?.mode ?? generalQuery.data?.productAnalyticsMode ?? "off") === mode}
+                onClick={() => telemetryMutation.mutate(mode)}
+                preview={null}
+              />
+            ))}
+          </SettingsChoiceGrid>
+          <div className="grid gap-1 text-xs text-muted-foreground">
+            <div>Last upload: {telemetryQuery.data?.lastSucceededAt ?? "Never"}</div>
+            <div>Pending events: {telemetryQuery.data?.pendingCount ?? 0}{telemetryQuery.data?.coverageGap ? " (backlog limit reached)" : ""}</div>
+            {telemetryQuery.data?.lastErrorCode ? <div className="text-destructive">Last error: {telemetryQuery.data.lastErrorCode}</div> : null}
+          </div>
+        </SettingsGroup>
+      </SettingsSection>
 
       <SettingsSection title={t("general.developer.title")}>
         <SettingsGroup>
