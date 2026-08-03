@@ -1,6 +1,6 @@
+import { eq } from "drizzle-orm";
 import type { IdentityDb } from "./client.js";
 import { identityUsers } from "./schema.js";
-import { eq } from "drizzle-orm";
 
 export type IdentityAccountProfile = {
   id: string;

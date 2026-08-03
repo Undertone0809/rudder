@@ -287,11 +287,14 @@ describe("InstanceAccountSettings", () => {
     Object.defineProperty(input, "files", { configurable: true, value: [file] });
     await act(async () => {
       input?.dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.waitFor(() => {
+        expect(bridge.updateProfile).toHaveBeenCalledWith({
+          image: expect.stringMatching(/^data:image\/png;base64,/),
+        });
+      });
     });
     await settle();
 
-    expect(bridge.updateProfile).toHaveBeenCalledWith({ image: expect.stringMatching(/^data:image\/png;base64,/) });
     expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   });
 });
