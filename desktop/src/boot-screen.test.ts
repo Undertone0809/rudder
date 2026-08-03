@@ -34,7 +34,10 @@ describe("desktop boot screen", () => {
     expect(html).toContain("stateIdentityChanged || !accountGateWasShown");
     expect(html).toContain("emailCodeEmail = email");
     expect(html).toContain("verifyEmailOtp(emailCodeEmail");
-    expect(html).toContain("Forgot or need to set a password?");
+    expect(html).toContain("forgot password");
+    expect(html).toContain("换一个登录方式");
+    expect(html).toContain('accountEmail.value = ""');
+    expect(html).not.toContain("Enter the code sent to");
     expect(html).toContain("Back to password sign in");
     expect(html).toContain("window.rudderBoot.signIn({");
     expect(html).toContain("window.rudderBoot.sendEmailOtp");
