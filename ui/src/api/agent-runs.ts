@@ -1,5 +1,6 @@
 import type {
   AgentRun,
+  AgentRunOverview,
   HeartbeatRun,
   HeartbeatRunEvent,
   WorkspaceOperation,
@@ -40,6 +41,8 @@ export interface AgentRunListFilters {
 }
 
 export const agentRunsApi = {
+  overview: (orgId: string) =>
+    api.get<AgentRunOverview>(`/orgs/${orgId}/agent-runs/overview`),
   list: (
     orgId: string,
     agentId?: string,

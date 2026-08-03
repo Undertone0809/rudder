@@ -1725,6 +1725,38 @@ export function heartbeatService(
   const { executeRun } = executeHandlers;
   const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
   return {
+    overview: async (orgId: string) => {
+      const [latestRows, recentRows] = await Promise.all([
+        db
+          .selectDistinctOn([heartbeatRuns.agentId], heartbeatRunListColumns)
+          .from(heartbeatRuns)
+          .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+          .where(and(
+            eq(heartbeatRuns.orgId, orgId),
+            eq(agents.orgId, orgId),
+            ne(agents.status, "terminated"),
+          ))
+          .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id)),
+        db
+          .select(heartbeatRunListColumns)
+          .from(heartbeatRuns)
+          .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+          .where(and(eq(heartbeatRuns.orgId, orgId), eq(agents.orgId, orgId)))
+          .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+          .limit(6),
+      ]);
+
+      const projectSummary = (row: (typeof latestRows)[number]) => toHeartbeatRun({
+        ...row,
+        resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
+      } as HeartbeatRun);
+
+      return {
+        latestByAgent: latestRows.map(projectSummary),
+        recent: recentRows.map(projectSummary),
+      };
+    },
+
     list: async (
       orgId: string,
       agentId?: string,
@@ -1740,7 +1772,7 @@ export function heartbeatService(
         .select(heartbeatRunListColumns)
         .from(heartbeatRuns)
         .where(and(...conditions))
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
 
       const rows = limit !== undefined ? await query.limit(limit) : await query;
       const runIds = rows.map((row) => row.id);

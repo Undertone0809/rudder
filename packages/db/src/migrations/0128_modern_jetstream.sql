@@ -1,0 +1,1 @@
+CREATE INDEX "heartbeat_runs_org_agent_created_id_idx" ON "heartbeat_runs" USING btree ("org_id","agent_id","created_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);

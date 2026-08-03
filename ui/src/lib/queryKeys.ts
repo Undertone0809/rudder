@@ -253,6 +253,7 @@ export const queryKeys = {
       : limit === undefined
       ? ["agent-runs", orgId, agentId] as const
       : ["agent-runs", orgId, agentId, limit] as const,
+  agentRunsOverview: (orgId: string) => ["agent-runs", orgId, "overview"] as const,
   heartbeats: (orgId: string, agentId?: string, limit?: number) =>
     queryKeys.agentRuns(orgId, agentId, limit),
   runDetail: (runId: string) => ["agent-run", runId] as const,

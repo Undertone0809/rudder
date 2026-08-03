@@ -109,7 +109,7 @@ export {
 } from "./constants.js";
 
 export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
-export type { AgentRunOrigin, AgentRunOriginInput } from "./agent-run.js";
+export type { AgentRunOrigin, AgentRunOriginInput, AgentRunOverview } from "./agent-run.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS

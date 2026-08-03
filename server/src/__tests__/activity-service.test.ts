@@ -473,6 +473,89 @@ describe("activityService.forIssue", () => {
     );
   });
 
+  it("returns bounded issue run summaries with usage and billing metadata intact", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const runId = randomUUID();
+    const oversizedMarker = "private-adapter-payload-".repeat(50_000);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Compact Issue Runs Org",
+      urlKey: deriveOrganizationUrlKey("Rudder Compact Issue Runs Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Compact issue run agent",
+      role: "engineer",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Issue with oversized adapter result",
+      status: "done",
+      priority: "medium",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      contextSnapshot: { issueId },
+      usageJson: {
+        provider: "openai",
+        biller: "chatgpt",
+        model: "gpt-5.6",
+        billingType: "subscription_overage",
+        inputTokens: 120,
+        cachedInputTokens: 20,
+        outputTokens: 40,
+      },
+      resultSummaryJson: {
+        summary: "Completed with compact evidence.",
+        costUsd: 1.25,
+      },
+      resultJson: {
+        summary: "Completed with compact evidence.",
+        provider: "openai",
+        biller: "chatgpt",
+        model: "gpt-5.6",
+        billingType: "subscription_overage",
+        costUsd: 1.25,
+        internalAdapterState: oversizedMarker,
+      },
+    });
+
+    const result = await svc.runsForIssue(orgId, issueId);
+    const serialized = JSON.stringify(result);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.usageJson).toEqual({
+      provider: "openai",
+      biller: "chatgpt",
+      model: "gpt-5.6",
+      billingType: "subscription_overage",
+      inputTokens: 120,
+      cachedInputTokens: 20,
+      outputTokens: 40,
+    });
+    expect(result[0]?.resultJson).toEqual({
+      summary: "Completed with compact evidence.",
+      costUsd: 1.25,
+      provider: "openai",
+      biller: "chatgpt",
+      model: "gpt-5.6",
+      billingType: "subscription_overage",
+    });
+    expect(serialized).not.toContain("private-adapter-payload");
+    expect(Buffer.byteLength(serialized)).toBeLessThan(5_000);
+  });
+
   it("orders issue runs deterministically when timestamps collide", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

@@ -86,6 +86,12 @@ export const heartbeatRuns = pgTable(
       table.agentId,
       table.startedAt,
     ),
+    orgAgentCreatedIdIdx: index("heartbeat_runs_org_agent_created_id_idx").on(
+      table.orgId,
+      table.agentId,
+      table.createdAt.desc().nullsFirst(),
+      table.id.desc().nullsFirst(),
+    ),
     companyStatusUpdatedIdx: index("heartbeat_runs_company_status_updated_idx").on(
       table.orgId,
       table.status,

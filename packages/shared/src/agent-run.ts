@@ -28,6 +28,11 @@ export interface AgentRunOrigin {
   wakeupRequestId: string | null;
 }
 
+export interface AgentRunOverview {
+  latestByAgent: AgentRun[];
+  recent: AgentRun[];
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { IssueDetail, buildIssueChatHref, buildIssueHeaderBreadcrumbs } from "./IssueDetail";
+import { IssueDetail, buildIssueChatHref, buildIssueHeaderBreadcrumbs, linkedIssueRunsRefetchInterval } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
@@ -580,6 +580,11 @@ describe("buildIssueHeaderBreadcrumbs", () => {
 });
 
 describe("IssueDetail", () => {
+  it("polls linked run summaries only while issue execution is live", () => {
+    expect(linkedIssueRunsRefetchInterval(false)).toBe(false);
+    expect(linkedIssueRunsRefetchInterval(true)).toBe(5000);
+  });
+
   beforeEach(() => {
     capturedMentions = [];
     capturedCommentThreadProps = null;

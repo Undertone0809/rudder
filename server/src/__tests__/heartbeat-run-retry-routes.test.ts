@@ -10,6 +10,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
   getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
   list: vi.fn(),
+  overview: vi.fn(),
   retryRun: vi.fn(),
 }));
 
@@ -151,6 +152,20 @@ describe("agent run retry route", () => {
         endDate: new Date("2026-06-16T12:00:00.000Z"),
       },
     );
+  });
+
+  it("loads the organization-scoped agent run overview", async () => {
+    mockHeartbeatService.overview.mockResolvedValue({
+      latestByAgent: [],
+      recent: [],
+    });
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/agent-runs/overview");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.overview).toHaveBeenCalledWith("organization-1");
+    expect(res.body).toEqual({ latestByAgent: [], recent: [] });
   });
 
   it("projects every public full-row run route through an explicit allowlist", async () => {

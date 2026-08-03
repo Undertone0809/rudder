@@ -145,6 +145,12 @@ export function summarizeHeartbeatRunResultJson(
     }
   }
 
+  const metadataFields = ["provider", "biller", "model", "billingType"] as const;
+  for (const key of metadataFields) {
+    const value = truncateSummaryText(resultJson[key]);
+    if (value !== null) summary[key] = value;
+  }
+
   if (!summary.summary && !summary.result && !summary.message) {
     const extractedResult = extractFinalResponseFromStdout(resultJson.stdout);
     if (extractedResult) {

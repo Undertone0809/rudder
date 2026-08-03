@@ -200,6 +200,99 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     expect(rows.map((row) => row.id)).toEqual([secondInRangeRunId, firstInRangeRunId]);
   });
 
+  it("builds an overview with every non-terminated agent latest run and the global recent six", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const busyAgentId = randomUUID();
+    const inactiveAgentId = randomUUID();
+    const terminatedAgentId = randomUUID();
+    const otherOrgAgentId = randomUUID();
+    const inactiveRunId = randomUUID();
+    const busyRunIds = Array.from({ length: 7 }, () => randomUUID());
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Rudder Overview Org",
+        urlKey: deriveOrganizationUrlKey("Rudder Overview Org"),
+        issuePrefix: "ROV",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Rudder Overview Neighbor",
+        urlKey: deriveOrganizationUrlKey("Rudder Overview Neighbor"),
+        issuePrefix: "RON",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values([
+      { id: busyAgentId, orgId, name: "Busy", role: "engineer", status: "active" },
+      { id: inactiveAgentId, orgId, name: "Inactive", role: "engineer", status: "idle" },
+      { id: terminatedAgentId, orgId, name: "Terminated", role: "engineer", status: "terminated" },
+      { id: otherOrgAgentId, orgId: otherOrgId, name: "Neighbor", role: "engineer", status: "active" },
+    ]);
+    await db.insert(heartbeatRuns).values([
+      {
+        id: inactiveRunId,
+        orgId,
+        agentId: inactiveAgentId,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        resultSummaryJson: { summary: "Old but still latest for this agent." },
+        createdAt: new Date("2025-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+      },
+      {
+        orgId,
+        agentId: terminatedAgentId,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: new Date("2025-06-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-06-01T00:00:00.000Z"),
+      },
+      {
+        orgId: otherOrgId,
+        agentId: otherOrgAgentId,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: new Date("2027-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2027-01-01T00:00:00.000Z"),
+      },
+      {
+        orgId,
+        agentId: otherOrgAgentId,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: new Date("2028-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2028-01-01T00:00:00.000Z"),
+      },
+      ...busyRunIds.map((id, index) => ({
+        id,
+        orgId,
+        agentId: busyAgentId,
+        invocationSource: "timer" as const,
+        status: "succeeded" as const,
+        createdAt: new Date(`2026-01-0${index + 1}T00:00:00.000Z`),
+        updatedAt: new Date(`2026-01-0${index + 1}T00:00:00.000Z`),
+      })),
+    ]);
+
+    const overview = await svc.overview(orgId);
+
+    expect(new Map(overview.latestByAgent.map((run) => [run.agentId, run.id]))).toEqual(new Map([
+      [busyAgentId, busyRunIds[6]],
+      [inactiveAgentId, inactiveRunId],
+    ]));
+    expect(overview.recent.map((run) => run.id)).toEqual(busyRunIds.slice(1).reverse());
+    expect(overview.latestByAgent.find((run) => run.agentId === inactiveAgentId)?.resultJson).toEqual({
+      summary: "Old but still latest for this agent.",
+    });
+    expect(overview.latestByAgent.some((run) => run.agentId === terminatedAgentId)).toBe(false);
+    expect(overview.recent.some((run) => run.orgId === otherOrgId)).toBe(false);
+    expect(overview.recent.some((run) => run.agentId === otherOrgAgentId)).toBe(false);
+  });
+
   it("aggregates recent used skills from adapter invoke events", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

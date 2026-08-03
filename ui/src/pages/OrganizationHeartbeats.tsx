@@ -1,4 +1,4 @@
-import { AGENT_RUN_LIST_HISTORY_LIMIT, agentRunsApi, type LiveRunForIssue } from "@/api/agent-runs";
+import { agentRunsApi, type LiveRunForIssue } from "@/api/agent-runs";
 import { agentsApi } from "@/api/agents";
 import { AgentIcon } from "@/components/AgentAvatar";
 import { EmptyState } from "@/components/EmptyState";
@@ -134,9 +134,9 @@ export function OrganizationHeartbeats() {
     enabled: !!viewedOrganizationId,
   });
 
-  const runsQuery = useQuery({
-    queryKey: queryKeys.agentRuns(viewedOrganizationId ?? "__none__", undefined, AGENT_RUN_LIST_HISTORY_LIMIT),
-    queryFn: () => agentRunsApi.list(viewedOrganizationId!, undefined, AGENT_RUN_LIST_HISTORY_LIMIT),
+  const overviewQuery = useQuery({
+    queryKey: queryKeys.agentRunsOverview(viewedOrganizationId ?? "__none__"),
+    queryFn: () => agentRunsApi.overview(viewedOrganizationId!),
     enabled: !!viewedOrganizationId,
     refetchInterval: 15_000,
   });
@@ -191,13 +191,13 @@ export function OrganizationHeartbeats() {
 
   const latestRunByAgent = useMemo(() => {
     const map = new Map<string, HeartbeatRun>();
-    for (const run of runsQuery.data ?? []) {
+    for (const run of overviewQuery.data?.latestByAgent ?? []) {
       if (!map.has(run.agentId)) {
         map.set(run.agentId, run);
       }
     }
     return map;
-  }, [runsQuery.data]);
+  }, [overviewQuery.data?.latestByAgent]);
 
   const liveRunsByAgent = useMemo(() => {
     const map = new Map<string, LiveRunForIssue[]>();
@@ -239,7 +239,7 @@ export function OrganizationHeartbeats() {
     return <EmptyState icon={Clock3} message="Select an organization to manage heartbeats." />;
   }
 
-  if (agentsQuery.isLoading || runsQuery.isLoading || liveRunsQuery.isLoading) {
+  if (agentsQuery.isLoading || overviewQuery.isLoading || liveRunsQuery.isLoading) {
     return <PageSkeleton variant="detail" />;
   }
 
@@ -247,8 +247,8 @@ export function OrganizationHeartbeats() {
     return <p className="text-sm text-destructive">{agentsQuery.error.message}</p>;
   }
 
-  if (runsQuery.error) {
-    return <p className="text-sm text-destructive">{runsQuery.error.message}</p>;
+  if (overviewQuery.error) {
+    return <p className="text-sm text-destructive">{overviewQuery.error.message}</p>;
   }
 
   if (liveRunsQuery.error) {
@@ -409,11 +409,11 @@ export function OrganizationHeartbeats() {
           </div>
         </div>
         <div className="px-5 py-4">
-          {(runsQuery.data ?? []).length === 0 ? (
+          {(overviewQuery.data?.recent ?? []).length === 0 ? (
             <div className="text-sm text-muted-foreground">No agent runs yet.</div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {(runsQuery.data ?? []).slice(0, 6).map((run) => {
+              {(overviewQuery.data?.recent ?? []).map((run) => {
                 const agent = (agentsQuery.data ?? []).find((item) => item.id === run.agentId) ?? null;
                 const summary = latestRunSummary(run);
                 return (
