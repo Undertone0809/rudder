@@ -1,4 +1,5 @@
 export * from "./account-linking.js";
+export * from "./account-profile.js";
 export * from "./auth-epochs.js";
 export * from "./client.js";
 export * from "./credential-revocation.js";

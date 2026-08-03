@@ -235,11 +235,13 @@ function parseDesktopIdentityState(value: unknown): DesktopIdentityState | null 
   if (
     typeof account.id !== "string"
     || (typeof account.email !== "string" && account.email !== null)
+    || typeof account.name !== "string"
+    || (typeof account.image !== "string" && account.image !== null)
     || typeof state.deviceId !== "string"
   ) return null;
   return {
     status: "signed-in",
-    account: { id: account.id, email: account.email },
+    account: { id: account.id, email: account.email, name: account.name, image: account.image },
     deviceId: state.deviceId,
   };
 }
@@ -262,6 +264,20 @@ contextBridge.exposeInMainWorld("desktopIdentity", {
       DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession,
       { deviceId },
     ) as Promise<void>,
+  getProfile: () =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.getProfile) as Promise<{
+      id: string;
+      email: string;
+      name: string;
+      image: string | null;
+    }>,
+  updateProfile: (input: { image: string | null }) =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile, input) as Promise<{
+      id: string;
+      email: string;
+      name: string;
+      image: string | null;
+    }>,
   onStateChanged: (listener: (state: DesktopIdentityState) => void) => {
     const wrapped = (_event: IpcRendererEvent, state: unknown) => {
       const parsed = parseDesktopIdentityState(state);
@@ -558,6 +574,13 @@ declare global {
       signOut(): Promise<DesktopIdentityState>;
       listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
       revokeDeviceSession(deviceId: string): Promise<void>;
+      getProfile(): Promise<{ id: string; email: string; name: string; image: string | null }>;
+      updateProfile(input: { image: string | null }): Promise<{
+        id: string;
+        email: string;
+        name: string;
+        image: string | null;
+      }>;
       onStateChanged(listener: (state: DesktopIdentityState) => void): () => void;
     };
     desktopShell: {

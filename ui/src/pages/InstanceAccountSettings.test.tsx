@@ -41,6 +41,13 @@ const translate = vi.hoisted(() => {
         "account.error.title": "Account unavailable",
         "account.tryAgain": "Try again",
         "account.emailUnavailable": "Signed-in account",
+        "account.avatar.change": "Change avatar",
+        "account.avatar.changing": "Changing avatar...",
+        "account.avatar.loadFailed": "Unable to load your account profile.",
+        "account.avatar.saveFailed": "Unable to save your avatar.",
+        "account.avatar.invalidType": "Choose a JPEG, PNG, or WebP image.",
+        "account.avatar.invalidImage": "Choose a valid JPEG, PNG, or WebP image.",
+        "account.avatar.tooLarge": "That image is too large. Choose a smaller image.",
         "account.signedIn.description": "This device is connected.",
         "account.signOut": "Sign out",
         "account.signingOut": "Signing out...",
@@ -85,6 +92,18 @@ function installBridge(overrides: Partial<DesktopIdentityApi> = {}) {
     signOut: vi.fn(async () => signedOut),
     listDeviceSessions: vi.fn(async () => []),
     revokeDeviceSession: vi.fn(async () => undefined),
+    getProfile: vi.fn(async () => ({
+      id: "account_zeeland",
+      email: "zee@rudderhq.dev",
+      name: "Zee Zeeland",
+      image: null,
+    })),
+    updateProfile: vi.fn(async ({ image }: { image: string | null }) => ({
+      id: "account_zeeland",
+      email: "zee@rudderhq.dev",
+      name: "Zee Zeeland",
+      image,
+    })),
     onStateChanged: vi.fn(() => () => undefined),
     ...overrides,
   };
@@ -126,7 +145,12 @@ describe("InstanceAccountSettings", () => {
   it("starts sign-in from the signed-out state and renders the returned account", async () => {
     const signedIn: DesktopIdentityState = {
       status: "signed-in",
-      account: { id: "account_zeeland", email: "zee@rudderhq.dev" },
+      account: {
+        id: "account_zeeland",
+        email: "zee@rudderhq.dev",
+        name: "Zee Zeeland",
+        image: null,
+      },
       deviceId: "device_current",
     };
     const bridge = installBridge({
@@ -153,7 +177,12 @@ describe("InstanceAccountSettings", () => {
   it("lists real device sessions and revokes a non-current device", async () => {
     const signedIn: DesktopIdentityState = {
       status: "signed-in",
-      account: { id: "account_zeeland", email: "zee@rudderhq.dev" },
+      account: {
+        id: "account_zeeland",
+        email: "zee@rudderhq.dev",
+        name: "Zee Zeeland",
+        image: null,
+      },
       deviceId: "device_current",
     };
     const bridge = installBridge({
@@ -199,7 +228,12 @@ describe("InstanceAccountSettings", () => {
   it("shows an explicit device-session error instead of placeholder data", async () => {
     const signedIn: DesktopIdentityState = {
       status: "signed-in",
-      account: { id: "account_zeeland", email: null },
+      account: {
+        id: "account_zeeland",
+        email: null,
+        name: "Zee Zeeland",
+        image: null,
+      },
       deviceId: "device_current",
     };
     installBridge({
@@ -211,8 +245,53 @@ describe("InstanceAccountSettings", () => {
     const container = renderPage();
     await settle();
 
-    expect(container.textContent).toContain("Signed-in account");
+    expect(container.textContent).toContain("Zee Zeeland");
     expect(container.textContent).toContain("Device session API is not supported");
     expect(container.textContent).not.toContain("No device sessions reported");
+  });
+
+  it("renders the Identity name and avatar and persists a selected image", async () => {
+    const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const signedIn: DesktopIdentityState = {
+      status: "signed-in",
+      account: {
+        id: "account_zeeland",
+        email: "zee@rudderhq.dev",
+        name: "Zee Zeeland",
+        image: null,
+      },
+      deviceId: "device_current",
+    };
+    const bridge = installBridge({
+      getState: vi.fn(async () => signedIn),
+      getProfile: vi.fn(async () => ({
+        id: signedIn.account.id,
+        email: signedIn.account.email ?? "zee@rudderhq.dev",
+        name: signedIn.account.name,
+        image: null,
+      })),
+      updateProfile: vi.fn(async () => ({
+        id: signedIn.account.id,
+        email: signedIn.account.email ?? "zee@rudderhq.dev",
+        name: signedIn.account.name,
+        image,
+      })),
+    });
+    const container = renderPage();
+    await settle();
+
+    expect(container.textContent).toContain("Zee Zeeland");
+    const input = container.querySelector<HTMLInputElement>("[data-testid='account-avatar-input']");
+    expect(input).not.toBeNull();
+    const file = new File([Uint8Array.from(atob(image.slice(image.indexOf(",") + 1)), (character) => character.charCodeAt(0))], "avatar.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await settle();
+
+    expect(bridge.updateProfile).toHaveBeenCalledWith({ image: expect.stringMatching(/^data:image\/png;base64,/) });
+    expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   });
 });

@@ -103,6 +103,7 @@ function parseTokenResponse(value: unknown): IdentityTokenResponse {
     || typeof account.id !== "string"
     || typeof account.email !== "string"
     || typeof account.name !== "string"
+    || (typeof account.image !== "string" && account.image !== null)
     || !device
     || typeof device.id !== "string"
     || typeof device.installationId !== "string"
@@ -111,6 +112,27 @@ function parseTokenResponse(value: unknown): IdentityTokenResponse {
     throw new Error("Rudder Identity returned an invalid response");
   }
   return value as IdentityTokenResponse;
+}
+
+function parseIdentityAccount(value: unknown): IdentityAccount {
+  if (!value || typeof value !== "object") {
+    throw new Error("Rudder Identity returned an invalid account profile");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string"
+    || typeof record.email !== "string"
+    || typeof record.name !== "string"
+    || (typeof record.image !== "string" && record.image !== null)
+  ) {
+    throw new Error("Rudder Identity returned an invalid account profile");
+  }
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name,
+    image: record.image,
+  };
 }
 
 function identityFallbackError(
@@ -604,6 +626,26 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
         options.vault.clear();
         accessToken = null;
       }
+    },
+
+    async getProfile(): Promise<IdentityAccount> {
+      const response = await authenticatedRequest("/api/account/profile");
+      if (!response.ok) throw new Error(`Unable to load Rudder Account profile (${response.status})`);
+      return parseIdentityAccount(await response.json());
+    },
+
+    async updateProfile(input: { image: string | null }): Promise<IdentityAccount> {
+      const response = await authenticatedRequest("/api/account/profile", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image: input.image }),
+      });
+      if (!response.ok) {
+        const value = await response.json().catch(() => null) as { error?: unknown } | null;
+        const message = typeof value?.error === "string" ? value.error : `Request failed (${response.status})`;
+        throw new Error(message);
+      }
+      return parseIdentityAccount(await response.json());
     },
 
     async signOut(): Promise<void> {

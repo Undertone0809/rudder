@@ -14,6 +14,7 @@ import {
 import { timeAgo } from "@/lib/timeAgo";
 import {
   AlertCircle,
+  Camera,
   Laptop,
   LoaderCircle,
   LogIn,
@@ -24,7 +25,7 @@ import {
   Trash2,
   UserRoundCheck,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 
@@ -35,6 +36,91 @@ type PageState =
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+const AVATAR_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_AVATAR_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_AVATAR_DATA_URL_LENGTH = 480 * 1024;
+
+function avatarInitials(name: string, email: string | null): string {
+  const source = name.trim() || email?.split("@", 1)[0] || "R";
+  const parts = source.split(/\s+/u).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0]?.[0] ?? ""}${parts.at(-1)?.[0] ?? ""}` : source.slice(0, 2))
+    .toUpperCase();
+}
+
+function readAvatarFile(file: File): Promise<string> {
+  if (!AVATAR_CONTENT_TYPES.has(file.type)) {
+    return Promise.reject(new Error("unsupported_type"));
+  }
+  if (file.size > MAX_AVATAR_FILE_BYTES) {
+    return Promise.reject(new Error("too_large"));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read_failed"));
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      if (
+        value.length === 0
+        || value.length > MAX_AVATAR_DATA_URL_LENGTH
+        || !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/u.test(value)
+      ) {
+        reject(new Error("too_large"));
+        return;
+      }
+      const encoded = value.slice(value.indexOf(",") + 1);
+      const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+      const isPng = file.type === "image/png"
+        && bytes.slice(0, 8).every((byte, index) => byte === [137, 80, 78, 71, 13, 10, 26, 10][index]);
+      const isJpeg = file.type === "image/jpeg"
+        && bytes.slice(0, 3).every((byte, index) => byte === [255, 216, 255][index]);
+      const isWebp = file.type === "image/webp"
+        && new TextDecoder().decode(bytes.slice(0, 4)) === "RIFF"
+        && new TextDecoder().decode(bytes.slice(8, 12)) === "WEBP";
+      if (!isPng && !isJpeg && !isWebp) {
+        reject(new Error("invalid_image"));
+        return;
+      }
+      resolve(value);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function AccountAvatar({
+  name,
+  email,
+  image,
+  ariaLabel,
+  onClick,
+  disabled,
+}: {
+  name: string;
+  email: string | null;
+  image: string | null;
+  ariaLabel: string;
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--border-soft)] bg-muted text-lg font-semibold text-muted-foreground transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {image ? (
+        <img src={image} alt="" className="size-full object-cover" />
+      ) : (
+        avatarInitials(name, email)
+      )}
+      <span className="absolute inset-0 flex items-center justify-center bg-foreground/55 text-background opacity-0 transition-opacity hover:opacity-100">
+        <Camera className="size-5" aria-hidden="true" />
+      </span>
+    </button>
+  );
 }
 
 function DeviceSessionRow({
@@ -89,9 +175,12 @@ export function AccountSettingsSections() {
   const [sessions, setSessions] = useState<DesktopIdentityDeviceSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [avatarPending, setAvatarPending] = useState(false);
   const [actionPending, setActionPending] = useState<"sign-in" | "sign-out" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async () => {
     const identity = readDesktopIdentity();
@@ -152,6 +241,38 @@ export function AccountSettingsSections() {
     void loadSessions();
   }, [loadSessions, signedInDeviceId]);
 
+  useEffect(() => {
+    if (!signedInDeviceId || pageState.kind !== "ready" || pageState.identity.status !== "signed-in") return;
+    const identity = readDesktopIdentity();
+    if (!identity) return;
+    let cancelled = false;
+    setProfileError(null);
+    void identity.getProfile()
+      .then((profile) => {
+        if (cancelled) return;
+        setPageState((current) => {
+          if (
+            current.kind !== "ready"
+            || current.identity.status !== "signed-in"
+            || current.identity.deviceId !== signedInDeviceId
+          ) return current;
+          return {
+            ...current,
+            identity: {
+              ...current.identity,
+              account: profile,
+            },
+          };
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) setProfileError(errorMessage(error, t("account.avatar.loadFailed")));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pageState.kind, signedInDeviceId, t]);
+
   async function handleSignIn() {
     const identity = readDesktopIdentity();
     if (!identity) return;
@@ -197,6 +318,42 @@ export function AccountSettingsSections() {
       setSessionsError(errorMessage(error, t("account.sessions.revokeFailed")));
     } finally {
       setRevokingSessionId(null);
+    }
+  }
+
+  async function handleAvatarChange(file: File | undefined) {
+    if (!file) return;
+    const identity = readDesktopIdentity();
+    if (!identity || pageState.kind !== "ready" || pageState.identity.status !== "signed-in") return;
+    const accountId = pageState.identity.account.id;
+    const deviceId = pageState.identity.deviceId;
+    setAvatarPending(true);
+    setProfileError(null);
+    try {
+      const image = await readAvatarFile(file);
+      const profile = await identity.updateProfile({ image });
+      setPageState((current) => {
+        if (
+          current.kind !== "ready"
+          || current.identity.status !== "signed-in"
+          || current.identity.account.id !== accountId
+          || current.identity.deviceId !== deviceId
+        ) return current;
+        return { ...current, identity: { ...current.identity, account: profile } };
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      const fallback = code === "unsupported_type"
+        ? t("account.avatar.invalidType")
+        : code === "too_large"
+          ? t("account.avatar.tooLarge")
+          : code === "invalid_image" || code === "invalid_avatar"
+            ? t("account.avatar.invalidImage")
+          : t("account.avatar.saveFailed");
+      setProfileError(code === "invalid_image" || code === "invalid_avatar" ? fallback : errorMessage(error, fallback));
+    } finally {
+      setAvatarPending(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
     }
   }
 
@@ -281,29 +438,72 @@ export function AccountSettingsSections() {
             ) : null}
 
             {identityState.status === "signed-in" ? (
-              <SettingsItem
-                icon={ShieldCheck}
-                title={identityState.account.email ?? t("account.emailUnavailable")}
-                description={t("account.signedIn.description")}
-                action={
+              <>
+                <div
+                  data-testid="account-profile-card"
+                  className="flex flex-wrap items-center gap-3 border-b border-[color:var(--border-soft)] px-4 py-4"
+                >
+                  <AccountAvatar
+                    name={identityState.account.name}
+                    email={identityState.account.email}
+                    image={identityState.account.image}
+                    ariaLabel={t("account.avatar.change")}
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={avatarPending}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">{identityState.account.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{identityState.account.email ?? t("account.emailUnavailable")}</p>
+                  </div>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    aria-label={t("account.avatar.change")}
+                    data-testid="account-avatar-input"
+                    onChange={(event) => void handleAvatarChange(event.target.files?.[0])}
+                  />
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={actionPending === "sign-out"}
-                    onClick={() => void handleSignOut()}
+                    disabled={avatarPending}
+                    onClick={() => avatarInputRef.current?.click()}
                   >
-                    {actionPending === "sign-out"
+                    {avatarPending
                       ? <LoaderCircle data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />
-                      : <LogOut data-icon="inline-start" />}
-                    {actionPending === "sign-out" ? t("account.signingOut") : t("account.signOut")}
+                      : <Camera data-icon="inline-start" />}
+                    {avatarPending ? t("account.avatar.changing") : t("account.avatar.change")}
                   </Button>
-                }
-              />
+                </div>
+                <SettingsItem
+                  icon={ShieldCheck}
+                  title={identityState.account.email ?? t("account.emailUnavailable")}
+                  description={t("account.signedIn.description")}
+                  action={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={actionPending === "sign-out" || avatarPending}
+                      onClick={() => void handleSignOut()}
+                    >
+                      {actionPending === "sign-out"
+                        ? <LoaderCircle data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />
+                        : <LogOut data-icon="inline-start" />}
+                      {actionPending === "sign-out" ? t("account.signingOut") : t("account.signOut")}
+                    </Button>
+                  }
+                />
+              </>
             ) : null}
           </SettingsGroup>
           {actionError ? (
             <p role="alert" className="text-[13px] leading-5 text-destructive">{actionError}</p>
+          ) : null}
+          {profileError ? (
+            <p role="alert" className="px-4 pb-3 text-[13px] leading-5 text-destructive">{profileError}</p>
           ) : null}
         </SettingsSection>
       ) : null}

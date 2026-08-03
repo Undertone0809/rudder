@@ -72,6 +72,26 @@ export async function resolveVerifiedIdentity(
         name: input.name?.trim() || normalizedEmail.split("@")[0],
         image: input.image ?? null,
       });
+    } else if (input.name?.trim() || input.image) {
+      const [existingUser] = await tx
+        .select({ name: identityUsers.name, image: identityUsers.image })
+        .from(identityUsers)
+        .where(eq(identityUsers.id, userId))
+        .limit(1);
+      if (existingUser) {
+        const fallbackName = normalizedEmail.split("@")[0] ?? normalizedEmail;
+        const providerName = input.name?.trim();
+        const name = providerName && existingUser.name === fallbackName
+          ? providerName
+          : existingUser.name;
+        const image = existingUser.image ?? input.image ?? null;
+        if (name !== existingUser.name || image !== existingUser.image) {
+          await tx
+            .update(identityUsers)
+            .set({ name, image, updatedAt: new Date() })
+            .where(eq(identityUsers.id, userId));
+        }
+      }
     }
 
     await tx
