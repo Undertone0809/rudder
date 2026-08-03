@@ -48,6 +48,15 @@ function createCollector() {
 }
 
 describe("product analytics collector", () => {
+  it("does not bootstrap consent from an assertion authorization", () => {
+    const collector = createProductAnalyticsCollector(new InMemoryProductAnalyticsCollectorStore());
+    const result = collector.ingestBatch({ authorization, events: [event()] });
+
+    expect(result.accepted).toBe(0);
+    expect(result.rejected[0]).toMatchObject({ errorCode: "revoked" });
+    expect(collector.store.listEvents()).toHaveLength(0);
+  });
+
   it("accepts a valid event and treats the same payload as a duplicate", () => {
     const collector = createCollector();
     const first = collector.ingestBatch({ authorization, events: [event()] });

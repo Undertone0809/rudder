@@ -57,7 +57,7 @@ export function createProductAnalyticsAssertionAuthorizer(input: {
 export function productAnalyticsCollectorRoutes(
   collector: ProductAnalyticsCollector | ProductAnalyticsPersistentCollector,
   authorize: ProductAnalyticsCollectorAuthorizer,
-  options: { revokeSecret?: string | null } = {},
+  options: { revokeSecret?: string | null; consentSyncSecret?: string | null } = {},
 ) {
   const router = Router();
 
@@ -97,6 +97,28 @@ export function productAnalyticsCollectorRoutes(
     }
     const state = await collector.advanceConsent({ installationId, consentVersion, consentEpoch, revoked: true, analyticsSubject });
     res.json({ installationId, analyticsSubject, consentEpoch: state.consentEpoch, revoked: state.revoked });
+  });
+
+  // Identity owns the append-only consent ledger. This private hook mirrors
+  // its current grant/revoke state into the collector before any assertion can
+  // authorize delivery. Assertions are intentionally not allowed to bootstrap
+  // a consent row from request claims.
+  router.post("/api/analytics/v1/internal/consent/sync", async (req, res) => {
+    if (!secretMatches(req.header("x-rudder-telemetry-consent-sync-secret"), options.consentSyncSecret ?? null)) {
+      res.status(401).json({ errorCode: "unauthorized" });
+      return;
+    }
+    const installationId = typeof req.body?.installationId === "string" ? req.body.installationId : "";
+    const analyticsSubject = typeof req.body?.analyticsSubject === "string" ? req.body.analyticsSubject : null;
+    const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion : "";
+    const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : NaN;
+    const revoked = req.body?.revoked;
+    if (!installationId || !consentVersion || !Number.isSafeInteger(consentEpoch) || consentEpoch < 1 || typeof revoked !== "boolean") {
+      res.status(422).json({ errorCode: "invalid_request" });
+      return;
+    }
+    const state = await collector.advanceConsent({ installationId, analyticsSubject, consentVersion, consentEpoch, revoked });
+    res.json({ installationId, analyticsSubject, consentVersion: state.consentVersion, consentEpoch: state.consentEpoch, revoked: state.revoked });
   });
 
   return router;

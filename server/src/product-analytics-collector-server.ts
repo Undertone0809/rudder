@@ -30,7 +30,10 @@ export function createProductAnalyticsCollectorApp(options: ProductAnalyticsColl
     expectedKeyId: options.config.identityKeyId,
     expectedIssuer: options.config.identityIssuer,
   });
-  app.use(productAnalyticsCollectorRoutes(collector, authorize, { revokeSecret: options.config.revokeSecret }));
+  app.use(productAnalyticsCollectorRoutes(collector, authorize, {
+    revokeSecret: options.config.revokeSecret,
+    consentSyncSecret: options.config.consentSyncSecret,
+  }));
   // Reports use the maintenance/report connection rather than the ingest
   // connection. In production this URL is provisioned with rollup/report
   // privileges; the collector role never serves raw data to report callers.

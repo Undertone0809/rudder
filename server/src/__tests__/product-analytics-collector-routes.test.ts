@@ -19,7 +19,7 @@ function app() {
     mode: "anonymous",
     consentVersion: "v1",
     consentEpoch: 1,
-  })));
+  }), { consentSyncSecret: "identity-ledger-hook" }));
   server.use(errorHandler);
   return { server, store };
 }
@@ -50,6 +50,42 @@ function event() {
 }
 
 describe("product analytics collector routes", () => {
+  it("requires Identity consent synchronization before accepting an assertion batch", async () => {
+    const store = new InMemoryProductAnalyticsCollectorStore();
+    const collector = createProductAnalyticsCollector(store);
+    const server = express();
+    server.use(express.json());
+    server.use(productAnalyticsCollectorRoutes(collector, () => ({
+      installationId,
+      mode: "anonymous",
+      consentVersion: "v1",
+      consentEpoch: 1,
+    }), { consentSyncSecret: "identity-ledger-hook" }));
+
+    const beforeSync = await request(server).post("/api/analytics/v1/events:batch").send({ events: [event()] });
+    expect(beforeSync.body.rejected[0]).toMatchObject({ errorCode: "revoked" });
+
+    const sync = await request(server)
+      .post("/api/analytics/v1/internal/consent/sync")
+      .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
+      .send({ installationId, consentVersion: "v1", consentEpoch: 1, revoked: false });
+    expect(sync.status).toBe(200);
+
+    const afterSync = await request(server).post("/api/analytics/v1/events:batch").send({ events: [event()] });
+    expect(afterSync.body.accepted).toBe(1);
+  });
+
+  it("rejects consent synchronization without the private Identity hook secret", async () => {
+    const { server } = app();
+    const response = await request(server).post("/api/analytics/v1/internal/consent/sync").send({
+      installationId,
+      consentVersion: "v1",
+      consentEpoch: 2,
+      revoked: false,
+    });
+    expect(response.status).toBe(401);
+  });
+
   it("returns idempotent batch acknowledgements without exposing request logging", async () => {
     const { server, store } = app();
     const payload = event();

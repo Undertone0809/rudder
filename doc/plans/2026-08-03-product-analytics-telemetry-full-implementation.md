@@ -49,7 +49,11 @@ reflected in `ANALYTICS.TELEMETRY.001`.
   retryable.
 - Identity owns an append-only per-user/per-installation consent ledger. The
   telemetry assertion endpoint derives its epoch from the latest granted row;
-  request-body consent flags cannot authorize an upload.
+  request-body consent flags cannot authorize an upload. The central collector
+  requires the Identity ledger to synchronize each grant/revoke through its
+  private `/api/analytics/v1/internal/consent/sync` hook (protected by
+  `RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET`) before an assertion can
+  authorize delivery; assertion claims never bootstrap consent state.
 - The central report exposes real delivery quality counters and W1 meaningful,
   W1 loop, and W4 loop cohorts. Retention deletes raw events at the exact cutoff
   timestamp and rebuilds the cutoff UTC day.

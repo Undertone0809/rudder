@@ -24,6 +24,14 @@ describe("product analytics collector deployment", () => {
     expect(() => parseProductAnalyticsCollectorConfig({ ...baseEnv, RUDDER_TELEMETRY_COLLECTOR_SCHEMA: "public" })).toThrow("invalid_rudder_telemetry_collector_schema");
   });
 
+  it("keeps the consent synchronization secret separate from report/revoke secrets", () => {
+    const config = parseProductAnalyticsCollectorConfig({
+      ...baseEnv,
+      RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "identity-ledger-hook",
+    });
+    expect(config.consentSyncSecret).toBe("identity-ledger-hook");
+  });
+
   it("exposes a liveness endpoint without touching the database", async () => {
     const app = createProductAnalyticsCollectorApp({ config: parseProductAnalyticsCollectorConfig(baseEnv), db: {} as Db, maintenance: false });
     const response = await request(app).get("/healthz");

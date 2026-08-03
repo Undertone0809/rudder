@@ -426,66 +426,20 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
   }
 
   async function ensureState(authorization: ProductAnalyticsCollectorAuthorization, now: Date) {
-    const existing = await readState(authorization.installationId);
-    if (existing) return existing;
-    const [created] = await db.insert(privateProductAnalyticsCollectorInstallations).values({
-      installationId: authorization.installationId,
-      mode: authorization.mode,
-      consentVersion: authorization.consentVersion,
-      consentEpoch: authorization.consentEpoch,
-      // The installation row is shared health/state only. Account-linked
-      // consent lives in product_analytics_collector_subjects per subject.
-      analyticsSubject: null,
-      revoked: false,
-      firstSeenAt: now,
-      lastSeenAt: now,
-      updatedAt: now,
-    }).onConflictDoNothing({ target: privateProductAnalyticsCollectorInstallations.installationId }).returning({
-      consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
-      consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
-      revoked: privateProductAnalyticsCollectorInstallations.revoked,
-      analyticsSubject: privateProductAnalyticsCollectorInstallations.analyticsSubject,
-    });
-    return created ?? await readState(authorization.installationId);
+    void now;
+    // A signed assertion proves identity, not consent. The Identity ledger
+    // sync hook must establish this row before upload is accepted.
+    return readState(authorization.installationId);
   }
 
   async function ensureSubjectState(authorization: ProductAnalyticsCollectorAuthorization, now: Date) {
     const analyticsSubject = authorization.analyticsSubject;
     if (!analyticsSubject) return null;
     const existing = await readSubjectState(authorization.installationId, analyticsSubject);
-    if (existing) {
-      if (authorization.consentEpoch > existing.consentEpoch) {
-        const [updated] = await db.update(privateProductAnalyticsCollectorSubjects).set({
-          consentVersion: authorization.consentVersion,
-          consentEpoch: authorization.consentEpoch,
-          revokedAt: null,
-          updatedAt: now,
-        }).where(and(
-          eq(privateProductAnalyticsCollectorSubjects.installationId, authorization.installationId),
-          eq(privateProductAnalyticsCollectorSubjects.analyticsSubject, analyticsSubject),
-          eq(privateProductAnalyticsCollectorSubjects.consentEpoch, existing.consentEpoch),
-        )).returning({
-          consentVersion: privateProductAnalyticsCollectorSubjects.consentVersion,
-          consentEpoch: privateProductAnalyticsCollectorSubjects.consentEpoch,
-          revoked: sql<boolean>`${privateProductAnalyticsCollectorSubjects.revokedAt} IS NOT NULL`,
-        });
-        return updated ?? await readSubjectState(authorization.installationId, analyticsSubject);
-      }
-      return existing;
-    }
-    const [created] = await db.insert(privateProductAnalyticsCollectorSubjects).values({
-      installationId: authorization.installationId,
-      analyticsSubject,
-      consentVersion: authorization.consentVersion,
-      consentEpoch: authorization.consentEpoch,
-      consentedAt: now,
-      updatedAt: now,
-    }).onConflictDoNothing({ target: [privateProductAnalyticsCollectorSubjects.installationId, privateProductAnalyticsCollectorSubjects.analyticsSubject] }).returning({
-      consentVersion: privateProductAnalyticsCollectorSubjects.consentVersion,
-      consentEpoch: privateProductAnalyticsCollectorSubjects.consentEpoch,
-      revoked: sql<boolean>`${privateProductAnalyticsCollectorSubjects.revokedAt} IS NOT NULL`,
-    });
-    return created ?? await readSubjectState(authorization.installationId, analyticsSubject);
+    void now;
+    // Do not advance or create a subject row from assertion claims. A grant
+    // must arrive through the private Identity consent sync hook.
+    return existing;
   }
 
   async function ingestBatch(input: { authorization: ProductAnalyticsCollectorAuthorization; events: unknown; now?: Date }) {
