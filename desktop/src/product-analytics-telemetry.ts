@@ -1,6 +1,6 @@
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
 
 export type DesktopTelemetryMode = "off" | "anonymous" | "account_linked";
 
