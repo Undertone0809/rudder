@@ -253,7 +253,9 @@ export function RunFeedbackChatPanel({
           planMode: false,
           modelOverride: null,
           effortOverride: null,
-          contextLinks: projectId ? [{ entityType: "project", entityId: projectId }] : [],
+          contextLinks: sendTarget.projectId
+            ? [{ entityType: "project", entityId: sendTarget.projectId }]
+            : [],
           clientMutationId: mutationKeyRef.current,
           files: serialized.files,
           inlineAnnotations: serialized.inlineAnnotations,

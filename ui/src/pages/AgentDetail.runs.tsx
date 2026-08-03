@@ -502,11 +502,11 @@ export function RunsTab({
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
     const annotationId = crypto.randomUUID();
-    const existing = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
+    const existing = feedbackTargetRef.current ?? sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
       candidate.kind === "run_feedback_chat"
       && candidate.agentId === agentId
       && candidate.organizationId === orgId
-    )) ?? feedbackTargetRef.current;
+    ));
     const clientMutationId = existing?.clientMutationId ?? crypto.randomUUID();
     const pendingAnnotation: ChatInlineAnnotationInput = {
       id: annotationId,
