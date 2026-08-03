@@ -25,6 +25,7 @@ import { cn, formatDate, formatDateTime, issueUrl, projectUrl } from "../lib/uti
 import { AgentIdentity } from "./AgentAvatar";
 import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./AssigneeLabel";
 import { IssueLabelChip } from "./IssueLabelChip";
+import { IssueRuntimeSelector } from "./IssueRuntimeSelector";
 import { PriorityIcon } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
@@ -502,7 +503,10 @@ export function IssueProperties({
             "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
             !issue.assigneeAgentId && !issue.assigneeUserId && "bg-accent"
           )}
-          onClick={() => { onUpdate({ assigneeAgentId: null, assigneeUserId: null }); setAssigneeOpen(false); }}
+          onClick={() => {
+            onUpdate({ assigneeAgentId: null, assigneeUserId: null, assigneeAgentRuntimeOverrides: null });
+            setAssigneeOpen(false);
+          }}
         >
           <AssigneeLabel kind="unassigned" label="No assignee" />
         </button>
@@ -513,7 +517,7 @@ export function IssueProperties({
               issue.assigneeUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
-              onUpdate({ assigneeAgentId: null, assigneeUserId: currentUserId });
+              onUpdate({ assigneeAgentId: null, assigneeUserId: currentUserId, assigneeAgentRuntimeOverrides: null });
               setAssigneeOpen(false);
             }}
           >
@@ -527,7 +531,7 @@ export function IssueProperties({
               issue.assigneeUserId === issue.createdByUserId && "bg-accent",
             )}
             onClick={() => {
-              onUpdate({ assigneeAgentId: null, assigneeUserId: issue.createdByUserId });
+              onUpdate({ assigneeAgentId: null, assigneeUserId: issue.createdByUserId, assigneeAgentRuntimeOverrides: null });
               setAssigneeOpen(false);
             }}
           >
@@ -544,16 +548,41 @@ export function IssueProperties({
             return `${formatChatAgentLabel(a)} ${a.name} ${a.role} ${a.title ?? ""}`.toLowerCase().includes(q);
           })
           .map((a) => (
-          <button
+          <div
             key={a.id}
             className={cn(
-              "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
-              a.id === issue.assigneeAgentId && "bg-accent"
+              "flex min-w-0 items-center gap-1 w-full rounded hover:bg-accent/50",
+              a.id === issue.assigneeAgentId && "bg-accent",
             )}
-            onClick={() => { trackRecentAssignee(a.id); onUpdate({ assigneeAgentId: a.id, assigneeUserId: null }); setAssigneeOpen(false); }}
           >
-            <AgentMenuLabel agent={a} />
-          </button>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-xs"
+              onClick={() => {
+                if (a.id === issue.assigneeAgentId) {
+                  setAssigneeOpen(false);
+                  return;
+                }
+                trackRecentAssignee(a.id);
+                onUpdate({
+                  assigneeAgentId: a.id,
+                  assigneeUserId: null,
+                  assigneeAgentRuntimeOverrides: null,
+                });
+                setAssigneeOpen(false);
+              }}
+            >
+              <AgentMenuLabel agent={a} />
+            </button>
+            {a.id === issue.assigneeAgentId ? (
+              <IssueRuntimeSelector
+                agent={a}
+                orgId={orgId!}
+                overrides={issue.assigneeAgentRuntimeOverrides}
+                onApply={(nextOverrides) => onUpdate({ assigneeAgentRuntimeOverrides: nextOverrides })}
+              />
+            ) : null}
+          </div>
         ))}
       </div>
     </>

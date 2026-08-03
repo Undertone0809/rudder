@@ -192,7 +192,7 @@ export function resolveRuntimeModels(
     seen.add(id);
     resolved.push({
       id,
-      label: candidate.label.trim() || id,
+      label: candidate.label?.trim() || id,
     });
   }
 

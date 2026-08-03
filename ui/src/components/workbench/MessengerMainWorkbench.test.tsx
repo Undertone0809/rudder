@@ -43,7 +43,7 @@ let emitDragEnd: ((event: {
 }) => void) | null = null;
 let nextId = 0;
 
-const createCustomGroup = vi.hoisted(() => vi.fn());
+const createCustomGroupWithEntries = vi.hoisted(() => vi.fn());
 const keepSavedView = vi.hoisted(() => vi.fn());
 const listCustomGroups = vi.hoisted(() => vi.fn());
 const updateSavedView = vi.hoisted(() => vi.fn());
@@ -60,7 +60,7 @@ const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
 vi.mock("@/api/messenger", () => ({
   messengerApi: {
-    createCustomGroup,
+    createCustomGroupWithEntries,
     keepSavedView,
     listCustomGroups,
     updateSavedView,
@@ -290,7 +290,7 @@ beforeEach(() => {
   nextId = 0;
   controls = null;
   emitDragEnd = null;
-  createCustomGroup.mockReset();
+  createCustomGroupWithEntries.mockReset();
   keepSavedView.mockReset();
   listCustomGroups.mockReset().mockResolvedValue({ groups: [] });
   updateSavedView.mockReset().mockResolvedValue({});
@@ -1014,7 +1014,12 @@ describe("MessengerMainWorkbench", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     const created = group("group-created", "Dashboard tools");
-    createCustomGroup.mockResolvedValue(created);
+    createCustomGroupWithEntries.mockResolvedValue({
+      groups: [{
+        ...created,
+        entries: [{ itemKey: "saved-view:saved-local" }],
+      }],
+    });
     keepSavedView.mockResolvedValue({
       savedView: savedBrowser(browser, "saved-local"),
       group: { id: created.id, name: created.name },
@@ -1025,9 +1030,14 @@ describe("MessengerMainWorkbench", () => {
         ?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(createCustomGroup).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(createCustomGroupWithEntries).toHaveBeenCalledWith(
       "org-a",
-      { name: "Dashboard tools", icon: null },
+      {
+        autoGenerateName: false,
+        icon: null,
+        itemKeys: ["saved-view:saved-local"],
+        name: "Dashboard tools",
+      },
     ));
   });
 

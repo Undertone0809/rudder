@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 import type { Agent, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, SlidersHorizontal } from "lucide-react";
-import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 
 const ISSUE_OVERRIDE_RUNTIME_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
 

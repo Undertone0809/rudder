@@ -481,7 +481,6 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
       await copyWorkspaceText(copyValue);
       pushToast({
         title: "Library link copied",
-        body: copyValue,
         tone: "info",
       });
     } catch (error) {

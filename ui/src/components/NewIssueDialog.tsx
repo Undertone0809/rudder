@@ -219,6 +219,7 @@ export function NewIssueDialog() {
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
+  const previousAssigneeAgentIdRef = useRef<string | null>(null);
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
   const dialogCompany = organizations.find((c) => c.id === effectiveCompanyId) ?? selectedOrganization;
   const requestedSavedIssueDraftId = newIssueDefaults.draftId ?? null;
@@ -682,7 +683,7 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects, requestedSavedIssueDraftId, selectedOrganizationId]);
-
+  useEffect(() => { if (!newIssueOpen) { previousAssigneeAgentIdRef.current = null; return; } const previousAgentId = previousAssigneeAgentIdRef.current; if (previousAgentId !== null && previousAgentId !== selectedAssigneeAgentId) { setAssigneeModelOverride(""); setAssigneeThinkingEffort(""); setAssigneeChrome(false); } previousAssigneeAgentIdRef.current = selectedAssigneeAgentId; }, [newIssueOpen, selectedAssigneeAgentId]);
   useEffect(() => {
     if (!supportsAssigneeOverrides) {
       setAssigneeOptionsOpen(false);
@@ -691,7 +692,6 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       return;
     }
-
     const validThinkingValues =
       assigneeAdapterType === "codex_local"
         ? withDefaultThinkingEffortOption(

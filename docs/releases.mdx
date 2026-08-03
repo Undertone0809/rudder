@@ -18,32 +18,34 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
-## v0.6.6
+## v0.7.0
 
 Released: 2026-08-03
 
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.6)
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.0)
 
-This release introduces Rudder Account sign-in and device security while keeping your Local Workspace private on your machine, and expands Rudder with App Builder, richer file review, and clearer agent-work visibility.
+This release brings Rudder's account, local workspace, agent runtime, and work-review flows together into a more dependable end-to-end workbench.
 
 ### New
 
-- Added Rudder Account sign-in: Stable Desktop now requires one account sign-in before Board entry. Continue with Google or GitHub OAuth in your system browser, or use native Rudder Desktop email OTP, password, and password-reset flows.
-- Added device-session controls so you can review and revoke signed-in Desktop devices. Device credentials use secure OS storage, and authorized Local Workspaces can continue offline for up to 30 days after online verification.
-- Added the experimental App Builder workspace for creating, verifying, and previewing local full-stack apps from Chat. App source stays on your device, and previews remain local to your computer.
-- Added editing and line-level annotations for supported text files in the Side Panel, plus a Chat Work manifest view for active and completed subagents.
+- Added Rudder Account sign-in and device-session controls, with native email verification and password flows alongside Google and GitHub sign-in.
+- Added the experimental App Builder workspace and local project entrypoints for creating, verifying, and previewing local applications from Chat.
+- Added transcript-aware Chat run feedback and annotations, including evidence links for agent-run activity and a clearer work manifest for active and completed subagents.
+- Added CodeMirror Markdown live preview for supported Library, issue, project, goal, automation, and file-review surfaces.
+- Added scoped Smart Model search fallback and a privacy-preserving local product-analytics ledger for measuring completed work cycles.
 
 ### Improved
 
-- Unified profile and account settings, added agent identity to Chat headers, and preserved Messenger groups, saved views, read state, and local preferences when an existing Local Workspace is connected to an account.
-- Improved the Apps workspace with direct opening, broader frontend-project support, safer local process handling, and an Ask AI for help path when an app fails to start.
-- Smoothed Messenger scrolling and group expansion under sustained activity.
-- Removed project-level budget controls. During upgrade, pending project-budget approvals are rejected, open budget incidents are resolved, project budget policies are disabled, and projects paused only by those policies resume.
+- Improved Messenger groups, saved views, Side Chat continuity, scrolling, and activity projections so busy workspaces remain easier to scan.
+- Improved Chat and automation runtime selection, agent identity, skill loading, local runtime compatibility, and heartbeat/run projections.
+- Improved Desktop startup, account recovery, local-app process ownership, browser registration, update checks, restart behavior, and packaged verification across macOS, Windows, and Linux.
+- Improved file review, Markdown editing, workspace navigation, mobile Messenger entry, organization onboarding, and account/profile settings.
 
 ### Fixed
 
-- Fixed historical Chat actions, terminal subagent status, Side Chat turn visibility, image-file previews, and Chat input after adding Library references.
-- Fixed issue activity timestamps changing after no-op edits and several Desktop startup, app restart, branding, and local-file bridge problems.
+- Fixed account OAuth and device-approval convergence, native email authentication recovery, secure local-session handling, and update checks that could run without the expected session.
+- Fixed historical Chat actions, Side Chat turn visibility, response-annotation range handling, file links and previews, Markdown cursor movement, and composer state after Library references.
+- Fixed local-app readiness and cleanup races, runtime ownership checks, platform-specific packaged launch behavior, issue activity timestamps after no-op edits, and several branding and file-bridge edge cases.
 
 ## v0.6.5
 

@@ -169,6 +169,6 @@ export async function revokeDesktopLocalSessions(options: {
 import {
   createOfflineGrantProof,
   offlineRequestBodyHash,
-} from "@rudderhq/identity-core";
+} from "@rudderhq/identity-core/electron";
 import { createPrivateKey, randomBytes } from "node:crypto";
 import type { DesktopOfflineGrantCredential } from "./identity-offline-grant.js";

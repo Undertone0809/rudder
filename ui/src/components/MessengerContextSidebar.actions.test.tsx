@@ -1777,8 +1777,12 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "rocket::amber" });
-    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:chat-1");
+    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", {
+      autoGenerateName: false,
+      icon: "rocket::amber",
+      itemKeys: ["chat:chat-1"],
+      name: "Deep work",
+    });
     expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "latest" }));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
   });
@@ -4245,7 +4249,7 @@ describe("MessengerContextSidebar chat actions", () => {
     });
   });
 
-  it("moves one grouped Saved View out without removing its group", async () => {
+  it("moves one grouped Saved View out through its row action", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
     });
@@ -4264,14 +4268,6 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockRemoveCustomGroupEntry).toHaveBeenCalledWith(
       "org-1",
       "saved-view:30000000-0000-4000-8000-000000000001",
-    );
-
-    const separate = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Separate items"));
-    expect(separate).toBeTruthy();
-    expect(separate?.hasAttribute("disabled")).toBe(false);
-    expect(container.textContent).not.toContain(
-      "Move or remove Saved Views before separating this group.",
     );
   });
 

@@ -227,41 +227,43 @@ function DesktopLocalTextFileEditor({
     <div className="relative flex min-h-0 flex-1 flex-col" data-testid="chat-side-panel-local-file-editor">
       {preview.previewKind === "markdown" ? (
         <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
-          {markdownParts.frontmatter !== null ? (
-            <details
-              className="group mb-6 rounded-md border border-border bg-muted/20"
-              data-chat-annotation-ignore
-            >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
-                <span>Frontmatter</span>
-                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-              </summary>
-              <textarea
-                value={markdownParts.frontmatter}
-                onChange={(event) => handleChange(joinChatSidePanelYamlFrontmatter(
-                  event.currentTarget.value,
-                  markdownParts.separator,
-                  markdownParts.body,
-                ))}
-                spellCheck={false}
-                className="block min-h-28 w-full resize-y border-t border-border bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
-                aria-label="Frontmatter"
-              />
-            </details>
-          ) : null}
-          <MarkdownEditor
-            key={preview.canonicalPath}
-            engine="milkdown"
-            value={markdownParts.body}
-            onChange={(body) => handleChange(joinChatSidePanelYamlFrontmatter(
-              markdownParts.frontmatter,
-              markdownParts.separator,
-              body,
-            ))}
-            bordered={false}
-            placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor rudder-readable-document rudder-side-panel-library-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
-          />
+          <div className="rudder-readable-document mx-auto w-full max-w-[880px]">
+            {markdownParts.frontmatter !== null ? (
+              <details
+                className="group mb-6 rounded-md border border-border bg-muted/20"
+                data-chat-annotation-ignore
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+                  <span>Frontmatter</span>
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                </summary>
+                <textarea
+                  value={markdownParts.frontmatter}
+                  onChange={(event) => handleChange(joinChatSidePanelYamlFrontmatter(
+                    event.currentTarget.value,
+                    markdownParts.separator,
+                    markdownParts.body,
+                  ))}
+                  spellCheck={false}
+                  className="block min-h-28 w-full resize-y border-t border-border bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                  aria-label="Frontmatter"
+                />
+              </details>
+            ) : null}
+            <MarkdownEditor
+              key={preview.canonicalPath}
+              engine="milkdown"
+              value={markdownParts.body}
+              onChange={(body) => handleChange(joinChatSidePanelYamlFrontmatter(
+                markdownParts.frontmatter,
+                markdownParts.separator,
+                body,
+              ))}
+              bordered={false}
+              placeholder="Write in Markdown..."
+              contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+            />
+          </div>
         </div>
       ) : (
         <div ref={annotationContainerRef} className="min-h-0 flex-1 pb-14">
