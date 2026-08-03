@@ -619,6 +619,7 @@ function ChatIssueSidePanelView({
               orgId={issue.orgId}
               projectId={issue.projectId}
               issueStatus={issue.status}
+              reopenWillWakeAgent={Boolean(issue.assigneeAgentId)}
               agentMap={agentMap}
               currentUserId={currentUserId}
               operatorDisplayName={operatorDisplayName}

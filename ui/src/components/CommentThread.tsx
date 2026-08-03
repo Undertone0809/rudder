@@ -10,7 +10,7 @@ import { useDialog } from "@/context/DialogContext";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizationRelativePath } from "@/lib/organization-routes";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import type { Agent, IssueComment } from "@rudderhq/shared";
-import { buildIssueMentionHref } from "@rudderhq/shared";
+import { buildIssueMentionHref, extractAgentWakeMentionIds, parseShortRef } from "@rudderhq/shared";
 import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -58,6 +58,7 @@ interface CommentThreadProps {
   onDelete?: (commentId: string) => Promise<void>;
   currentUserId?: string | null;
   issueStatus?: string;
+  reopenWillWakeAgent?: boolean;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
   /** Fallback callback for consumers that upload files without inserting a markdown link. */
@@ -78,6 +79,25 @@ interface CommentThreadProps {
 
 export function shouldOfferReopen(issueStatus?: string) {
   return issueStatus === "done";
+}
+
+export function shouldConfirmUnmentionedComment(
+  markdown: string,
+  validAgentIds: ReadonlySet<string> = new Set(),
+  reopenWillWakeAgent = false,
+) {
+  if (reopenWillWakeAgent) return false;
+  return !extractAgentWakeMentionIds(markdown).some((agentRef) => {
+    if (validAgentIds.has(agentRef)) return true;
+    const shortRef = parseShortRef(agentRef);
+    if (shortRef?.kind !== "agent") return false;
+    let matches = 0;
+    for (const agentId of validAgentIds) {
+      if (agentId.replace(/-/g, "").toLowerCase().startsWith(shortRef.prefix)) matches += 1;
+      if (matches > 1) return false;
+    }
+    return matches === 1;
+  });
 }
 
 function loadDraft(draftKey: string): string {
@@ -1045,6 +1065,7 @@ export function CommentThread({
   onDelete,
   currentUserId,
   issueStatus,
+  reopenWillWakeAgent = false,
   agentMap,
   imageUploadHandler,
   onAttachImage,
@@ -1061,10 +1082,12 @@ export function CommentThread({
   fixedComposerTimelineScroll = true,
   timelineScrollElementRef,
 }: CommentThreadProps) {
+  const { confirm } = useDialog();
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmingUnmentioned, setConfirmingUnmentioned] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
@@ -1083,6 +1106,8 @@ export function CommentThread({
   const pendingScrollRetryTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastCommentScrollRef = useRef<{ container: HTMLElement | null; scrollTop: number | null } | null>(null);
   const pendingScrollCancelCleanupRef = useRef<(() => void) | null>(null);
+  const submissionInFlightRef = useRef(false);
+  const validAgentIds = useMemo(() => new Set(agentMap?.keys() ?? []), [agentMap]);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
 
@@ -1379,19 +1404,43 @@ export function CommentThread({
   }, [location.hash, location.key, scrollToComment]);
 
   async function handleSubmit() {
+    if (submissionInFlightRef.current) return;
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
     const trimmed = currentMarkdown.trim();
     if (!trimmed) return;
     const reopenRequested = canReopen && reopen ? true : undefined;
 
-    setSubmitting(true);
+    submissionInFlightRef.current = true;
     try {
+      if (shouldConfirmUnmentionedComment(
+        trimmed,
+        validAgentIds,
+        Boolean(reopenRequested && reopenWillWakeAgent),
+      )) {
+        setConfirmingUnmentioned(true);
+        const confirmed = await confirm({
+          title: "未 @ 任何 Agent",
+          description: "您未 @ 任何 Agent，是否确认直接发送评论？未 @ Agent 的评论不会触发 Agent，可能无法被及时处理。",
+          cancelLabel: "返回并 @ Agent",
+          confirmLabel: "直接发送",
+          restoreFocus: (confirmed) => {
+            if (confirmed) composerSurfaceRef.current?.focus({ preventScroll: true });
+            else editorRef.current?.focus();
+          },
+        });
+        setConfirmingUnmentioned(false);
+        if (!confirmed) return;
+      }
+
+      setSubmitting(true);
       await onAdd(trimmed, reopenRequested);
       updateBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);
     } finally {
       setSubmitting(false);
+      setConfirmingUnmentioned(false);
+      submissionInFlightRef.current = false;
     }
   }
 
@@ -1426,7 +1475,7 @@ export function CommentThread({
     }
   }
 
-  const canSubmit = !submitting && !!body.trim();
+  const canSubmit = !submitting && !confirmingUnmentioned && !!body.trim();
   const focusComposerEditor = (event: MouseEvent<HTMLDivElement>) => {
     if (!shouldForwardComposerFocus(event.target)) return;
     event.preventDefault();
@@ -1463,9 +1512,11 @@ export function CommentThread({
   const composerNode = (
     <div
       ref={composerSurfaceRef}
+      aria-label="Comment composer"
       className="chat-composer rounded-[var(--radius-lg)] p-3"
       data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
       onMouseDown={focusComposerEditor}
+      tabIndex={-1}
     >
       <div
         data-testid="issue-comment-composer-editor-scroll"

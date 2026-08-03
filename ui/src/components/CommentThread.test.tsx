@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { Agent } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -12,6 +13,7 @@ import {
   extractIssueRouteRefFromPathname,
   resolveCurrentIssueCommentLink,
   resolveInternalMarkdownRoute,
+  shouldConfirmUnmentionedComment,
 } from "./CommentThread";
 
 (
@@ -51,6 +53,7 @@ vi.mock("./MarkdownEditor", async () => {
       ) => {
         const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
         React.useImperativeHandle(ref, () => ({
+          focus: () => textareaRef.current?.focus(),
           getMarkdown: () => textareaRef.current?.value ?? value ?? "",
         }));
         return (
@@ -693,6 +696,130 @@ describe("CommentThread", () => {
     expect(html).toContain("chat-composer");
     expect(html).toContain('data-agent-mention-intent="wake"');
     expect(html).not.toContain("Assignee");
+  });
+
+  it("detects only wake-intent agent mentions as directed comments", () => {
+    const validAgentIds = new Set(["d573266f-af95-44e6-9303-e903a54662b8"]);
+    expect(shouldConfirmUnmentionedComment("Ordinary comment", validAgentIds)).toBe(true);
+    expect(shouldConfirmUnmentionedComment("@Dylan please review", validAgentIds)).toBe(true);
+    expect(shouldConfirmUnmentionedComment("[Dylan](agent://d573266f-af95-44e6-9303-e903a54662b8) please review", validAgentIds)).toBe(true);
+    expect(shouldConfirmUnmentionedComment("[Dylan](agent://d573266f-af95-44e6-9303-e903a54662b8?intent=wake) please review", validAgentIds)).toBe(false);
+    expect(shouldConfirmUnmentionedComment("[Dylan](agent://agt_d573266f?intent=wake) please review", validAgentIds)).toBe(false);
+    expect(shouldConfirmUnmentionedComment("[Other](agent://agt_aaaaaaaa?intent=wake) please review", validAgentIds)).toBe(true);
+    expect(shouldConfirmUnmentionedComment(
+      "[Ambiguous](agent://agt_d573266f?intent=wake) please review",
+      new Set([...validAgentIds, "d573266f-1111-4111-8111-111111111111"]),
+    )).toBe(true);
+    expect(shouldConfirmUnmentionedComment("Ordinary reopen comment", validAgentIds, true)).toBe(false);
+  });
+
+  it("keeps an unmentioned draft when the operator returns to add an Agent", async () => {
+    mockConfirm.mockImplementation(async (options: { restoreFocus?: (confirmed: boolean) => void }) => {
+      options.restoreFocus?.(false);
+      return false;
+    });
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread comments={[]} onAdd={onAdd} />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
+    change(editor, "Please review this result");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
+
+    await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "未 @ 任何 Agent",
+      description: "您未 @ 任何 Agent，是否确认直接发送评论？未 @ Agent 的评论不会触发 Agent，可能无法被及时处理。",
+      cancelLabel: "返回并 @ Agent",
+      confirmLabel: "直接发送",
+      restoreFocus: expect.any(Function),
+    })));
+    expect(onAdd).not.toHaveBeenCalled();
+    expect((editor as HTMLTextAreaElement).value).toBe("Please review this result");
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor));
+  });
+
+  it("posts an unmentioned comment only after explicit confirmation", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread comments={[]} onAdd={onAdd} />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
+    change(editor, "General project note");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
+
+    await vi.waitFor(() => expect(onAdd).toHaveBeenCalledWith("General project note", undefined));
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves focus to the non-editable composer surface when an unmentioned comment is confirmed", async () => {
+    mockConfirm.mockImplementation(async (options: { restoreFocus?: (confirmed: boolean) => void }) => {
+      options.restoreFocus?.(true);
+      return true;
+    });
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread comments={[]} onAdd={onAdd} />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]') as HTMLTextAreaElement;
+    const composerSurface = container.querySelector('[aria-label="Comment composer"]');
+    change(editor, "General project note");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
+
+    await vi.waitFor(() => expect(onAdd).toHaveBeenCalledWith("General project note", undefined));
+    expect(document.activeElement).toBe(composerSurface);
+  });
+
+  it("posts a directed Agent comment without confirmation", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          agentMap={new Map([["agent-1", { id: "agent-1" } as Agent]])}
+          onAdd={onAdd}
+        />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
+    change(editor, "[Dylan](agent://agent-1?intent=wake) please review");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
+
+    await vi.waitFor(() => expect(onAdd).toHaveBeenCalledWith(
+      "[Dylan](agent://agent-1?intent=wake) please review",
+      undefined,
+    ));
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it("skips confirmation for a reopen only when an Agent assignee will be woken", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          issueStatus="done"
+          reopenWillWakeAgent
+          onAdd={onAdd}
+        />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
+    change(editor, "Please continue the work");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
+
+    await vi.waitFor(() => expect(onAdd).toHaveBeenCalledWith("Please continue the work", true));
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 
   it("pins the fixed composer below an independently scrollable timeline", () => {

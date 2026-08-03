@@ -2612,6 +2612,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           orgId={issue.orgId}
           projectId={issue.projectId}
           issueStatus={issue.status}
+          reopenWillWakeAgent={Boolean(issue.assigneeAgentId)}
           agentMap={agentMap}
           draftKey={`rudder:issue-comment-draft:${issue.id}`}
           mentions={mentionOptions}
