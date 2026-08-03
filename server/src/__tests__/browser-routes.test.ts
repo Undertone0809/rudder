@@ -199,6 +199,23 @@ describe.sequential("Browser routes", () => {
     );
     expect(invalid.status).toBe(400);
 
+    const invalidRefresh = await sendRequest(
+      createApp(localBoard),
+      "put",
+      "/api/instance/browser/broker",
+      { endpoint: payload.endpoint, token: payload.token, refresh: true },
+    );
+    expect(invalidRefresh.status).toBe(400);
+
+    const refresh = await sendRequest(
+      createApp(localBoard),
+      "put",
+      "/api/instance/browser/broker",
+      { ...payload, refresh: true },
+    );
+    expect(refresh.status).toBe(204);
+    expect(registry.register).toHaveBeenLastCalledWith({ ...payload, refresh: true });
+
     registry.register.mockImplementationOnce(() => {
       throw new BrowserBrokerError(
         "browser_broker_stale_registration",
@@ -208,6 +225,21 @@ describe.sequential("Browser routes", () => {
     const stale = await sendRequest(createApp(localBoard), "put", "/api/instance/browser/broker", payload);
     expect(stale.status).toBe(409);
     expect(stale.body).toMatchObject({ code: "browser_broker_stale_registration" });
+
+    registry.register.mockImplementationOnce(() => {
+      throw new BrowserBrokerError(
+        "browser_broker_revoked_registration",
+        "Browser Broker registration was revoked and must reconnect.",
+      );
+    });
+    const revoked = await sendRequest(
+      createApp(localBoard),
+      "put",
+      "/api/instance/browser/broker",
+      { ...payload, refresh: true },
+    );
+    expect(revoked.status).toBe(409);
+    expect(revoked.body).toMatchObject({ code: "browser_broker_revoked_registration" });
   });
 
   it("returns stable disabled and unavailable errors before dispatch", async () => {

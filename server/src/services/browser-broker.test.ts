@@ -5,6 +5,89 @@ import {
 } from "./browser-broker.js";
 
 describe("Browser Broker registry", () => {
+  it("restores a missing registration from a Desktop refresh", () => {
+    const registry = createBrowserBrokerRegistry();
+
+    registry.register({
+      endpoint: "http://127.0.0.1:43123/browser",
+      token: "a".repeat(64),
+      ownerId: "desktop-a",
+      generation: 1,
+      refresh: true,
+    });
+
+    expect(registry.isAvailable()).toBe(true);
+  });
+
+  it("rejects a stale Desktop refresh after another lifecycle takes ownership", () => {
+    const registry = createBrowserBrokerRegistry();
+    registry.register({
+      endpoint: "http://127.0.0.1:43124/browser",
+      token: "b".repeat(64),
+      ownerId: "desktop-b",
+      generation: 1,
+    });
+
+    expect(() => registry.register({
+      endpoint: "http://127.0.0.1:43123/browser",
+      token: "a".repeat(64),
+      ownerId: "desktop-a",
+      generation: 1,
+      refresh: true,
+    })).toThrow(expect.objectContaining({ code: "browser_broker_stale_registration" }));
+  });
+
+  it("keeps a replaced Desktop retired after the current owner disconnects", () => {
+    const registry = createBrowserBrokerRegistry();
+    const desktopA = {
+      endpoint: "http://127.0.0.1:43123/browser",
+      token: "a".repeat(64),
+      ownerId: "desktop-a",
+      generation: 1,
+    };
+    const desktopB = {
+      endpoint: "http://127.0.0.1:43124/browser",
+      token: "b".repeat(64),
+      ownerId: "desktop-b",
+      generation: 1,
+    };
+    registry.register(desktopA);
+    registry.register(desktopB);
+    registry.unregister(desktopB.token);
+
+    expect(() => registry.register({ ...desktopA, refresh: true }))
+      .toThrow(expect.objectContaining({ code: "browser_broker_stale_registration" }));
+  });
+
+  it("does not let a revoked lifecycle refresh after Browser is disabled", () => {
+    const registry = createBrowserBrokerRegistry();
+    const desktop = {
+      endpoint: "http://127.0.0.1:43123/browser",
+      token: "a".repeat(64),
+      ownerId: "desktop-a",
+      generation: 1,
+    };
+    registry.register(desktop);
+    registry.revoke();
+
+    expect(() => registry.register({ ...desktop, refresh: true }))
+      .toThrow(expect.objectContaining({ code: "browser_broker_revoked_registration" }));
+  });
+
+  it("does not let a legacy Desktop replace a versioned lifecycle", () => {
+    const registry = createBrowserBrokerRegistry();
+    registry.register({
+      endpoint: "http://127.0.0.1:43123/browser",
+      token: "a".repeat(64),
+      ownerId: "desktop-a",
+      generation: 1,
+    });
+
+    expect(() => registry.register({
+      endpoint: "http://127.0.0.1:43124/browser",
+      token: "b".repeat(64),
+    })).toThrow(expect.objectContaining({ code: "browser_broker_stale_registration" }));
+  });
   it("accepts only credentialed loopback HTTP endpoints", () => {
     const registry = createBrowserBrokerRegistry();
 

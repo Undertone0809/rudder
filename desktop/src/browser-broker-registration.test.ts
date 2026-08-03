@@ -47,6 +47,20 @@ describe("Desktop Browser Broker server registration", () => {
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual(versionedBroker);
   });
 
+  it("marks a Broker heartbeat as a registration refresh", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const refresh = {
+      ...broker,
+      ownerId: "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08",
+      generation: 7,
+      refresh: true,
+    };
+
+    await registerDesktopBrowserBroker("http://127.0.0.1:3100/api", refresh, fetchImpl);
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual(refresh);
+  });
+
   it("loads Browser settings and checks exact active run ownership", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (url.endsWith("/instance/settings/browser")) {
@@ -88,5 +102,19 @@ describe("Desktop Browser Broker server registration", () => {
       expect(message).not.toContain("secret server response");
       expect(message).not.toContain(broker.token);
     }
+  });
+
+  it("retains only the stable registration error code for lifecycle handling", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      code: "browser_broker_revoked_registration",
+      message: "secret detail",
+    }), { status: 409, headers: { "content-type": "application/json" } }));
+
+    await expect(registerDesktopBrowserBroker("http://127.0.0.1:3100/api", broker, fetchImpl))
+      .rejects.toMatchObject({
+        status: 409,
+        code: "browser_broker_revoked_registration",
+        message: "Rudder Browser Broker registration failed (409).",
+      });
   });
 });

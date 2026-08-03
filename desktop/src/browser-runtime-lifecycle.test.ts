@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DesktopBrowserBrokerRegistrationError } from "./browser-broker-registration.js";
 import { createDesktopBrowserRuntimeLifecycle } from "./browser-runtime-lifecycle.js";
 
 const identity = { orgId: "org-1", agentId: "agent-1", runId: "run-1" };
@@ -88,8 +89,31 @@ describe("Desktop Browser runtime lifecycle", () => {
     );
 
     await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.registerBroker).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:3100/api",
+      harness.broker,
+      undefined,
+      true,
+    );
     expect(harness.tabs.reapInactiveRuns).toHaveBeenCalledTimes(1);
     expect(harness.isRunActive).toHaveBeenCalledWith("http://127.0.0.1:3100/api", identity);
+  });
+
+  it("refreshes the active Broker registration so a restarted server can recover", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+    harness.registerBroker.mockClear();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(harness.registerBroker).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api",
+      harness.broker,
+      undefined,
+      true,
+    );
+    expect(harness.broker.stop).not.toHaveBeenCalled();
+    expect(harness.tabs.closeAll).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the Broker offline while Browser is disabled and starts it after re-enable", async () => {
@@ -216,5 +240,64 @@ describe("Desktop Browser runtime lifecycle", () => {
       "Rudder Browser settings sync failed.",
       expect.any(Error),
     );
+  });
+
+  it("continues run cleanup when registration refresh fails", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+    harness.registerBroker.mockRejectedValueOnce(new Error("refresh unavailable"));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(harness.tabs.reapInactiveRuns).toHaveBeenCalledTimes(1);
+    expect(harness.onWarning).toHaveBeenCalledWith(
+      "Rudder Browser Broker registration refresh failed.",
+      expect.any(Error),
+    );
+  });
+
+  it("shuts down after a newer Desktop lifecycle rejects its refresh", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+    harness.registerBroker.mockRejectedValueOnce(new DesktopBrowserBrokerRegistrationError(409));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.broker.stop).toHaveBeenCalledTimes(1));
+
+    await expect(harness.executeBrokerCommand({
+      identity,
+      action: "tabs",
+      args: {},
+    })).rejects.toMatchObject({ code: "browser_unavailable" });
+    expect(harness.unregisterBroker).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api",
+      harness.broker.token,
+    );
+    expect(harness.onWarning).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a revoked refresh through disabled and re-enabled settings", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+    harness.readSettings
+      .mockResolvedValueOnce({ enabled: true, openLinksIn: "built_in" })
+      .mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
+    harness.registerBroker.mockRejectedValueOnce(new DesktopBrowserBrokerRegistrationError(
+      409,
+      "browser_broker_revoked_registration",
+    ));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.broker.stop).toHaveBeenCalledTimes(1));
+    expect(harness.setProfileEnabled).toHaveBeenCalledWith(false);
+
+    harness.setServerEnabled(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.registerBroker).toHaveBeenCalledTimes(3));
+    await expect(harness.executeBrokerCommand({
+      identity,
+      action: "tabs",
+      args: {},
+    })).resolves.toEqual({ ok: true });
   });
 });

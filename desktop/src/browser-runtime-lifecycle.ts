@@ -1,5 +1,9 @@
 import { BrowserAgentError, type BrowserAgentCommand, type BrowserRuntimeIdentity } from "./browser-agent-tabs.js";
-import type { DesktopBrowserSettings } from "./browser-broker-registration.js";
+import {
+  isDesktopBrowserBrokerRegistrationConflict,
+  isDesktopBrowserBrokerRegistrationRevoked,
+  type DesktopBrowserSettings,
+} from "./browser-broker-registration.js";
 
 type BrowserBrokerHandle = {
   endpoint: string;
@@ -24,6 +28,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     apiUrl: string,
     broker: { endpoint: string; token: string },
     registrationGeneration?: number,
+    refresh?: boolean,
   ): Promise<void>;
   unregisterBroker(apiUrl: string, token: string): Promise<void>;
   readSettings(apiUrl: string): Promise<DesktopBrowserSettings>;
@@ -33,12 +38,14 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 }) {
   let broker: BrowserBrokerHandle | null = null;
   let registeredApiUrl: string | null = null;
+  let registeredGeneration: number | undefined;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
   let sweepInFlight: Promise<void> | null = null;
   let lifecycleQueue: Promise<void> = Promise.resolve();
   let lifecycleEpoch = 0;
   let acceptingCommands = false;
   let reconcileRequested = false;
+  let supersededRequested = false;
 
   const warn = (message: string, error: unknown) => {
     options.onWarning?.(message, error);
@@ -61,6 +68,20 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
         if (settings && Boolean(broker) !== settings.enabled) {
           acceptingCommands = false;
           reconcileRequested = true;
+        } else if (settings?.enabled && broker) {
+          try {
+            await options.registerBroker(apiUrl, broker, registeredGeneration, true);
+          } catch (error) {
+            if (isDesktopBrowserBrokerRegistrationRevoked(error)) {
+              acceptingCommands = false;
+              reconcileRequested = true;
+            } else if (isDesktopBrowserBrokerRegistrationConflict(error)) {
+              acceptingCommands = false;
+              supersededRequested = true;
+            } else {
+              warn("Rudder Browser Broker registration refresh failed.", error);
+            }
+          }
         }
       } catch (error) {
         warn("Rudder Browser settings sync failed.", error);
@@ -76,6 +97,12 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
       }
     })().finally(() => {
       sweepInFlight = null;
+      if (supersededRequested && expectedEpoch === lifecycleEpoch) {
+        acceptingCommands = false;
+        lifecycleEpoch += 1;
+        void enqueue(disconnectCurrent);
+        return;
+      }
       if (reconcileRequested && expectedEpoch === lifecycleEpoch) {
         reconcileRequested = false;
         void connect(apiUrl);
@@ -89,6 +116,8 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     const currentApiUrl = registeredApiUrl;
     broker = null;
     registeredApiUrl = null;
+    registeredGeneration = undefined;
+    supersededRequested = false;
     if (sweepTimer) {
       clearInterval(sweepTimer);
       sweepTimer = null;
@@ -128,6 +157,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 
   const connect = (apiUrl: string): Promise<void> => {
     acceptingCommands = false;
+    supersededRequested = false;
     const registrationGeneration = options.allocateRegistrationGeneration?.();
     const expectedEpoch = ++lifecycleEpoch;
     return enqueue(async () => {
@@ -174,6 +204,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
       return;
     }
     broker = nextBroker;
+    registeredGeneration = registrationGeneration;
     acceptingCommands = true;
     startSweepTimer(apiUrl, expectedEpoch);
     });

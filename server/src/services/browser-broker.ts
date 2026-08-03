@@ -45,6 +45,7 @@ type BrowserBrokerRegistration = {
   token: string;
   ownerId?: string;
   generation?: number;
+  refresh?: boolean;
 };
 
 type BrowserBrokerEnvelope = {
@@ -96,6 +97,11 @@ function normalizeBrokerCredential(rawToken: string): string {
     throw new BrowserBrokerError("browser_broker_invalid_registration", "Browser Broker credential is invalid.");
   }
   return token;
+}
+
+function versionedRegistrationKey(registration: BrowserBrokerRegistration): string | null {
+  if (registration.ownerId === undefined || registration.generation === undefined) return null;
+  return `${registration.ownerId.trim()}:${registration.generation}:${registration.token}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,12 +159,21 @@ export function createBrowserBrokerRegistry(options: {
   const requestTimeoutMs = options.requestTimeoutMs ?? 40_000;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_BROWSER_BROKER_MAX_RESPONSE_BYTES;
   let registration: BrowserBrokerRegistration | null = null;
+  const retiredRegistrations = new Map<string, "revoked" | "superseded">();
   const activeRequests = new Set<AbortController>();
-  const revoke = () => {
+  const retireCurrent = (reason: "revoked" | "superseded") => {
+    const retiredKey = registration ? versionedRegistrationKey(registration) : null;
+    if (retiredKey) {
+      retiredRegistrations.set(retiredKey, reason);
+      if (retiredRegistrations.size > 64) {
+        retiredRegistrations.delete(retiredRegistrations.keys().next().value!);
+      }
+    }
     registration = null;
     for (const controller of activeRequests) controller.abort();
     activeRequests.clear();
   };
+  const revoke = () => retireCurrent("revoked");
 
   return {
     register(input: BrowserBrokerRegistration): void {
@@ -174,6 +189,33 @@ export function createBrowserBrokerRegistry(options: {
           "Browser Broker owner generation is invalid.",
         );
       }
+      const registrationKey = versionedRegistrationKey({ ...input, token });
+      const retiredReason = registrationKey ? retiredRegistrations.get(registrationKey) : undefined;
+      if (input.refresh && (!registrationKey || retiredReason)) {
+        throw new BrowserBrokerError(
+          retiredReason === "revoked"
+            ? "browser_broker_revoked_registration"
+            : "browser_broker_stale_registration",
+          retiredReason === "revoked"
+            ? "Browser Broker registration was revoked and must reconnect."
+            : "Browser Broker refresh no longer owns the active Desktop lifecycle.",
+        );
+      }
+      if (input.refresh && registration
+        && (registration.ownerId !== input.ownerId
+          || registration.generation !== input.generation
+          || registration.token !== token)) {
+        throw new BrowserBrokerError(
+          "browser_broker_stale_registration",
+          "Browser Broker refresh no longer owns the active Desktop lifecycle.",
+        );
+      }
+      if (!hasVersion && registration?.ownerId) {
+        throw new BrowserBrokerError(
+          "browser_broker_stale_registration",
+          "Legacy Browser Broker registration cannot replace an owned Desktop lifecycle.",
+        );
+      }
       if (registration?.ownerId
         && registration.ownerId === input.ownerId
         && registration.generation !== undefined
@@ -187,7 +229,7 @@ export function createBrowserBrokerRegistry(options: {
         }
         if (input.generation === registration.generation && token === registration.token) return;
       }
-      revoke();
+      retireCurrent("superseded");
       registration = {
         endpoint,
         token,

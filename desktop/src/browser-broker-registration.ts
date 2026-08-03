@@ -10,9 +10,33 @@ type DesktopBrowserBrokerRegistration = {
   token: string;
   ownerId?: string;
   generation?: number;
+  refresh?: boolean;
 };
 
 const DESKTOP_BROWSER_API_TIMEOUT_MS = 5_000;
+
+export class DesktopBrowserBrokerRegistrationError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(status: number, code?: string) {
+    super(`Rudder Browser Broker registration failed (${status}).`);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isDesktopBrowserBrokerRegistrationConflict(error: unknown): boolean {
+  return error instanceof DesktopBrowserBrokerRegistrationError
+    && error.status === 409
+    && (error.code === undefined || error.code === "browser_broker_stale_registration");
+}
+
+export function isDesktopBrowserBrokerRegistrationRevoked(error: unknown): boolean {
+  return error instanceof DesktopBrowserBrokerRegistrationError
+    && error.status === 409
+    && error.code === "browser_broker_revoked_registration";
+}
 
 function boundedFetch(
   fetchImpl: typeof fetch,
@@ -60,7 +84,11 @@ export async function registerDesktopBrowserBroker(
     body: JSON.stringify(broker),
   });
   if (!response.ok) {
-    throw new Error(`Rudder Browser Broker registration failed (${response.status}).`);
+    const payload = await response.json().catch(() => null) as { code?: unknown } | null;
+    const code = typeof payload?.code === "string" && /^browser_[a-z0-9_]+$/.test(payload.code)
+      ? payload.code
+      : undefined;
+    throw new DesktopBrowserBrokerRegistrationError(response.status, code);
   }
 }
 

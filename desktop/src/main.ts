@@ -1111,7 +1111,7 @@ function replaceBrowserRuntimeLifecycle(): void {
     },
     startBroker: startBrowserBrokerServer,
     allocateRegistrationGeneration: () => ++desktopBrowserBrokerGeneration,
-    registerBroker: (apiUrl, broker, generation) => {
+    registerBroker: (apiUrl, broker, generation, refresh) => {
       if (generation === undefined) {
         throw new Error("Rudder Browser Broker registration generation is missing.");
       }
@@ -1119,6 +1119,7 @@ function replaceBrowserRuntimeLifecycle(): void {
         ...broker,
         ownerId: desktopBrowserBrokerOwnerId,
         generation,
+        ...(refresh ? { refresh: true } : {}),
       });
     },
     unregisterBroker: unregisterDesktopBrowserBroker,

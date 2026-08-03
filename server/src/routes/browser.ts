@@ -23,9 +23,13 @@ const brokerRegistrationSchema = z.object({
   token: z.string().min(32).max(512),
   ownerId: z.string().uuid().optional(),
   generation: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  refresh: z.boolean().optional(),
 }).strict().refine(
   (value) => (value.ownerId === undefined) === (value.generation === undefined),
   "Browser Broker ownerId and generation must be provided together.",
+).refine(
+  (value) => !value.refresh || value.ownerId !== undefined,
+  "Browser Broker refresh requires an ownerId and generation.",
 );
 
 const safeWebUrlSchema = z.string().min(1).max(8_192).refine((value) => {
@@ -338,7 +342,10 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
       if (error instanceof BrowserBrokerError) {
         sendBrowserError(
           res,
-          error.code === "browser_broker_stale_registration" ? 409 : 400,
+          error.code === "browser_broker_stale_registration"
+            || error.code === "browser_broker_revoked_registration"
+            ? 409
+            : 400,
           error.code,
           error.message,
         );
