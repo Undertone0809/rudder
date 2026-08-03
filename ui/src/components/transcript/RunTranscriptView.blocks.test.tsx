@@ -172,12 +172,62 @@ describe("TranscriptRunAnnotationBlock", () => {
       addButton?.click();
     });
 
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+    expect(onAnnotate).not.toHaveBeenCalled();
+    const textarea = document.querySelector<HTMLTextAreaElement>("[data-testid='chat-response-annotation-editor'] textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, "Needs review");
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+        .find((button) => button.textContent === "Save")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
     expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
       anchorKind: "text",
       text: "Selectable transcript text",
       sourceRunId: "run-1",
       sourceMemberIds: ["event-1"],
+      comment: "Needs review",
+      pendingFiles: [],
+      attachmentIds: [],
     }));
+  });
+
+  it("discards a transition annotation when the editor is cancelled", () => {
+    const onAnnotate = vi.fn();
+    const container = render(
+      <TranscriptRunAnnotationBlock
+        block={{
+          type: "thinking",
+          ts: "2026-07-23T12:00:00.000Z",
+          text: "Reasoning text",
+          streaming: false,
+          sourceEntryIds: ["event-2"],
+        }}
+        presentation="detail"
+        context={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+      >
+        <span>Reasoning text</span>
+      </TranscriptRunAnnotationBlock>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    trigger!.getBoundingClientRect = () => new DOMRect(20, 20, 120, 20);
+    act(() => {
+      trigger?.click();
+    });
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+    act(() => {
+      Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+        .find((button) => button.textContent === "Cancel")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onAnnotate).not.toHaveBeenCalled();
   });
 });
 
