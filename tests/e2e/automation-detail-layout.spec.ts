@@ -64,6 +64,37 @@ async function createAutomationFixture(page: Page) {
 }
 
 test.describe("Automation detail layout", () => {
+  test("uses absolute timestamps for historical activity while keeping recent activity relative", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const { organization, automation } = await createAutomationFixture(page);
+
+    let historicalEventPatched = false;
+    await page.route(`**/api/orgs/${organization.id}/activity**`, async (route) => {
+      const response = await page.request.get(route.request().url());
+      expect(response.ok()).toBe(true);
+      const events = await response.json() as Array<Record<string, unknown>>;
+      // The API owns createdAt, so make the historical boundary deterministic in this UI test.
+      const historicalEvents = events.map((event) => {
+        if (historicalEventPatched) return event;
+        historicalEventPatched = true;
+        return { ...event, createdAt: "2026-07-30T01:00:00.000Z" };
+      });
+      await route.fulfill({
+        status: response.status(),
+        headers: { ...response.headers(), "content-type": "application/json" },
+        body: JSON.stringify(historicalEvents),
+      });
+    });
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/automations/${automation.id}`);
+
+    const timestamps = page.getByTestId("automation-activity-time");
+    await expect(page.getByTestId("automation-activity-list")).toBeVisible();
+    await expect(timestamps.filter({ hasText: /2026|Jul/ }).first()).toBeVisible();
+    await expect(timestamps.filter({ hasText: /ago|just now/ }).first()).toBeVisible();
+  });
+
   test("opens a Codex-style inspector beside the list and preserves editing controls", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1900, height: 1200 });
     const { organization, project, agent, automation } = await createAutomationFixture(page);

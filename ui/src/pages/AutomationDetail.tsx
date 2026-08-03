@@ -1281,7 +1281,7 @@ export function AutomationDetail({
                       )}
                     </span>
                     <span data-testid="automation-activity-time" className="col-start-2 shrink-0 text-muted-foreground/70 sm:col-start-auto">
-                      {timeAgo(item.createdAt)}
+                      {timeAgo(item.createdAt, { absoluteAfterDays: 2 })}
                     </span>
                   </div>
                 ))}
@@ -1601,7 +1601,7 @@ export function AutomationDetail({
             {!embedded ? (
               <SidebarSection title="Run status">
                 <SidebarRow label="Last ran">
-                  <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
+                  <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt, { absoluteAfterDays: 2 }) : "-"}</span>
                 </SidebarRow>
                 <SidebarRow label="Edits">
                   <span className={editSyncClassName}>{editSyncLabel}</span>

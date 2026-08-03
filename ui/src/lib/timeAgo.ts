@@ -1,4 +1,4 @@
-import { formatDate, getUiLocale } from "./utils";
+import { formatDate, formatDateTime, getUiLocale } from "./utils";
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
@@ -6,11 +6,15 @@ const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 const MONTH = 30 * DAY;
 
-export function timeAgo(date: Date | string): string {
+export function timeAgo(date: Date | string, options: { absoluteAfterDays?: number } = {}): string {
   const locale = getUiLocale();
   const now = Date.now();
   const then = new Date(date).getTime();
   const seconds = Math.round((now - then) / 1000);
+
+  if (options.absoluteAfterDays !== undefined && seconds >= options.absoluteAfterDays * DAY) {
+    return formatDateTime(date);
+  }
 
   if (seconds < MINUTE) return locale === "zh-CN" ? "刚刚" : "just now";
   if (seconds < HOUR) {
