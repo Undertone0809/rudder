@@ -132,9 +132,20 @@ test.describe("Apps workspace", () => {
     );
     expect((await attachConversationResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/messenger\/chat\/[^/?#]+$/);
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("Thinking", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("chat-assistant-message")).toHaveCount(0);
     await expect(page.getByText(/\$app-builder/).first()).toBeVisible({
       timeout: 20_000,
     });
+    await expect(page.getByTestId("chat-assistant-message")).toHaveCount(1, {
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId("chat-assistant-message")).toContainText("Streaming reply");
   });
 
   test("loads registered Apps into the left column and supports multiple tabs", async ({

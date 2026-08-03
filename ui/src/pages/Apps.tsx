@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
+import { useChatGenerationActions } from "@/context/ChatGenerationContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
 import { useAppRegistry } from "@/hooks/useAppRegistry";
@@ -39,11 +40,13 @@ import {
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import type {
   Agent,
   ChatConversation,
+  ChatMessage,
   ChatStreamEvent,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -67,6 +70,12 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { mergeChatConversationsForStatus, mergeChatMessages } from "./Chat.parts";
+import {
+  applyChatStreamProgressEvent,
+  CHAT_LIST_PREVIEW_LIMIT,
+  EMPTY_CHAT_BODY_SHA256,
+} from "./Chat.workspace-helpers";
 
 type WorkspaceTab = {
   key: string;
@@ -630,6 +639,12 @@ function ActiveAppPane({
 export function Apps() {
   const { selectedOrganizationId } = useOrganization();
   const { pushToast } = useToast();
+  const {
+    setChatSendInFlight,
+    setStreamAbortController,
+    setStreamDraftForChat,
+  } = useChatGenerationActions();
+  const appBuilderStreamOwnersRef = useRef<Record<string, string>>({});
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -719,24 +734,173 @@ export function Apps() {
         appBuilderChatPrefill(appName, false, sourceRoot),
         idea,
       ].join("\n\n");
+      const startedAt = new Date();
+      const abortController = new AbortController();
+      const streamKey = `app-builder:${startedAt.getTime()}:${crypto.randomUUID()}`;
+      let streamConversation: ChatConversation | null = null;
       let acknowledged = false;
+      const ownsStream = () => Boolean(
+        streamConversation
+        && appBuilderStreamOwnersRef.current[streamConversation.id] === streamKey,
+      );
+      const refreshChatCaches = (chatId: string) => Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.chats.detail(selectedOrganizationId, chatId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.chats.messages(selectedOrganizationId, chatId),
+        }),
+        ...(["active", "all"] as const).flatMap((status) => [
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.list(selectedOrganizationId, status),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.listPreview(
+              selectedOrganizationId,
+              status,
+              CHAT_LIST_PREVIEW_LIMIT,
+            ),
+          }),
+        ]),
+        invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId),
+      ]);
+      const clearOwnedStreamState = (removeDraft: boolean) => {
+        if (!streamConversation || !ownsStream()) return false;
+        delete appBuilderStreamOwnersRef.current[streamConversation.id];
+        setStreamAbortController(streamConversation.id, null);
+        setChatSendInFlight(streamConversation.id, false);
+        if (removeDraft) {
+          setStreamDraftForChat(
+            streamConversation.id,
+            (current) => current?.streamKey === streamKey ? null : current,
+          );
+        }
+        return true;
+      };
       const acknowledgement = new Promise<ChatConversation>((resolve, reject) => {
         const onEvent = (event: ChatStreamEvent) => {
-          if (event.type !== "ack" || !event.conversation || acknowledged) return;
-          acknowledged = true;
-          resolve(event.conversation);
+          if (event.type === "ack") {
+            if (!event.conversation || acknowledged) return;
+            acknowledged = true;
+            streamConversation = event.conversation;
+            appBuilderStreamOwnersRef.current[streamConversation.id] = streamKey;
+            setStreamAbortController(streamConversation.id, abortController);
+            setChatSendInFlight(streamConversation.id, true);
+            setStreamDraftForChat(streamConversation.id, {
+              chatId: streamConversation.id,
+              streamKey,
+              userBody: body,
+              userCreatedAt: new Date(event.userMessage.createdAt),
+              userMessageId: event.userMessage.id,
+              chatTurnId: event.userMessage.chatTurnId ?? null,
+              turnVariant: event.userMessage.turnVariant ?? 0,
+              editedFromCreatedAt: null,
+              body: "",
+              generationId: event.generationId ?? null,
+              attemptEpoch: event.attemptEpoch ?? null,
+              lastCommittedRenderSeq: event.generationSeq ?? 0,
+              renderedBodyHash: event.bodyHash ?? EMPTY_CHAT_BODY_SHA256,
+              state: "streaming",
+              createdAt: startedAt,
+              transcript: [],
+              replyingAgentId: streamConversation.chatRuntime.runtimeAgentId
+                ?? streamConversation.preferredAgentId
+                ?? null,
+            });
+            queryClient.setQueryData(
+              queryKeys.chats.detail(selectedOrganizationId, streamConversation.id),
+              streamConversation,
+            );
+            queryClient.setQueryData<ChatMessage[]>(
+              queryKeys.chats.messages(selectedOrganizationId, streamConversation.id),
+              (current) => mergeChatMessages(current ?? [], [event.userMessage]),
+            );
+            for (const status of ["active", "all"] as const) {
+              queryClient.setQueryData<ChatConversation[]>(
+                queryKeys.chats.list(selectedOrganizationId, status),
+                (current) => mergeChatConversationsForStatus(current ?? [], streamConversation!, status),
+              );
+              queryClient.setQueryData<ChatConversation[]>(
+                queryKeys.chats.listPreview(
+                  selectedOrganizationId,
+                  status,
+                  CHAT_LIST_PREVIEW_LIMIT,
+                ),
+                (current) => mergeChatConversationsForStatus(current ?? [], streamConversation!, status),
+              );
+            }
+            navigate(`/messenger/chat/${streamConversation.id}`);
+            resolve(streamConversation);
+            return;
+          }
+
+          if (!streamConversation) return;
+          if (
+            event.type === "assistant_delta"
+            || event.type === "assistant_state"
+            || event.type === "transcript_entry"
+          ) {
+            setStreamDraftForChat(
+              streamConversation.id,
+              (current) => applyChatStreamProgressEvent(current, streamKey, event),
+            );
+            return;
+          }
+          if (event.type === "final") {
+            queryClient.setQueryData<ChatMessage[]>(
+              queryKeys.chats.messages(selectedOrganizationId, streamConversation.id),
+              (current) => mergeChatMessages(current ?? [], event.messages),
+            );
+            setStreamDraftForChat(
+              streamConversation.id,
+              (current) => current?.streamKey === streamKey ? null : current,
+            );
+            void refreshChatCaches(streamConversation.id).catch(() => undefined);
+            return;
+          }
+          if (event.type === "error") {
+            setStreamDraftForChat(
+              streamConversation.id,
+              (current) => current?.streamKey === streamKey
+                ? { ...current, state: "failed" }
+                : current,
+            );
+            throw new Error(event.error);
+          }
         };
         void chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: agent.id,
           issueCreationMode: "manual_approval",
           planMode: false,
           contextLinks: [],
+          signal: abortController.signal,
           onEvent,
         }).then(() => {
-          if (!acknowledged) reject(new Error("The App Builder Chat did not start."));
+          if (!acknowledged) {
+            reject(new Error("The App Builder Chat did not start."));
+            return;
+          }
+          if (streamConversation && ownsStream()) {
+            clearOwnedStreamState(false);
+            void refreshChatCaches(streamConversation.id).catch(() => undefined);
+          }
         }).catch((error) => {
-          if (!acknowledged) reject(error);
-          else {
+          if (!acknowledged) {
+            reject(error);
+            return;
+          }
+          const isAbort = error instanceof DOMException
+            ? error.name === "AbortError"
+            : error instanceof Error && error.name === "AbortError";
+          if (streamConversation && clearOwnedStreamState(true)) {
+            void refreshChatCaches(streamConversation.id).catch(() => undefined);
+            if (!isAbort) {
+              void appBuilderApi.updateBuild(selectedOrganizationId, app.id, {
+                status: "failed",
+              }).catch(() => undefined);
+            }
+          }
+          if (!isAbort) {
             pushToast({
               title: "App Builder stopped before finishing",
               body: error instanceof Error ? error.message : "Continue from the Chat to retry.",
@@ -771,7 +935,6 @@ export function Apps() {
           tone: "error",
         });
       }
-      navigate(`/messenger/chat/${conversation.id}`);
       return { app, conversation };
     },
     onSuccess: async () => {
