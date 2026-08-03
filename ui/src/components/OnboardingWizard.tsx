@@ -385,7 +385,10 @@ export function OnboardingWizard() {
   function selectModel(nextModel: string) {
     const currentEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, model);
     const nextEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, nextModel);
-    const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(agentRuntimeType, nextModel);
+    const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(
+      agentRuntimeType,
+      nextModel || defaultModelForRuntime(agentRuntimeType),
+    );
     setModel(nextModel);
     setThinkingEffort((current) =>
       nextThinkingEffortOptions.some((option) => option.id === current) ? current : "",

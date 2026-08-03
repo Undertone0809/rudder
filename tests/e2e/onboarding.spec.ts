@@ -150,11 +150,16 @@ test.describe("Onboarding wizard", () => {
     const onboardingDialog = page.getByTestId("onboarding-dialog");
 
     const modelButton = onboardingDialog.getByRole("button", { name: "GPT-5.6-sol", exact: true });
+    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last()
+      .getByText("Ultra", { exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
     await modelButton.click();
     const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await modelPopover.getByRole("button", { name: "Default", exact: true }).click();
     await expect(onboardingDialog.getByRole("button", { name: "Default", exact: true })).toBeVisible();
-    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Ultra", exact: true }).click();
     const defaultEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(defaultEffortPopover.getByText("Light", { exact: true })).toBeVisible();
     await expect(defaultEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
