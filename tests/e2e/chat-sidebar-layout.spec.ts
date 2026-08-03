@@ -74,9 +74,14 @@ test.describe("Chat sidebar layout", () => {
 
     const headerBox = await header.boundingBox();
     const actionsBox = await page.getByTestId("chat-desktop-toolbar-actions").boundingBox();
+    const toolbarGlassBox = await page.getByTestId("chat-desktop-toolbar-clearance").boundingBox();
+    const messagesScrollBox = await page.getByTestId("chat-messages-scroll-region").boundingBox();
     expect(headerBox).not.toBeNull();
     expect(actionsBox).not.toBeNull();
+    expect(toolbarGlassBox).not.toBeNull();
+    expect(messagesScrollBox).not.toBeNull();
     expect(headerBox!.x + headerBox!.width).toBeLessThanOrEqual(actionsBox!.x);
+    expect(messagesScrollBox!.y).toBeGreaterThanOrEqual(toolbarGlassBox!.y + toolbarGlassBox!.height);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-agent-title-header.png"),
@@ -141,7 +146,7 @@ test.describe("Chat sidebar layout", () => {
     await expect(page.locator("html")).toHaveClass(/\bdesktop-shell-macos\b/);
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
     await expect(toolbarGlass).toBeVisible();
-    await expect(toolbarGlass).toHaveCSS("position", "absolute");
+    await expect(toolbarGlass).toHaveCSS("position", "relative");
     await expect(toolbarGlass).toHaveCSS("backdrop-filter", /blur\(18px\)/);
 
     const desktopErrorBox = await loadError.boundingBox();
@@ -153,7 +158,7 @@ test.describe("Chat sidebar layout", () => {
     expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(
       desktopToolbarGlassBox!.y + desktopToolbarGlassBox!.height + 23,
     );
-    await expect(loadError).toHaveCSS("margin-top", "68px");
+    await expect(loadError).toHaveCSS("margin-top", "24px");
 
     await page.screenshot({
       path: testInfo.outputPath("chat-load-error-position-desktop.png"),
@@ -176,7 +181,7 @@ test.describe("Chat sidebar layout", () => {
     });
   });
 
-  test("shows a compact title-first conversation list and a denser chat intake empty state", async ({ page }, testInfo) => {
+  test("shows a compact title-first Messenger thread list and a denser chat intake empty state", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Sidebar-Chat-${Date.now()}`,
@@ -184,14 +189,16 @@ test.describe("Chat sidebar layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
-    await createE2EChatAgent(page.request, organization.id, { name: "Sidebar Agent" });
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Sidebar Agent" });
 
     const firstChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Release blockers",
         summary: "Collect the blockers, confirm owners, and decide whether this needs tracked execution.",
+        preferredAgentId: agent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Review the current release blockers." },
       },
     });
     expect(firstChatRes.ok()).toBe(true);
@@ -201,8 +208,10 @@ test.describe("Chat sidebar layout", () => {
       data: {
         title: "Agent runtime follow-up",
         summary: "Compare runtime options and keep the ask lightweight until the path is clear.",
+        preferredAgentId: agent.id,
         issueCreationMode: "manual_approval",
         planMode: true,
+        initialMessage: { body: "Compare the available agent runtime options." },
       },
     });
     expect(secondChatRes.ok()).toBe(true);
@@ -218,11 +227,9 @@ test.describe("Chat sidebar layout", () => {
     await expect(page.getByTestId("workspace-context-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-context-header")).toBeVisible();
-    await expect(page.getByTestId("workspace-main-header")).toBeVisible();
     await expect(page.getByTestId("workspace-column-resizer")).toBeVisible();
-    await expect(page.getByText("Recent conversations")).toBeVisible();
-    await expect(page.getByRole("link", { name: /New Chat/i })).toBeVisible();
-    await expect(page.locator(".chat-sidebar .chat-chip")).toHaveCount(0);
+    await expect(page.getByText("Threads", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "New chat", exact: true })).toBeVisible();
 
     const shellStyles = await page.getByTestId("workspace-shell").evaluate((element) => {
       const styles = getComputedStyle(element);
@@ -245,13 +252,13 @@ test.describe("Chat sidebar layout", () => {
       return styles.backgroundColor;
     });
     expect(contextCardStyles).toBe(LIGHT_WORKSPACE_PAPER);
-    expect(mainCardStyles).toBe(LIGHT_WORKSPACE_PAPER);
+    expect(mainCardStyles).toBe("rgba(0, 0, 0, 0)");
 
-    const firstRow = page.getByTestId(`chat-sidebar-conversation-${firstChat.id}`);
+    const firstRow = page.getByTestId(`messenger-thread-chat-${firstChat.id}`);
     await expect(firstRow).toContainText("Release blockers");
     await expect(firstRow).not.toContainText("Collect the blockers, confirm owners");
 
-    const secondRow = page.getByTestId(`chat-sidebar-conversation-${secondChat.id}`);
+    const secondRow = page.getByTestId(`messenger-thread-chat-${secondChat.id}`);
     await expect(secondRow).toContainText("Agent runtime follow-up");
     await expect(secondRow).not.toContainText("Compare runtime options and keep the ask lightweight");
     await expect(secondRow).not.toContainText("Light ops");

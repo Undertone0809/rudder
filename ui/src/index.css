@@ -1419,22 +1419,9 @@
       isolation: isolate;
     }
 
-    html.desktop-shell-macos [data-testid="chat-main-workspace-card"] .chat-messages-scroll-content {
-      padding-top: calc(2.75rem + 1rem);
-    }
-
-    html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) > [data-testid="chat-load-error"] {
-      margin-top: calc(2.75rem + 1.5rem);
-    }
-
-    html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) > [data-testid="chat-conversation-loading-state"] {
-      padding-top: calc(2.75rem + 1rem);
-    }
-
     html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
-      position: absolute;
-      inset: 0 0 auto;
-      z-index: 20;
+      position: relative;
+      z-index: 1;
       height: 2.75rem;
       overflow: hidden;
       border-bottom: 1px solid color-mix(in oklab, var(--desktop-content-border-light) 42%, transparent);

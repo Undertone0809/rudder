@@ -441,9 +441,7 @@ describe("index.css motion rules", () => {
     const activeChatCard = cssBlock(activeChatCardSelector);
     const lightChatHeader = cssBlock(chatHeaderSelector);
     const darkChatHeader = cssBlock(darkChatHeaderSelector);
-    const chatMessages = cssBlock('html.desktop-shell-macos [data-testid="chat-main-workspace-card"] .chat-messages-scroll-content');
-    const chatLoadError = cssBlock(`${activeChatCardSelector} > [data-testid="chat-load-error"]`);
-    const chatLoadingState = cssBlock(`${activeChatCardSelector} > [data-testid="chat-conversation-loading-state"]`);
+    const chatMessages = cssBlock(".chat-messages-scroll-content");
     const chatToolbarClearance = cssBlock(".chat-desktop-toolbar-clearance");
     const chatLoadErrorOffset = cssBlock(".chat-load-error-offset");
     const chatLoadingOffset = cssBlock(".chat-conversation-loading-offset");
@@ -463,13 +461,11 @@ describe("index.css motion rules", () => {
     expect(activeChatCard).toContain("isolation: isolate");
     expect(activeChatCard).not.toContain("linear-gradient");
     expect(chatToolbarClearance).toContain("height: 2.75rem");
-    expect(lightChatHeader).toContain("position: absolute");
+    expect(lightChatHeader).toContain("position: relative");
     expect(lightChatHeader).toContain("height: 2.75rem");
     expect(lightChatHeader).toContain("backdrop-filter: blur(18px) saturate(128%)");
     expect(darkChatHeader).toContain("backdrop-filter: blur(18px) saturate(132%)");
-    expect(chatMessages).toContain("padding-top: calc(2.75rem + 1rem)");
-    expect(chatLoadError).toContain("margin-top: calc(2.75rem + 1.5rem)");
-    expect(chatLoadingState).toContain("padding-top: calc(2.75rem + 1rem)");
+    expect(chatMessages).toContain("padding-top: 1rem");
     expect(chatLoadErrorOffset).toContain("margin-top: 1.5rem");
     expect(chatLoadingOffset).toContain("padding-top: 1rem");
     expect(chatLoadingOffset).toContain("padding-bottom: 1rem");
