@@ -43,6 +43,7 @@ Recommended defaults:
 
 - `pnpm dev` starts the non-watch local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
+- Development Desktop opens the Local Workspace without an Account Gate by default. Use `RUDDER_DESKTOP_AUTH_BYPASS=0 pnpm dev` to exercise the complete fixture authentication flow.
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
 - `pnpm prod` builds the packaged portable Desktop artifact for the current platform, verifies the packaged app boots successfully, and then opens the local app artifact
 - `npx @rudderhq/cli@latest start` is the public first-run form; after the
@@ -87,6 +88,8 @@ different interaction paths:
 - Google and GitHub open the system default browser. The Electron main process
   owns the ephemeral loopback callback and exchanges the resulting short-lived
   Rudder authorization code with PKCE.
+- Google and GitHub controls are shown only when the corresponding Identity
+  provider is configured. Email OTP is the email sign-in and new-account path.
 - Email OTP, email/password sign-in, forgot password, and password reset stay
   inside the Desktop boot window. Renderer input crosses only narrow,
   exact-key-validated IPC messages to the main process.

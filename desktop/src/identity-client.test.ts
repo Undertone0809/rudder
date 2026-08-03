@@ -36,6 +36,29 @@ describe("Desktop Identity client", () => {
     })).toThrow("must use HTTPS");
   });
 
+  it("reads public Identity provider capabilities without credentials", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      providers: { emailOtp: true, password: true, google: false, github: true },
+    }), { status: 200 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+    });
+
+    await expect(client.getAuthProviders()).resolves.toEqual({ google: false, github: true });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL("https://accounts.rudderhq.dev/api/health"),
+      expect.objectContaining({
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
   it("clears the credential vault on local sign-out", async () => {
     const clear = vi.fn();
     const client = createDesktopIdentityClient({

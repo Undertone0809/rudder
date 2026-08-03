@@ -662,8 +662,14 @@ export async function identityHandler(
 
   if (req.method === "GET" && url.pathname === "/") {
     sendHtml(res, homePage({
-      google: true,
-      github: true,
+      google: Boolean(
+        process.env.IDENTITY_GOOGLE_CLIENT_ID?.trim()
+        && process.env.IDENTITY_GOOGLE_CLIENT_SECRET?.trim(),
+      ),
+      github: Boolean(
+        process.env.IDENTITY_GITHUB_CLIENT_ID?.trim()
+        && process.env.IDENTITY_GITHUB_CLIENT_SECRET?.trim(),
+      ),
     }), { sensitive: true });
     return;
   }
@@ -1130,6 +1136,13 @@ export async function identityHandler(
       const body = await readJson(req);
       const provider = stringField(body, "provider");
       if (provider !== "google" && provider !== "github") throw new Error("invalid_request");
+      if (!runtime.config[provider]) {
+        throw new RootIdentityError({
+          code: "provider_unavailable",
+          message: `${provider} sign-in is not configured for this Identity service`,
+          status: 404,
+        });
+      }
       const nextPath = typeof body.nextPath === "string" ? body.nextPath : undefined;
       const result = await runtime.rootIdentity.beginOAuth(
         rootIdentityContext(req, res),
@@ -1150,6 +1163,18 @@ export async function identityHandler(
       return;
     }
     try {
+      const fixtureProvider = code === "fixture-google"
+        ? "google"
+        : code === "fixture-github"
+          ? "github"
+          : null;
+      if (fixtureProvider && !runtime.config[fixtureProvider]) {
+        throw new RootIdentityError({
+          code: "provider_unavailable",
+          message: `${fixtureProvider} sign-in is not configured for this Identity service`,
+          status: 404,
+        });
+      }
       const principal = await runtime.rootIdentity.completePkceCallback(
         rootIdentityContext(req, res),
         { code, flowId: url.searchParams.get("sb_flow_id") ?? undefined },
@@ -1597,8 +1622,8 @@ export async function identityHandler(
       providers: {
         emailOtp: true,
         password: true,
-        google: true,
-        github: true,
+        google: Boolean(runtime.config.google),
+        github: Boolean(runtime.config.github),
         deviceAuthorization: true,
         offlineGrant: Boolean(runtime.offlineGrantSigning),
       },

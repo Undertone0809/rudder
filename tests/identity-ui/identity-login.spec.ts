@@ -71,7 +71,7 @@ test.describe("Rudder Account login UI", () => {
     await page.goto("/");
 
     await page.locator("#otp-form").getByLabel("Email address").fill("login-ui@rudderhq.dev");
-    const continueButton = page.getByRole("button", { name: "Continue with email code" });
+    const continueButton = page.getByRole("button", { name: "Continue with email" });
     const passwordMode = page.locator("#password-mode-toggle");
     const submitPromise = continueButton.dblclick();
     await expect(passwordMode).toBeDisabled();
@@ -98,13 +98,13 @@ test.describe("Rudder Account login UI", () => {
     await page.goto("/");
 
     await page.locator("#otp-form").getByLabel("Email address").fill("delivery-test@rudderhq.dev");
-    await page.getByRole("button", { name: "Continue with email code" }).click();
+    await page.getByRole("button", { name: "Continue with email" }).click();
 
     await expect(page.locator("#otp-form")).toBeVisible();
     await expect(page.locator("#otp-verify-form")).toBeHidden();
     await expect(page.getByRole("status")).toHaveText("Mail transport unavailable");
     await expect(page.getByRole("status")).toHaveAttribute("data-state", "error");
-    await expect(page.getByRole("button", { name: "Continue with email code" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Continue with email" })).toBeEnabled();
   });
 
   test("verifies an email code and rejects an unsafe next redirect", async ({ page }) => {
@@ -118,7 +118,7 @@ test.describe("Rudder Account login UI", () => {
     await page.goto("/?next=https://evil.example/collect");
 
     await page.locator("#otp-form").getByLabel("Email address").fill("owner@rudderhq.dev");
-    await page.getByRole("button", { name: "Continue with email code" }).click();
+    await page.getByRole("button", { name: "Continue with email" }).click();
     await page.locator("#otp-verify-form").getByLabel("Verification code").fill("123456");
     await page.getByRole("button", { name: "Verify and continue" }).click();
 
@@ -142,7 +142,7 @@ test.describe("Rudder Account login UI", () => {
     await page.goto("/");
 
     await page.locator("#otp-form").getByLabel("Email address").fill("owner@rudderhq.dev");
-    await page.getByRole("button", { name: "Continue with email code" }).click();
+    await page.getByRole("button", { name: "Continue with email" }).click();
     await page.locator("#otp-verify-form").getByLabel("Verification code").fill("000000");
     await page.getByRole("button", { name: "Verify and continue" }).click();
 

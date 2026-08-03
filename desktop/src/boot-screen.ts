@@ -22,6 +22,10 @@ export type BootScreenState = {
     instance?: string | null;
     version?: string | null;
   };
+  identityProviders?: {
+    google: boolean;
+    github: boolean;
+  };
   instanceRoot?: string | null;
 };
 
@@ -33,6 +37,7 @@ export function deriveBootScreenState(state: {
     instanceId?: string | null;
     version?: string | null;
   };
+  identityProviders?: BootScreenState["identityProviders"];
   paths?: { instanceRoot?: string | null };
 }): BootScreenState {
   return {
@@ -48,6 +53,7 @@ export function deriveBootScreenState(state: {
       instance: state.runtime?.instanceId,
       version: state.runtime?.version,
     },
+    identityProviders: state.identityProviders,
     instanceRoot: state.paths?.instanceRoot,
   };
 }
@@ -68,6 +74,8 @@ export function createBootScreenHtml(
   const initialStateJson = serializeForInlineScript(initialState);
   const initialFailure = initialState.view === "failed";
   const initialAccountRequired = initialState.view === "account_required";
+  const identityProviders = initialState.identityProviders ?? { google: false, github: false };
+  const socialStackHidden = !identityProviders.google && !identityProviders.github ? " hidden" : "";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -241,14 +249,6 @@ export function createBootScreenHtml(
         line-height: 1.15;
       }
       #account-title:focus { outline: none; }
-      .account-intro {
-        max-width: 34ch;
-        margin: 10px auto 26px;
-        color: var(--muted);
-        text-align: center;
-        font-size: 14px;
-        line-height: 1.55;
-      }
       .social-stack { display: grid; gap: 10px; }
       .auth-button {
         position: relative;
@@ -326,18 +326,10 @@ export function createBootScreenHtml(
       }
       .mode-toggle::after { content: " →"; }
       .mode-toggle:hover:not(:disabled) { color: var(--text); transform: none; }
-      .password-panel {
-        margin-top: 14px;
-        padding-top: 14px;
-        border-top: 1px solid var(--border);
-      }
-      .password-panel p {
-        margin: 0 0 12px;
-        color: var(--muted);
-        text-align: center;
-        font-size: 12px;
-        line-height: 1.5;
-      }
+      .back-toggle::before { content: "← "; }
+      .back-toggle::after { content: none; }
+      .auth-page { display: grid; }
+      .password-panel { gap: 8px; }
       .password-actions { display: grid; gap: 8px; }
       .native-auth-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .password-recovery {
@@ -354,14 +346,6 @@ export function createBootScreenHtml(
       }
       .password-recovery:hover:not(:disabled) { color: var(--text); transform: none; }
       .account-sheet .inline-status { text-align: center; }
-      .account-sheet .privacy-note {
-        margin: 22px auto 0;
-        color: var(--faint);
-        text-align: center;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-      .account-sheet .privacy-note strong { color: inherit; }
       .device-approval { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
       .device-code { margin-top: 8px; font: 650 24px/1.2 ui-monospace, "SFMono-Regular", monospace; letter-spacing: 0.08em; }
       .device-url { margin-top: 8px; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, "SFMono-Regular", monospace; }
@@ -489,41 +473,45 @@ export function createBootScreenHtml(
       <section class="account-sheet" id="account-sheet" role="region" aria-labelledby="account-title"${initialAccountRequired ? "" : " hidden"}>
         <div class="account-brand">${brandMark}</div>
         <h1 id="account-title" tabindex="-1">Welcome to Rudder</h1>
-        <p class="account-intro">Sign in to connect this device. Your Local Workspace stays on your machine.</p>
-        <div class="social-stack" role="group" aria-label="Social sign in">
-          <button class="auth-button auth-entry" id="google-sign-in-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.55h3.24c1.9-1.75 2.98-4.33 2.98-7.42Z"/><path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.43l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.05v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.86A6 6 0 0 1 6.08 12c0-.65.11-1.28.31-1.86V7.52H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.48l3.34-2.62Z"/><path fill="#EA4335" d="M12 6.01c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.65 9.65 0 0 0 12 2a10 10 0 0 0-8.95 5.52l3.34 2.62C7.18 7.77 9.39 6.01 12 6.01Z"/></svg>
-            <span>Continue with Google</span>
-          </button>
-          <button class="auth-button auth-entry" id="github-sign-in-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.54 1.03 1.54 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 6.82c.85 0 1.7.11 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86l-.01 2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
-            <span>Continue with GitHub</span>
-          </button>
+        <div class="auth-page" id="auth-options-page">
+          <div class="social-stack" id="social-stack" role="group" aria-label="Social sign in"${socialStackHidden}>
+            <button class="auth-button auth-entry" id="google-sign-in-button" type="button"${identityProviders.google ? "" : " hidden"}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.55h3.24c1.9-1.75 2.98-4.33 2.98-7.42Z"/><path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.43l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.05v2.62A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.86A6 6 0 0 1 6.08 12c0-.65.11-1.28.31-1.86V7.52H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.48l3.34-2.62Z"/><path fill="#EA4335" d="M12 6.01c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.65 9.65 0 0 0 12 2a10 10 0 0 0-8.95 5.52l3.34 2.62C7.18 7.77 9.39 6.01 12 6.01Z"/></svg>
+              <span>Continue with Google</span>
+            </button>
+            <button class="auth-button auth-entry" id="github-sign-in-button" type="button"${identityProviders.github ? "" : " hidden"}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.54 1.03 1.54 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.57 9.57 0 0 1 12 6.82c.85 0 1.7.11 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86l-.01 2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+              <span>Continue with GitHub</span>
+            </button>
+          </div>
+          <div class="divider" id="social-divider"${socialStackHidden}>or continue with email</div>
+          <form class="email-form" id="email-sign-in-form">
+            <label>Email address
+              <input id="account-email" required type="email" autocomplete="email" placeholder="you@example.com">
+            </label>
+            <button class="auth-primary auth-entry" id="email-code-submit-button" type="submit">Continue with email</button>
+          </form>
+          <button class="mode-toggle auth-navigation" id="password-mode-toggle" type="button">Use password instead</button>
         </div>
-        <div class="divider">or continue with email</div>
-        <form class="email-form" id="email-sign-in-form">
-          <label>Email address
-            <input id="account-email" required type="email" autocomplete="email" placeholder="you@example.com">
-          </label>
-          <button class="auth-primary auth-entry" id="email-code-submit-button" type="submit">Continue with email code</button>
-        </form>
-        <form class="email-form native-auth-panel" id="email-code-form" hidden>
+        <form class="email-form auth-page" id="email-code-form" hidden>
           <label>Verification code
             <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Email code">
           </label>
           <button class="auth-primary auth-entry" type="submit">Verify and sign in</button>
-          <button class="password-recovery" id="email-code-back-button" type="button">Use a different email</button>
+          <button class="password-recovery auth-navigation" id="email-code-back-button" type="button">Use a different email</button>
         </form>
-        <button class="mode-toggle" id="password-mode-toggle" type="button" aria-controls="password-panel" aria-expanded="false">Use password instead</button>
-        <div class="password-panel" id="password-panel" hidden>
+        <div class="password-panel auth-page" id="password-panel" hidden>
           <form class="email-form" id="password-sign-in-form">
+            <label>Email address
+              <input id="password-email" required type="email" autocomplete="email" placeholder="you@example.com">
+            </label>
             <label>Password
               <input id="account-password" required type="password" minlength="8" maxlength="128" autocomplete="current-password" placeholder="Your password">
             </label>
             <button class="auth-primary auth-entry" type="submit">Sign in with password</button>
           </form>
           <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
-          <form class="email-form native-auth-panel" id="password-reset-form" hidden>
+          <form class="email-form" id="password-reset-form" hidden>
             <label>Reset code
               <input id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Reset code">
             </label>
@@ -531,7 +519,9 @@ export function createBootScreenHtml(
               <input id="new-password" required type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="At least 8 characters">
             </label>
             <button class="auth-primary auth-entry" type="submit">Reset password and sign in</button>
+            <button class="password-recovery auth-navigation" id="password-reset-back-button" type="button">Back to password sign in</button>
           </form>
+          <button class="mode-toggle back-toggle auth-navigation" id="password-back-button" type="button">Back to sign-in options</button>
         </div>
         <p class="inline-status" id="account-status" role="status" aria-live="polite"></p>
         <div class="device-approval" id="device-approval" hidden>
@@ -543,7 +533,6 @@ export function createBootScreenHtml(
             <button class="secondary" id="copy-device-button" type="button">Copy address and code</button>
           </div>
         </div>
-        <p class="privacy-note">Signing in connects your identity and devices. It does not upload Local Workspace content.</p>
       </section>
       <section class="failure-sheet" id="failure-sheet" role="region" aria-labelledby="failure-title"${initialFailure ? "" : " hidden"}>
         <div class="failure-header">
@@ -599,11 +588,14 @@ export function createBootScreenHtml(
       const failureSheet = document.getElementById("failure-sheet");
       const accountSheet = document.getElementById("account-sheet");
       const accountTitle = document.getElementById("account-title");
-      const authEntryButtons = Array.from(document.querySelectorAll(".auth-entry"));
+      const authControlButtons = Array.from(document.querySelectorAll(".auth-entry, .auth-navigation"));
+      const authControlInputs = Array.from(accountSheet.querySelectorAll("input"));
+      const authOptionsPage = document.getElementById("auth-options-page");
+      const socialStack = document.getElementById("social-stack");
+      const socialDivider = document.getElementById("social-divider");
       const googleSignInButton = document.getElementById("google-sign-in-button");
       const githubSignInButton = document.getElementById("github-sign-in-button");
       const emailSignInForm = document.getElementById("email-sign-in-form");
-      const emailCodeSubmitButton = document.getElementById("email-code-submit-button");
       const emailCodeForm = document.getElementById("email-code-form");
       const accountEmail = document.getElementById("account-email");
       const accountEmailCode = document.getElementById("account-email-code");
@@ -611,9 +603,12 @@ export function createBootScreenHtml(
       const passwordModeToggle = document.getElementById("password-mode-toggle");
       const passwordPanel = document.getElementById("password-panel");
       const passwordSignInForm = document.getElementById("password-sign-in-form");
+      const passwordEmail = document.getElementById("password-email");
       const accountPassword = document.getElementById("account-password");
       const passwordResetButton = document.getElementById("password-reset-button");
       const passwordResetForm = document.getElementById("password-reset-form");
+      const passwordResetBackButton = document.getElementById("password-reset-back-button");
+      const passwordBackButton = document.getElementById("password-back-button");
       const passwordResetCode = document.getElementById("password-reset-code");
       const newPassword = document.getElementById("new-password");
       const accountStatus = document.getElementById("account-status");
@@ -638,10 +633,41 @@ export function createBootScreenHtml(
       let failureWasVisible = false;
       let viewGeneration = 0;
       let latestDeviceApproval = null;
-      passwordPanel.hidden = true;
+      let emailCodeEmail = "";
+
+      function showAuthPage(page) {
+        authOptionsPage.hidden = page !== "options";
+        emailCodeForm.hidden = page !== "code";
+        passwordPanel.hidden = page !== "password" && page !== "reset";
+        passwordSignInForm.hidden = page !== "password";
+        passwordResetButton.hidden = page !== "password";
+        passwordResetForm.hidden = page !== "reset";
+        passwordBackButton.hidden = page === "reset";
+        accountTitle.textContent = page === "options"
+          ? "Welcome to Rudder"
+          : page === "code"
+            ? "Enter verification code"
+            : page === "reset"
+              ? "Reset your password"
+              : "Sign in with password";
+        deviceApproval.hidden = true;
+      }
+
+      showAuthPage("options");
 
       function syncFallbackActions() {
         fallbackActions.hidden = copyEmailButton.hidden && copyIssueButton.hidden;
+      }
+
+      function applyIdentityProviders(providers) {
+        if (!providers) return;
+        const google = providers.google === true;
+        const github = providers.github === true;
+        googleSignInButton.hidden = !google;
+        githubSignInButton.hidden = !github;
+        const hasSocialProvider = google || github;
+        socialStack.hidden = !hasSocialProvider;
+        socialDivider.hidden = !hasSocialProvider;
       }
 
       function renderDiagnostic(state) {
@@ -675,6 +701,7 @@ export function createBootScreenHtml(
         );
         if (stateIdentityChanged) viewGeneration += 1;
         latestState = state;
+        applyIdentityProviders(state?.identityProviders);
         const failed = state?.view === "failed";
         const accountRequired = state?.view === "account_required";
         document.body.dataset.bootView = failed ? "failed" : accountRequired ? "account_required" : "loading";
@@ -684,7 +711,8 @@ export function createBootScreenHtml(
         failureSheet.hidden = !failed;
         accountSheet.hidden = !accountRequired;
         if (accountRequired) {
-          for (const button of authEntryButtons) button.disabled = false;
+          if (stateIdentityChanged) showAuthPage("options");
+          for (const button of authControlButtons) button.disabled = false;
           accountStatus.textContent = "";
           requestAnimationFrame(() => accountTitle.focus({ preventScroll: true }));
           return;
@@ -709,18 +737,18 @@ export function createBootScreenHtml(
         }
       }
 
-      function requiredEmail() {
-        const email = accountEmail.value.trim();
-        if (!accountEmail.checkValidity()) {
-          accountEmail.reportValidity();
+      function requiredEmail(input) {
+        const email = input.value.trim();
+        if (!input.checkValidity()) {
+          input.reportValidity();
           return null;
         }
         return email;
       }
 
       async function startSignIn(method, pendingMessage, email) {
-        if (authEntryButtons.some((button) => button.disabled)) return;
-        for (const button of authEntryButtons) button.disabled = true;
+        if (authControlButtons.some((button) => button.disabled)) return;
+        for (const button of authControlButtons) button.disabled = true;
         latestDeviceApproval = null;
         deviceApproval.hidden = true;
         accountStatus.textContent = pendingMessage;
@@ -731,22 +759,23 @@ export function createBootScreenHtml(
           });
           if (state?.status === "error") {
             accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-            for (const button of authEntryButtons) button.disabled = false;
+            for (const button of authControlButtons) button.disabled = false;
           } else {
             accountStatus.textContent = "Signed in. Opening your Local Workspace…";
           }
         } catch {
           accountStatus.textContent = "Rudder Account sign-in could not start.";
-          for (const button of authEntryButtons) button.disabled = false;
+          for (const button of authControlButtons) button.disabled = false;
         }
       }
 
       function setAuthBusy(busy) {
-        for (const button of authEntryButtons) button.disabled = busy;
+        for (const button of authControlButtons) button.disabled = busy;
+        for (const input of authControlInputs) input.disabled = busy;
       }
 
       async function completeNativeSignIn(request, pendingMessage) {
-        if (authEntryButtons.some((button) => button.disabled)) return;
+        if (authControlButtons.some((button) => button.disabled)) return;
         setAuthBusy(true);
         deviceApproval.hidden = true;
         accountStatus.textContent = pendingMessage;
@@ -772,18 +801,15 @@ export function createBootScreenHtml(
       });
       emailSignInForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        if (passwordModeToggle.getAttribute("aria-expanded") === "true") {
-          accountPassword.focus();
-          return;
-        }
         if (!emailSignInForm.reportValidity()) return;
-        if (authEntryButtons.some((button) => button.disabled)) return;
+        if (authControlButtons.some((button) => button.disabled)) return;
+        const email = accountEmail.value.trim();
+        emailCodeEmail = email;
         setAuthBusy(true);
         accountStatus.textContent = "Sending a verification code…";
-        void window.rudderBoot.sendEmailOtp(accountEmail.value.trim()).then(() => {
-          emailSignInForm.hidden = true;
-          emailCodeForm.hidden = false;
-          accountStatus.textContent = "Enter the code sent to " + accountEmail.value.trim() + ".";
+        void window.rudderBoot.sendEmailOtp(email).then(() => {
+          showAuthPage("code");
+          accountStatus.textContent = "Enter the code sent to " + email + ".";
           setAuthBusy(false);
           accountEmailCode.focus();
         }).catch((error) => {
@@ -795,28 +821,32 @@ export function createBootScreenHtml(
         event.preventDefault();
         if (!emailCodeForm.reportValidity()) return;
         void completeNativeSignIn(
-          () => window.rudderBoot.verifyEmailOtp(accountEmail.value.trim(), accountEmailCode.value.trim()),
+          () => window.rudderBoot.verifyEmailOtp(emailCodeEmail, accountEmailCode.value.trim()),
           "Verifying your email code…",
         );
       });
       emailCodeBackButton.addEventListener("click", () => {
-        emailCodeForm.hidden = true;
-        emailSignInForm.hidden = false;
+        showAuthPage("options");
+        emailCodeEmail = "";
         accountEmailCode.value = "";
         accountStatus.textContent = "";
         accountEmail.focus();
       });
       passwordModeToggle.addEventListener("click", () => {
-        const expanded = passwordModeToggle.getAttribute("aria-expanded") === "true";
-        passwordModeToggle.setAttribute("aria-expanded", String(!expanded));
-        passwordModeToggle.textContent = expanded ? "Use password instead" : "Use email code instead";
-        emailCodeSubmitButton.hidden = !expanded;
-        passwordPanel.hidden = expanded;
-        if (!expanded) accountPassword.focus();
+        passwordEmail.value = accountEmail.value;
+        showAuthPage("password");
+        (passwordEmail.value ? accountPassword : passwordEmail).focus();
+      });
+      passwordBackButton.addEventListener("click", () => {
+        accountEmail.value = passwordEmail.value;
+        accountPassword.value = "";
+        accountStatus.textContent = "";
+        showAuthPage("options");
+        accountEmail.focus();
       });
       passwordSignInForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        const email = requiredEmail();
+        const email = requiredEmail(passwordEmail);
         if (email === null || !passwordSignInForm.reportValidity()) return;
         void completeNativeSignIn(
           () => window.rudderBoot.signInWithPassword(email, accountPassword.value),
@@ -824,13 +854,12 @@ export function createBootScreenHtml(
         );
       });
       passwordResetButton.addEventListener("click", () => {
-        const email = requiredEmail();
-        if (email === null || authEntryButtons.some((button) => button.disabled)) return;
+        const email = requiredEmail(passwordEmail);
+        if (email === null || authControlButtons.some((button) => button.disabled)) return;
         setAuthBusy(true);
         accountStatus.textContent = "Sending a password reset code…";
         void window.rudderBoot.requestPasswordReset(email).then(() => {
-          passwordResetForm.hidden = false;
-          passwordResetButton.hidden = true;
+          showAuthPage("reset");
           accountStatus.textContent = "If an account exists, a reset code was sent to " + email + ".";
           setAuthBusy(false);
           passwordResetCode.focus();
@@ -839,9 +868,16 @@ export function createBootScreenHtml(
           setAuthBusy(false);
         });
       });
+      passwordResetBackButton.addEventListener("click", () => {
+        passwordResetCode.value = "";
+        newPassword.value = "";
+        accountStatus.textContent = "";
+        showAuthPage("password");
+        accountPassword.focus();
+      });
       passwordResetForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        const email = requiredEmail();
+        const email = requiredEmail(passwordEmail);
         if (email === null || !passwordResetForm.reportValidity()) return;
         void completeNativeSignIn(
           () => window.rudderBoot.resetPassword(
@@ -977,7 +1013,7 @@ export function createBootScreenHtml(
         }
         if (state?.status === "error") {
           accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-          for (const button of authEntryButtons) button.disabled = false;
+          for (const button of authControlButtons) button.disabled = false;
         }
       });
     </script>

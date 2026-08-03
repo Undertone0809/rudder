@@ -520,6 +520,10 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       IDENTITY_MAIL_FROM: "Rudder Account <account@updates.rudderhq.dev>",
       IDENTITY_MAIL_MODE: "capture",
       IDENTITY_CAPTURE_MAILBOX_SECRET: CAPTURE_MAILBOX_SECRET,
+      IDENTITY_GOOGLE_CLIENT_ID: "identity-e2e-google-client",
+      IDENTITY_GOOGLE_CLIENT_SECRET: "identity-e2e-google-secret",
+      IDENTITY_GITHUB_CLIENT_ID: "identity-e2e-github-client",
+      IDENTITY_GITHUB_CLIENT_SECRET: "identity-e2e-github-secret",
       IDENTITY_OFFLINE_GRANT_KEY_ID: "identity-e2e-key",
       IDENTITY_OFFLINE_GRANT_PRIVATE_KEY: OFFLINE_SIGNING_KEYS.privateKey
         .export({ format: "der", type: "pkcs8" }).toString("base64url"),
@@ -596,7 +600,7 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     const home = await homeResponse.text();
     expect(home).toContain("Continue with Google");
     expect(home).toContain("Continue with GitHub");
-    expect(home).toContain("Continue with email code");
+    expect(home).toContain("Continue with email");
     expect(home).toContain("Sign in with password");
     expect((await fetch(`${baseUrl}/privacy`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/terms`)).status).toBe(200);
@@ -604,6 +608,46 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     expect((await fetch(`${baseUrl}/rudder-logo.png`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/favicon.ico`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/dev/mailbox`)).status).toBe(404);
+  });
+
+  it("hides and rejects OAuth when local provider credentials are absent", async () => {
+    const providerKeys = [
+      "IDENTITY_GOOGLE_CLIENT_ID",
+      "IDENTITY_GOOGLE_CLIENT_SECRET",
+      "IDENTITY_GITHUB_CLIENT_ID",
+      "IDENTITY_GITHUB_CLIENT_SECRET",
+    ] as const;
+    const previous = new Map(providerKeys.map((key) => [key, process.env[key]]));
+    for (const key of providerKeys) delete process.env[key];
+    await resetIdentityRuntimeForTests();
+    try {
+      const home = await (await fetch(`${baseUrl}/`)).text();
+      expect(home).not.toContain('data-social="google"');
+      expect(home).not.toContain('data-social="github"');
+      expect(await (await fetch(`${baseUrl}/api/health`)).json()).toMatchObject({
+        providers: { google: false, github: false },
+      });
+      const oauth = await post("/api/root-auth/oauth", { provider: "google" });
+      expect(oauth.status).toBe(404);
+      expect(await oauth.json()).toEqual({
+        error: "provider_unavailable",
+        message: "google sign-in is not configured for this Identity service",
+      });
+      const callback = await fetch(`${baseUrl}/auth/callback?code=fixture-google`, {
+        redirect: "manual",
+      });
+      expect(callback.status).toBe(404);
+      expect(await callback.json()).toEqual({
+        error: "provider_unavailable",
+        message: "google sign-in is not configured for this Identity service",
+      });
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await resetIdentityRuntimeForTests();
+    }
   });
 
   it("runs OAuth, OTP, password signup/reset and scoped sign-out through root-auth", async () => {

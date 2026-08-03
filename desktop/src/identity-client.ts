@@ -23,6 +23,11 @@ export type IdentityDevice = {
   displayName: string;
 };
 
+export type DesktopIdentityAuthProviders = {
+  google: boolean;
+  github: boolean;
+};
+
 type IdentityTokenResponse = {
   access_token: string;
   token_type: "Bearer";
@@ -339,6 +344,25 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
   };
 
   return {
+    async getAuthProviders(): Promise<DesktopIdentityAuthProviders> {
+      try {
+        const response = await request(new URL("/api/health", identityOrigin), {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) return { google: false, github: false };
+        const value = await response.json() as {
+          providers?: { google?: unknown; github?: unknown };
+        };
+        return {
+          google: value.providers?.google === true,
+          github: value.providers?.github === true,
+        };
+      } catch {
+        return { google: false, github: false };
+      }
+    },
+
     async createServerExchange(audience: string): Promise<string> {
       if (!audience.trim() || audience.length > 256) {
         throw new Error("Local Rudder server audience is invalid");

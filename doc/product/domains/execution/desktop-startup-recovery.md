@@ -100,11 +100,13 @@ trust placed in a renderer that is active before the normal application loads.
    surface. Technical fields and paths remain behind explicit disclosure. The
    original exception stays in the main-process log and never enters the boot
    renderer, copied diagnostic, support draft, or issue handoff.
-9. Account Gate is a normal admission state before managed Local startup, not
-   a startup failure. Identity unavailable, login failed/cancelled, or expired
-   offline authorization keeps the operator on a recoverable login surface.
-   Sign-out stops authenticated Local access and returns to Account Gate. These
-   transitions do not delete or upload Local data.
+9. When the Account Gate is active, it is a normal admission state before
+   managed Local startup, not a startup failure. Packaged clients and explicitly
+   auth-enabled development show that gate; default development bypasses it for
+   the local-trusted workspace. Identity unavailable, login failed/cancelled, or
+   expired offline authorization keeps the operator on a recoverable login
+   surface. Sign-out stops authenticated Local access and returns to Account
+   Gate. These transitions do not delete or upload Local data.
 
 ## Decision Table
 
@@ -116,7 +118,7 @@ trust placed in a renderer that is active before the normal application loads.
 | Email support clicked | Open one editable, bounded draft or expose copy fallback | Send automatically, upload data, or attach private files |
 | Report on GitHub clicked | Open the fixed public bug-report form and keep a safe diagnostic copy path | Submit automatically, construct an arbitrary URL, or imply that the report is private |
 | Reduced motion requested | Keep a recognizable static/low-motion branded state | Require continuous motion to understand failure or recovery |
-| Account not authenticated | Show Account Gate and recovery actions before Local Board startup | Present login as a runtime crash or expose Board anonymously |
+| Account Gate active and account not authenticated | Show Account Gate and recovery actions before Local Board startup | Present login as a runtime crash or expose Board anonymously |
 | Login cancelled, Identity unavailable, or offline grant expired | Stay on a recoverable Account surface and preserve Local data | Delete, claim, or upload Local data as error recovery |
 | User signs out | Stop authenticated Local access and return to Account Gate | Leave Board/session access active or erase Local Workspace content |
 

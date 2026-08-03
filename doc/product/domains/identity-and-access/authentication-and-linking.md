@@ -35,8 +35,10 @@ edit_policy: user_confirmed_only
 ### Contract Summary
 
 Supabase Auth is the root identity system for Rudder Account. Packaged Canary
-and Stable clients require a signed-in Rudder Account before Local Board entry
-and support Google, GitHub, Email OTP, and email/password authentication.
+and Stable clients require a signed-in Rudder Account before Local Board entry.
+They support configured Google/GitHub providers, Email OTP, and
+email/password authentication. Development can enter the local workspace
+without the gate and can opt into the same authentication flow for testing.
 
 ### Intent / User Job
 
@@ -59,13 +61,16 @@ reach Desktop, a Local Server, or a runtime agent.
 
 ### Entry Points / Inputs
 
-- Google or GitHub continuation, Email OTP, password sign-in or sign-up,
+- Google or GitHub continuation when configured, Email OTP sign-in or account
+  creation, password sign-in or sign-up,
   password set/change/reset, and current/other/global web sign-out.
 
 ### Product Logic Flow
 
-1. The login surface presents Google, GitHub, and Email OTP as direct methods;
-   password remains an explicit alternative and recovery path.
+1. When the Account Gate is active, the login surface presents only configured
+   Google/GitHub methods and always presents Email OTP as the sign-in or
+   account-creation path; password remains an explicit alternative and recovery
+   path.
 2. Supabase Auth verifies the root identity and owns users, identities,
    passwords, OTP material, web sessions, and refresh tokens.
 3. Rudder Identity accepts only an active verified Supabase principal, maps it
@@ -87,8 +92,9 @@ reach Desktop, a Local Server, or a runtime agent.
 
 ### Actor-Visible Input
 
-The operator sees the Rudder login card, supported methods, verification and
-recovery forms, clear errors, and Privacy/Terms links.
+The operator sees the Rudder login card, configured methods, Email OTP
+verification/account creation, recovery forms, clear errors, and Privacy/Terms
+links.
 
 ### Operator-Visible Output
 
@@ -104,8 +110,8 @@ password, provider token, and refresh-token plaintext are not duplicated there.
 
 ### Canonical Scenarios
 
-1. Email OTP signs a new operator into one Supabase user and proceeds to the
-   same Desktop authorization path as Google or GitHub.
+1. Email OTP creates a new operator account when the verified email is new and
+   proceeds to the same Desktop authorization path as other configured methods.
 2. Password reset invalidates the old password and long-lived credentials while
    preserving Local files.
 3. A provider response without verified email fails closed.

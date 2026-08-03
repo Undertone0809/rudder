@@ -36,10 +36,11 @@ edit_policy: user_confirmed_only
 
 ### Contract Summary
 
-Development can run a complete zero-configuration authentication fixture, but
-Preview, Canary, and Stable fail closed unless configured for their intended
-hosted Supabase Auth environment. Test identity capability is not a releasable
-runtime option.
+Development can run with zero-configuration local workspace access by default,
+and can opt into the complete authentication fixture for auth testing. Preview,
+Canary, and Stable fail closed unless configured for their intended hosted
+Supabase Auth environment. Test identity capability is not a releasable runtime
+option.
 
 ### Intent / User Job
 
@@ -68,9 +69,10 @@ are served.
 
 ### Product Logic Flow
 
-1. With no Supabase/Auth variables, development selects the in-process fixture
-   and runs real UI, OTP/password, mock OAuth, sessions, PKCE, Device
-   Authorization, and Local exchange.
+1. With no Supabase/Auth variables, development opens the Local Workspace
+   without the Desktop Account Gate. `RUDDER_DESKTOP_AUTH_BYPASS=0` selects the
+   in-process fixture and runs real UI, OTP/password, configured mock OAuth,
+   sessions, PKCE, Device Authorization, and Local exchange.
 2. A complete development Supabase configuration selects hosted Auth; partial
    configuration is rejected rather than mixed with fixture state.
 3. Hosted development/test rejects the production project ref even if listed.
@@ -84,16 +86,18 @@ are served.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Zero-config dev | No Auth variables | Complete fixture login | Anonymous default bypass | Dev-env/fixture tests |
+| Zero-config dev | No Auth variables and default dev startup | Open the Local Workspace directly | Enable bypass in a packaged client | Dev-env/Desktop tests |
+| Explicit dev auth | `RUDDER_DESKTOP_AUTH_BYPASS=0` | Complete fixture login | Require auth in the default local path | Dev-env/fixture tests |
 | Hosted dev | Complete allowed dev ref | Real development Supabase | Connect production | Config tests |
 | Partial config | Some required values missing | Fail with configuration error | Mix fixture and hosted state | Config tests |
 | Canary/Stable | Fixture, bypass, test marker, or missing hosted config | Fail closed | Serve Board/login under test trust | Release tests/smoke |
 
 ### Actor-Visible Input
 
-Developers see the normal login UI and captured mailbox/mock providers. Release
-operators receive an actionable startup/configuration failure, not a silent
-fallback.
+Developers enter the Local Workspace directly by default. When development auth
+is explicitly enabled, they see the normal login UI, captured mailbox, and only
+the configured mock providers. Release operators receive an actionable
+startup/configuration failure, not a silent fallback.
 
 ### Operator-Visible Output
 
@@ -108,13 +112,16 @@ enter production Auth.
 
 ### Canonical Scenarios
 
-1. `pnpm dev` with no Auth variables completes fixture OTP and Desktop login.
-2. Full development variables select a non-production Supabase project.
-3. A Canary containing a test marker refuses to start.
+1. `pnpm dev` with no Auth variables opens the Local Workspace directly.
+2. `RUDDER_DESKTOP_AUTH_BYPASS=0 pnpm dev` completes fixture OTP and Desktop
+   login.
+3. Full development variables select a non-production Supabase project.
+4. A Canary containing a test marker refuses to start.
 
 ### Invariants / Non-Goals
 
-- Fixture is full authentication, not anonymous bypass.
+- Fixture is full authentication when explicitly selected; default development
+  local access is limited to the un-packaged local-trusted Desktop path.
 - Production project ref is forbidden in dev/test and mandatory in production.
 - Stable additionally requires its operational availability/backup gates; this
   contract does not purchase or configure the Supabase plan.

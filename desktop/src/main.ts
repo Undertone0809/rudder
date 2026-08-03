@@ -170,6 +170,10 @@ type BootState = {
     version?: string;
     apiUrl?: string;
   };
+  identityProviders?: {
+    google: boolean;
+    github: boolean;
+  };
 };
 
 type StartServerOptions = {
@@ -1902,6 +1906,7 @@ async function startLocalRudder(): Promise<void> {
   const pendingProfile = resolveDesktopLocalEnvProfile();
   const identityRuntime = requireDesktopIdentityRuntime();
   if (identityRuntime.accountRequired && identityRuntime.controller.getState().status !== "signed-in") {
+    const identityProviders = await identityRuntime.getAuthProviders();
     updateBootState({
       stage: "account_required",
       message: "Sign in to Rudder Account",
@@ -1917,6 +1922,7 @@ async function startLocalRudder(): Promise<void> {
         version: undefined,
         apiUrl: undefined,
       },
+      identityProviders,
     });
     return;
   }

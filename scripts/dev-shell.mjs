@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolveDevIdentityEnvironment } from "./dev-identity-env.mjs";
 import {
   isolateDevShellFromParentRuntime,
+  resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
   resolveHomeDir,
 } from "./dev-local-env.mjs";
@@ -229,9 +230,7 @@ async function main() {
   });
   const resolvedIdentity = resolveDevIdentityEnvironment(resolvedDev.env);
   const env = resolvedIdentity.env;
-  const desktopEnv = {
-    ...env,
-  };
+  const desktopEnv = resolveDevDesktopEnvironment(env);
 
   serverChild = spawnManagedChild(
     "server",

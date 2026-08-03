@@ -431,6 +431,7 @@ Useful variants:
 ```sh
 pnpm dev:reset   # wipe only dev profile data
 pnpm dev:watch   # Desktop shell + watched dev runtime
+RUDDER_DESKTOP_AUTH_BYPASS=0 pnpm dev  # exercise the fixture login flow
 pnpm dev:ui      # standalone Vite UI; worktree-aware API proxy
 pnpm rudder run  # persistent local prod_local instance
 ```
@@ -491,6 +492,7 @@ pnpm --filter @rudderhq/desktop smoke
 Notes:
 
 - `pnpm dev` and `pnpm dev:watch` both open the Desktop shell against the same shared `dev` instance.
+- Dev Desktop bypasses the Account Gate by default so a local workspace is immediately usable. Set `RUDDER_DESKTOP_AUTH_BYPASS=0` to test Email OTP, account creation, password, or configured OAuth login.
 - The only workflow difference is whether the runtime watches code and auto-restarts.
 - Dev desktop is quit-on-close; tray/menu resident lifecycle applies to packaged builds.
 - For low-frequency resident-shell debugging, use `RUDDER_DESKTOP_RESIDENT_SHELL=1 pnpm dev:watch`.

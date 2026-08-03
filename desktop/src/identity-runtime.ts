@@ -2,7 +2,7 @@ import { app, ipcMain, session, shell } from "electron";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { createDesktopIdentityClient } from "./identity-client.js";
+import { createDesktopIdentityClient, type DesktopIdentityAuthProviders } from "./identity-client.js";
 import {
   createIdentityCredentialVault,
   type IdentitySafeStorage,
@@ -173,6 +173,9 @@ export function createDesktopIdentityRuntime(options: {
   return {
     accountRequired,
     controller,
+    getAuthProviders(): Promise<DesktopIdentityAuthProviders> {
+      return client.getAuthProviders();
+    },
 
     registerIpc(): void {
       registerDesktopIdentityIpcHandlers(ipcMain, {

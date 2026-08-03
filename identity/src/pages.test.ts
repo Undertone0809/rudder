@@ -11,11 +11,11 @@ import {
 } from "./pages.js";
 
 describe("Identity public pages", () => {
-  it("offers all four login methods and disables unconfigured providers", () => {
+  it("offers configured login methods and omits unconfigured providers", () => {
     const html = homePage({ google: true, github: false });
     expect(html).toContain("Continue with Google");
-    expect(html).toContain('data-social="github" disabled');
-    expect(html).toContain("Continue with email code");
+    expect(html).not.toContain('data-social="github"');
+    expect(html).toContain("Continue with email");
     expect(html).toContain('pattern="[0-9]{6,8}" maxlength="8"');
     expect(html).toContain('placeholder="00000000"');
     expect(html).toContain("Sign in with password");
@@ -30,6 +30,10 @@ describe("Identity public pages", () => {
     expect(html).toContain("[hidden] { display: none !important; }");
     expect(html).not.toContain("background-image");
     expect(html).not.toContain("font-family: Inter");
+
+    const providerFreeHtml = homePage({ google: false, github: false });
+    expect(providerFreeHtml).not.toContain('aria-label="Social sign in"');
+    expect(providerFreeHtml).not.toContain("or continue with email");
   });
 
   it("offers password, scoped web-session controls, and separate device controls", () => {

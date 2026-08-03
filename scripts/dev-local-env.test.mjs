@@ -5,8 +5,21 @@ import path from "node:path";
 import test from "node:test";
 import {
   isolateDevShellFromParentRuntime,
+  resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
 } from "./dev-local-env.mjs";
+
+test("defaults the development Desktop to local workspace access", () => {
+  assert.equal(resolveDevDesktopEnvironment({}).RUDDER_DESKTOP_AUTH_BYPASS, "1");
+  assert.equal(
+    resolveDevDesktopEnvironment({ RUDDER_DESKTOP_AUTH_BYPASS: "0" }).RUDDER_DESKTOP_AUTH_BYPASS,
+    "0",
+  );
+  assert.equal(
+    resolveDevDesktopEnvironment({ RUDDER_DESKTOP_AUTH_BYPASS: "false" }).RUDDER_DESKTOP_AUTH_BYPASS,
+    "false",
+  );
+});
 
 test("drops inherited production runtime identity before resolving pnpm dev", () => {
   const isolated = isolateDevShellFromParentRuntime({

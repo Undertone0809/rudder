@@ -9,6 +9,7 @@ describe("desktop boot screen", () => {
       view: "account_required",
       stage: "account_required",
       runtime: { profile: "prod_local", instance: "default", version: "0.6.5" },
+      identityProviders: { google: true, github: true },
     });
 
     expect(html).toContain('data-boot-view="account_required"');
@@ -16,15 +17,22 @@ describe("desktop boot screen", () => {
     expect(html).toContain("Welcome to Rudder");
     expect(html).toContain("Continue with Google");
     expect(html).toContain("Continue with GitHub");
-    expect(html).toContain("Continue with email code");
+    expect(html).toContain("Continue with email");
+    expect(html).toContain('id="auth-options-page"');
     expect(html).toContain('id="email-code-submit-button"');
     expect(html).toContain('id="account-email"');
     expect(html).toContain("Use password instead");
-    expect(html).toContain('passwordPanel.hidden = true');
-    expect(html).toContain('expanded ? "Use password instead" : "Use email code instead"');
-    expect(html).toContain("emailCodeSubmitButton.hidden = !expanded");
+    expect(html).toContain('id="password-email"');
+    expect(html).toContain("Back to sign-in options");
+    expect(html).toContain('showAuthPage("code")');
+    expect(html).toContain('showAuthPage("password")');
+    expect(html).toContain('authOptionsPage.hidden = page !== "options"');
+    expect(html).toContain('document.querySelectorAll(".auth-entry, .auth-navigation")');
+    expect(html).toContain('accountSheet.querySelectorAll("input")');
+    expect(html).toContain("emailCodeEmail = email");
+    expect(html).toContain("verifyEmailOtp(emailCodeEmail");
     expect(html).toContain("Forgot or need to set a password?");
-    expect(html).toContain("It does not upload Local Workspace content.");
+    expect(html).toContain("Back to password sign in");
     expect(html).toContain("window.rudderBoot.signIn({");
     expect(html).toContain("window.rudderBoot.sendEmailOtp");
     expect(html).toContain("window.rudderBoot.verifyEmailOtp");
@@ -41,9 +49,26 @@ describe("desktop boot screen", () => {
     expect(html).not.toContain("Opening email code sign-in in your browser");
     expect(html).not.toContain("Opening password sign-in in your browser");
     expect(html).not.toContain("Opening password recovery in your browser");
+    expect(html).not.toContain("Sign in to connect this device");
+    expect(html).not.toContain("Signing in connects your identity and devices");
     expect(html).toContain('aria-label="Social sign in"');
+    expect(html).toContain("applyIdentityProviders(state?.identityProviders)");
+    expect(html).toContain("socialStack.hidden = !hasSocialProvider");
     expect(html).toContain('autocomplete="one-time-code"');
     expect(html).toContain('id="loading-view" aria-hidden="true" hidden');
+  });
+
+  it("hides social providers when Identity reports no OAuth configuration", () => {
+    const html = createBootScreenHtml("Rudder", BRAND_ICON, {
+      view: "account_required",
+      stage: "account_required",
+      identityProviders: { google: false, github: false },
+    });
+
+    expect(html).toContain('class="social-stack" id="social-stack" role="group" aria-label="Social sign in" hidden');
+    expect(html).toContain('id="google-sign-in-button" type="button" hidden');
+    expect(html).toContain('id="github-sign-in-button" type="button" hidden');
+    expect(html).toContain('class="divider" id="social-divider" hidden');
   });
 
   it("renders healthy startup as icon-only motion with failure UI hidden", () => {

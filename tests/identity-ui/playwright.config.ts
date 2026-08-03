@@ -24,7 +24,9 @@ export default defineConfig({
     command: [
       `IDENTITY_BASE_URL=${baseURL}`,
       "IDENTITY_GOOGLE_CLIENT_ID=identity-ui-google-fixture",
+      "IDENTITY_GOOGLE_CLIENT_SECRET=identity-ui-google-fixture-secret",
       "IDENTITY_GITHUB_CLIENT_ID=identity-ui-github-fixture",
+      "IDENTITY_GITHUB_CLIENT_SECRET=identity-ui-github-fixture-secret",
       "pnpm --filter @rudderhq/identity dev",
     ].join(" "),
     url: baseURL,
