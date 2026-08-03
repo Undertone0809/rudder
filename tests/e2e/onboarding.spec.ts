@@ -138,6 +138,61 @@ test.describe("Onboarding wizard", () => {
     expect(cleanupResponse.ok()).toBe(true);
   });
 
+  test("persists Codex thinking effort selected during first-agent setup", async ({ page }) => {
+    await page.goto("/onboarding");
+    await expectOnboardingStep(page, "Name your organization");
+    await page.locator('input[placeholder="Acme Corp"]').fill(`E2E-Reasoning-${Date.now()}`);
+    await page.getByRole("button", { name: "Next" }).click();
+
+    await expectOnboardingStep(page, "Create your first agent");
+    await page.getByRole("button", { name: "Codex" }).click();
+    await expectSelectedCodexModel(page);
+    const onboardingDialog = page.getByTestId("onboarding-dialog");
+
+    const modelButton = onboardingDialog.getByRole("button", { name: "GPT-5.6-sol", exact: true });
+    await modelButton.click();
+    const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await modelPopover.getByRole("button", { name: "Default", exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Default", exact: true })).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    const defaultEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await expect(defaultEffortPopover.getByText("Light", { exact: true })).toBeVisible();
+    await expect(defaultEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
+    await defaultEffortPopover.getByText("Ultra", { exact: true }).click();
+
+    await onboardingDialog.getByRole("button", { name: "Default", exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last()
+      .getByRole("button", { name: "GPT-5.5", exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Auto", exact: true })).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    const legacyEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await expect(legacyEffortPopover.getByText("Low", { exact: true })).toBeVisible();
+    await expect(legacyEffortPopover.getByText("Ultra", { exact: true })).toHaveCount(0);
+    await legacyEffortPopover.getByText("Auto", { exact: true }).click();
+
+    await onboardingDialog.getByRole("button", { name: "GPT-5.5", exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last()
+      .getByRole("button", { name: "GPT-5.6-sol", exact: true }).click();
+    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last()
+      .getByText("Ultra", { exact: true }).click();
+
+    const createAgentResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" && /\/api\/orgs\/[^/]+\/agents$/.test(response.url()),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const response = await createAgentResponse;
+    expect(response.ok()).toBe(true);
+    const agent = await response.json() as {
+      agentRuntimeType: string;
+      agentRuntimeConfig: Record<string, unknown>;
+    };
+    expect(agent.agentRuntimeType).toBe("codex_local");
+    expect(agent.agentRuntimeConfig.model).toBe("gpt-5.6-sol");
+    expect(agent.agentRuntimeConfig.modelReasoningEffort).toBe("ultra");
+    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
+  });
+
   test("explains each slow setup stage while creating a starter organization", async ({
     page,
   }) => {
@@ -280,6 +335,14 @@ test.describe("Onboarding wizard", () => {
     await page.getByRole("button", { name: "Codex" }).click();
     const selectedCodexModel = await expectSelectedCodexModel(page);
     expect(selectedCodexModel).toBe("gpt-5.6-sol");
+    const thinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true });
+    await expect(thinkingEffortButton).toBeVisible();
+    await thinkingEffortButton.click();
+    const thinkingEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await expect(thinkingEffortPopover.getByText("Light", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
+    await thinkingEffortPopover.getByText("Ultra", { exact: true }).click();
+    await expect(page.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
     await onboardingNameInput.fill(updatedAgentName);
 
     await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -320,6 +383,7 @@ test.describe("Onboarding wizard", () => {
     expect(rootAgent.title).toBe("Operator Assistant");
     expect(rootAgent.agentRuntimeType).toBe("codex_local");
     expect(rootAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
+    expect(rootAgent.agentRuntimeConfig.modelReasoningEffort).toBe("ultra");
 
     const profilesRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/intelligence-profiles`,
