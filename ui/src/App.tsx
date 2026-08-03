@@ -68,6 +68,7 @@ import { InstanceShortcutsSettings } from "./pages/InstanceShortcutsSettings";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { IssueDetail } from "./pages/IssueDetail";
 import { Issues } from "./pages/Issues";
+import { LocalAppSavedViewWorkspace } from "./pages/LocalAppSavedViewWorkspace";
 import { Messenger } from "./pages/Messenger";
 import { NewAgent } from "./pages/NewAgent";
 import { NotFoundPage } from "./pages/NotFound";
@@ -255,6 +256,7 @@ function boardRoutes() {
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<Automations />} />
+      <Route path="apps/saved/:savedViewId" element={<LocalAppSavedViewWorkspace />} />
       <Route path="apps/*" element={<Apps />} />
       <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="run-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />

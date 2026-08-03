@@ -408,7 +408,7 @@
     0 10px 24px -20px rgb(15 23 42 / 0.76);
   transform: translate(
     calc(-50% + var(--primary-rail-item-shift, 0.25rem)),
-    calc(var(--motion-rail-active-index) * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))
+    var(--motion-rail-active-offset, calc(var(--motion-rail-active-index) * (var(--motion-rail-item-height) + var(--motion-rail-item-gap))))
   );
   transition:
     transform var(--motion-duration-standard) var(--motion-ease-enter),

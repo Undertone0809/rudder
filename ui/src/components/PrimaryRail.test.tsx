@@ -142,11 +142,13 @@ vi.mock("@/lib/router", () => ({
   NavLink: ({
     children,
     className,
+    end: _end,
     to,
     ...props
   }: {
     children: ReactNode;
     className?: string | ((input: { isActive: boolean }) => string);
+    end?: boolean;
     to: string;
   }) => (
     <a
@@ -558,7 +560,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     const pinnedLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("MKT dashboard with a very long project name"));
-    expect(pinnedLink?.getAttribute("href")).toBe("/messenger/saved/saved-local-a");
+    expect(pinnedLink?.getAttribute("href")).toBe("/apps/saved/saved-local-a");
     expect(pinnedLink?.querySelector('[data-testid="primary-rail-local-app-icon"]')).not.toBeNull();
     expect(pinnedLink?.lastElementChild?.className).toContain("truncate");
     expect(pinnedLink?.lastElementChild?.getAttribute("title"))
@@ -566,9 +568,9 @@ describe("PrimaryRail active motion indicator", () => {
     expect(document.querySelector(".motion-rail-nav")?.className).toContain("overflow-y-auto");
   });
 
-  it("gives an exact pinned Saved View the only Messenger-route active treatment", async () => {
+  it("gives an exact pinned Local App the unified active treatment", async () => {
     mockState.generalSettings = { experimentalSitesEnabled: true };
-    mockState.pathname = "/messenger/saved/saved-local-a";
+    mockState.pathname = "/apps/saved/saved-local-a";
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
       title: "MKT dashboard",
@@ -584,14 +586,16 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const links = Array.from(document.querySelectorAll("a"));
-    const messenger = links.find((link) => link.textContent?.includes("Messenger"));
+    const apps = links.find((link) => link.textContent === "Apps");
     const pinned = links.find((link) => link.textContent?.includes("MKT dashboard"));
-    expect(messenger?.hasAttribute("aria-current")).toBe(false);
+    expect(apps?.hasAttribute("aria-current")).toBe(false);
     expect(pinned?.getAttribute("aria-current")).toBe("page");
-    expect(pinned?.className).toContain("var(--sidebar-foreground)");
-    expect(pinned?.className).toContain("dark:text-[#def4eb]");
-    expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).toBeNull();
+    expect(pinned?.className).toContain("text-white");
+    expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).toBeNull();
+    expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).not.toBeNull();
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("7");
+    expect(document.querySelector<HTMLElement>(".motion-rail-nav")?.style
+      .getPropertyValue("--motion-rail-active-offset")).toContain("0.6875rem");
   });
 
   it("keeps the legacy resources route active under Library", async () => {

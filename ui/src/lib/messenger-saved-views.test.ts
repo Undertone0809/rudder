@@ -1,6 +1,7 @@
 import type { MessengerSavedView } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
+  localAppSavedViewRoute,
   messengerSavedViewRoute,
   savedViewKeepInputFromSidePanelTarget,
   savedViewPlacementForSidePanelContext,
@@ -84,6 +85,9 @@ describe("Messenger Saved View UI model", () => {
 
     expect(messengerSavedViewRoute(savedView.id)).toBe(
       "/messenger/saved/30000000-0000-4000-8000-000000000001",
+    );
+    expect(localAppSavedViewRoute(savedView.id)).toBe(
+      "/apps/saved/30000000-0000-4000-8000-000000000001",
     );
     expect(sidePanelTargetFromSavedView(savedView)).toEqual({
       kind: "library_file",

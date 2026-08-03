@@ -108,6 +108,10 @@ export function messengerSavedViewRoute(savedViewId: string) {
   return `/messenger/saved/${encodeURIComponent(savedViewId)}`;
 }
 
+export function localAppSavedViewRoute(savedViewId: string) {
+  return `/apps/saved/${encodeURIComponent(savedViewId)}`;
+}
+
 export function sidePanelTargetFromSavedView(savedView: MessengerSavedView): SidePanelTarget | null {
   const target = savedView.targetPayload;
   const common = { label: savedView.title, viewInstanceId: target.viewInstanceId };

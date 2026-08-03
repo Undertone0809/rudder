@@ -50,6 +50,7 @@ export function resolvePrimaryRailSection(path: string): PrimaryRailSection | nu
   if (/^\/issues(?:\/|$)/.test(pathname)) return "issues";
   if (/^\/agents(?:\/|$)/.test(pathname)) return "agents";
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(pathname)) return "library";
+  if (/^\/apps\/saved\/[^/]+(?:\/|$)/.test(pathname)) return null;
   if (/^\/apps(?:\/|$)/.test(pathname)) return "apps";
   if (/^\/(?:dashboard|calendar|org|projects|heartbeats|goals|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
   if (/^\/automations(?:\/|$)/.test(pathname)) return "automations";

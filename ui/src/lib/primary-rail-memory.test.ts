@@ -43,6 +43,8 @@ describe("primary rail memory", () => {
     expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
     expect(resolvePrimaryRailSection("/skills/skill-123/files/SKILL.md")).toBeNull();
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
+    expect(resolvePrimaryRailSection("/apps/local/binding-a")).toBe("apps");
+    expect(resolvePrimaryRailSection("/apps/saved/saved-local-a")).toBeNull();
     expect(resolvePrimaryRailSection("/organization/settings")).toBeNull();
   });
 
@@ -62,6 +64,14 @@ describe("primary rail memory", () => {
     expect(readRememberedPrimaryRailPath("org-1", "issues", "/issues")).toBe("/issues/ZST-586");
     expect(readRememberedPrimaryRailPath("org-1", "agents", "/agents")).toBe("/agents/wesley/runs/run-1");
     expect(readRememberedPrimaryRailPath("org-2", "issues", "/issues")).toBe("/issues/ZST-100");
+  });
+
+  it("does not replace the Apps launcher memory with a pinned Local App route", () => {
+    rememberPrimaryRailPath("org-1", "/apps/local/binding-a");
+    rememberPrimaryRailPath("org-1", "/apps/saved/saved-local-a");
+
+    expect(readRememberedPrimaryRailPath("org-1", "apps", "/apps"))
+      .toBe("/apps/local/binding-a");
   });
 
   it("does not remember workspace backups as the Library rail destination", () => {
