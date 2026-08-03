@@ -403,6 +403,7 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
 
   async function readState(installationId: string) {
     const [row] = await db.select({
+      mode: privateProductAnalyticsCollectorInstallations.mode,
       consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
       consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
       revoked: privateProductAnalyticsCollectorInstallations.revoked,
@@ -457,7 +458,7 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
     const installationState = await ensureState(input.authorization, now);
     const state = input.authorization.mode === "account_linked"
       ? await ensureSubjectState(input.authorization, now)
-      : installationState;
+      : installationState?.mode === "anonymous" ? installationState : null;
     if (input.authorization.mode === "account_linked" && !input.authorization.analyticsSubject) {
       return { accepted: 0, duplicate: 0, rejected: events.map((value) => reject("invalid_schema", typeof (value as Record<string, unknown>)?.eventId === "string" ? String((value as Record<string, unknown>).eventId) : "unknown")), receivedAt: now.toISOString() };
     }
@@ -546,9 +547,29 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
 
   async function advanceConsent(input: { installationId: string; analyticsSubject?: string | null; consentVersion: string; consentEpoch: number; revoked: boolean }) {
     if (input.analyticsSubject) {
+      const now = new Date();
+      // Keep an installation row for account-linked subjects as well. Reports
+      // use this row for installation cohorts, while the subject table remains
+      // the authorization source for per-user uploads on shared installations.
+      const installation = await readState(input.installationId);
+      if (!installation) {
+        await db.insert(privateProductAnalyticsCollectorInstallations).values({
+          installationId: input.installationId,
+          mode: "account_linked",
+          consentVersion: input.consentVersion,
+          // Subject consent must never become installation-wide consent. The
+          // row exists for cohort reporting until an anonymous decision creates
+          // its own installation-scoped authorization state.
+          consentEpoch: 0,
+          revoked: true,
+          analyticsSubject: null,
+          firstSeenAt: now,
+          lastSeenAt: now,
+          updatedAt: now,
+        }).onConflictDoNothing({ target: privateProductAnalyticsCollectorInstallations.installationId });
+      }
       const current = await readSubjectState(input.installationId, input.analyticsSubject);
       if (current && input.consentEpoch <= current.consentEpoch) return current;
-      const now = new Date();
       const [row] = current
         ? await db.update(privateProductAnalyticsCollectorSubjects).set({
           consentVersion: input.consentVersion,
@@ -579,33 +600,41 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
         });
       return row ?? await readSubjectState(input.installationId, input.analyticsSubject) ?? { consentVersion: input.consentVersion, consentEpoch: input.consentEpoch, revoked: input.revoked };
     }
-    const current = await readState(input.installationId);
-    if (current && input.consentEpoch <= current.consentEpoch) return current;
-    const [row] = await db.update(privateProductAnalyticsCollectorInstallations).set({
-      consentVersion: input.consentVersion,
-      consentEpoch: input.consentEpoch,
-      revoked: input.revoked,
-      updatedAt: new Date(),
-    }).where(current
-      ? and(eq(privateProductAnalyticsCollectorInstallations.installationId, input.installationId), eq(privateProductAnalyticsCollectorInstallations.consentEpoch, current.consentEpoch))
-      : eq(privateProductAnalyticsCollectorInstallations.installationId, input.installationId)).returning({
-      consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
-      consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
-      revoked: privateProductAnalyticsCollectorInstallations.revoked,
-    });
-    if (row) return row;
-    const [created] = await db.insert(privateProductAnalyticsCollectorInstallations).values({
-      installationId: input.installationId,
-      mode: "anonymous",
-      consentVersion: input.consentVersion,
-      consentEpoch: input.consentEpoch,
-      revoked: input.revoked,
-    }).onConflictDoNothing({ target: privateProductAnalyticsCollectorInstallations.installationId }).returning({
-      consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
-      consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
-      revoked: privateProductAnalyticsCollectorInstallations.revoked,
-    });
-    return created ?? await readState(input.installationId) ?? { consentVersion: input.consentVersion, consentEpoch: input.consentEpoch, revoked: input.revoked };
+    // Anonymous consent has its own epoch stream. Retry a bounded number of
+    // times when a concurrent subject sync inserts the cohort sentinel between
+    // our compare-and-set update and installation insert.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await readState(input.installationId);
+      if (current?.mode === "anonymous" && input.consentEpoch <= current.consentEpoch) return current;
+      const [row] = await db.update(privateProductAnalyticsCollectorInstallations).set({
+        mode: "anonymous",
+        consentVersion: input.consentVersion,
+        consentEpoch: input.consentEpoch,
+        revoked: input.revoked,
+        updatedAt: new Date(),
+      }).where(current
+        ? and(eq(privateProductAnalyticsCollectorInstallations.installationId, input.installationId), eq(privateProductAnalyticsCollectorInstallations.consentEpoch, current.consentEpoch))
+        : eq(privateProductAnalyticsCollectorInstallations.installationId, input.installationId)).returning({
+        consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
+        consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
+        revoked: privateProductAnalyticsCollectorInstallations.revoked,
+      });
+      if (row) return row;
+      const [created] = await db.insert(privateProductAnalyticsCollectorInstallations).values({
+        installationId: input.installationId,
+        mode: "anonymous",
+        consentVersion: input.consentVersion,
+        consentEpoch: input.consentEpoch,
+        revoked: input.revoked,
+      }).onConflictDoNothing({ target: privateProductAnalyticsCollectorInstallations.installationId }).returning({
+        consentVersion: privateProductAnalyticsCollectorInstallations.consentVersion,
+        consentEpoch: privateProductAnalyticsCollectorInstallations.consentEpoch,
+        revoked: privateProductAnalyticsCollectorInstallations.revoked,
+      });
+      if (created) return created;
+    }
+    const winner = await readState(input.installationId);
+    return winner ?? { consentVersion: input.consentVersion, consentEpoch: input.consentEpoch, revoked: input.revoked };
   }
 
   return { ingestBatch, advanceConsent };

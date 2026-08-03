@@ -53,7 +53,18 @@ reflected in `ANALYTICS.TELEMETRY.001`.
   requires the Identity ledger to synchronize each grant/revoke through its
   private `/api/analytics/v1/internal/consent/sync` hook (protected by
   `RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET`) before an assertion can
-  authorize delivery; assertion claims never bootstrap consent state.
+  authorize delivery; Identity performs this sync with
+  `IDENTITY_TELEMETRY_COLLECTOR_URL` and
+  `IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET`, and retries the gate on
+  assertion issuance. Assertion claims never bootstrap consent state.
+- Subject-scoped consent synchronization also creates the central installation
+  cohort row without treating one shared-installation subject as the global
+  installation authorization state. The row is metadata-only until an
+  anonymous installation-scoped decision establishes its own consent epoch.
+- Identity performs the private sync before appending a new consent decision;
+  a collector outage therefore returns a retryable 503 without committing a
+  ledger decision that the collector cannot enforce. Replaying an unchanged
+  decision re-synchronizes its existing epoch.
 - The central report exposes real delivery quality counters and W1 meaningful,
   W1 loop, and W4 loop cohorts. Retention deletes raw events at the exact cutoff
   timestamp and rebuilds the cutoff UTC day.

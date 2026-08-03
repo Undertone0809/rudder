@@ -86,6 +86,43 @@ describe("product analytics collector routes", () => {
     expect(response.status).toBe(401);
   });
 
+  it("rejects an empty account-linked subject instead of falling back to installation state", async () => {
+    const { server } = app();
+    const response = await request(server)
+      .post("/api/analytics/v1/internal/consent/sync")
+      .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
+      .send({ installationId, analyticsSubject: "", consentVersion: "v1", consentEpoch: 2, revoked: false });
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects a non-string account-linked subject instead of falling back to installation state", async () => {
+    const { server } = app();
+    const response = await request(server)
+      .post("/api/analytics/v1/internal/consent/sync")
+      .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
+      .send({ installationId, analyticsSubject: 42, consentVersion: "v1", consentEpoch: 2, revoked: false });
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects an invalid subject on the revoke hook too", async () => {
+    const store = new InMemoryProductAnalyticsCollectorStore();
+    const collector = createProductAnalyticsCollector(store);
+    const server = express();
+    server.use(express.json());
+    server.use(productAnalyticsCollectorRoutes(collector, () => ({
+      installationId,
+      mode: "anonymous",
+      consentVersion: "v1",
+      consentEpoch: 1,
+    }), { revokeSecret: "revoke-secret" }));
+
+    const response = await request(server)
+      .post("/api/analytics/v1/internal/consent/revoke")
+      .set("x-rudder-telemetry-revoke-secret", "revoke-secret")
+      .send({ installationId, analyticsSubject: " ", consentVersion: "v1", consentEpoch: 2 });
+    expect(response.status).toBe(422);
+  });
+
   it("returns idempotent batch acknowledgements without exposing request logging", async () => {
     const { server, store } = app();
     const payload = event();

@@ -20,6 +20,10 @@ export type IdentityConfig = {
     privateKeyPkcs8: string;
     subjectSecret: string;
     revokeSecret: string;
+    collectorConsentSync?: {
+      collectorUrl: string;
+      syncSecret: string;
+    };
   };
   google?: { clientId: string; clientSecret: string };
   github?: { clientId: string; clientSecret: string };
@@ -336,6 +340,37 @@ export function readIdentityConfig(env: NodeJS.ProcessEnv = process.env): Identi
   if (telemetryRevokeSecret && telemetryRevokeSecret.length < 32) {
     throw new Error("IDENTITY_TELEMETRY_REVOKE_SECRET must be at least 32 characters");
   }
+  const telemetryCollectorUrl = env.IDENTITY_TELEMETRY_COLLECTOR_URL?.trim();
+  const telemetryCollectorSyncSecret = env.IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET?.trim();
+  if (Boolean(telemetryCollectorUrl) !== Boolean(telemetryCollectorSyncSecret)) {
+    throw new Error("IDENTITY_TELEMETRY_COLLECTOR_URL and IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET must be configured together");
+  }
+  if ((telemetryCollectorUrl || telemetryCollectorSyncSecret) && telemetryValues.some((value) => !value)) {
+    throw new Error("Identity telemetry collector sync requires the assertion and subject secrets");
+  }
+  if (telemetryCollectorSyncSecret && telemetryCollectorSyncSecret.length < 32) {
+    throw new Error("IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET must be at least 32 characters");
+  }
+  if (telemetryCollectorUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(telemetryCollectorUrl);
+    } catch {
+      throw new Error("IDENTITY_TELEMETRY_COLLECTOR_URL must be a valid origin");
+    }
+    if (!parsed.origin || (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
+      throw new Error("IDENTITY_TELEMETRY_COLLECTOR_URL must be a valid origin");
+    }
+    if ((releaseChannel === "production" || releaseChannel === "preview") && parsed.protocol !== "https:") {
+      throw new Error("IDENTITY_TELEMETRY_COLLECTOR_URL must use HTTPS outside local development");
+    }
+  }
+  if ((releaseChannel === "production" || releaseChannel === "preview")
+    && telemetryValues.every(Boolean)
+    && (!telemetryCollectorUrl || !telemetryCollectorSyncSecret)) {
+    throw new Error("Production telemetry assertions require a collector consent sync configuration");
+  }
 
   const allowedOrigins = (env.IDENTITY_ALLOWED_ORIGINS ?? baseUrl)
     .split(",")
@@ -372,7 +407,15 @@ export function readIdentityConfig(env: NodeJS.ProcessEnv = process.env): Identi
       ? { keyId: offlineGrantKeyId, privateKeyPkcs8: offlineGrantPrivateKey }
       : undefined,
     telemetry: telemetryKeyId && telemetryPrivateKey && telemetrySubjectSecret && telemetryRevokeSecret
-      ? { keyId: telemetryKeyId, privateKeyPkcs8: telemetryPrivateKey, subjectSecret: telemetrySubjectSecret, revokeSecret: telemetryRevokeSecret }
+      ? {
+          keyId: telemetryKeyId,
+          privateKeyPkcs8: telemetryPrivateKey,
+          subjectSecret: telemetrySubjectSecret,
+          revokeSecret: telemetryRevokeSecret,
+          ...(telemetryCollectorUrl && telemetryCollectorSyncSecret
+            ? { collectorConsentSync: { collectorUrl: telemetryCollectorUrl, syncSecret: telemetryCollectorSyncSecret } }
+            : {}),
+        }
       : undefined,
     google,
     github,

@@ -12,6 +12,7 @@ type ConsentInput = {
   mode: IdentityProductAnalyticsMode;
   decision: IdentityProductAnalyticsDecision;
   consentVersion: string;
+  beforePersist?: (consent: { consentVersion: string; consentEpoch: number; revoked: boolean }) => Promise<void>;
 };
 
 function assertInput(input: ConsentInput): void {
@@ -43,8 +44,19 @@ export async function recordIdentityProductAnalyticsConsent(db: IdentityDb, inpu
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.userId}:${input.installationId}:${input.mode}`}, 0))`);
     const previous = await latestConsent(tx as unknown as IdentityDb, input);
     if (previous && previous.decision === input.decision && previous.consentVersion === input.consentVersion) {
+      await input.beforePersist?.({
+        consentVersion: previous.consentVersion,
+        consentEpoch: previous.consentEpoch,
+        revoked: previous.decision === "revoked",
+      });
       return previous;
     }
+    const consentEpoch = (previous?.consentEpoch ?? 0) + 1;
+    await input.beforePersist?.({
+      consentVersion: input.consentVersion,
+      consentEpoch,
+      revoked: input.decision === "revoked",
+    });
     const [row] = await tx.insert(identityProductAnalyticsConsent).values({
       id: randomUUID(),
       userId: input.userId,
@@ -52,7 +64,7 @@ export async function recordIdentityProductAnalyticsConsent(db: IdentityDb, inpu
       mode: input.mode,
       decision: input.decision,
       consentVersion: input.consentVersion,
-      consentEpoch: (previous?.consentEpoch ?? 0) + 1,
+      consentEpoch,
     }).returning();
     if (!row) throw new Error("product_analytics_consent_write_failed");
     return row;

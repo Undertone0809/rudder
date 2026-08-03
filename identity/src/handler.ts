@@ -61,8 +61,16 @@ import {
   type RootIdentityRequestContext,
 } from "./root-identity-adapter.js";
 import { getIdentityRuntime } from "./runtime.js";
+import { syncProductAnalyticsConsent } from "./telemetry-sync.js";
 
 const credentialRecoveryWorkerId = `identity-${randomUUID()}`;
+
+class TelemetryConsentSyncUnavailableError extends Error {
+  constructor() {
+    super("telemetry_consent_sync_unavailable");
+    this.name = "TelemetryConsentSyncUnavailableError";
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status;
@@ -2056,6 +2064,24 @@ export async function identityHandler(
       const analyticsSubject = mode === "account_linked"
         ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning.subjectSecret, access.userId)
         : null;
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      if (collectorConsentSync) {
+        try {
+          await syncProductAnalyticsConsent({
+            config: collectorConsentSync,
+            consent: {
+              installationId,
+              analyticsSubject,
+              consentVersion: consent.consentVersion,
+              consentEpoch: consent.consentEpoch,
+              revoked: false,
+            },
+          });
+        } catch {
+          sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+          return;
+        }
+      }
       const nowMs = Date.now();
       const assertion = issueProductAnalyticsAssertion({
         signingPrivateKey: runtime.telemetryAssertionSigning.privateKey,
@@ -2101,12 +2127,38 @@ export async function identityHandler(
         || (mode !== "anonymous" && mode !== "account_linked")
         || (decision !== "granted" && decision !== "revoked")
       ) throw new Error("invalid_request");
+      if (mode === "account_linked" && !runtime.telemetryAssertionSigning) {
+        sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+        return;
+      }
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning!.subjectSecret, access.userId)
+        : null;
       const consent = await recordIdentityProductAnalyticsConsent(runtime.db, {
         userId: access.userId,
         installationId,
         mode,
         decision,
         consentVersion,
+        beforePersist: collectorConsentSync
+          ? async (next) => {
+              try {
+                await syncProductAnalyticsConsent({
+                  config: collectorConsentSync,
+                  consent: {
+                    installationId,
+                    analyticsSubject,
+                    consentVersion: next.consentVersion,
+                    consentEpoch: next.consentEpoch,
+                    revoked: next.revoked,
+                  },
+                });
+              } catch {
+                throw new TelemetryConsentSyncUnavailableError();
+              }
+            }
+          : undefined,
       });
       sendJson(res, 201, {
         mode: consent.mode,
@@ -2115,7 +2167,11 @@ export async function identityHandler(
         consentEpoch: consent.consentEpoch,
         decidedAt: consent.decidedAt.toISOString(),
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof TelemetryConsentSyncUnavailableError) {
+        sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+        return;
+      }
       sendJson(res, 422, { error: "invalid_request" });
     }
     return;

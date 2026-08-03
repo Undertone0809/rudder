@@ -13,6 +13,13 @@ function secretMatches(value: string | undefined, expected: string | null): bool
   return actual.length === target.length && timingSafeEqual(actual, target);
 }
 
+function readOptionalAnalyticsSubject(body: unknown): { value: string | null; valid: boolean } {
+  if (!body || typeof body !== "object") return { value: null, valid: true };
+  const value = (body as Record<string, unknown>).analyticsSubject;
+  if (value === undefined || value === null) return { value: null, valid: true };
+  return typeof value === "string" ? { value, valid: true } : { value: null, valid: false };
+}
+
 /** Build the central authorizer for short-lived telemetry-scoped assertions. */
 export function createProductAnalyticsAssertionAuthorizer(input: {
   identityPublicKey: string | Buffer;
@@ -88,10 +95,13 @@ export function productAnalyticsCollectorRoutes(
       return;
     }
     const installationId = typeof req.body?.installationId === "string" ? req.body.installationId : "";
-    const analyticsSubject = typeof req.body?.analyticsSubject === "string" ? req.body.analyticsSubject : null;
-    const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion : "v1";
+    const analyticsSubjectInput = readOptionalAnalyticsSubject(req.body);
+    const analyticsSubject = analyticsSubjectInput.value;
+    const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion : "";
     const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : NaN;
-    if (!installationId || !Number.isInteger(consentEpoch) || consentEpoch < 1) {
+    if (!analyticsSubjectInput.valid || !installationId || installationId.length > 256 || !consentVersion || consentVersion.length > 80
+      || (analyticsSubject !== null && !/^[0-9a-f]{64}$/u.test(analyticsSubject))
+      || !Number.isInteger(consentEpoch) || consentEpoch < 1) {
       res.status(422).json({ errorCode: "invalid_request" });
       return;
     }
@@ -109,11 +119,14 @@ export function productAnalyticsCollectorRoutes(
       return;
     }
     const installationId = typeof req.body?.installationId === "string" ? req.body.installationId : "";
-    const analyticsSubject = typeof req.body?.analyticsSubject === "string" ? req.body.analyticsSubject : null;
+    const analyticsSubjectInput = readOptionalAnalyticsSubject(req.body);
+    const analyticsSubject = analyticsSubjectInput.value;
     const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion : "";
     const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : NaN;
     const revoked = req.body?.revoked;
-    if (!installationId || !consentVersion || !Number.isSafeInteger(consentEpoch) || consentEpoch < 1 || typeof revoked !== "boolean") {
+    if (!analyticsSubjectInput.valid || !installationId || installationId.length > 256 || !consentVersion || consentVersion.length > 80
+      || (analyticsSubject !== null && !/^[0-9a-f]{64}$/u.test(analyticsSubject))
+      || !Number.isSafeInteger(consentEpoch) || consentEpoch < 1 || typeof revoked !== "boolean") {
       res.status(422).json({ errorCode: "invalid_request" });
       return;
     }
