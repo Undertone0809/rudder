@@ -4,6 +4,7 @@ import { chatsApi } from "@/api/chats";
 import {
   shouldShowThinkingEffort,
   thinkingEffortKeyForRuntime,
+  thinkingEffortLabelForRuntime,
   thinkingEffortOptionsForRuntime,
 } from "@/components/AgentConfigForm.helpers";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -261,6 +262,7 @@ export function ChatConversationRuntimeControls(props: {
   );
   const configuredModel = configuredAgentModel(props.agent);
   const configuredEffort = configuredAgentEffort(props.agent);
+  const effortControlLabel = thinkingEffortLabelForRuntime(props.agent.agentRuntimeType);
   const effectiveModel = props.overrides.modelOverride ?? configuredModel;
   const effortOptions = thinkingEffortOptionsForRuntime(
     props.agent.agentRuntimeType,
@@ -445,7 +447,7 @@ export function ChatConversationRuntimeControls(props: {
             ref={effortTriggerRef}
             type="button"
             data-testid="chat-effort-selector"
-            aria-label={`Thinking effort for this conversation (${props.agent.name} runtime)`}
+            aria-label={`${effortControlLabel} for this conversation (${props.agent.name} runtime)`}
             aria-haspopup="listbox"
             aria-expanded={activeSubmenu === "effort"}
             className={triggerClassName}
@@ -460,7 +462,9 @@ export function ChatConversationRuntimeControls(props: {
               }
             }}
           >
-            <span className="font-medium text-foreground">Thinking</span>
+            <span className="font-medium text-foreground">
+              {effortControlLabel === "Execution mode" ? "Mode" : "Thinking"}
+            </span>
             <span className="min-w-0 truncate text-right text-muted-foreground">
               {effortLabel(effectiveEffort)}
             </span>
@@ -476,7 +480,7 @@ export function ChatConversationRuntimeControls(props: {
               data-chat-runtime-submenu
               data-testid="chat-effort-options"
               role="listbox"
-              aria-label="Conversation thinking effort"
+              aria-label={`Conversation ${effortControlLabel.toLowerCase()}`}
               className={submenuClassName}
               style={submenuPosition}
               onKeyDown={(event) => handleSubmenuKeyDown(event, "effort")}
