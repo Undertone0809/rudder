@@ -1,9 +1,17 @@
 import { verifyProductAnalyticsAssertion } from "@rudderhq/identity-core";
 import { Router, type Request } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { unauthorized } from "../errors.js";
 import type { ProductAnalyticsCollector, ProductAnalyticsCollectorAuthorization, ProductAnalyticsPersistentCollector } from "../services/product-analytics-collector.js";
 
 export type ProductAnalyticsCollectorAuthorizer = (req: Request) => ProductAnalyticsCollectorAuthorization | Promise<ProductAnalyticsCollectorAuthorization>;
+
+function secretMatches(value: string | undefined, expected: string | null): boolean {
+  if (!value || !expected) return false;
+  const actual = Buffer.from(value);
+  const target = Buffer.from(expected);
+  return actual.length === target.length && timingSafeEqual(actual, target);
+}
 
 /** Build the central authorizer for short-lived telemetry-scoped assertions. */
 export function createProductAnalyticsAssertionAuthorizer(input: {
@@ -46,7 +54,11 @@ export function createProductAnalyticsAssertionAuthorizer(input: {
  * Rudder app; the central telemetry deployment supplies the authorizer and
  * central store when it hosts this router.
  */
-export function productAnalyticsCollectorRoutes(collector: ProductAnalyticsCollector | ProductAnalyticsPersistentCollector, authorize: ProductAnalyticsCollectorAuthorizer) {
+export function productAnalyticsCollectorRoutes(
+  collector: ProductAnalyticsCollector | ProductAnalyticsPersistentCollector,
+  authorize: ProductAnalyticsCollectorAuthorizer,
+  options: { revokeSecret?: string | null } = {},
+) {
   const router = Router();
 
   router.post("/api/analytics/v1/events:batch", async (req, res) => {
@@ -62,11 +74,29 @@ export function productAnalyticsCollectorRoutes(collector: ProductAnalyticsColle
     const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : authorization.consentEpoch + 1;
     const state = await collector.advanceConsent({
       installationId: authorization.installationId,
+      analyticsSubject: authorization.mode === "account_linked" ? authorization.analyticsSubject : null,
       consentVersion,
       consentEpoch,
       revoked: true,
     });
     res.json({ installationId: authorization.installationId, consentEpoch: state.consentEpoch, revoked: state.revoked });
+  });
+
+  router.post("/api/analytics/v1/internal/consent/revoke", async (req, res) => {
+    if (!secretMatches(req.header("x-rudder-telemetry-revoke-secret"), options.revokeSecret ?? null)) {
+      res.status(401).json({ errorCode: "unauthorized" });
+      return;
+    }
+    const installationId = typeof req.body?.installationId === "string" ? req.body.installationId : "";
+    const analyticsSubject = typeof req.body?.analyticsSubject === "string" ? req.body.analyticsSubject : null;
+    const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion : "v1";
+    const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : NaN;
+    if (!installationId || !Number.isInteger(consentEpoch) || consentEpoch < 1) {
+      res.status(422).json({ errorCode: "invalid_request" });
+      return;
+    }
+    const state = await collector.advanceConsent({ installationId, consentVersion, consentEpoch, revoked: true, analyticsSubject });
+    res.json({ installationId, analyticsSubject, consentEpoch: state.consentEpoch, revoked: state.revoked });
   });
 
   return router;

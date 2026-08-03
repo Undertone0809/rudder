@@ -101,4 +101,20 @@ describe("product analytics collector", () => {
 
     expect(replay).toEqual({ consentVersion: "v1", consentEpoch: 2, revoked: true });
   });
+
+  it("isolates account-linked consent by subject on a shared installation", () => {
+    const store = new InMemoryProductAnalyticsCollectorStore();
+    store.setSubjectState(installationId, "user-a", { consentVersion: "v1", consentEpoch: 1, revoked: false });
+    store.setSubjectState(installationId, "user-b", { consentVersion: "v1", consentEpoch: 1, revoked: false });
+    const collector = createProductAnalyticsCollector(store);
+    const authA = { ...authorization, mode: "account_linked" as const, analyticsSubject: "user-a" };
+    const authB = { ...authorization, mode: "account_linked" as const, analyticsSubject: "user-b" };
+
+    expect(collector.ingestBatch({ authorization: authA, events: [event()] }).accepted).toBe(1);
+    expect(collector.ingestBatch({ authorization: authB, events: [event({ eventId: "33333333-3333-4333-8333-333333333333" })] }).accepted).toBe(1);
+    collector.advanceConsent({ installationId, analyticsSubject: "user-a", consentVersion: "v1", consentEpoch: 2, revoked: true });
+
+    expect(collector.ingestBatch({ authorization: authA, events: [event({ eventId: "44444444-4444-4444-8444-444444444444" })] }).rejected[0]?.errorCode).toBe("revoked");
+    expect(collector.ingestBatch({ authorization: authB, events: [event({ eventId: "55555555-5555-4555-8555-555555555555" })] }).accepted).toBe(1);
+  });
 });

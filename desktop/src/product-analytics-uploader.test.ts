@@ -70,4 +70,28 @@ describe("desktop product analytics uploader", () => {
     expect(result).toMatchObject({ status: "retry_wait", errorCode: "http_503" });
     expect(calls).toBe(3);
   });
+
+  it("never promotes the local installation secret to collector authorization", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-auth-"));
+    const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "anonymous" });
+    const calls: string[] = [];
+    const result = await uploadDesktopProductAnalyticsOnce({
+      localApiUrl: "http://127.0.0.1:3100",
+      orgId: "org-1",
+      installationId: telemetry.installationId,
+      installationSecret: telemetry.installationSecret,
+      deliveryMode: "anonymous",
+      statePath: telemetry.statePath,
+      collectorUrl: "https://telemetry.example.test",
+      fetchImpl: async (url, init) => {
+        calls.push(`${url} ${String(init?.headers ?? "")}`);
+        if (url.endsWith("/outbox/claim")) return new Response(JSON.stringify({ claimToken: "claim-1", events: [{ eventId }] }), { status: 200 });
+        if (url.includes("events:batch")) throw new Error("collector should not be called without authorization");
+        return new Response(JSON.stringify({ state: "retry_wait" }), { status: 200 });
+      },
+    });
+    expect(result).toMatchObject({ status: "retry_wait", errorCode: "collector_authorization_unavailable" });
+    expect(calls.some((call) => call.includes(telemetry.installationSecret))).toBe(false);
+  });
 });

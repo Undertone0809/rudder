@@ -42,6 +42,7 @@ import { getIdentityRuntime, resetIdentityRuntimeForTests } from "./runtime.js";
 const TEST_SECRET = "identity-e2e-secret-with-at-least-thirty-two-characters";
 const CAPTURE_MAILBOX_SECRET = "identity-e2e-capture-mailbox-secret";
 const OFFLINE_SIGNING_KEYS = generateKeyPairSync("ed25519");
+const TELEMETRY_SIGNING_KEYS = generateKeyPairSync("ed25519");
 const FIXTURE_COOKIE = "rudder_root_fixture";
 
 type FixtureUser = RootIdentityPrincipal & {
@@ -527,6 +528,11 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       IDENTITY_OFFLINE_GRANT_KEY_ID: "identity-e2e-key",
       IDENTITY_OFFLINE_GRANT_PRIVATE_KEY: OFFLINE_SIGNING_KEYS.privateKey
         .export({ format: "der", type: "pkcs8" }).toString("base64url"),
+      IDENTITY_TELEMETRY_ASSERTION_KEY_ID: "identity-e2e-telemetry-key",
+      IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY: TELEMETRY_SIGNING_KEYS.privateKey
+        .export({ format: "der", type: "pkcs8" }).toString("base64url"),
+      IDENTITY_TELEMETRY_SUBJECT_SECRET: "identity-e2e-telemetry-subject-secret-32-chars",
+      IDENTITY_TELEMETRY_REVOKE_SECRET: "identity-e2e-telemetry-revoke-secret-32-chars",
     });
 
     const server = createServer((req, res) => {
@@ -1077,6 +1083,58 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       refresh_token: expect.any(String),
       offline_grant: expect.any(String),
     });
+
+    const telemetryHeaders = {
+      authorization: `Bearer ${tokens.access_token}`,
+      "content-type": "application/json",
+    };
+    const telemetryRequest = (path: string, body: Record<string, unknown>) => fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: telemetryHeaders,
+      body: JSON.stringify(body),
+    });
+    const pseudonymousInstallationId = "a".repeat(64);
+    const beforeConsent = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(beforeConsent.status).toBe(400);
+    const consent = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(consent.status).toBe(201);
+    expect(await consent.json()).toMatchObject({ mode: "account_linked", decision: "granted", consentEpoch: 1 });
+    const assertionResponse = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+      consent_epoch: 999,
+      consent_granted: false,
+    });
+    expect(assertionResponse.status).toBe(200);
+    const assertion = await assertionResponse.json() as { assertion?: string };
+    expect(assertion.assertion).toEqual(expect.any(String));
+    const revoked = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "revoked",
+      consent_version: "v1",
+    });
+    expect(revoked.status).toBe(201);
+    expect(await revoked.json()).toMatchObject({ decision: "revoked", consentEpoch: 2 });
+    const afterRevoke = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(afterRevoke.status).toBe(400);
 
     const exchange = await post("/api/server/exchange", {
       installation_id: "desktop-pkce-installation",

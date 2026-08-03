@@ -43,6 +43,13 @@
       "when": 1785452400000,
       "tag": "0005_auth_session_verifier_isolation",
       "breakpoints": false
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785456000000,
+      "tag": "0006_product_analytics_consent",
+      "breakpoints": false
     }
   ]
 }

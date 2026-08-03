@@ -28,5 +28,19 @@ test.describe("product analytics privacy controls", () => {
 
     const after = await page.request.get(`/api/orgs/${organization.id}/analytics/product/installation/${installationId}`);
     expect(await after.json()).toMatchObject({ installation: { mode: "anonymous" }, pendingCount: 0 });
+
+    const secondOrgResponse = await page.request.post("/api/orgs", {
+      data: { name: `Analytics Privacy E2E post-consent ${Date.now()}` },
+    });
+    expect(secondOrgResponse.ok()).toBe(true);
+    const pendingAfterConsent = await page.request.get(`/api/orgs/${organization.id}/analytics/product/installation/${installationId}`);
+    expect((await pendingAfterConsent.json()).pendingCount).toBeGreaterThanOrEqual(0);
+
+    const revoke = await page.request.post(`/api/orgs/${organization.id}/analytics/product/installation/${installationId}/consent`, {
+      data: { scope: "anonymous_installation", decision: "revoked", policyVersion: "v1", installationSecret },
+    });
+    expect(revoke.status()).toBe(201);
+    const afterRevoke = await page.request.get(`/api/orgs/${organization.id}/analytics/product/installation/${installationId}`);
+    expect(await afterRevoke.json()).toMatchObject({ installation: { mode: "off" } });
   });
 });

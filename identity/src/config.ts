@@ -15,6 +15,12 @@ export type IdentityConfig = {
     keyId: string;
     privateKeyPkcs8: string;
   };
+  telemetry?: {
+    keyId: string;
+    privateKeyPkcs8: string;
+    subjectSecret: string;
+    revokeSecret: string;
+  };
   google?: { clientId: string; clientSecret: string };
   github?: { clientId: string; clientSecret: string };
   mail:
@@ -316,6 +322,21 @@ export function readIdentityConfig(env: NodeJS.ProcessEnv = process.env): Identi
     throw new Error("Production Identity requires an Offline Grant signing key");
   }
 
+  const telemetryKeyId = env.IDENTITY_TELEMETRY_ASSERTION_KEY_ID?.trim();
+  const telemetryPrivateKey = env.IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY?.trim();
+  const telemetrySubjectSecret = env.IDENTITY_TELEMETRY_SUBJECT_SECRET?.trim();
+  const telemetryRevokeSecret = env.IDENTITY_TELEMETRY_REVOKE_SECRET?.trim();
+  const telemetryValues = [telemetryKeyId, telemetryPrivateKey, telemetrySubjectSecret, telemetryRevokeSecret];
+  if (telemetryValues.some(Boolean) && telemetryValues.some((value) => !value)) {
+    throw new Error("Identity telemetry assertion and subject secrets must be configured together");
+  }
+  if (telemetrySubjectSecret && telemetrySubjectSecret.length < 32) {
+    throw new Error("IDENTITY_TELEMETRY_SUBJECT_SECRET must be at least 32 characters");
+  }
+  if (telemetryRevokeSecret && telemetryRevokeSecret.length < 32) {
+    throw new Error("IDENTITY_TELEMETRY_REVOKE_SECRET must be at least 32 characters");
+  }
+
   const allowedOrigins = (env.IDENTITY_ALLOWED_ORIGINS ?? baseUrl)
     .split(",")
     .map((value) => value.trim())
@@ -349,6 +370,9 @@ export function readIdentityConfig(env: NodeJS.ProcessEnv = process.env): Identi
     ),
     offlineGrant: offlineGrantKeyId && offlineGrantPrivateKey
       ? { keyId: offlineGrantKeyId, privateKeyPkcs8: offlineGrantPrivateKey }
+      : undefined,
+    telemetry: telemetryKeyId && telemetryPrivateKey && telemetrySubjectSecret && telemetryRevokeSecret
+      ? { keyId: telemetryKeyId, privateKeyPkcs8: telemetryPrivateKey, subjectSecret: telemetrySubjectSecret, revokeSecret: telemetryRevokeSecret }
       : undefined,
     google,
     github,

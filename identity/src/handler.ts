@@ -1,11 +1,14 @@
 import {
+  deriveProductAnalyticsSubject,
   hashOpaqueSecret,
   issueOfflineGrant,
+  issueProductAnalyticsAssertion,
   normalizeVerifiedEmail,
   opaqueSecretMatches,
 } from "@rudderhq/identity-core";
 import {
   approveDeviceAuthorization,
+  assertIdentityProductAnalyticsConsent,
   beginCredentialRevocationIntent,
   beginSupabaseAuthMigration,
   bindSupabaseAuthUser,
@@ -21,6 +24,7 @@ import {
   listIdentityDevices,
   markCredentialProviderMutationComplete,
   markCredentialRevocationFailed,
+  recordIdentityProductAnalyticsConsent,
   recordSecurityEvent,
   recordSupabaseAuthUserCreated,
   recoverCredentialRevocationIntents,
@@ -2015,6 +2019,104 @@ export async function identityHandler(
       });
     } catch {
       sendJson(res, 400, { error: "invalid_grant" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/assertion") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    if (!runtime.telemetryAssertionSigning) {
+      sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const consentVersion = stringField(body, "consent_version");
+      const pseudonymousInstallationId = stringField(body, "pseudonymous_installation_id");
+      if (
+        installationId !== access.installationId
+        || mode !== "account_linked"
+        || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+      ) throw new Error("invalid_request");
+      const consent = await assertIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        consentVersion,
+      });
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning.subjectSecret, access.userId)
+        : null;
+      const nowMs = Date.now();
+      const assertion = issueProductAnalyticsAssertion({
+        signingPrivateKey: runtime.telemetryAssertionSigning.privateKey,
+        keyId: runtime.telemetryAssertionSigning.keyId,
+        issuer: runtime.config.baseUrl,
+        installationId,
+        pseudonymousInstallationId,
+        analyticsSubject,
+        consentVersion,
+        consentEpoch: consent.consentEpoch,
+        nowMs,
+        jti: randomUUID(),
+      });
+      sendJson(res, 200, {
+        assertion,
+        expires_at: new Date(nowMs + 15 * 60 * 1000).toISOString(),
+        audience: "telemetry-collector",
+        analytics_subject: analyticsSubject,
+      });
+    } catch {
+      sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/consent") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const decision = body.decision;
+      const consentVersion = stringField(body, "consent_version");
+      if (
+        installationId !== access.installationId
+        || (mode !== "anonymous" && mode !== "account_linked")
+        || (decision !== "granted" && decision !== "revoked")
+      ) throw new Error("invalid_request");
+      const consent = await recordIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        decision,
+        consentVersion,
+      });
+      sendJson(res, 201, {
+        mode: consent.mode,
+        decision: consent.decision,
+        consentVersion: consent.consentVersion,
+        consentEpoch: consent.consentEpoch,
+        decidedAt: consent.decidedAt.toISOString(),
+      });
+    } catch {
+      sendJson(res, 422, { error: "invalid_request" });
     }
     return;
   }

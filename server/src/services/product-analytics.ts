@@ -344,6 +344,16 @@ export async function completeProductAnalyticsWorkCycle(
     if (lockedCycle.state === "completed" && lockedCycle.invalidatedAt === null) {
       return { event: null, revision: lockedCycle.completionRevision };
     }
+    const rootRunRows = await tx.select({ rootRunId: productAnalyticsEvents.rootRunId }).from(productAnalyticsEvents).where(and(
+      eq(productAnalyticsEvents.orgId, input.orgId),
+      eq(productAnalyticsEvents.workCycleId, input.workCycleId),
+      sql`${productAnalyticsEvents.rootRunId} is not null`,
+    ));
+    const rootRunIds = [...new Set([
+      ...(lockedCycle.rootRunIds ?? []),
+      ...rootRunRows.map((row) => row.rootRunId).filter((value): value is string => Boolean(value)),
+      ...(input.rootRunId ? [input.rootRunId] : []),
+    ])];
     const revision = (lockedCycle.completionRevision ?? 0) + 1;
     const event = await recordProductAnalyticsEvent(tx as unknown as Db, {
       orgId: input.orgId,
@@ -366,7 +376,7 @@ export async function completeProductAnalyticsWorkCycle(
     });
     await tx
       .update(productAnalyticsWorkCycles)
-      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, rootRunIds: input.rootRunId ? [...new Set([...(lockedCycle.rootRunIds ?? []), input.rootRunId])] : lockedCycle.rootRunIds, updatedAt: new Date() })
+      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, rootRunIds, updatedAt: new Date() })
       .where(and(eq(productAnalyticsWorkCycles.orgId, input.orgId), eq(productAnalyticsWorkCycles.workCycleId, input.workCycleId)));
     await tx.insert(productAnalyticsWorkCycleRevisions).values({
       orgId: input.orgId,

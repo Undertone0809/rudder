@@ -8,6 +8,8 @@
     "dev:reset": "node cli/node_modules/tsx/dist/cli.mjs scripts/reset-local-instance.ts --local-env dev",
     "dev:server": "pnpm --filter @rudderhq/server dev",
     "dev:ui": "pnpm --filter @rudderhq/ui dev",
+    "collector:dev": "pnpm --filter @rudderhq/server collector:dev",
+    "collector:start": "pnpm --filter @rudderhq/server collector:start",
     "identity:dev": "pnpm --filter @rudderhq/identity dev",
     "identity:migrate": "pnpm --filter @rudderhq/identity-db migrate",
     "identity:test": "pnpm --filter @rudderhq/identity-core test && pnpm --filter @rudderhq/identity-db test && pnpm --filter @rudderhq/identity test",

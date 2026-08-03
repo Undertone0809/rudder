@@ -224,5 +224,13 @@ export function createDesktopIdentityRuntime(options: {
         },
       };
     },
+
+    issueProductAnalyticsAssertion(input: Parameters<typeof client.issueProductAnalyticsAssertion>[0]): Promise<string> {
+      return client.issueProductAnalyticsAssertion(input);
+    },
+
+    recordProductAnalyticsConsent(input: Parameters<typeof client.recordProductAnalyticsConsent>[0]): Promise<{ consentEpoch: number }> {
+      return client.recordProductAnalyticsConsent(input);
+    },
   };
 }

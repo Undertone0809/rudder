@@ -11,7 +11,7 @@ export type DesktopProductAnalyticsUploaderOptions = {
   deliveryMode: Exclude<DesktopTelemetryMode, "off">;
   statePath: string;
   collectorUrl: string;
-  collectorAuthorization: string;
+  collectorAuthorization?: string | (() => Promise<string>);
   localHeaders?: HeadersInit;
   fetchImpl?: FetchLike;
   now?: () => Date;
@@ -77,16 +77,24 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   let collectorResponse: Response;
   let collectorBody: Record<string, unknown> = {};
   try {
-    collectorResponse = await fetchImpl(`${options.collectorUrl.replace(/\/$/, "")}/api/analytics/v1/events:batch`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-rudder-installation-id": options.installationId,
-        authorization: options.collectorAuthorization,
-      },
-      body: JSON.stringify({ events }),
-    });
-    collectorBody = await readJson(collectorResponse);
+    const collectorAuthorization = typeof options.collectorAuthorization === "function"
+      ? await options.collectorAuthorization()
+      : options.collectorAuthorization;
+    if (!collectorAuthorization) {
+      collectorResponse = new Response(null, { status: 503 });
+      collectorBody = { errorCode: "collector_authorization_unavailable" };
+    } else {
+      collectorResponse = await fetchImpl(`${options.collectorUrl.replace(/\/$/, "")}/api/analytics/v1/events:batch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-rudder-installation-id": options.installationId,
+          authorization: collectorAuthorization,
+        },
+        body: JSON.stringify({ events }),
+      });
+      collectorBody = await readJson(collectorResponse);
+    }
   } catch {
     collectorResponse = new Response(null, { status: 503 });
   }
