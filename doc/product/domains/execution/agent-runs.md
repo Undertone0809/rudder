@@ -31,6 +31,7 @@ related_tests:
   - tests/e2e/agent-run-conversation-grouping.spec.ts
 related_plans:
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
+  - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
 edit_policy: user_confirmed_only
 ---
 
@@ -260,6 +261,26 @@ Flow:
     Run directly, independent of the conversation's newest run. Chat omits
     the action when it cannot resolve both the message run id and agent
     identity, so it does not render a dead run link.
+17. For an external runtime, the Chat workstream maps to an opaque
+    organization/Agent/conversation session record and an upstream run ID. Stop
+    uses the provider's run-scoped cancellation when the capability snapshot
+    advertises it, freezes the Rudder-visible cutoff first, and waits for
+    provider terminal reconciliation. A managed-process fallback or
+    `cancel_unverified` outcome remains explicit; closing a whole provider
+    session is never presented as run cancellation.
+18. Direct Chat follows the same tool-bearing continuity contract as Issue
+    workstreams. OpenClaw reuses its mapped provider session. Hermes continues
+    from the Rudder-owned canonical transcript and sends a bounded
+    `RUDDER_TOOL_CONTEXT_V1` projection when the upstream text-only history
+    surface requires it. Within the declared projection bounds, tool calls,
+    results, structured content, and approvals do not force a reset.
+19. Hermes approval requests are durable governed actions. Rudder presents
+    only the V1 `once` and `deny` choices, records the actor decision or
+    timeout, and sends only a capability-advertised approval response. Hermes
+    `session` and `always` grants are not ordinary approval responses; they
+    require a separately named, audited runtime-policy change with explicit
+    authorization. Unsupported or unsafe approval states fail closed rather
+    than silently enabling broader authority.
 
 Invariants:
 
@@ -305,6 +326,14 @@ Invariants:
 - Model-generation failures after visible model output remain retryable failed
   chat outcomes and must preserve `phase: "model_generation"` and
   `action: "retry"` when Rudder can classify that phase.
+- External provider cancellation is scoped to the exact Agent Run attempt and
+  upstream run/session identity. A provider acknowledgement is not a terminal
+  cancellation; Rudder remains `stopping` until terminal evidence or an honest
+  timeout/indeterminate outcome is recorded.
+- Hermes tool/approval history projected into Chat is quoted, bounded, escaped,
+  redacted, and hash-linked evidence. It is labeled
+  `synthetic_tool_continuity`, never native or lossless, and projection failure
+  blocks the later turn instead of silently dropping causal records.
 
 Evidence:
 
@@ -393,6 +422,29 @@ Behavior:
   runtimes/models can attempt execution.
 - Final outcome is derived from cancellation, timeout, adapter result, and
   forbidden runtime skill marker detection.
+- For `openclaw_gateway` or `hermes_gateway`, execution revalidates the
+  authenticated connection against the supported upstream version/protocol and
+  capability matrix before creating provider work. It records the capability
+  snapshot used by the attempt and refuses an unverified or changed endpoint.
+- Workspace-dependent external work requires a deterministic binding to the
+  resolved project/organization/Agent workspace. An attached process without
+  that proof is blocked with an actionable remediation; managed mode starts or
+  restarts only the recorded provider process in that workspace.
+- Provider submission carries the Rudder attempt identity and an idempotency
+  key when the upstream supports one. If a side-effecting submission response is
+  indeterminate, the run records `submission_indeterminate` and does not retry
+  automatically.
+- Hermes Run execution persists the Rudder canonical workstream transcript
+  hash and the exact bounded `RUDDER_TOOL_CONTEXT_V1` projection metadata used
+  for the turn. V1 bounds the projection at 200 events, 64 KiB UTF-8 per event,
+  512 KiB UTF-8 aggregate, and a conservative 32,000-token estimate.
+  Projection is atomic: unsafe, corrupt, or over-budget history blocks the turn
+  before provider submission.
+- For Hermes Issue, reviewer, and direct Chat workstreams,
+  `synthetic_tool_continuity` is the default supported continuity mode. Within
+  the declared bounds, ordinary tool calls, tool results, structured content,
+  and approval events do not force a session reset. The mode is explicitly not
+  native or lossless Hermes history.
 
 Invariant:
 
@@ -401,6 +453,20 @@ Invariant:
 - Agent status must be finalized after a terminal run outcome.
 - An override created for one assignee must never follow the issue to another
   assignee or affect runs that are not backed by that issue.
+- An external attempt must not execute when readiness, organization binding,
+  process identity, or workspace binding is stale or unproven. A connection
+  probe alone cannot authorize a later Run after the endpoint or process
+  changes.
+- Rudder generates idempotency and mapping keys. Upstream Run/session IDs are
+  accepted only from the authenticated adapter response and stored in
+  organization/Agent/workstream-scoped mappings; arbitrary IDs copied from
+  another Agent or organization are rejected.
+- A lost provider submission response is never converted into a duplicate
+  upstream Run by an automatic retry.
+- Hermes continuity records must retain causally required tool/approval pairs,
+  source transcript hash, projection version, and the exact 200-event,
+  64 KiB/event, 512 KiB aggregate, and 32,000-token bounds. Dropping a tool
+  result to fit a limit is not a valid continuation.
 
 Rationale:
 

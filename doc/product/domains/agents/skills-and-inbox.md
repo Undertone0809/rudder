@@ -42,6 +42,7 @@ related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
+  - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
 edit_policy: user_confirmed_only
 ---
 
@@ -66,6 +67,16 @@ Product model:
 
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
+- Adapter-native directories remain an opt-in capability of a specific adapter;
+  OpenClaw Gateway and Hermes API Server connections do not enable that source
+  in V1.
+- Connecting an OpenClaw Gateway or Hermes API Server does not import, list as
+  Rudder-enabled, synchronize, or persist provider-native skills, memory stores,
+  plugins, or historical skill state. A runtime capability snapshot may report
+  that the provider has native skills, but V1 injects or synchronizes only the
+  Rudder-resolved selected/always-enabled/capability-bundled set. Provider
+  native tools, skills, and memory may remain active on the upstream host; they
+  are unmanaged and separately identified rather than reported as Rudder skills.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
   `rudder-docs`, `skill-creator`, and `visualize`. Other repo-owned skill
   packages, including `conversation-to-skill`, are not part of the default
@@ -157,13 +168,18 @@ Flow:
    stored provenance identifies them as Rudder-bundled.
 3. Agent skill snapshot is built from all supported sources.
 4. Desired selection is validated against available/always-enabled entries.
-5. Runtime skill sync/materialization prepares the runtime-side skill surface
-   from the Rudder-resolved selected, always-bundled, and active
-   capability-bundled set only. It reuses each stable installed source path and
-   must not redownload, delete, or reconstruct an organization skill on every
-   invocation.
-6. Instruction loading exposes desired/realized skill facts to the adapter.
-7. Metadata-first/native hosts expose the skill description for intent matching
+5. For an external runtime, connection discovery and capability negotiation do
+   not add a new skill source. Any provider-native listing remains diagnostic
+   capability evidence until Rudder has an explicit, governed synchronization
+   contract in a future release.
+6. Runtime skill sync/materialization injects or prepares the runtime-side
+   Rudder skill surface from the Rudder-resolved selected, always-bundled, and
+   active capability-bundled set. It reuses each stable installed source path
+   and must not redownload, delete, or reconstruct an organization skill on
+   every invocation. Provider-native capabilities remain outside this
+   projection and are reported separately.
+7. Instruction loading exposes desired/realized skill facts to the adapter.
+8. Metadata-first/native hosts expose the skill description for intent matching
    before the agent reads the body or references. Prompt-injected hosts may put
    the compact `SKILL.md` body in the prompt before model judgment; on those
    hosts the body's self-gate prevents unnecessary docs lookup or skill-directed
@@ -226,6 +242,9 @@ Invariants:
 - Agent-facing skill status must separate Rudder-enabled skills from
   provider-native built-ins. Runtime prompts must not let provider-native
   built-ins appear as this agent's Rudder-loaded skills.
+- Connection success, provider-native skill availability, or a provider's
+  workspace skill directory must never be treated as Rudder skill enablement or
+  as permission to import files, memories, plugins, or credentials.
 - Skill UI copy must not imply that a discovered skill was used in a run.
 
 Evidence:
@@ -238,6 +257,12 @@ Evidence:
 - Bundled docs, public route, organization refresh, persistent-adapter cleanup,
   Desktop smoke, and organization Agent Skills E2E tests prove the canonical
   `rudder-docs` inventory and retired-identity hard deletion.
+- External-runtime E2E must prove that OpenClaw/Hermes discovery and execution
+  receive the Rudder-resolved skill projection without importing or
+  synchronizing provider-native listings and memory/skill stores. The same E2E
+  must prove provider-native capabilities, when active upstream, remain
+  unmanaged and separately identified rather than being reported as Rudder
+  skill usage.
 
 ## AGENT.SKILL.TELEMETRY.001
 

@@ -154,6 +154,7 @@ contracts:
       - tests/e2e/codex-model-order.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   RUN.ADMISSION.001:
     owner: product
     domain: execution
@@ -222,6 +223,7 @@ contracts:
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-23-chat-response-annotations.md
       - doc/plans/2026-07-27-transcript-skill-side-panel.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   ROUTING.ASSIGNMENT.001:
     owner: product
     domain: work-routing
@@ -440,6 +442,7 @@ contracts:
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
       - doc/plans/2026-07-23-chat-response-annotations.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   AGENT.IDENTITY.CONFIG.001:
     owner: product
     domain: agents
@@ -476,6 +479,7 @@ contracts:
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
       - doc/plans/2026-07-20-oreo-agent-avatar-style.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   AGENT.RUNTIME.ADAPTERS.001:
     owner: product
     domain: agents
@@ -533,6 +537,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-23-chat-conversation-model-selector.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   AGENT.RUNTIME.PERMISSIONS.001:
     owner: product
     domain: agents
@@ -792,6 +797,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+      - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   AGENT.SKILL.TELEMETRY.001:
     owner: product
     domain: agents
@@ -1261,6 +1267,8 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - packages/shared/src/chat-transcript-provenance.ts
       - server/src/services/chat-inline-annotations.ts
+      - server/src/services/chat-inline-annotation-validation.ts
+      - server/src/services/chats.create.ts
       - server/src/services/chat-assistant.annotations.ts
       - server/src/services/chat-assistant.helpers.ts
       - server/src/services/chat-generation-provenance.ts
@@ -1285,6 +1293,11 @@ contracts:
       - ui/src/components/chat/SelectionAnnotationToolbar.tsx
       - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
       - ui/src/components/side-panel/SideChatPanelView.tsx
+      - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
+      - ui/src/components/transcript/RunTranscriptView.tsx
+      - ui/src/components/transcript/RunTranscriptView.blocks.tsx
+      - ui/src/pages/AgentDetail.runs.tsx
+      - ui/src/pages/AgentDetail.run-log.tsx
       - ui/src/lib/chat-file-annotation-events.ts
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
@@ -1575,6 +1588,7 @@ contracts:
       - tests/e2e/chat-work-manifest.spec.ts
       - tests/e2e/chat-work-manifest-image-preview.spec.ts
       - tests/e2e/chat-proposal-review.spec.ts
+      - ui/src/components/transcript/RunTranscriptView.test.tsx
     related_plans:
       - doc/plans/2026-07-12-chat-work-manifest.md
       - doc/plans/2026-07-23-chat-response-annotations.md
@@ -1606,6 +1620,8 @@ contracts:
       - ui/src/context/MainWorkbenchContext.tsx
       - ui/src/context/LiveSurfaceRuntimeContext.tsx
       - ui/src/context/SavedViewPromotionContext.tsx
+      - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
+      - ui/src/pages/AgentDetail.runs.tsx
       - ui/src/components/CommentThread.tsx
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/IssueProperties.tsx

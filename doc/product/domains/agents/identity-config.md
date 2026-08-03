@@ -61,6 +61,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-07-20-oreo-agent-avatar-style.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+  - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
 edit_policy: user_confirmed_only
 ---
 
@@ -102,6 +103,23 @@ Product model:
   whether the agent can be woken or configured.
 - Config changes are operator-visible product changes when they alter runtime,
   instruction, skill, budget, or permission behavior.
+- External local runtime configuration is a connection identity, not a provider
+  credential dump. It stores the runtime type, normalized transport/endpoint,
+  local ownership mode, and a Rudder secret reference; plaintext OpenClaw device
+  keys, Hermes bearer keys, and provider session IDs do not belong in general
+  Agent config JSON.
+- V1 local ownership modes are `rudder_managed_local` and
+  `attach_existing_local`. Managed mode owns only the recorded process identity
+  and start epoch and binds it to the resolved workspace. Each process identity
+  and start epoch has exactly one lifecycle owner; a second Agent may share a
+  reachable endpoint only in attach mode and cannot restart or stop the managed
+  process. Attach mode records that Rudder does not own lifecycle and is
+  eligible only for the workspace binding that the provider/process can prove.
+- An external endpoint/credential tuple is a single-organization trust domain.
+  A secret reference already bound to one organization cannot be attached to a
+  different organization, and provider session mappings are scoped by
+  organization, Agent, and workstream rather than stored as reusable Agent
+  identity fields.
 
 Flow:
 
@@ -111,9 +129,13 @@ Flow:
    avatar is preserved; an omitted or incoming legacy named icon becomes a new
    Oreo default reference.
 3. Approval or permission policy may gate the final active state.
-4. Updates create visible config state so later runs can be traced back to the
+4. For an external local runtime, setup discovers a supported loopback endpoint
+   or executable, validates the authenticated connection, and persists only the
+   normalized connection identity plus secret reference. It never imports the
+   provider's credential files, skills, memories, or historical sessions.
+5. Updates create visible config state so later runs can be traced back to the
    operating frame active at invocation time.
-5. Agent Detail exposes config, instructions, skills, integrations, runs, and
+6. Agent Detail exposes config, instructions, skills, integrations, runs, and
    issues from the same durable identity.
 
 Invariants:
@@ -123,6 +145,13 @@ Invariants:
   agent list selects `ceo`, while a non-empty list selects `general`.
 - Terminated or pending-approval agents are not ordinary invokable agents.
 - Runtime config is not only UI preference; it is execution contract.
+- A connection secret is resolved by reference at execution time and remains
+  organization-scoped. Provider credentials and Rudder Agent identity tokens
+  are separate namespaces.
+- A provider run/session mapping must be opaque, organization/Agent/workstream
+  scoped, and never accepted as an arbitrary client-supplied session ID.
+- Local ownership, endpoint, managed-process identity, workspace binding, and
+  last tested readiness remain visible to operators without exposing secrets.
 - Oreo shape, palette, and UUID segments must match the IDs and UUID grammar
   tied to the pinned renderer version. Unknown or malformed Oreo references
   are rejected at the API boundary.
@@ -229,6 +258,26 @@ Product model:
 - Runtime environment test results are tri-state operator evidence: `pass` is
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
+- External local runtimes are registered as `openclaw_gateway` and
+  `hermes_gateway`. `hermes_local` remains a `Legacy` CLI adapter with its
+  existing configuration semantics; it is not silently reinterpreted as an API
+  Server connection.
+- External connection readiness requires an authenticated handshake against the
+  exact execution path plus a supported upstream version/capability snapshot.
+  An installed executable, open port, unauthenticated health response, or
+  version string alone is advisory setup evidence, not `pass`.
+- A ready external connection snapshot includes transport, endpoint, upstream
+  version, protocol/capabilities, provider-reported workspace identity when
+  exposed, session/continuation, approval, Stop, Steer, and
+  evidence-completeness support. A provider workspace identity is not Rudder
+  launch proof: attached mode additionally needs independent process/CWD or
+  provider-selector evidence, while managed mode uses Rudder-owned launch
+  binding. UI and routing may expose only capabilities present in that
+  snapshot plus separately verified Rudder binding.
+- V1 external connections are loopback-only. Managed start/supervision binds a
+  supported process to the resolved workspace; attach mode never upgrades,
+  restarts, or terminates an unrelated process. A future connector/relay is an
+  extension point, not a current adapter capability.
 
 Flow:
 
@@ -240,17 +289,21 @@ Flow:
    choosing.
 3. Agent config selects a runtime type and config payload.
 4. Registry resolves the adapter and capability surface.
-5. For a supported local adapter, Rudder derives conditional Browser skill/tool
+5. For an external local runtime, Rudder authenticates the normalized loopback
+   connection, validates the locked version/protocol/capability matrix, and
+   records readiness plus the capability snapshot before making it selectable
+   for execution.
+6. For a supported local adapter, Rudder derives conditional Browser skill/tool
    availability from trusted instance/run context after user environment merge,
    so agent config cannot force-enable or retain it after disablement.
-6. Runtime config is prepared, secrets are resolved, skills/context are loaded,
+7. Runtime config is prepared, secrets are resolved, skills/context are loaded,
    and execution workspace is realized.
-7. For an interactive chat attempt, the adapter registers its control handle
+8. For an interactive chat attempt, the adapter registers its control handle
    only after the provider turn identity is known. Rudder fences every control
    call to that attempt and unregisters the handle on terminal release.
-8. Adapter executes and returns provider-specific result/transcript/session
+9. Adapter executes and returns provider-specific result/transcript/session
    evidence.
-9. Rudder normalizes and stores the result under `RUN.RESULT.001`.
+10. Rudder normalizes and stores the result under `RUN.RESULT.001`.
 
 Invariants:
 
@@ -278,6 +331,27 @@ Invariants:
   preserve the Agent fallback chain and all unrelated runtime configuration.
 - A warning-only environment result must remain distinguishable from both pass
   and fail while leaving supported configuration and recovery actions visible.
+- A connection marked ready must have an authenticated, versioned capability
+  snapshot for the same endpoint and execution path. Preflight cannot
+  grandfather a changed address, process, protocol, or workspace binding.
+- OpenClaw capability claims require the locked Gateway protocol/device pairing
+  and run-scoped control evidence. Hermes capability claims require the locked
+  API Server Runs, events, approval, Stop, Sessions, and provider workspace
+  identity support when exposed. Hermes capability discovery does not attest
+  terminal.cwd; attached workspace readiness still requires independent Rudder
+  process/CWD or selector evidence. A missing or unverified upstream version is
+  not Supported.
+- Stop claims must distinguish provider-native run-scoped cancellation,
+  managed-process fallback, and unavailable. Steer claims must distinguish
+  native same-turn delivery from Rudder `interrupt_continue` fallback.
+- `hermes_local` remains Legacy until an explicit, tested migration switches the
+  Agent to `hermes_gateway`; existing CLI configuration is not mutated by a
+  capability probe.
+- V1 must reject non-loopback external endpoints and must not import provider
+  credentials, skills, memories, or historical sessions during discovery.
+- A managed process identity and start epoch can have only one lifecycle owner.
+  Shared existing gateways are attach-only for additional Agents, and an
+  attach record cannot stop, restart, or rebind the managed owner.
 - Runtime adapters must not expose Browser tools from inherited user MCP config
   or an agent-supplied enable flag. Managed projection is conditional, and live
   authorization remains enforced by `AGENT.BROWSER.001`.
@@ -306,3 +380,8 @@ Evidence:
   `turn/steer`, native `turn/interrupt`, disconnect ambiguity, and fallback
   process termination. Chat protocol tests cover attempt ownership and stale
   handle rejection.
+- External-runtime compatibility E2E must cover authenticated preflight,
+  readiness codes, loopback rejection, capability snapshots, managed versus
+  attached ownership, workspace binding, process identity fencing, explicit
+  Legacy Hermes migration, and organization/Agent/workstream session
+  isolation.

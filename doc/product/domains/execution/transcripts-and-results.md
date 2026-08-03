@@ -44,6 +44,8 @@ related_tests:
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/pages/Chat.side-panel.skill-file.test.tsx
   - tests/e2e/chat-transcript-internal-events.spec.ts
+related_plans:
+  - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
 edit_policy: user_confirmed_only
 ---
 
@@ -71,6 +73,30 @@ Behavior:
   readable boundaries.
 - Adapter result summary, result JSON, usage, cost, provider/model, session
   IDs, exit code, signal, log digest, and terminal error fields are persisted.
+- External-runtime results additionally normalize the upstream runtime and
+  version, Rudder adapter version, transport, negotiated protocol, capability
+  snapshot hash, ownership/workspace binding, and opaque provider Run/session
+  identifiers. A missing or unverified upstream version remains explicit in
+  the result evidence and cannot be rendered as Supported.
+- Provider tool, tool-result, approval-request, approval-decision, lifecycle,
+  and cancellation events remain structured Run evidence. Cancellation records
+  requested time, exact target, transport, provider acknowledgement, terminal
+  state, timeout/fallback, and whether the visible-output cutoff preceded the
+  request.
+- Continuity evidence records `native_session` or
+  `synthetic_tool_continuity`, the projection version, source transcript hash,
+  event/token/byte bounds, redaction and deterministic compaction metadata,
+  plus the final sanitized projection digest, immutable source-event versions,
+  ordered inclusion/omission ranges, compaction outputs, and any `session_reset`
+  or verified `provider_session_rebound` marker.
+  Hermes's canonical Rudder transcript is authoritative for Rudder-originated
+  work; a provider session ID alone is correlation evidence, not proof of
+  history continuity. V1's synthetic projection bounds are 200 events, 64 KiB
+  UTF-8 per event, 512 KiB UTF-8 aggregate, and a 32,000-token estimate.
+- Event completeness is explicit: `complete`, `partial`, or `terminal_only`.
+  An SSE disconnect, expired replay window, or unreconciled intermediate gap
+  may preserve terminal status and final output while marking the event
+  evidence `partial`; it must not be presented as lossless replay.
 - Adapter result summary is user-visible assistant output from a completed
   runtime turn. Incomplete, stopped, aborted, or failed streams may preserve
   transcript evidence, including thinking/reasoning entries, but must not
@@ -94,6 +120,11 @@ Behavior:
   range. It becomes user-authored message context only through that explicit
   annotation action; the selected Process text remains Run evidence and is not
   promoted into assistant body or result summary.
+- Under `CHAT.RESPONSE.ANNOTATION.001`, terminal Nice Transcript entries on an
+  Agent Run may be staged as `agent_run_transcript` annotations. Admission
+  revalidates organization, Agent, terminal Run status, visible source members,
+  selected text, and source hash; synthetic client block labels are accepted
+  only when they resolve unambiguously to persisted Run evidence.
 - Consecutive completed tool activity is summarized as a compact semantic digest
   such as skills used, files read or edited, searches performed, and commands
   run. Expanding the digest reveals the individual structured actions and keeps
@@ -121,6 +152,17 @@ Invariant:
 - The operator must be able to inspect a run outcome without reading raw
   process logs only.
 - Usage/session metadata must stay connected to the run that produced it.
+- External Run evidence must identify the exact upstream attempt and capability
+  snapshot used, without exposing endpoint secrets, provider credentials, raw
+  local paths, or unrestricted launch environment data.
+- A provider acknowledgement of Stop is not a terminal cancellation, and a
+  managed-process fallback is not provider-native cancellation. Result fields
+  must preserve that distinction through restarts and reconciliation.
+- `synthetic_tool_continuity` must never be labeled native or lossless. The
+  source transcript hash, final sanitized projection digest, immutable source
+  event versions, ordered inclusion/omission ranges, and compaction outputs
+  must let an operator determine exactly what history was supplied to a later
+  Hermes turn without exposing unredacted provider payloads.
 - NUL characters in structured transcript evidence must not break run
   completion or detach transcript evidence. The normalized generation ledger,
   Agent Run event, and message transcript must remain attributable to the same
@@ -206,3 +248,9 @@ Related tests:
 - `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`
 - `tests/e2e/chat-response-annotations.spec.ts`
+
+External-runtime result E2E must also prove capability/version evidence,
+provider Run/session and approval/cancellation normalization, SSE-gap
+`partial` marking, Hermes canonical transcript hashes, bounded
+`RUDDER_TOOL_CONTEXT_V1` projection, redaction, and refusal of unsafe or
+over-budget continuity input.
