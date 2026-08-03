@@ -469,7 +469,11 @@ export async function setProductAnalyticsInstallationMode(db: Db, installationId
   return row ?? null;
 }
 
-export async function reconcileProductAnalyticsInstallationMode(db: Db, installationId: string) {
+export async function reconcileProductAnalyticsInstallationMode(
+  db: Db,
+  installationId: string,
+  preferredMode?: "off" | "anonymous" | "account_linked",
+) {
   const consent = await db.select({ scope: productAnalyticsConsentLedger.scope, decision: productAnalyticsConsentLedger.decision })
     .from(productAnalyticsConsentLedger)
     .where(eq(productAnalyticsConsentLedger.installationId, installationId))
@@ -478,9 +482,9 @@ export async function reconcileProductAnalyticsInstallationMode(db: Db, installa
   for (const row of consent) {
     if (!latestByScope.has(row.scope)) latestByScope.set(row.scope, row.decision);
   }
-  const mode = latestByScope.get("account_linked_user") === "granted"
+  const mode = preferredMode ?? (latestByScope.get("account_linked_user") === "granted"
     ? "account_linked"
-    : latestByScope.get("anonymous_installation") === "granted" ? "anonymous" : "off";
+    : latestByScope.get("anonymous_installation") === "granted" ? "anonymous" : "off");
   return setProductAnalyticsInstallationMode(db, installationId, mode);
 }
 

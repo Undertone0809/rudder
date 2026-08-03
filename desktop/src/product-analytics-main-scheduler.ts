@@ -49,17 +49,24 @@ export async function startDesktopProductAnalyticsScheduler(
   let consentVersion = telemetry.state.consentVersion;
   let consentEpoch = telemetry.state.consentEpoch;
   let identityConsentAuthorized = false;
+  let anonymousAuthorizationFallbackAllowed = false;
   try {
     const settingsResponse = await fetchImpl(new URL("/api/instance/settings/product-analytics", apiUrl));
-    if (settingsResponse.ok) {
-      const settings = await settingsResponse.json() as Record<string, unknown>;
-      if (settings.mode === "off" || settings.mode === "anonymous" || settings.mode === "account_linked") mode = settings.mode;
-      if (typeof settings.consentVersion === "string" && settings.consentVersion.length > 0) consentVersion = settings.consentVersion;
-      if (Number.isSafeInteger(settings.consentEpoch) && Number(settings.consentEpoch) >= 1) consentEpoch = Number(settings.consentEpoch);
-      await updateDesktopTelemetryState(telemetry.statePath, { mode, consentVersion, consentEpoch });
+    if (!settingsResponse.ok) {
+      console.warn(`[rudder-desktop] Product analytics settings unavailable (${settingsResponse.status})`);
+      return;
     }
+    const settings = await settingsResponse.json() as Record<string, unknown>;
+    if (settings.mode !== "off" && settings.mode !== "anonymous" && settings.mode !== "account_linked") return;
+    if (typeof settings.consentVersion !== "string" || settings.consentVersion.length === 0) return;
+    if (!Number.isSafeInteger(settings.consentEpoch) || Number(settings.consentEpoch) < 1) return;
+    mode = settings.mode;
+    consentVersion = settings.consentVersion;
+    consentEpoch = Number(settings.consentEpoch);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode, consentVersion, consentEpoch });
   } catch (error) {
     console.warn("[rudder-desktop] Unable to read local telemetry settings", error);
+    return;
   }
   if (mode === "off") return;
   try {
@@ -74,6 +81,8 @@ export async function startDesktopProductAnalyticsScheduler(
   } catch (error) {
     console.warn("[rudder-desktop] Identity telemetry consent unavailable", error);
     if (mode === "account_linked") return;
+    if ((error as { code?: unknown }).code !== "IDENTITY_NOT_SIGNED_IN") return;
+    anonymousAuthorizationFallbackAllowed = true;
   }
   let orgId: string | null = null;
   try {
@@ -103,7 +112,7 @@ export async function startDesktopProductAnalyticsScheduler(
   } catch (error) {
     console.warn("[rudder-desktop] Product analytics registration failed", error);
   }
-  const deliveryMode = telemetry.state.mode === "account_linked" ? "account_linked" as const : "anonymous" as const;
+  const deliveryMode = mode === "account_linked" ? "account_linked" as const : "anonymous" as const;
   const base = {
     localApiUrl,
     orgId,
@@ -111,6 +120,7 @@ export async function startDesktopProductAnalyticsScheduler(
     installationSecret: telemetry.installationSecret,
     statePath: telemetry.statePath,
     collectorUrl: options.collectorUrl,
+    fetchImpl,
     deliveryMode,
     collectorAuthorization: async () => {
       if (deliveryMode === "account_linked") {
@@ -130,6 +140,7 @@ export async function startDesktopProductAnalyticsScheduler(
           pseudonymousInstallationId: deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId),
         });
       }
+      if (!anonymousAuthorizationFallbackAllowed) return "";
       const authorization = process.env.RUDDER_TELEMETRY_ANONYMOUS_AUTHORIZATION?.trim();
       return authorization ? (authorization.startsWith("Bearer ") ? authorization : `Bearer ${authorization}`) : "";
     },

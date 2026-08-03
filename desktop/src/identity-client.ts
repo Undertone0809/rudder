@@ -217,7 +217,9 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
     if (refreshInFlight) return refreshInFlight;
     const credential = options.vault.read();
     if (!credential || credential.issuer !== identityOrigin) {
-      throw new Error("Rudder Account is not signed in");
+      throw Object.assign(new Error("Rudder Account is not signed in"), {
+        code: "IDENTITY_NOT_SIGNED_IN",
+      });
     }
     const pending = (async () => {
       const material = offlineMaterial();

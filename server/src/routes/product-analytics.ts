@@ -168,7 +168,11 @@ export function productAnalyticsRoutes(db: Db) {
       policyVersion: typeof req.body?.policyVersion === "string" ? req.body.policyVersion : "v1",
       decidedByLocalUserId: actor.actorType === "user" ? actor.actorId : null,
     });
-    await reconcileProductAnalyticsInstallationMode(db, req.params.installationId as string);
+    await reconcileProductAnalyticsInstallationMode(
+      db,
+      req.params.installationId as string,
+      decision === "granted" ? (scope === "account_linked_user" ? "account_linked" : "anonymous") : undefined,
+    );
     res.status(201).json(consent);
   });
 

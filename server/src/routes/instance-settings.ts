@@ -97,7 +97,7 @@ export function instanceSettingsRoutes(
       policyVersion: "v1",
       decidedByLocalUserId: actor.actorType === "user" ? actor.actorId : null,
     });
-    await reconcileProductAnalyticsInstallationMode(db, telemetryInstallationId);
+    await reconcileProductAnalyticsInstallationMode(db, telemetryInstallationId, mode);
     const updated = await svc.updateGeneral({ productAnalyticsMode: mode });
     res.json({ mode: updated.general.productAnalyticsMode, consentEpoch: updated.general.productAnalyticsConsentEpoch });
   });
