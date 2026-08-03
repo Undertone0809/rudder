@@ -148,6 +148,113 @@ test.describe("Apps workspace", () => {
     await expect(page.getByTestId("chat-assistant-message")).toContainText("Streaming reply");
   });
 
+  test("offers Agent creation and local web project loading from the Apps add menu", async ({
+    page,
+  }, testInfo) => {
+    const organization = await createOrganization(page.request, "Apps-Add");
+    await createE2EChatAgent(page.request, organization.id, {
+      name: "App Builder Agent",
+    });
+    await setSitesEnabled(page.request, true);
+    await page.addInitScript(() => {
+      const savedDefinition = {
+        id: "definition-added",
+        desktopInstallationId: "desktop-e2e",
+        appPublicId: "added-project",
+        localBindingId: "binding-added",
+        title: "Existing Vue dashboard",
+        executable: "pnpm",
+        argv: ["dev", "--host", "127.0.0.1"],
+        cwd: "/tmp/existing-vue-dashboard",
+        inheritedEnvNames: [],
+        readiness: { path: "/", timeoutMs: 10_000 },
+        openPath: "/dashboard",
+        trustFingerprint: "trust-added",
+        approvedFingerprint: "trust-added",
+        createdAt: "2026-08-03T00:00:00.000Z",
+        updatedAt: "2026-08-03T00:00:00.000Z",
+      };
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          localApps: {
+            supported: true,
+            list: async () => [],
+            discover: async () => {
+              const testWindow = window as typeof window & { __localAppDiscoveries?: number };
+              testWindow.__localAppDiscoveries = (testWindow.__localAppDiscoveries ?? 0) + 1;
+              const {
+                id: _id,
+                desktopInstallationId: _desktopInstallationId,
+                appPublicId: _appPublicId,
+                localBindingId: _localBindingId,
+                approvedFingerprint: _approvedFingerprint,
+                createdAt: _createdAt,
+                updatedAt: _updatedAt,
+                ...draft
+              } = savedDefinition;
+              return { canceled: false, draft };
+            },
+            create: async () => {
+              const testWindow = window as typeof window & { __localAppCreations?: number };
+              testWindow.__localAppCreations = (testWindow.__localAppCreations ?? 0) + 1;
+              return savedDefinition;
+            },
+            status: async () => ({ status: "stopped", generation: null }),
+            attestedTarget: async () => null,
+          },
+        },
+      });
+    });
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
+
+    await page.getByTestId("apps-add").click();
+    const buildWithAgent = page.getByTestId("apps-build-with-agent");
+    await expect(buildWithAgent).toBeVisible();
+    await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveCSS("opacity", "1");
+    await expect(buildWithAgent).toContainText(
+      "Create or improve a web App with App Builder.",
+    );
+    await expect(page.getByTestId("apps-add-local-project")).toContainText(
+      "Load a Next.js, React, Vue, or other web project from this computer.",
+    );
+    await page.screenshot({
+      path: `/tmp/rudder-apps-add-menu-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+
+    await page.getByTestId("apps-add-local-project").click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __localAppDiscoveries?: number }).__localAppDiscoveries ?? 0
+    ))).toBe(1);
+    await expect(page.getByTestId("apps-add-local-project")).toHaveCount(0);
+    const review = page.getByTestId("local-app-definition-review");
+    await expect(review).toBeVisible();
+    await expect(review.getByTestId("local-app-project-folder"))
+      .toHaveText("/tmp/existing-vue-dashboard");
+    await expect(review.getByTestId("local-app-start-command"))
+      .toContainText("pnpm dev --host 127.0.0.1");
+    await review.getByRole("button", { name: "Review & add" }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __localAppCreations?: number }).__localAppCreations ?? 0
+    ))).toBe(1);
+    await expect(page).toHaveURL(/\/apps\/view\/local%3Adefinition-added$/);
+    await expect(page.getByTestId("apps-entry-local:definition-added")).toBeVisible();
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
+    await page.getByTestId("apps-add").click();
+    await expect(page.getByTestId("apps-build-with-agent")).toBeVisible();
+    await page.getByTestId("apps-build-with-agent").click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?.*)?$/);
+    const composer = page.getByTestId("chat-composer-editor-scroll")
+      .locator("[contenteditable='true']").first();
+    await expect(composer).toContainText("Use $app-builder to create or improve a Rudder App.");
+    await expect(composer).toContainText(
+      "Help me clarify what this local web app should do before building it.",
+    );
+  });
+
   test("loads registered Apps into the left column and supports multiple tabs", async ({
     page,
   }, testInfo) => {

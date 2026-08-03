@@ -1,6 +1,6 @@
 ---
 title: "App Builder"
-description: "Turn a request into a full-stack App that Rudder builds, verifies, and runs on your machine."
+description: "Create or improve a local website and use it as a Rudder App on your machine."
 icon: "blocks"
 keywords:
   - "Rudder App Builder"
@@ -12,40 +12,45 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/app-builder"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/app-builder"
 ---
 
-## Describe the workflow, not the stack
+## Rudder Apps are local websites
 
-App Builder turns a request such as “build a cold-email manager” or “make a CRM
-for this customer data” into an App on your device. You do not need to choose a
-framework, database, package manager, or process layout.
+App Builder turns a request such as “build a cold-email manager” or “improve my
+existing CRM” into a local web product. In Rudder it appears and behaves as an
+App; underneath it remains an ordinary website running on your computer. The
+source stays conventional and can still be opened in an IDE, terminal, or
+regular browser.
 
-Rudder uses one maintained full-stack scaffold, writes the application in your
-organization workspace, runs its checks, and opens a verified preview beside
-the Chat that produced it. The source stays conventional, so you can also open
-it in an IDE or terminal.
+For a new App, App Builder uses Rudder's maintained Next.js full-stack scaffold
+so a non-technical user does not have to choose infrastructure. For an existing
+Next.js, React, Vue, Astro, SvelteKit, Nuxt, or other web project, App Builder
+preserves the current framework and helps improve the product or prepare its
+development script for Rudder.
 
-The App is a normal webpage. **Open** shows it inside Rudder's browser. While
-the App is running, **Copy App link** gives you its current loopback address so
-you can open the same page in another browser on this computer.
-
-## Enable Sites, then start from Apps
+## Create or add an App
 
 Open **Settings → Experimental** and turn on **Enable Apps**. Rudder adds
 **Apps** to the Primary Rail and enables the App Builder Skill.
 
-Apps uses Rudder's three-column workspace. The left column contains Home,
-search, and every registered App. On Home, enter your request under **Turn
-ideas into applications**. Sending opens a normal Chat with App Builder already
-attached, so requirements, implementation, and review remain visible.
+Select the **+** icon in the Apps sidebar:
 
-After Chat has created the App source, **Register & preview** discloses the package
-installation and lifecycle scripts it will run. If you continue, Rudder runs
-typecheck, tests, a production build, and a real loopback readiness check before
-marking the App ready. It does not substitute the generic scaffold when the
-requested source is missing.
+- **Build with Agent** opens a normal Chat with an editable App Builder prompt.
+  Use it to clarify, create, or improve the product before source changes begin.
+- **Add local web project** opens a folder picker. Use it to load a frequently
+  used web project from this computer and open it directly inside Rudder.
 
-Opening a registered App displays it in the Apps main content. The header keeps
-multiple closable App tabs, and the right column provides runtime and link
-actions.
+Rudder discovers the project's package manager and supported development
+script, then shows the complete launch definition for review before running
+anything. Registered Apps appear in the sidebar and open in the main Apps
+workspace with closable tabs. Their More menu contains settings, source,
+current link, browser, data, and Stop actions when those actions apply.
+
+Apps Home also provides **Turn ideas into applications**. Sending that brief
+creates the managed App record and opens a normal `$app-builder` Chat. When its
+source is ready, **Register & preview** discloses the maintained setup and check
+path before Desktop verifies and starts the local website.
+
+While an App is running, **Copy App link** gives you its current loopback
+address so you can open the same page in another browser on this computer.
 
 ## The App owns its data
 
@@ -81,5 +86,5 @@ The copied App link is not a public sharing link. It works only on the same
 computer while that App generation is running, and it may change after a stop
 or restart.
 
-Manual Local Apps and normal coding workflows remain available when a technical
-user wants a different stack or launch definition.
+Existing web projects and normal coding workflows remain available when a user
+wants a different stack or already has a product worth keeping in Rudder.

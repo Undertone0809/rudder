@@ -54,16 +54,21 @@ edit_policy: user_confirmed_only
 
 ### Contract Summary
 
-Rudder Desktop can run an explicitly reviewed local development service and
-open it in an isolated Browser guest. A Local App definition and its process
-authority stay installation-local. Messenger may persist only an opaque Saved
-View identity, while an exact live Local App instance can move from Side Panel
-to Main Workbench without restarting either the process or guest.
+Rudder Desktop can register an ordinary local web project as a Rudder App, run
+its explicitly reviewed development service, and open it in an isolated Browser
+guest. "App" is the operator-facing product model, not a new local executable or
+package format. A Local App definition and its process authority stay
+installation-local. Messenger may persist only an opaque Saved View identity,
+while an exact live Local App instance can move from Side Panel to Main Workbench
+without restarting either the process or guest.
 
 ### Intent / User Job
 
 - Let an operator use a project service, such as the Rudder MKT dashboard,
   inside the same workbench as Chat, Issue, Browser, Library, and Automation.
+- Let an operator load a frequently used Next.js, React, Vue, Astro, SvelteKit,
+  Nuxt, or other local web project into Rudder Apps, with Agent help to prepare
+  its existing scripts or optional discovery metadata when useful.
 - Make starting a local command a direct action against a reviewed definition;
   Apps treats clicking a registered App as that direct action.
 - Keep the service alive while its view moves, closes, or is removed from
@@ -95,6 +100,8 @@ Saved View identity and group placement.
 - **Operator**: reviews a discovered definition, opens a registered App
   directly, uses explicit lifecycle controls when needed, and moves or saves
   its view.
+- **Agent**: may inspect and minimally prepare an existing web project for
+  discovery, but cannot approve its launch definition or start it indirectly.
 - **Local App definition**: installation-local executable, arguments, working
   directory, readiness check, open path, and reviewed revision.
 - **Runtime generation**: one process tree, attested loopback listener, PID,
@@ -109,6 +116,8 @@ Saved View identity and group placement.
 ### Entry Points / Inputs
 
 - Desktop Local Apps catalog and reviewed-definition flow.
+- Apps context-sidebar **Add an App** menu and its **Add local web project**
+  folder-picker action; **Build with Agent** is the separate Chat path.
 - Apps workspace registered-App rows, tabs, and row More menus.
 - Explicit `Start & open`, `Stop`, retry, and review actions.
 - Main Workbench Local App tab hover/focus More menu and its `Project settings`
@@ -119,7 +128,10 @@ Saved View identity and group placement.
 
 ### Product Logic Flow
 
-1. Desktop discovers a candidate definition but does not execute it.
+1. The Apps sidebar **Add an App** menu offers **Build with Agent** and **Add
+   local web project**. The first opens an editable, unsent App Builder Chat
+   draft. The second opens Desktop folder selection; Desktop discovers a
+   candidate definition but does not execute it.
 2. The review dialog always shows the composed start command, project folder,
    open path, and local-code warning. The structured executable, literal
    arguments, editable working directory, readiness path and timeout, open path,
@@ -200,6 +212,12 @@ framework command. Custom executables, dependency-only projects, and shell
 compound scripts remain unchanged rather than receiving arguments that could be
 interpreted by the wrong process.
 
+An Agent may help an operator prepare an existing project by preserving its
+stack and making its development script directly discoverable. When automatic
+inference is insufficient, it may add the optional `package.json` `rudder`
+readiness or open-path fields. Agent edits do not approve a definition: folder
+selection and the complete Desktop review remain explicit operator actions.
+
 Recognized frontend projects use `/` as the default readiness path because an
 HTML response proves the development server is serving. Generic or API-only
 projects retain `/api/health` as the fallback. An explicit
@@ -217,6 +235,9 @@ presentation metadata only and never grants runtime authority.
 | Situation | Required behavior | Forbidden behavior |
 |---|---|---|
 | Definition is discovered | Show the command/folder/open-path summary, warning, and an Advanced disclosure for the complete launch definition | Execute it |
+| User selects Build with Agent from Apps + | Open an editable, unsent App Builder Chat draft | Start, register, or run local code |
+| User selects Add local web project from Apps + | Open folder selection and discovery, then require review | Run immediately or require one framework |
+| Agent prepares an existing project | Preserve its stack and limit changes to the requested product plus necessary discovery configuration | Treat source edits as launch approval |
 | Operator approves without opening Advanced | Approve the exact summarized definition and its installation-local revision | Treat approval as permission for a later changed definition |
 | Operator selects `Start & open` on an approved definition | Start once, attest loopback listener, open isolated guest | Use a shell or accept a foreign listener |
 | Definition revision changed | Require renewed review | Reuse old approval silently |
@@ -239,6 +260,8 @@ presentation metadata only and never grants runtime authority.
 
 ### Actor-Visible Input
 
+- Apps Add menu choice between Agent-assisted creation/improvement and local
+  folder selection.
 - Always-visible composed start command, project folder, open path, and
   local-code warning.
 - Advanced launch fields for the resolved executable, literal arguments,
@@ -261,6 +284,8 @@ presentation metadata only and never grants runtime authority.
   persistent right runtime-control column.
 - A registered App row with its discovered project icon or framework fallback
   badge when no project icon is available.
+- A reviewed local website available directly from Rudder's Apps workspace for
+  repeated same-computer use.
 - A Main-tab project settings dialog that shows the reviewed configuration,
   prevents active-runtime edits, and updates the tab label after a successful
   reviewed save.

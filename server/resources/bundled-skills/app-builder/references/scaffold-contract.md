@@ -3,8 +3,23 @@
 ## Purpose
 
 The maintained scaffold is the default foundation for non-technical users. Do
-not offer a framework chooser. Technical users may leave this workflow and use
-their own project.
+not offer a framework chooser. It is not a requirement for existing websites
+that will be loaded as Rudder Apps.
+
+## Existing Web Projects
+
+When the user already has a local web project, preserve its framework, package
+manager, data model, scripts, and test conventions. Do not copy scaffold files
+or add `rudder.app.json` to make an independently authored project appear
+managed.
+
+Rudder Desktop discovers a direct `dev`, `start`, `serve`, or `preview` script
+from `package.json`. It recognizes common direct framework commands for Next.js,
+Vite-based React or Vue, Astro, SvelteKit, Nuxt, Vue CLI, and `react-scripts`.
+When the ordinary inference is insufficient, the project may add a `rudder`
+object to `package.json` with `readiness.path`, `readiness.timeoutMs`, or
+`openPath`. The operator still reviews the complete structured launch
+definition through **Apps + > Add local web project** before anything runs.
 
 ## Fixed Foundation
 

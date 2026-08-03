@@ -48,6 +48,18 @@
         "Does not describe localhost as private, offline, or shareable.",
         "Continues with a useful local app option if that still serves the user."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "I already have a Vue project on this computer. Help me improve the onboarding flow and make it easy to open as a Rudder App.",
+      "expected_output": "Preserves the existing Vue project, improves the requested product workflow, prepares a direct supported development script and only the minimal Rudder discovery metadata, then routes the operator through Apps + > Add local web project for review.",
+      "files": [],
+      "assertions": [
+        "Does not replace the existing project with the maintained Next.js scaffold.",
+        "Inspects and preserves the project's framework, package manager, data boundary, and test conventions.",
+        "Uses a direct supported development script and adds package.json Rudder readiness or open-path fields only when inference is insufficient.",
+        "Requires the operator to review the discovered launch definition before Desktop runs it."
+      ]
     }
   ]
 }
