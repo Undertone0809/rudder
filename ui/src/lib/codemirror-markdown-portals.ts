@@ -75,6 +75,45 @@ export function openDecoratedMarkdownLink(href: string) {
   anchor.remove();
 }
 
+function firstVisibleTextNode(node: Node): Text | null {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE && child.textContent) {
+      return child as Text;
+    }
+    const descendant = firstVisibleTextNode(child);
+    if (descendant) return descendant;
+  }
+  return null;
+}
+
+function normalizePreviewPointerPosition(
+  view: EditorView,
+  position: number,
+  event: Pick<MouseEvent, "clientX">,
+) {
+  const line = view.state.doc.lineAt(position);
+  const previewLine = view.contentDOM.querySelector<HTMLElement>(
+    `.cm-line[data-source-line-start="${line.number}"][data-markdown-preview-state="preview"]`,
+  );
+  if (!previewLine) return position;
+
+  const visibleText = firstVisibleTextNode(previewLine);
+  if (!visibleText) return position;
+
+  let visibleStart: number;
+  try {
+    visibleStart = view.posAtDOM(visibleText, 0);
+  } catch {
+    return position;
+  }
+  if (position >= visibleStart || visibleStart <= line.from) return position;
+
+  const visibleCoords = view.coordsAtPos(visibleStart);
+  return visibleCoords && event.clientX >= visibleCoords.left - 2
+    ? visibleStart
+    : position;
+}
+
 export function markdownPointerPosition(
   view: EditorView,
   event: Pick<MouseEvent, "clientX" | "clientY">,
@@ -96,7 +135,11 @@ export function markdownPointerPosition(
   );
   if (caretPosition) {
     try {
-      return view.posAtDOM(caretPosition.offsetNode, caretPosition.offset);
+      return normalizePreviewPointerPosition(
+        view,
+        view.posAtDOM(caretPosition.offsetNode, caretPosition.offset),
+        event,
+      );
     } catch {
       // Fall through to CodeMirror's geometry lookup.
     }
@@ -107,15 +150,22 @@ export function markdownPointerPosition(
   );
   if (caretRange) {
     try {
-      return view.posAtDOM(caretRange.startContainer, caretRange.startOffset);
+      return normalizePreviewPointerPosition(
+        view,
+        view.posAtDOM(caretRange.startContainer, caretRange.startOffset),
+        event,
+      );
     } catch {
       // Fall through to CodeMirror's geometry lookup.
     }
   }
-  return view.posAtCoords({
+  const position = view.posAtCoords({
     x: event.clientX,
     y: event.clientY,
   });
+  return position == null
+    ? null
+    : normalizePreviewPointerPosition(view, position, event);
 }
 
 function tokenKind(reference: AtomicMarkdownReference): AtomicInlineTokenElement["kind"] {
