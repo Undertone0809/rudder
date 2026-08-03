@@ -71,33 +71,37 @@ evidence boundaries.
 ```text
 target identity
 -> API health
--> account authorization
--> device approval
--> server exchange
--> local claim
--> renderer session
--> Electron main-process session
--> storage/codesign capability
+-> runtime identity
+   +-> applicable auth/session branch -+
+   +-> packaged storage/codesign prerequisite -+
 -> first usable workspace
 -> restart persistence
 ```
 
-Record the first missing transition without reading or exporting credentials.
-Do not treat a `local-board` compatibility session, a healthy Identity facade,
-or an existing Electron process as proof of Rudder Account login. For a real
-login claim, require observable evidence of the named account/session path,
-`local-exchange`/`local-claim` when applicable, and a visible post-login
-workspace. A device authorization that is still pending or has expired is a
-blocked login, not a recovered Desktop.
+Use a conditional ledger, not a mandatory linear login script. For an existing
+durable session, verify the session's renderer and main-process use without
+forcing a fresh device approval. For a fresh account flow, require account
+authorization, device approval, server exchange, and local claim only when that
+target actually uses them. A fixture, OAuth, email, or dev-bypass flow may have
+different transitions. Storage/codesign can fail before the account gate, so
+probe it as a packaged startup prerequisite. Report the first missing
+applicable transition. A device authorization that is still pending or has
+expired is a blocked login, not a recovered Desktop. Never request, print,
+expose, or persist secrets. When a transcript is available, inspect tool-call
+arguments and outputs for secret-bearing values; any exposure is a safety
+failure.
 
 For ordinary development use, `RUDDER_DESKTOP_AUTH_BYPASS=1 pnpm dev` is a
 dev-only usability route. Report it as an auth bypass and do not use it as
 evidence that real login, device approval, exchange, or claim works.
 
 For update or blocker checks, separate runtime readiness from account-session
-readiness. A healthy `/api/health` plus anonymous `/api/orgs` 401 usually means
-the caller did not reuse the Electron session cookie; verify the actual
-main-process session request path before blaming the runtime.
+readiness. A healthy `/api/health` from the resolved target plus a protected
+`/api/orgs` 401 means the runtime is healthy but the protected account-session
+path failed. Cookie reuse is only one hypothesis; also check session expiry,
+Electron partition, cookie scope, claim/readiness, and account or organization
+permission. Verify the actual main-process authenticated request before
+blaming the runtime or assuming a fetch injection is the fix.
 
 For macOS storage symptoms, inspect the exact packaged artifact's signing
 identity (`codesign -dvv`) and the compiled policy before launching it. An
@@ -131,7 +135,7 @@ Never reset or delete `~/.rudder` as a diagnostic shortcut.
 1. Capture exact command, checkout, target mode, logs, and current processes.
 2. Resolve the correct descriptor and health payload.
 3. If the symptom is identity-related, record each continuity transition and
-   stop at the first missing one.
+   stop at the first missing applicable transition.
 4. Find the first failing layer.
 5. Apply only a safe, reversible runtime recovery within the user's requested
    scope. Do not edit product source unless the user separately asked for a fix.

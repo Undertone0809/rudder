@@ -29,7 +29,7 @@ import {
   help
 } from "./agent-config-primitives";
 import { AdapterTypeDropdown, RuntimeAdvancedOptions } from "./AgentConfigForm.advanced";
-import { RuntimeEnvironmentStatus, filterRuntimeEnvironmentDisplayChecks, normalizeRuntimeEnvironmentDisplayStatus, shouldShowThinkingEffort, thinkingEffortKeyForRuntime, thinkingEffortOptionsForRuntime } from "./AgentConfigForm.helpers";
+import { RuntimeEnvironmentStatus, filterRuntimeEnvironmentDisplayChecks, normalizeRuntimeEnvironmentDisplayStatus, shouldShowThinkingEffort, thinkingEffortKeyForRuntime, thinkingEffortLabelForRuntime, thinkingEffortOptionsForRuntime } from "./AgentConfigForm.helpers";
 import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
 
 /* ---- Create mode values ---- */
@@ -313,6 +313,7 @@ export function RuntimeProviderCard({
             <ThinkingEffortDropdown
               value={currentThinkingEffort}
               options={thinkingEffortOptions}
+              label={thinkingEffortLabelForRuntime(runtimeType)}
               onChange={updateThinkingEffort}
               open={thinkingEffortOpen}
               onOpenChange={setThinkingEffortOpen}

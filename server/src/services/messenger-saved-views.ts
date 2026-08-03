@@ -726,7 +726,6 @@ export function messengerSavedViewsService(db: Db) {
           groupId: existingMembership.groupId,
           source: "keep",
         });
-        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, existingMembership.groupId);
       }
       if (group && existingMembership?.groupId !== group.id) {
         const [lastEntry] = await txDb.select({ sortOrder: messengerCustomGroupEntries.sortOrder })

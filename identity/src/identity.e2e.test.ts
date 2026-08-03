@@ -66,6 +66,13 @@ class FixtureRootIdentityAdapter implements RootIdentityAdapter {
     return user.id;
   }
 
+  updateProfile(email: string, profile: { displayName: string | null; avatarUrl: string | null }): void {
+    const user = this.users.get(email.trim().toLowerCase());
+    if (!user) throw new Error(`No root-auth user for ${email}`);
+    user.displayName = profile.displayName;
+    user.avatarUrl = profile.avatarUrl;
+  }
+
   failNextPasswordResetRequest(error: Error): void {
     this.passwordResetRequestError = error;
   }
@@ -845,6 +852,77 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     }
   });
 
+  it("fills missing account profile fields when linking an OAuth identity", async () => {
+    const runtime = getIdentityRuntime();
+    const email = "oauth-profile-backfill@example.com";
+    const emailIdentity = await resolveVerifiedIdentity(runtime.db, {
+      provider: "email",
+      providerSubject: "email-profile-backfill",
+      email,
+      emailVerified: true,
+    });
+    await resolveVerifiedIdentity(runtime.db, {
+      provider: "google",
+      providerSubject: "google-profile-backfill",
+      email,
+      emailVerified: true,
+      name: "OAuth Profile Owner",
+      image: "https://avatars.example.test/oauth-profile.png",
+    });
+
+    const [profile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, emailIdentity.userId));
+    expect(profile).toEqual({
+      name: "OAuth Profile Owner",
+      image: "https://avatars.example.test/oauth-profile.png",
+    });
+
+    await resolveVerifiedIdentity(runtime.db, {
+      provider: "github",
+      providerSubject: "github-profile-backfill",
+      email,
+      emailVerified: true,
+      name: "Later Provider Name",
+      image: "https://avatars.example.test/later-provider.png",
+    });
+    const [preservedProfile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, emailIdentity.userId));
+    expect(preservedProfile).toEqual(profile);
+  });
+
+  it("refreshes OAuth profile fields for an existing Supabase binding", async () => {
+    const email = "oauth-bound-profile-refresh@example.com";
+    const firstLogin = await fetch(
+      `${baseUrl}/auth/callback?code=${encodeURIComponent(email)}&next=%2Faccount`,
+      { redirect: "manual" },
+    );
+    expect(firstLogin.status).toBe(302);
+
+    rootIdentity.updateProfile(email, {
+      displayName: "Refreshed OAuth Owner",
+      avatarUrl: "https://avatars.example.test/refreshed-oauth-profile.png",
+    });
+    const secondLogin = await fetch(
+      `${baseUrl}/auth/callback?code=${encodeURIComponent(email)}&next=%2Faccount`,
+      { redirect: "manual" },
+    );
+    expect(secondLogin.status).toBe(302);
+
+    const runtime = getIdentityRuntime();
+    const [profile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.email, email));
+    expect(profile).toEqual({
+      name: "Refreshed OAuth Owner",
+      image: "https://avatars.example.test/refreshed-oauth-profile.png",
+    });
+  });
+
   it("fails closed on login CSRF and completes the recovery-link page journey", async () => {
     const crossOrigin = await fetch(`${baseUrl}/api/root-auth/password/sign-in`, {
       method: "POST",
@@ -1077,6 +1155,77 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       refresh_token: expect.any(String),
       offline_grant: expect.any(String),
     });
+
+
+    const unauthenticatedProfile = await fetch(`${baseUrl}/api/account/profile`);
+    expect(unauthenticatedProfile.status).toBe(401);
+
+    const invalidBearerProfile = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: "Bearer invalid-profile-token" },
+    });
+    expect(invalidBearerProfile.status).toBe(401);
+
+    const profileBefore = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: `Bearer ${tokens.access_token}` },
+    });
+    expect(profileBefore.status).toBe(200);
+    expect(await profileBefore.json()).toMatchObject({
+      id: tokens.account.id,
+      email,
+      name: "desktop-pkce",
+      image: null,
+    });
+
+    const malformedProfile = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+    expect(malformedProfile.status).toBe(422);
+
+    const invalidAvatar = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: "data:image/png;base64,AA==" }),
+    });
+    expect(invalidAvatar.status).toBe(422);
+
+    const avatar = "data:image/png;base64,iVBORw0KGgo=";
+    const profileUpdated = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: avatar }),
+    });
+    expect(profileUpdated.status).toBe(200);
+    expect(await profileUpdated.json()).toMatchObject({
+      id: tokens.account.id,
+      image: avatar,
+    });
+
+    const profileAfter = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: `Bearer ${tokens.access_token}` },
+    });
+    expect(await profileAfter.json()).toMatchObject({ image: avatar });
+
+    const profileCleared = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: null }),
+    });
+    expect(profileCleared.status).toBe(200);
+    expect(await profileCleared.json()).toMatchObject({ image: null });
 
     const exchange = await post("/api/server/exchange", {
       installation_id: "desktop-pkce-installation",

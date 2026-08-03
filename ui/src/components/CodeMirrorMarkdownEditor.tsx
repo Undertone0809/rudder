@@ -32,6 +32,14 @@ import {
 import { GFM } from "@lezer/markdown";
 import { basicSetup } from "codemirror";
 import {
+  Code2,
+  List,
+  ListOrdered,
+  MoreHorizontal,
+  Square,
+  type LucideIcon,
+} from "lucide-react";
+import {
   forwardRef,
   useCallback,
   useEffect,
@@ -68,6 +76,11 @@ import {
   codeMirrorMarkdownEditorTheme,
   codeMirrorMarkdownHighlightStyle,
 } from "../lib/codemirror-markdown-theme";
+import {
+  applyMarkdownBlockAction,
+  markdownBlockActionDisabled,
+  type MarkdownBlockAction,
+} from "../lib/markdown-block-actions";
 import { alignMarkdownSourceLine } from "../lib/markdown-editor-scroll";
 import {
   activeMarkdownPreviewBlockIds,
@@ -98,6 +111,186 @@ import { MarkdownMentionMenu } from "./MarkdownMentionMenu";
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 
 type CodeMirrorMarkdownEditorProps = MarkdownEditorProps;
+
+const markdownBlockActions: Array<{
+  action: MarkdownBlockAction;
+  label: string;
+  shortcut?: string;
+  icon?: LucideIcon;
+  marker?: string;
+}> = [
+  { action: "display", label: "Display", shortcut: "#", marker: "01" },
+  { action: "headline", label: "Headline", shortcut: "##", marker: "02" },
+  { action: "subheader", label: "Subheader", shortcut: "###", marker: "03" },
+  { action: "body", label: "Body", shortcut: "Mod-4", marker: "04" },
+  { action: "task", label: "Task", shortcut: "Mod-T", icon: Square },
+  { action: "list", label: "List", shortcut: "Mod-L", icon: List },
+  { action: "number-list", label: "Number list", shortcut: "Shift-Mod-L", icon: ListOrdered },
+  { action: "code-block", label: "Code block", shortcut: "Shift-Mod-C", icon: Code2 },
+];
+
+interface MarkdownBlockHoverState {
+  line: number;
+  top: number;
+  left: number;
+}
+
+function MarkdownBlockHoverMenu({
+  anchor,
+  block,
+  open,
+  onAction,
+  onClose,
+  onKeepOpen,
+  onOpen,
+  onScheduleClose,
+}: {
+  anchor: MarkdownBlockHoverState;
+  block: MarkdownPreviewBlock | null;
+  open: boolean;
+  onAction: (action: MarkdownBlockAction) => void;
+  onClose: () => void;
+  onKeepOpen: () => void;
+  onOpen: () => void;
+  onScheduleClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuId = `markdown-block-menu-${useId().replace(/[^a-zA-Z0-9_-]/gu, "")}`;
+
+  useEffect(() => {
+    if (!open) return;
+    const firstEnabled = menuRef.current?.querySelector<HTMLButtonElement>(
+      "[role='menuitem']:not(:disabled)",
+    );
+    firstEnabled?.focus();
+  }, [open]);
+
+  const focusMenuItem = (current: HTMLElement, direction: 1 | -1) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[role='menuitem']:not(:disabled)",
+      ) ?? [],
+    );
+    if (items.length === 0) return;
+    const index = items.indexOf(current as HTMLButtonElement);
+    items[(index + direction + items.length) % items.length]?.focus();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        requestAnimationFrame(() => triggerRef.current?.focus());
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (!target || menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [onClose, open]);
+
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  const menuTop = Math.min(Math.max(8, anchor.top + 32), Math.max(8, viewportHeight - 430));
+  const menuLeft = Math.min(Math.max(8, anchor.left + 32), Math.max(8, viewportWidth - 372));
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      data-markdown-block-hover-overlay="true"
+      onMouseEnter={onKeepOpen}
+      onMouseLeave={onScheduleClose}
+      style={{
+        position: "fixed",
+        top: anchor.top,
+        left: anchor.left,
+        zIndex: 80,
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="markdown-block-menu-trigger"
+        aria-label={`Open block actions for line ${anchor.line}`}
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-background/95 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpen();
+          triggerRef.current?.focus();
+        }}
+      >
+        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          id={menuId}
+          role="menu"
+          aria-label={`Block actions for line ${anchor.line}`}
+          data-testid="markdown-block-menu"
+          className="w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-xl"
+          style={{
+            position: "fixed",
+            top: menuTop,
+            left: menuLeft,
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            focusMenuItem(event.target as HTMLElement, event.key === "ArrowDown" ? 1 : -1);
+          }}
+        >
+          {markdownBlockActions.map(({ action, icon: Icon, label, marker, shortcut }, index) => {
+            const disabled = !block || markdownBlockActionDisabled(block.markdown, action, block.kind);
+            return (
+              <div key={action}>
+                {index === 4 ? <div className="my-2 h-px bg-border/70" role="separator" /> : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-markdown-block-action={action}
+                  disabled={disabled}
+                  className="flex min-h-10 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-45 focus-visible:bg-accent focus-visible:outline-none"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!disabled) onAction(action);
+                  }}
+                >
+                  {Icon ? (
+                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  ) : (
+                    <span className="w-4 shrink-0 text-center text-xs font-semibold text-muted-foreground">
+                      {marker}
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {shortcut ? <span className="shrink-0 text-xs text-muted-foreground">{shortcut}</span> : null}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
 
 interface PendingTitleUpgrade {
   requestId: number;
@@ -184,6 +377,38 @@ function sourceLineSeparator(source: string) {
 
 function sourceMarkdown(state: EditorState) {
   return state.sliceDoc(0, state.doc.length);
+}
+
+function markdownBlockForLine(source: string, lineNumber: number) {
+  const document = getMarkdownPreviewDocument(source);
+  const blockIndex = document.blocks.findIndex((block) => (
+    block.startLine <= lineNumber && block.endLine >= lineNumber
+  ));
+  if (blockIndex < 0) return null;
+  const block = document.blocks[blockIndex]!;
+  if (block.kind !== "list") return block;
+
+  let first = blockIndex;
+  let last = blockIndex;
+  while (first > 0 && document.blocks[first - 1]!.kind === "list"
+    && document.blocks[first - 1]!.endLine + 1 >= document.blocks[first]!.startLine) {
+    first -= 1;
+  }
+  while (last + 1 < document.blocks.length && document.blocks[last + 1]!.kind === "list"
+    && document.blocks[last]!.endLine + 1 >= document.blocks[last + 1]!.startLine) {
+    last += 1;
+  }
+  const firstBlock = document.blocks[first]!;
+  const lastBlock = document.blocks[last]!;
+  return {
+    ...block,
+    id: `${firstBlock.id}:${lastBlock.id}`,
+    from: firstBlock.from,
+    to: lastBlock.to,
+    startLine: firstBlock.startLine,
+    endLine: lastBlock.endLine,
+    markdown: source.slice(firstBlock.from, lastBlock.to),
+  };
 }
 
 export function __getCodeMirrorMarkdownViewForTests(root: Element | null): EditorView | null {
@@ -532,10 +757,14 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const lineSeparatorCompartmentRef = useRef<Compartment | null>(null);
   const lineSeparatorRef = useRef(sourceLineSeparator(value));
   const mountedRef = useRef(false);
+  const markdownBlockHoverRef = useRef<MarkdownBlockHoverState | null>(null);
+  const markdownBlockCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [portals, setPortals] = useState<PortalDescriptor[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [mentionState, setMentionState] = useState<CodeMirrorMentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [markdownBlockHover, setMarkdownBlockHover] = useState<MarkdownBlockHoverState | null>(null);
+  const [markdownBlockMenuOpen, setMarkdownBlockMenuOpen] = useState(false);
   const mentionListboxId = `markdown-reference-suggestions-${useId().replace(/[^a-zA-Z0-9_-]/gu, "")}`;
   propsRef.current = props;
 
@@ -555,6 +784,113 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     if (!mountedRef.current) return;
     setPortals((current) => current.filter((portal) => portal.key !== key || portal.host !== host));
   }, []);
+
+  const clearMarkdownBlockCloseTimeout = useCallback(() => {
+    if (markdownBlockCloseTimeoutRef.current === null) return;
+    clearTimeout(markdownBlockCloseTimeoutRef.current);
+    markdownBlockCloseTimeoutRef.current = null;
+  }, []);
+
+  const closeMarkdownBlockHover = useCallback(() => {
+    clearMarkdownBlockCloseTimeout();
+    markdownBlockHoverRef.current = null;
+    setMarkdownBlockMenuOpen(false);
+    setMarkdownBlockHover(null);
+  }, [clearMarkdownBlockCloseTimeout]);
+
+  const scheduleMarkdownBlockClose = useCallback(() => {
+    clearMarkdownBlockCloseTimeout();
+    markdownBlockCloseTimeoutRef.current = setTimeout(() => {
+      markdownBlockCloseTimeoutRef.current = null;
+      closeMarkdownBlockHover();
+    }, 160);
+  }, [clearMarkdownBlockCloseTimeout, closeMarkdownBlockHover]);
+
+  const keepMarkdownBlockOpen = useCallback(() => {
+    clearMarkdownBlockCloseTimeout();
+  }, [clearMarkdownBlockCloseTimeout]);
+
+  const openMarkdownBlockMenu = useCallback(() => {
+    clearMarkdownBlockCloseTimeout();
+    setMarkdownBlockMenuOpen(true);
+  }, [clearMarkdownBlockCloseTimeout]);
+
+  const updateMarkdownBlockHover = useCallback((line: HTMLElement) => {
+    const parsedLine = Number(line.dataset.sourceLineStart);
+    const lineNumber = Number.isFinite(parsedLine) ? Math.max(1, parsedLine) : null;
+    if (!lineNumber) return;
+    const rect = line.getBoundingClientRect();
+    const nextHover = {
+      line: lineNumber,
+      top: Math.max(8, rect.top + Math.max(0, (rect.height - 32) / 2)),
+      left: Math.max(8, rect.left - 40),
+    };
+    keepMarkdownBlockOpen();
+    const previous = markdownBlockHoverRef.current;
+    if (
+      previous?.line === nextHover.line
+      && previous.top === nextHover.top
+      && previous.left === nextHover.left
+    ) {
+      return;
+    }
+    markdownBlockHoverRef.current = nextHover;
+    setMarkdownBlockHover(nextHover);
+  }, [keepMarkdownBlockOpen]);
+
+  const handleMarkdownEditorMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const line = target?.closest<HTMLElement>(
+      ".cm-line[data-source-line-start]",
+    );
+    if (line) updateMarkdownBlockHover(line);
+  }, [updateMarkdownBlockHover]);
+
+  const refreshMarkdownBlockHover = useCallback(() => {
+    const current = markdownBlockHoverRef.current;
+    const view = viewRef.current;
+    if (!current || !view) return;
+    const line = view.contentDOM.querySelector<HTMLElement>(
+      `.cm-line[data-source-line-start="${current.line}"]`,
+    );
+    if (line) updateMarkdownBlockHover(line);
+  }, [updateMarkdownBlockHover]);
+
+  useEffect(() => {
+    if (!markdownBlockHover) return;
+    window.addEventListener("resize", refreshMarkdownBlockHover);
+    window.addEventListener("scroll", refreshMarkdownBlockHover, true);
+    return () => {
+      window.removeEventListener("resize", refreshMarkdownBlockHover);
+      window.removeEventListener("scroll", refreshMarkdownBlockHover, true);
+    };
+  }, [markdownBlockHover, refreshMarkdownBlockHover]);
+
+  const markdownBlockTarget = (() => {
+    if (!markdownBlockHover || !viewRef.current) return null;
+    return markdownBlockForLine(
+      sourceMarkdown(viewRef.current.state),
+      markdownBlockHover.line,
+    );
+  })();
+
+  const handleMarkdownBlockAction = useCallback((action: MarkdownBlockAction) => {
+    const view = viewRef.current;
+    const hover = markdownBlockHoverRef.current;
+    if (!view || !hover) return;
+    const block = markdownBlockForLine(sourceMarkdown(view.state), hover.line);
+    if (!block || markdownBlockActionDisabled(block.markdown, action, block.kind)) return;
+    const replacement = applyMarkdownBlockAction(block.markdown, action, block.kind);
+    if (replacement === block.markdown) return;
+    view.dispatch({
+      changes: { from: block.from, to: block.to, insert: replacement },
+      selection: { anchor: block.from + replacement.length },
+      userEvent: "input.format",
+    });
+    view.focus();
+    setPreviewFocusRef.current?.(view, true);
+    closeMarkdownBlockHover();
+  }, [closeMarkdownBlockHover]);
 
   const filteredMentions = useMemo(() => {
     if (!mentionState) return [];
@@ -1425,6 +1761,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
 
     return () => {
       mountedRef.current = false;
+      clearMarkdownBlockCloseTimeout();
+      markdownBlockHoverRef.current = null;
       pendingTitlesRef.current.clear();
       pendingImageUploadsRef.current.clear();
       viewRef.current = null;
@@ -1434,6 +1772,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       view.destroy();
     };
   }, [
+    clearMarkdownBlockCloseTimeout,
     registerPortal,
     setActiveMentionIndex,
     unregisterPortal,
@@ -1470,6 +1809,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     <div
       ref={rootRef}
       data-editor-engine="codemirror-live-preview"
+      onMouseMove={handleMarkdownEditorMouseMove}
+      onMouseLeave={scheduleMarkdownBlockClose}
       className={cn(
         "rudder-codemirror-markdown-editor relative",
         bordered && "rudder-codemirror-markdown-editor--bordered",
@@ -1495,6 +1836,18 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       ))}
       {uploadError ? (
         <p className="px-3 pb-2 text-xs text-destructive">{uploadError}</p>
+      ) : null}
+      {markdownBlockHover ? (
+        <MarkdownBlockHoverMenu
+          anchor={markdownBlockHover}
+          block={markdownBlockTarget}
+          onAction={handleMarkdownBlockAction}
+          onClose={closeMarkdownBlockHover}
+          onKeepOpen={keepMarkdownBlockOpen}
+          onOpen={openMarkdownBlockMenu}
+          onScheduleClose={scheduleMarkdownBlockClose}
+          open={markdownBlockMenuOpen}
+        />
       ) : null}
       {mentionState && filteredMentions.length > 0 && mentionMenuPosition ? (
         <MarkdownMentionMenu

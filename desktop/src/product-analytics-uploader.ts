@@ -1,4 +1,5 @@
-import { updateDesktopTelemetryState, type DesktopTelemetryMode } from "./product-analytics-telemetry.js";
+import path from "node:path";
+import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState, type DesktopTelemetryMode } from "./product-analytics-telemetry.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -38,6 +39,10 @@ function errorCodeForResponse(response: Response, body: Record<string, unknown>)
 export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductAnalyticsUploaderOptions): Promise<DesktopProductAnalyticsUploadResult> {
   const fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   const now = options.now ?? (() => new Date());
+  const persisted = await loadOrCreateDesktopTelemetryState(path.dirname(path.dirname(options.statePath)));
+  if (persisted.state.mode === "off" || persisted.state.mode !== options.deliveryMode) {
+    return { status: "idle", eventCount: 0, errorCode: null };
+  }
   const attemptedAt = now().toISOString();
   await updateDesktopTelemetryState(options.statePath, { lastAttemptedAt: attemptedAt, lastErrorCode: null });
   const claimUrl = `${options.localApiUrl.replace(/\/$/, "")}/api/orgs/${encodeURIComponent(options.orgId)}/analytics/product/installation/${encodeURIComponent(options.installationId)}/outbox/claim`;
@@ -60,6 +65,10 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   }
   const claimToken = typeof claimBody.claimToken === "string" ? claimBody.claimToken : null;
   const events = Array.isArray(claimBody.events) ? claimBody.events.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object") : [];
+  await updateDesktopTelemetryState(options.statePath, {
+    lastPayloadEventIds: events.map((event) => typeof event.eventId === "string" ? event.eventId : "").filter(Boolean),
+    collectorRegistration: "registered",
+  });
   if (!claimToken || events.length === 0) {
     await updateDesktopTelemetryState(options.statePath, { lastSucceededAt: now().toISOString(), lastErrorCode: null });
     return { status: "idle", eventCount: 0, errorCode: null };
@@ -72,6 +81,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-rudder-installation-id": options.installationId,
         authorization: options.collectorAuthorization,
       },
       body: JSON.stringify({ events }),

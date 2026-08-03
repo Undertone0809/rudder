@@ -29,6 +29,18 @@ function fixture() {
     current: true,
   }]);
   const revokeDeviceSession = vi.fn(async () => undefined);
+  const getProfile = vi.fn(async () => ({
+    id: "account-1",
+    email: "verified@example.com",
+    name: "Rudder User",
+    image: null,
+  }));
+  const updateProfile = vi.fn(async ({ image }: { image: string | null }) => ({
+    id: "account-1",
+    email: "verified@example.com",
+    name: "Rudder User",
+    image,
+  }));
   const signIn = vi.fn(async () => ({
     accessToken: "not-exposed",
     account: { id: "account-1", email: "verified@example.com", name: "Rudder User", image: null },
@@ -55,6 +67,8 @@ function fixture() {
       signOut: async () => clear(),
       listDeviceSessions,
       revokeDeviceSession,
+      getProfile,
+      updateProfile,
     },
     getMainRenderer: () => renderer,
   });
@@ -68,6 +82,8 @@ function fixture() {
     clear,
     listDeviceSessions,
     revokeDeviceSession,
+    getProfile,
+    updateProfile,
     controller,
     signIn,
     nativeSignIn,
@@ -213,6 +229,13 @@ describe("Desktop Rudder Account IPC", () => {
         signOut: vi.fn(async () => undefined),
         listDeviceSessions: vi.fn(async () => []),
         revokeDeviceSession: vi.fn(async () => undefined),
+        getProfile: vi.fn(async () => ({ id: "account-1", email: "user@example.com", name: "User", image: null })),
+        updateProfile: vi.fn(async ({ image }: { image: string | null }) => ({
+          id: "account-1",
+          email: "user@example.com",
+          name: "User",
+          image,
+        })),
       },
       getMainRenderer: () => renderer,
     });
@@ -267,7 +290,7 @@ describe("Desktop Rudder Account IPC", () => {
   });
 
   it("clears local credentials and delegates device session management without exposing credentials", async () => {
-    const { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession } = fixture();
+    const { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession, getProfile, updateProfile } = fixture();
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
 
     await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.signOut)?.(event)).resolves.toMatchObject({
@@ -282,6 +305,16 @@ describe("Desktop Rudder Account IPC", () => {
       handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession)?.(event, { deviceId: "device-1" }),
     ).resolves.toBeUndefined();
     expect(revokeDeviceSession).toHaveBeenCalledWith("device-1");
+    await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.getProfile)?.(event)).resolves.toMatchObject({
+      id: "account-1",
+      image: null,
+    });
+    const avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    await expect(
+      handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile)?.(event, { image: avatar }),
+    ).resolves.toMatchObject({ image: avatar });
+    expect(getProfile).toHaveBeenCalledOnce();
+    expect(updateProfile).toHaveBeenCalledWith({ image: avatar });
   });
 
   it("still clears Identity credentials when Local session revocation fails", async () => {
@@ -307,6 +340,8 @@ describe("Desktop Rudder Account IPC", () => {
         signOut,
         listDeviceSessions: vi.fn(),
         revokeDeviceSession: vi.fn(),
+        getProfile: vi.fn(),
+        updateProfile: vi.fn(),
       },
       getMainRenderer: () => null,
       onBeforeSignedOut: async () => {

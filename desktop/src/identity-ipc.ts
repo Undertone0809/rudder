@@ -14,6 +14,8 @@ export const DESKTOP_IDENTITY_IPC_CHANNELS = {
   signOut: "desktop:identity:sign-out",
   listDeviceSessions: "desktop:identity:list-device-sessions",
   revokeDeviceSession: "desktop:identity:revoke-device-session",
+  getProfile: "desktop:identity:get-profile",
+  updateProfile: "desktop:identity:update-profile",
   stateChanged: "desktop:identity:state-changed",
 } as const;
 
@@ -42,6 +44,8 @@ export type DesktopIdentityState =
     account: {
       id: string;
       email: string | null;
+      name: string;
+      image: string | null;
     };
     deviceId: string;
   }
@@ -83,6 +87,8 @@ type DesktopIdentityClient = {
   signOut(): Promise<void>;
   listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
   revokeDeviceSession(deviceId: string): Promise<void>;
+  getProfile(): Promise<IdentityAccount>;
+  updateProfile(input: { image: string | null }): Promise<IdentityAccount>;
 };
 
 export function resolveDesktopIdentityOrigin(options: {
@@ -244,6 +250,8 @@ function stateFromCredential(
     account: {
       id: credential.accountId,
       email: credential.accountEmail || null,
+      name: credential.accountName,
+      image: null,
     },
     deviceId: credential.deviceId,
   };
@@ -293,7 +301,7 @@ export function createDesktopIdentityIpcController(options: {
       .then(async ({ account, device }) => {
         const signedIn = publish({
           status: "signed-in",
-          account: { id: account.id, email: account.email },
+          account: { id: account.id, email: account.email, name: account.name, image: account.image },
           deviceId: device.id,
         });
         await options.onSignedIn?.();
@@ -363,6 +371,14 @@ export function createDesktopIdentityIpcController(options: {
     revokeDeviceSession(deviceId: string): Promise<void> {
       return options.client.revokeDeviceSession(deviceId);
     },
+
+    getProfile(): Promise<IdentityAccount> {
+      return options.client.getProfile();
+    },
+
+    updateProfile(input: { image: string | null }): Promise<IdentityAccount> {
+      return options.client.updateProfile(input);
+    },
   };
 }
 
@@ -412,4 +428,30 @@ export function registerDesktopIdentityIpcHandlers(
   });
   register(DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession, (_event, payload) =>
     options.controller.revokeDeviceSession(deviceIdPayload(payload)));
+  register(DESKTOP_IDENTITY_IPC_CHANNELS.getProfile, (_event, ...args) => {
+    noArguments(args, "Rudder Account profile");
+    return options.controller.getProfile();
+  });
+  register(DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile, (_event, payload) =>
+    options.controller.updateProfile(accountProfilePayload(payload)));
+}
+
+function accountProfilePayload(value: unknown): { image: string | null } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Rudder Account profile is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 1
+    || !Object.prototype.hasOwnProperty.call(record, "image")
+    || (record.image !== null && typeof record.image !== "string")
+    || (typeof record.image === "string" && (
+      record.image.length === 0
+      || record.image.length > 480 * 1024
+      || !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/u.test(record.image)
+    ))
+  ) {
+    throw new Error("Rudder Account profile is invalid");
+  }
+  return { image: record.image as string | null };
 }

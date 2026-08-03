@@ -4938,7 +4938,7 @@ describe("messengerService and issue follows", () => {
     expect(customGroups.groups[1]?.id).toBe(firstGroup!.id);
   });
 
-  it("dissolves a custom group when its final Messenger item moves out", async () => {
+  it("preserves an empty custom group when its final Messenger item moves out", async () => {
     const orgId = randomUUID();
     const userId = "board-user-custom-group-empty-after-move";
     const conversationId = randomUUID();
@@ -4965,12 +4965,12 @@ describe("messengerService and issue follows", () => {
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, sourceGroup.id, itemKey);
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, targetGroup.id, itemKey);
 
-    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, sourceGroup.id))).toEqual([]);
-    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups.map((group) => group.id)).toEqual([targetGroup.id]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, sourceGroup.id))).toHaveLength(1);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups.map((group) => group.id)).toEqual([sourceGroup.id, targetGroup.id]);
 
     await messengerSvc.removeThreadFromCustomGroups(orgId, userId, itemKey);
-    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, targetGroup.id))).toEqual([]);
-    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, targetGroup.id))).toHaveLength(1);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups.map((group) => group.id)).toEqual([sourceGroup.id, targetGroup.id]);
   });
 
   it("removes deleted Chat and Issue memberships and dissolves their empty groups", async () => {
@@ -5024,7 +5024,7 @@ describe("messengerService and issue follows", () => {
     expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.orgId, orgId))).toEqual([]);
   });
 
-  it("does not retain a directly created empty group after hydration", async () => {
+  it("retains a directly created empty group after hydration", async () => {
     const orgId = randomUUID();
     const userId = "board-user-custom-group-empty-create";
 
@@ -5037,8 +5037,8 @@ describe("messengerService and issue follows", () => {
     });
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Never populated");
 
-    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups).toEqual([]);
-    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups).toMatchObject([{ id: group.id, entries: [] }]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toHaveLength(1);
   });
 
   it("hydrates split issue custom group entries outside the current Messenger thread summary page", async () => {
@@ -11492,7 +11492,7 @@ describe("messengerService and issue follows", () => {
     )).resolves.toEqual({ itemKey: `saved-view:${kept.savedView.id}` });
     expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, group.id))).toHaveLength(0);
     await expect(savedViewsSvc.get(orgId, userId, kept.savedView.id)).resolves.toMatchObject({ id: kept.savedView.id });
-    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toHaveLength(1);
     await savedViewsSvc.remove(orgId, userId, kept.savedView.id);
   });
 

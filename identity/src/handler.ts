@@ -14,6 +14,7 @@ import {
   consumeIdentityOperationRateLimit,
   consumeServerExchangeCode,
   denyDeviceAuthorization,
+  getIdentityAccountProfile,
   getSupabaseAuthUserBinding,
   issueDesktopAuthorizationCode,
   issueDeviceAuthorization,
@@ -31,6 +32,7 @@ import {
   revokeAllIdentityDevices,
   revokeIdentityDevice,
   rotateDeviceRefreshToken,
+  updateIdentityAccountProfile,
   verifyDeviceAuthorization,
 } from "@rudderhq/identity-db";
 import { randomUUID } from "node:crypto";
@@ -59,6 +61,8 @@ import {
 import { getIdentityRuntime } from "./runtime.js";
 
 const credentialRecoveryWorkerId = `identity-${randomUUID()}`;
+const MAX_ACCOUNT_PROFILE_BODY_BYTES = 512 * 1024;
+const MAX_ACCOUNT_AVATAR_DATA_URL_LENGTH = 480 * 1024;
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status;
@@ -154,15 +158,45 @@ function nativeDesktopRootIdentityContext(req: IncomingMessage): RootIdentityReq
   };
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(
+  req: IncomingMessage,
+  maxBodyBytes = 32_768,
+): Promise<Record<string, unknown>> {
   let body = "";
   for await (const chunk of req) {
     body += String(chunk);
-    if (body.length > 32_768) throw new Error("request_too_large");
+    if (body.length > maxBodyBytes) throw new Error("request_too_large");
   }
-  const parsed: unknown = JSON.parse(body);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error("invalid_request");
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_request");
   return parsed as Record<string, unknown>;
+}
+
+function accountAvatarValue(value: unknown): string | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > MAX_ACCOUNT_AVATAR_DATA_URL_LENGTH
+    || !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/u.test(value)
+  ) {
+    throw new Error("invalid_avatar");
+  }
+  const bytes = Buffer.from(value.slice(value.indexOf(",") + 1), "base64");
+  const isPng = value.startsWith("data:image/png;")
+    && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = value.startsWith("data:image/jpeg;")
+    && bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
+  const isWebp = value.startsWith("data:image/webp;")
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!isPng && !isJpeg && !isWebp) throw new Error("invalid_avatar");
+  return value;
 }
 
 function browserMutationError(
@@ -476,6 +510,21 @@ async function bindRootPrincipal(
         status: 409,
       });
     }
+    const resolved = await resolveVerifiedIdentity(runtime.db, {
+      provider: "email",
+      providerSubject: principal.id,
+      email: principal.email,
+      emailVerified: true,
+      name: principal.displayName,
+      image: principal.avatarUrl,
+    });
+    if (resolved.userId !== existing.rudderUserId) {
+      throw new RootIdentityError({
+        code: "identity_binding_conflict",
+        message: "The authenticated identity does not match its Rudder Account binding",
+        status: 409,
+      });
+    }
     return { userId: existing.rudderUserId, deviceId: null };
   }
 
@@ -524,8 +573,7 @@ async function resolveAccountPrincipal(
 ): Promise<{ userId: string; deviceId: string | null } | null> {
   const authorization = req.headers.authorization;
   if (authorization?.startsWith("Bearer ")) {
-    const access = await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length));
-    if (access) return access;
+    return await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length));
   }
   return resolveWebPrincipal(runtime, req, res, {
     requireActiveSession: options?.requireActiveWebSession,
@@ -2032,6 +2080,82 @@ export async function identityHandler(
         current: device.id === principal.deviceId,
       })),
     });
+    return;
+  }
+
+  if (
+    (req.method === "GET" || req.method === "PATCH")
+    && url.pathname === "/api/account/profile"
+  ) {
+    const cookieAuthenticated = !req.headers.authorization?.startsWith("Bearer ");
+    if (req.method === "PATCH" && cookieAuthenticated) {
+      const browserError = browserMutationError(req, runtime.config.allowedOrigins, {
+        requireJson: true,
+      });
+      if (browserError) {
+        sendJson(res, 403, { error: browserError });
+        return;
+      }
+    }
+    let principal: { userId: string; deviceId: string | null } | null;
+    try {
+      principal = await resolveAccountPrincipal(runtime, req, res, {
+        requireActiveWebSession: cookieAuthenticated,
+      });
+    } catch (error) {
+      if (error instanceof RootIdentityError) {
+        sendRootIdentityError(res, error);
+        return;
+      }
+      throw error;
+    }
+    if (!principal) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET") {
+      const profile = await getIdentityAccountProfile(runtime.db, principal.userId);
+      if (!profile) {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+      sendJson(res, 200, profile);
+      return;
+    }
+
+    try {
+      const body = await readJson(req, MAX_ACCOUNT_PROFILE_BODY_BYTES);
+      const keys = Object.keys(body);
+      if (keys.length !== 1 || keys[0] !== "image") throw new Error("invalid_request");
+      const image = accountAvatarValue(body.image);
+      const profile = await updateIdentityAccountProfile(runtime.db, {
+        userId: principal.userId,
+        image,
+      });
+      if (!profile) {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+      await recordSecurityEvent(runtime.db, {
+        userId: principal.userId,
+        deviceId: principal.deviceId,
+        eventType: "account.profile.updated",
+        ...securityRequestMetadata(req, runtime.config.secret),
+        metadata: { changed: "image" },
+      });
+      sendJson(res, 200, profile);
+    } catch (error) {
+      if (error instanceof Error && (error.message === "invalid_avatar" || error.message === "invalid_request")) {
+        sendJson(res, 422, { error: error.message });
+        return;
+      }
+      if (error instanceof Error && error.message === "request_too_large") {
+        sendJson(res, 413, { error: "request_too_large" });
+        return;
+      }
+      throw error;
+    }
     return;
   }
 

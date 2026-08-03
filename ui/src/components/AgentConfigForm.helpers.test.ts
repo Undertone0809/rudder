@@ -24,6 +24,8 @@ import {
   defaultFallbackItemForChain,
   defaultModelForRuntime,
   runtimeChainItemsFromConfig,
+  shouldShowThinkingEffort,
+  thinkingEffortLabelForRuntime,
   thinkingEffortOptionsForRuntime,
 } from "./AgentConfigForm.helpers";
 
@@ -71,6 +73,32 @@ describe("AgentConfigForm runtime defaults", () => {
       { id: "xhigh", label: "Extra High" },
     ]);
   });
+
+  it.each([
+    ["claude_local", ["", "low", "medium", "high"]],
+    ["opencode_local", ["", "minimal", "low", "medium", "high", "max"]],
+    ["pi_local", ["", "off", "minimal", "low", "medium", "high", "xhigh"]],
+  ] as const)("exposes the declared reasoning levels for %s", (runtimeType, ids) => {
+    expect(thinkingEffortOptionsForRuntime(runtimeType).map((option) => option.id)).toEqual(ids);
+    expect(shouldShowThinkingEffort(runtimeType)).toBe(true);
+  });
+
+  it("treats Cursor execution mode separately from reasoning effort", () => {
+    expect(thinkingEffortLabelForRuntime("cursor")).toBe("Execution mode");
+    expect(thinkingEffortOptionsForRuntime("cursor").map((option) => option.id)).toEqual([
+      "",
+      "plan",
+      "ask",
+    ]);
+  });
+
+  it.each(["gemini_local", "openclaw_gateway", "process", "http"])(
+    "does not render an unsupported reasoning selector for %s",
+    (runtimeType) => {
+      expect(shouldShowThinkingEffort(runtimeType)).toBe(false);
+      expect(thinkingEffortOptionsForRuntime(runtimeType)).toEqual([]);
+    },
+  );
 
   it("uses non-dangerous Claude auto permission mode by default", () => {
     expect(createValuesForRuntime("claude_local")).toMatchObject({

@@ -68,4 +68,13 @@ describe("product analytics collector routes", () => {
     expect(response.status).toBe(422);
     expect(response.body.rejected[0]).toMatchObject({ errorCode: "invalid_schema" });
   });
+
+  it("returns conflict for a reused event id with a different payload", async () => {
+    const { server } = app();
+    const first = event();
+    await request(server).post("/api/analytics/v1/events:batch").send({ events: [first] });
+    const response = await request(server).post("/api/analytics/v1/events:batch").send({ events: [{ ...first, properties: { work_surface: "issue" } }] });
+    expect(response.status).toBe(409);
+    expect(response.body.rejected[0]).toMatchObject({ errorCode: "conflict" });
+  });
 });

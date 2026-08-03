@@ -215,6 +215,8 @@ export function ModelDropdown({
 export function ThinkingEffortDropdown({
   value,
   options,
+  label = "Thinking effort",
+  hint = help.thinkingEffort,
   onChange,
   open,
   onOpenChange,
@@ -222,6 +224,8 @@ export function ThinkingEffortDropdown({
 }: {
   value: string;
   options: ReadonlyArray<{ id: string; label: string }>;
+  label?: string;
+  hint?: string;
   onChange: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -230,7 +234,7 @@ export function ThinkingEffortDropdown({
   const selected = options.find((option) => option.id === value) ?? options[0];
 
   return (
-    <Field label="Thinking effort" hint={help.thinkingEffort}>
+    <Field label={label} hint={hint}>
       <Popover open={disabled ? false : open} onOpenChange={(nextOpen) => {
         if (!disabled) onOpenChange(nextOpen);
       }}>

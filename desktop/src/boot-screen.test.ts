@@ -35,7 +35,8 @@ describe("desktop boot screen", () => {
     expect(html).toContain("emailCodeEmail = email");
     expect(html).toContain("verifyEmailOtp(emailCodeEmail");
     expect(html).toContain("forgot password");
-    expect(html).toContain("换一个登录方式");
+    expect(html).toContain("Use another sign-in method");
+    expect(html).not.toMatch(/[\u4e00-\u9fff]/);
     expect(html).toContain('accountEmail.value = ""');
     expect(html).not.toContain("Enter the code sent to");
     expect(html).toContain("Back to password sign in");

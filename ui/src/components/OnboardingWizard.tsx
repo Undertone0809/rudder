@@ -62,6 +62,7 @@ import { defaultCreateValues } from "./agent-config-defaults";
 import {
   defaultModelForRuntime,
   shouldShowThinkingEffort,
+  thinkingEffortLabelForRuntime,
   thinkingEffortOptionsForRuntime,
 } from "./AgentConfigForm.helpers";
 import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
@@ -1038,6 +1039,7 @@ export function OnboardingWizard() {
                           <ThinkingEffortDropdown
                             value={thinkingEffort}
                             options={availableThinkingEffortOptions}
+                            label={thinkingEffortLabelForRuntime(agentRuntimeType)}
                             onChange={setThinkingEffort}
                             open={thinkingEffortOpen}
                             onOpenChange={setThinkingEffortOpen}

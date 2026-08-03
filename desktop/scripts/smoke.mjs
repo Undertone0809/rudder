@@ -2112,7 +2112,7 @@ async function runAccountGateScenario(mode) {
       "verification-code mode must not show the password page",
     );
     await interactionPage.screenshot({ path: emailCodeScreenshotPath, fullPage: true });
-    await interactionPage.getByRole("button", { name: "换一个登录方式" }).click();
+    await interactionPage.getByRole("button", { name: "Use another sign-in method" }).click();
     await interactionPage.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     assert.equal(
       await interactionPage.getByRole("button", { name: "Continue with Google" }).isVisible(),
@@ -2152,6 +2152,11 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.getByRole("button", { name: "Continue with email" }).waitFor();
+    assert.equal(
+      await page.getByText("Secure credential storage is unavailable on this device.", { exact: true }).count(),
+      0,
+      "unsigned macOS packaged Desktop must keep online sign-in available through process-only storage",
+    );
     assert.equal(
       await page.getByText(/Sign in or create an account/i).count(),
       0,

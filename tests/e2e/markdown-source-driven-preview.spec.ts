@@ -150,6 +150,130 @@ test("Library preview reveals exact Markdown without moving surrounding source l
   expect((await saved.json() as { content: string }).content).toBe(markdown);
 });
 
+test("Library Markdown restores the line hover block menu and formats its source block", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(90_000);
+  const organization = await createOrganization(request);
+  const filePath = "docs/hover-block-menu.md";
+  const markdown = [
+    "# Stable heading",
+    "",
+    "Paragraph to format.",
+    "",
+    "- first item",
+    "",
+    "```ts",
+    "const answer = 42;",
+    "```",
+  ].join("\n");
+  const createFile = await request.post(
+    `${E2E_BASE_URL}/api/orgs/${organization.id}/workspace/file`,
+    { data: { filePath, content: markdown } },
+  );
+  expect(createFile.ok(), await createFile.text()).toBe(true);
+  await selectOrganization(page, organization.id);
+  await page.goto(
+    `${E2E_BASE_URL}/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`,
+  );
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const paragraph = editor.locator('[data-source-line-start="3"]');
+  await expect(paragraph).toContainText("Paragraph to format.");
+  await paragraph.hover();
+
+  const trigger = page.getByTestId("markdown-block-menu-trigger");
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-label", "Open block actions for line 3");
+  await trigger.click();
+
+  const menu = page.getByTestId("markdown-block-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Display");
+  await expect(menu).toContainText("Number list");
+  await menu.hover();
+  await expect(menu).toBeVisible();
+
+  await menu.getByRole("menuitem", { name: /Headline/iu }).click();
+  const sourceParagraph = editor.locator(
+    '[data-source-line-start="3"][data-markdown-preview-state="source"]',
+  );
+  await expect(sourceParagraph).toContainText("## Paragraph to format.");
+  await expect(page.getByTestId("markdown-block-menu")).toHaveCount(0);
+
+  await expect.poll(async () => {
+    const saved = await request.get(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`,
+    );
+    expect(saved.ok(), await saved.text()).toBe(true);
+    return (await saved.json() as { content: string }).content;
+  }).toContain(markdown.replace("Paragraph to format.", "## Paragraph to format."));
+});
+
+test("Library preview keeps hidden heading syntax out of pointer selections", async ({
+  page,
+  request,
+}) => {
+  const organization = await createOrganization(request);
+  const filePath = "docs/heading-selection.md";
+  const markdown = "# Visible heading\n\nA paragraph.";
+  const createFile = await request.post(
+    `${E2E_BASE_URL}/api/orgs/${organization.id}/workspace/file`,
+    { data: { filePath, content: markdown } },
+  );
+  expect(createFile.ok(), await createFile.text()).toBe(true);
+  await selectOrganization(page, organization.id);
+  await page.goto(
+    `${E2E_BASE_URL}/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`,
+  );
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const heading = editor.locator(
+    '[data-source-line-start="1"][data-markdown-preview-state="preview"]',
+  );
+  await expect(heading).toContainText("Visible heading");
+
+  const visibleTextStart = await heading.evaluate((element) => {
+    const findText = (node: Node): Text | null => {
+      for (const child of Array.from(node.childNodes)) {
+        if (child.nodeType === Node.TEXT_NODE && child.textContent) return child as Text;
+        const descendant = findText(child);
+        if (descendant) return descendant;
+      }
+      return null;
+    };
+    const textNode = findText(element);
+    if (!textNode) throw new Error("Expected visible heading text");
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, 1);
+    return range.getBoundingClientRect().left;
+  });
+  const headingBox = await heading.boundingBox();
+  expect(headingBox).not.toBeNull();
+
+  await page.mouse.move(visibleTextStart + 1, headingBox!.y + headingBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(visibleTextStart + 90, headingBox!.y + headingBox!.height / 2, { steps: 4 });
+  const selectionRects = await editor.evaluate((element) => Array.from(
+    element.querySelectorAll<HTMLElement>(".cm-selectionBackground"),
+  ).map((selection) => {
+    const rect = selection.getBoundingClientRect();
+    return { left: rect.left, width: rect.width };
+  }));
+  await page.mouse.up();
+
+  expect(selectionRects.length).toBeGreaterThan(0);
+  expect(Math.min(...selectionRects.map((rect) => rect.left))).toBeGreaterThanOrEqual(
+    visibleTextStart - 1,
+  );
+});
+
 test("Library vertical cursor movement visits every adjacent Markdown source line", async ({
   page,
   request,

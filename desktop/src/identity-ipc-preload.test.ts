@@ -27,6 +27,8 @@ type ExposedDesktopIdentity = {
   signOut(): Promise<unknown>;
   listDeviceSessions(): Promise<unknown[]>;
   revokeDeviceSession(deviceId: string): Promise<void>;
+  getProfile(): Promise<unknown>;
+  updateProfile(input: { image: string | null }): Promise<unknown>;
   onStateChanged(listener: (state: unknown) => void): () => void;
 };
 
@@ -51,6 +53,8 @@ describe("Desktop Rudder Account preload bridge", () => {
     await identity.signOut();
     await identity.listDeviceSessions();
     await identity.revokeDeviceSession("device-1");
+    await identity.getProfile();
+    await identity.updateProfile({ image: null });
 
     expect(electronMocks.invoke.mock.calls).toEqual([
       [DESKTOP_IDENTITY_IPC_CHANNELS.getState],
@@ -58,6 +62,8 @@ describe("Desktop Rudder Account preload bridge", () => {
       [DESKTOP_IDENTITY_IPC_CHANNELS.signOut],
       [DESKTOP_IDENTITY_IPC_CHANNELS.listDeviceSessions],
       [DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession, { deviceId: "device-1" }],
+      [DESKTOP_IDENTITY_IPC_CHANNELS.getProfile],
+      [DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile, { image: null }],
     ]);
   });
 
@@ -70,7 +76,7 @@ describe("Desktop Rudder Account preload bridge", () => {
 
     registration?.[1]({}, {
       status: "signed-in",
-      account: { id: "account-1", email: null },
+      account: { id: "account-1", email: null, name: "Rudder User", image: null },
       deviceId: "device-1",
       refreshToken: "must-not-cross-bridge",
     });
@@ -80,7 +86,7 @@ describe("Desktop Rudder Account preload bridge", () => {
     expect(listener).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledWith({
       status: "signed-in",
-      account: { id: "account-1", email: null },
+      account: { id: "account-1", email: null, name: "Rudder User", image: null },
       deviceId: "device-1",
     });
 

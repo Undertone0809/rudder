@@ -20,8 +20,11 @@ export type DesktopIdentitySessionStore = {
 export function desktopIdentityMemoryFallbackAllowed(options: {
   isPackaged: boolean;
   platform: NodeJS.Platform;
+  storageBackend: string;
 }): boolean {
-  return !options.isPackaged || options.platform === "linux";
+  return !options.isPackaged
+    || options.platform === "linux"
+    || (options.platform === "darwin" && options.storageBackend === "mac_memory_only");
 }
 
 /**

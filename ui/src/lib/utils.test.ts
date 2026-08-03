@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { timeAgo } from "./timeAgo";
 import { agentIssuesUrl, formatDateTime, formatDateTimeSeconds, formatTime, formatTokens, relativeTime } from "./utils";
 
 afterEach(() => {
@@ -61,5 +62,23 @@ describe("relativeTime", () => {
     vi.setSystemTime(new Date(2026, 5, 9, 12, 0, 0));
 
     expect(relativeTime(new Date(2026, 4, 9, 12, 0, 0), { compactDate: true })).toBe("2026.5.9");
+  });
+});
+
+describe("timeAgo absolute cutoff", () => {
+  it("keeps recent timestamps relative", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 9, 12, 0, 0));
+
+    expect(timeAgo(new Date(2026, 5, 8, 12, 0, 0), { absoluteAfterDays: 2 })).toBe("1d ago");
+  });
+
+  it("uses the full local date and time once the cutoff is reached", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 9, 12, 0, 0));
+
+    const timestamp = new Date(2026, 5, 7, 12, 0, 0);
+    expect(timeAgo(timestamp, { absoluteAfterDays: 2 })).toBe(formatDateTime(timestamp));
+    expect(timeAgo(timestamp, { absoluteAfterDays: 2 })).not.toContain("ago");
   });
 });

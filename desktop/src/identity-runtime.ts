@@ -111,10 +111,12 @@ export function createDesktopIdentityRuntime(options: {
     credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-session-store");
+  const credentialVaultStatus = credentialVault.status();
   const vault = createDesktopIdentitySessionStore(credentialVault, {
     allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
       isPackaged: app.isPackaged,
       platform: process.platform,
+      storageBackend: credentialVaultStatus.backend,
     }),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");

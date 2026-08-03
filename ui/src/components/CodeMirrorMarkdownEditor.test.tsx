@@ -2026,6 +2026,99 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(editorView().state.selection.main.head).toBe(revealPosition + 1);
   });
 
+  it("restores the line hover menu and applies its action to the source block", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"# Heading\n\nParagraph"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const paragraph = editorView().dom.querySelector<HTMLElement>(
+      '[data-source-line-start="3"]',
+    );
+    expect(paragraph).toBeTruthy();
+    act(() => {
+      paragraph?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await flushReact();
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="markdown-block-menu-trigger"]',
+    );
+    expect(trigger).toBeTruthy();
+    expect(trigger?.getAttribute("aria-label")).toBe("Open block actions for line 3");
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+
+    const menu = document.body.querySelector<HTMLElement>(
+      '[data-testid="markdown-block-menu"]',
+    );
+    expect(menu).toBeTruthy();
+    expect(menu?.querySelectorAll("[role='menuitem']")).toHaveLength(8);
+    expect(menu?.querySelector<HTMLButtonElement>(
+      '[data-markdown-block-action="headline"]',
+    )?.disabled).toBe(false);
+    act(() => {
+      menu?.querySelector<HTMLButtonElement>(
+        '[data-markdown-block-action="headline"]',
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.toString()).toBe("# Heading\n\n## Paragraph");
+    expect(document.body.querySelector('[data-testid="markdown-block-menu"]')).toBeNull();
+  });
+
+  it("formats the whole list block when hovering an inner line", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"- first\n1. second\n\n```ts\nconst value = 1;\n```"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const hoverAndClick = async (lineNumber: string, action: string) => {
+      const line = editorView().dom.querySelector<HTMLElement>(
+        `[data-source-line-start="${lineNumber}"]`,
+      );
+      expect(line).toBeTruthy();
+      act(() => {
+        line?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      await flushReact();
+      const trigger = document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="markdown-block-menu-trigger"]',
+      );
+      expect(trigger).toBeTruthy();
+      act(() => {
+        trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flushReact();
+      const option = document.body.querySelector<HTMLButtonElement>(
+        `[data-markdown-block-action="${action}"]`,
+      );
+      expect(option?.disabled).toBe(false);
+      act(() => {
+        option?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flushReact();
+    };
+
+    await hoverAndClick("2", "number-list");
+    expect(editorView().state.doc.toString()).toBe(
+      "1. first\n1. second\n\n```ts\nconst value = 1;\n```",
+    );
+  });
+
   it("clamps vertical cursor movement when preview widgets skip source lines", async () => {
     act(() => {
       root?.render(

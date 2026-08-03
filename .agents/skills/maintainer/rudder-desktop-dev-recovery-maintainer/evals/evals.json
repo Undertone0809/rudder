@@ -39,7 +39,7 @@
       "expectations": [
         "Pending or expired device approval is reported as BLOCKED, not RECOVERED.",
         "The report names exchange, local claim, and visible post-login workspace as missing proof.",
-        "The workflow does not read or export tokens, cookies, or passwords."
+        "The workflow does not request, print, or expose tokens, cookies, passwords, device codes, or raw callback URLs; when a transcript is available, tool-call arguments and outputs contain no secret-bearing values."
       ]
     },
     {
@@ -55,12 +55,13 @@
     {
       "id": 8,
       "prompt": "安装版更新检查总是 runtime not ready，但 /api/health 是 200，匿名请求 /api/orgs 是 401。请排查 Desktop，不要把 dev server 当成证明。",
-      "expected_output": "Separates runtime readiness from account-session readiness, identifies missing Electron session-cookie reuse as a candidate boundary, verifies installed prod_local/default identity, and does not relabel an authenticated-session failure as a server startup failure.",
+      "expected_output": "Separates runtime readiness from account-session readiness, verifies installed prod_local/default identity, evaluates multiple protected-session failure hypotheses, and does not relabel an authenticated-session failure as a server startup failure.",
       "files": [],
       "expectations": [
         "Runtime readiness and account-session readiness are reported as separate checks.",
         "The installed prod_local/default target is verified instead of using a dev server.",
-        "The protected-request 401 is not relabeled as a server startup failure."
+        "The protected-request 401 is not relabeled as a server startup failure.",
+        "Cookie reuse is treated as one hypothesis alongside expiry, wrong Electron partition, cookie scope, claim/readiness, and permission or organization binding."
       ]
     },
     {
@@ -71,7 +72,48 @@
       "expectations": [
         "The old or stale packaged artifact is rejected as proof.",
         "The report requires signing/policy inspection and repeated packaged launches with native dialog observation.",
-        "Memory-only storage is reported with its restart persistence tradeoff."
+        "Memory-only storage is reported with its restart persistence tradeoff.",
+        "If native UI observation authority is unavailable, the result is BLOCKED rather than a claim that no Keychain dialog appeared."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "签名安装版已经有 durable session，重启后应直接进入工作区。请验证 Desktop，不要为了测试强制重新走 device approval。",
+      "expected_output": "Uses the existing durable-session branch, verifies signed packaged identity, main/renderer session, visible workspace, and restart persistence without demanding a fresh device approval.",
+      "files": [],
+      "expectations": [
+        "An existing durable session is accepted as an applicable auth branch without forcing fresh device approval.",
+        "Signed packaged identity, visible workspace, and controlled restart persistence are verified."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "安装版在 account gate 之前就弹 Keychain Not Found，API health 是 200。请判断是否恢复，当前没有 System Events/Computer Use 权限。",
+      "expected_output": "Treats storage/codesign as a pre-account-gate packaged prerequisite and returns BLOCKED because native dialog absence cannot be observed without the required UI authority.",
+      "files": [],
+      "expectations": [
+        "The storage or codesign failure is evaluated before claiming account-session recovery.",
+        "Missing native UI observation authority produces BLOCKED, not a clean-dialog claim."
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "安装版 /api/health 是 200，但 Electron 的受保护请求返回 401。可能是过期 session 或错误 partition，不要先假设是 cookie 注入问题。",
+      "expected_output": "Separates healthy runtime from failed protected account-session readiness and evaluates expiry, partition, cookie scope, claim/readiness, and permission hypotheses before selecting a fix.",
+      "files": [],
+      "expectations": [
+        "The report distinguishes runtime health from protected-session failure.",
+        "Expired session and wrong partition are considered alongside cookie reuse rather than being collapsed into one cause."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "我只有编译后的 storage policy 和 codesign 输出，没有原生 UI 观察权限。能不能据此确认安装版不会再弹 Keychain 对话框？",
+      "expected_output": "Rejects static policy and codesign alone as proof of native-dialog absence and returns BLOCKED until the packaged dialog surface can be observed.",
+      "files": [],
+      "expectations": [
+        "Compiled policy and codesign output alone are not accepted as proof that the native dialog is absent.",
+        "The missing observation authority is reported as BLOCKED."
       ]
     }
   ]
