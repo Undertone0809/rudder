@@ -1,0 +1,11 @@
+import { RUDDER_MCP_MANAGED_ENV_KEYS } from "@rudderhq/agent-runtime-utils";
+
+export const PI_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
+  "RUDDER_DESKTOP_CLI_ENTRY",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);

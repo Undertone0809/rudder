@@ -10,9 +10,11 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   parseObject,
+  resolveLocalOperatorHome,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
+import { PI_PROTECTED_ENV_KEYS } from "./config.js";
 import { discoverPiModelsCached } from "./models.js";
 import {
   ensurePiOpenCodeAnonymousModelsConfig,
@@ -20,7 +22,7 @@ import {
   parsePiModelProvider,
 } from "./opencode-anonymous-config.js";
 import { parsePiJsonl } from "./parse.js";
-import { resolveManagedPiHomeDir } from "./skills.js";
+import { prepareManagedPiHome } from "./skills.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -66,6 +68,7 @@ const PROVIDER_API_KEY_HINTS: Record<string, string[]> = {
   kimi: ["KIMI_API_KEY"],
   "kimi-coding": ["KIMI_API_KEY"],
   openai: ["OPENAI_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
   xai: ["XAI_API_KEY"],
 };
 
@@ -129,17 +132,31 @@ export async function testEnvironment(
   const envConfig = parseObject(config.env);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
+    if (typeof value === "string" && !PI_PROTECTED_ENV_KEYS.has(key)) env[key] = value;
   }
   const configuredModel = asString(config.model, "").trim();
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
-  const managedPiAgentDir = path.join(resolveManagedPiHomeDir({ env: runtimeEnv }, ctx.orgId), ".pi", "agent");
+  const sourceEnv = { ...process.env };
+  const operatorHome = resolveLocalOperatorHome(sourceEnv);
+  const runtimeEnv = normalizeEnv(ensurePathInEnv({
+    ...sourceEnv,
+    ...env,
+    HOME: operatorHome,
+    USERPROFILE: operatorHome,
+    RUDDER_OPERATOR_HOME: operatorHome,
+  }));
+  const managedHome = await prepareManagedPiHome(
+    runtimeEnv,
+    operatorHome,
+    async () => {},
+    ctx.orgId,
+  );
+  const managedPiAgentDir = path.join(managedHome, ".pi", "agent");
   if (configuredModel) {
     await ensurePiOpenCodeAnonymousModelsConfig({
       modelProvider: parsePiModelProvider(configuredModel),
       modelId: parsePiModelId(configuredModel),
       piAgentDir: managedPiAgentDir,
-      sourceEnv: process.env,
+      sourceEnv,
       runtimeEnv,
     });
     runtimeEnv.PI_CODING_AGENT_DIR = managedPiAgentDir;
