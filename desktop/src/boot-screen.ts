@@ -631,8 +631,10 @@ export function createBootScreenHtml(
       const copyIssueButton = document.getElementById("copy-issue-button");
       let latestState = ${initialStateJson};
       let failureWasVisible = false;
+      let accountGateWasShown = false;
       let viewGeneration = 0;
       let latestDeviceApproval = null;
+      let authBusy = false;
       let emailCodeEmail = "";
 
       function showAuthPage(page) {
@@ -711,12 +713,21 @@ export function createBootScreenHtml(
         failureSheet.hidden = !failed;
         accountSheet.hidden = !accountRequired;
         if (accountRequired) {
-          if (stateIdentityChanged) showAuthPage("options");
-          for (const button of authControlButtons) button.disabled = false;
-          accountStatus.textContent = "";
-          requestAnimationFrame(() => accountTitle.focus({ preventScroll: true }));
+          const shouldFocusAccountTitle = stateIdentityChanged || !accountGateWasShown;
+          accountGateWasShown = true;
+          if (stateIdentityChanged) {
+            showAuthPage("options");
+            accountStatus.textContent = "";
+            setAuthBusy(false);
+          } else {
+            setAuthBusy(authBusy);
+          }
+          if (shouldFocusAccountTitle) {
+            requestAnimationFrame(() => accountTitle.focus({ preventScroll: true }));
+          }
           return;
         }
+        accountGateWasShown = false;
         if (!failed) {
           failureWasVisible = false;
           inlineStatus.textContent = "";
@@ -748,7 +759,7 @@ export function createBootScreenHtml(
 
       async function startSignIn(method, pendingMessage, email) {
         if (authControlButtons.some((button) => button.disabled)) return;
-        for (const button of authControlButtons) button.disabled = true;
+        setAuthBusy(true);
         latestDeviceApproval = null;
         deviceApproval.hidden = true;
         accountStatus.textContent = pendingMessage;
@@ -759,17 +770,18 @@ export function createBootScreenHtml(
           });
           if (state?.status === "error") {
             accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-            for (const button of authControlButtons) button.disabled = false;
+            setAuthBusy(false);
           } else {
             accountStatus.textContent = "Signed in. Opening your Local Workspace…";
           }
         } catch {
           accountStatus.textContent = "Rudder Account sign-in could not start.";
-          for (const button of authControlButtons) button.disabled = false;
+          setAuthBusy(false);
         }
       }
 
       function setAuthBusy(busy) {
+        authBusy = busy;
         for (const button of authControlButtons) button.disabled = busy;
         for (const input of authControlInputs) input.disabled = busy;
       }
@@ -1013,7 +1025,7 @@ export function createBootScreenHtml(
         }
         if (state?.status === "error") {
           accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
-          for (const button of authControlButtons) button.disabled = false;
+          setAuthBusy(false);
         }
       });
     </script>

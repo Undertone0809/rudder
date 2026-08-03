@@ -2040,19 +2040,33 @@ async function runAccountGateScenario(mode) {
     const context = await interactionBrowser.newContext({ viewport: { width: 1440, height: 1000 } });
     await context.addInitScript(() => {
       let resolveEmailOtp;
+      let emitState;
       window.rudderBoot = {
         sendEmailOtp: () => new Promise((resolve) => {
           resolveEmailOtp = resolve;
         }),
-        onState: () => undefined,
+        onState: (listener) => {
+          emitState = listener;
+        },
         onIdentityState: () => undefined,
       };
       window.resolveEmailOtp = () => resolveEmailOtp?.();
+      window.emitAccountRequiredState = () => emitState?.({
+        view: "account_required",
+        stage: "account_required",
+        identityProviders: { google: true, github: true },
+      });
     });
     const interactionPage = await context.newPage();
     await interactionPage.goto(pathToFileURL(interactionFixturePath).href);
     await interactionPage.getByRole("button", { name: "Continue with Google" }).waitFor();
     await interactionPage.locator("#account-email").fill("smoke@example.com");
+    await interactionPage.evaluate(() => window.emitAccountRequiredState());
+    assert.equal(
+      await interactionPage.evaluate(() => document.activeElement?.id),
+      "account-email",
+      "a same-view recovery-state refresh must preserve the active auth input",
+    );
     await interactionPage.getByRole("button", { name: "Continue with email" }).click();
     assert.equal(
       await interactionPage.getByRole("button", { name: "Use password instead" }).isDisabled(),
@@ -2063,6 +2077,17 @@ async function runAccountGateScenario(mode) {
       await interactionPage.locator("#account-email").isDisabled(),
       true,
       "the requested email must stay immutable while an email-code request is pending",
+    );
+    await interactionPage.evaluate(() => window.emitAccountRequiredState());
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Use password instead" }).isDisabled(),
+      true,
+      "a recovery-state refresh must not unlock auth navigation while a request is pending",
+    );
+    assert.equal(
+      await interactionPage.locator("#account-email").isDisabled(),
+      true,
+      "a recovery-state refresh must not unlock auth inputs while a request is pending",
     );
     await interactionPage.evaluate(() => window.resolveEmailOtp());
     await interactionPage.getByRole("heading", { name: "Enter verification code" }).waitFor();

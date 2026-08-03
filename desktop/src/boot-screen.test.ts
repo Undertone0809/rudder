@@ -29,6 +29,9 @@ describe("desktop boot screen", () => {
     expect(html).toContain('authOptionsPage.hidden = page !== "options"');
     expect(html).toContain('document.querySelectorAll(".auth-entry, .auth-navigation")');
     expect(html).toContain('accountSheet.querySelectorAll("input")');
+    expect(html).toContain("let authBusy = false");
+    expect(html).toContain("setAuthBusy(authBusy)");
+    expect(html).toContain("stateIdentityChanged || !accountGateWasShown");
     expect(html).toContain("emailCodeEmail = email");
     expect(html).toContain("verifyEmailOtp(emailCodeEmail");
     expect(html).toContain("Forgot or need to set a password?");
