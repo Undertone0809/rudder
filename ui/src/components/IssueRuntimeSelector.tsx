@@ -1,6 +1,7 @@
 import type { AgentRuntimeModel } from "@/api/agents";
 import { agentsApi } from "@/api/agents";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
 import {
@@ -11,8 +12,8 @@ import { cn } from "@/lib/utils";
 import type { Agent, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, SlidersHorizontal } from "lucide-react";
-import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 
 const ISSUE_OVERRIDE_RUNTIME_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
 
@@ -176,6 +177,7 @@ export function IssueRuntimeSelector({
   const [draftInitialized, setDraftInitialized] = useState(false);
   const menuRootRef = useRef<HTMLDivElement | null>(null);
   const submenuRootRef = useRef<HTMLDivElement | null>(null);
+  const submenuScrollRef = useScrollbarActivityRef();
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -219,6 +221,33 @@ export function IssueRuntimeSelector({
     };
   };
 
+  const positionSubmenuFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
+    const viewportPadding = 12;
+    const gap = 8;
+    const right = window.innerWidth - rect.right;
+    const left = right >= width + gap + viewportPadding
+      ? rect.right + gap
+      : Math.max(viewportPadding, rect.left - width - gap);
+    const availableBelow = Math.max(0, window.innerHeight - viewportPadding - rect.top);
+    const availableAbove = Math.max(0, rect.bottom - viewportPadding);
+    const keepTriggerAligned = availableBelow >= 120;
+    const maxHeight = Math.min(
+      height,
+      keepTriggerAligned ? availableBelow : Math.max(availableAbove, availableBelow),
+    );
+    const top = keepTriggerAligned
+      ? Math.max(viewportPadding, rect.top)
+      : Math.max(
+        viewportPadding,
+        Math.min(rect.top, window.innerHeight - viewportPadding - maxHeight),
+      );
+    return {
+      left,
+      top,
+      maxHeight: `${maxHeight}px`,
+    };
+  };
+
   const openMenu = () => {
     if (disabled || !menuTriggerRef.current) return;
     setDraftModel(currentModel);
@@ -231,7 +260,7 @@ export function IssueRuntimeSelector({
 
   const openSubmenu = (kind: "model" | "effort", trigger: HTMLButtonElement | null) => {
     if (!trigger) return;
-    setSubmenuPosition(positionFor(trigger.getBoundingClientRect(), 256, 360));
+    setSubmenuPosition(positionSubmenuFor(trigger.getBoundingClientRect(), 256, 320));
     setActiveSubmenu(kind);
   };
 
@@ -268,7 +297,7 @@ export function IssueRuntimeSelector({
           ? modelTriggerRef.current
           : effortTriggerRef.current;
         if (trigger) {
-          setSubmenuPosition(positionFor(trigger.getBoundingClientRect(), 256, 360));
+          setSubmenuPosition(positionSubmenuFor(trigger.getBoundingClientRect(), 256, 320));
         }
       }
     };
@@ -478,7 +507,10 @@ export function IssueRuntimeSelector({
 
     const submenu = menuOpen && activeSubmenu && submenuPosition && typeof document !== "undefined" ? createPortal(
       <div
-        ref={submenuRootRef}
+        ref={(node) => {
+          submenuRootRef.current = node;
+          submenuScrollRef(node);
+        }}
         data-testid={`issue-runtime-${activeSubmenu}-options`}
         role="listbox"
         aria-label={activeSubmenu === "model" ? "Automation model" : "Automation thinking effort"}
