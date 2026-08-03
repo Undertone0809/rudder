@@ -25,33 +25,6 @@ const SEO_GUARD_RE = /<script\b[^>]*\bdata-rudder-seo-guard[^>]*>[\s\S]*?<\/scri
 const SEARCH_RUNTIME_RE = /<script\b[^>]*\bdata-rudder-search[^>]*><\/script>/gi;
 const SEARCH_RUNTIME_SOURCE = fileURLToPath(new URL("./docs-static-search.js", import.meta.url));
 const SEARCH_RUNTIME_TAG = '<script src="/rudder-search.js" defer data-rudder-search></script>';
-const CHINESE_FOOTER_PATHS = [
-  "/get-started/installation",
-  "/get-started/first-organization",
-  "/how-to/issue-lifecycle",
-  "/how-to/configure-agent-runtime",
-  "/concepts/chat-messenger",
-  "/concepts/built-in-browser",
-  "/concepts/calendar",
-  "/contact",
-  "/releases",
-];
-const CHINESE_FOOTER_LABELS = new Map([
-  ["Quick Start", "快速开始"],
-  ["First organization", "第一个组织"],
-  ["Issue lifecycle guide", "Issue 生命周期指南"],
-  ["Configure an agent runtime", "配置 Agent 运行环境"],
-  ["Chat and Messenger", "Chat 和 Messenger"],
-  ["Built-in Browser", "内置浏览器"],
-  ["Calendar", "日历"],
-  ["Contact", "联系方式"],
-  ["Changelog", "更新日志"],
-]);
-const CHINESE_FOOTER_HEADERS = new Map([
-  ["Docs", "文档"],
-  ["Product", "产品"],
-  ["Project", "项目"],
-]);
 
 function collectPageFiles(exportDir) {
   const files = [];
@@ -181,13 +154,6 @@ function injectSearchRuntime(html) {
   return html.replace("</head>", `${SEARCH_RUNTIME_TAG}</head>`);
 }
 
-function replaceHtmlLang(html, language) {
-  return html.replace(
-    /<html\b([^>]*?)\blang=(["'])[^"']*\2/i,
-    (_match, before) => `<html${before}lang="${language}"`,
-  );
-}
-
 function languageRoutes(route, routes) {
   const isChinese = route === "/zh" || route.startsWith("/zh/");
   const englishRoute = isChinese ? (route === "/zh" ? "/" : route.slice(3)) : route;
@@ -229,79 +195,17 @@ function injectSocialMeta(html) {
   return html.replace("</head>", `${tags}</head>`);
 }
 
-function injectSeoGuard(html, isChinese) {
-  const languageGuard = isChinese
-    ? 'if(document.documentElement.lang!=="zh-CN")document.documentElement.lang="zh-CN";'
-    : "";
+function injectSeoGuard(html) {
   const socialGuard = SOCIAL_META.map(
     ({ attribute, key, content }) =>
       `setMeta(${JSON.stringify(attribute)},${JSON.stringify(key)},${JSON.stringify(content)});`,
   ).join("");
-  const script = `<script data-rudder-seo-guard>(function(){const setMeta=function(a,k,v){const nodes=Array.from(document.querySelectorAll('meta[property="'+k+'"],meta[name="'+k+'"]'));let node=nodes.shift();if(!node){node=document.createElement("meta");document.head.appendChild(node)}if(node.getAttribute(a)!==k)node.setAttribute(a,k);const other=a==="property"?"name":"property";if(node.hasAttribute(other))node.removeAttribute(other);if(node.getAttribute("content")!==v)node.setAttribute("content",v);nodes.forEach(function(extra){extra.remove()})};const fix=function(){${languageGuard}document.querySelectorAll('link[rel="alternate"][type="text/markdown"]').forEach(function(link){link.remove()});${socialGuard}};fix();new MutationObserver(fix).observe(document.documentElement,{attributes:true,attributeFilter:["lang","content","name","property"],childList:true,subtree:true})})()</script>`;
+  const script = `<script data-rudder-seo-guard>(function(){const setMeta=function(a,k,v){const nodes=Array.from(document.querySelectorAll('meta[property="'+k+'"],meta[name="'+k+'"]'));let node=nodes.shift();if(!node){node=document.createElement("meta");document.head.appendChild(node)}if(node.getAttribute(a)!==k)node.setAttribute(a,k);const other=a==="property"?"name":"property";if(node.hasAttribute(other))node.removeAttribute(other);if(node.getAttribute("content")!==v)node.setAttribute("content",v);nodes.forEach(function(extra){extra.remove()})};const fix=function(){document.querySelectorAll('link[rel="alternate"][type="text/markdown"]').forEach(function(link){link.remove()});${socialGuard}};fix();new MutationObserver(fix).observe(document.documentElement,{attributes:true,attributeFilter:["content","name","property"],childList:true,subtree:true})})()</script>`;
 
   if (!html.includes("</head>")) {
     throw new Error("Exported docs page is missing </head>");
   }
   return html.replace("</head>", `${script}</head>`);
-}
-
-function localizeFooterMarkup(html) {
-  const footerStart = html.indexOf('<footer id="footer"');
-  if (footerStart === -1) return html;
-  const footerEnd = html.indexOf("</footer>", footerStart);
-  if (footerEnd === -1) throw new Error("Exported docs page has an unclosed footer");
-
-  const before = html.slice(0, footerStart);
-  let footer = html.slice(footerStart, footerEnd + "</footer>".length);
-  const after = html.slice(footerEnd + "</footer>".length);
-
-  for (const englishPath of CHINESE_FOOTER_PATHS) {
-    footer = footer.replaceAll(`href="${englishPath}"`, `href="/zh${englishPath}"`);
-  }
-  for (const [englishLabel, chineseLabel] of CHINESE_FOOTER_LABELS) {
-    footer = footer.replaceAll(`>${englishLabel}<`, `>${chineseLabel}<`);
-  }
-  for (const [englishHeader, chineseHeader] of CHINESE_FOOTER_HEADERS) {
-    footer = footer.replaceAll(`>${englishHeader}<`, `>${chineseHeader}<`);
-  }
-  return before + footer + after;
-}
-
-function localizeSerializedFooter(html) {
-  const startMarker = '\\"footer\\":';
-  const endMarker = ',\\"seo\\":';
-  let searchFrom = 0;
-
-  while (true) {
-    const start = html.indexOf(startMarker, searchFrom);
-    if (start === -1) return html;
-    const configuredEnd = html.indexOf(endMarker, start);
-    const scriptEnd = html.indexOf("</script>", start);
-    const end = configuredEnd === -1 ? scriptEnd : configuredEnd;
-    if (end === -1) throw new Error("Could not isolate serialized docs footer config");
-
-    let footer = html.slice(start, end);
-    for (const englishPath of CHINESE_FOOTER_PATHS) {
-      footer = footer.replaceAll(
-        `\\"href\\":\\"${englishPath}\\"`,
-        `\\"href\\":\\"/zh${englishPath}\\"`,
-      );
-    }
-    for (const [englishLabel, chineseLabel] of CHINESE_FOOTER_LABELS) {
-      footer = footer.replaceAll(
-        `\\"label\\":\\"${englishLabel}\\"`,
-        `\\"label\\":\\"${chineseLabel}\\"`,
-      );
-    }
-    for (const [englishHeader, chineseHeader] of CHINESE_FOOTER_HEADERS) {
-      footer = footer.replaceAll(
-        `\\"header\\":\\"${englishHeader}\\"`,
-        `\\"header\\":\\"${chineseHeader}\\"`,
-      );
-    }
-    html = html.slice(0, start) + footer + html.slice(end);
-    searchFrom = start + footer.length;
-  }
 }
 
 function postprocessExport(exportDir) {
@@ -322,8 +226,6 @@ function postprocessExport(exportDir) {
       .replace(MARKDOWN_ALTERNATE_RE, "")
       .replace(HREFLANG_ALTERNATE_RE, "")
       .replace(SEO_GUARD_RE, "");
-    html = replaceHtmlLang(html, isChinese ? "zh-CN" : "en");
-
     const pair = languageRoutes(route, routes);
     if (pair) {
       html = injectLanguageAlternates(html, pair);
@@ -331,13 +233,10 @@ function postprocessExport(exportDir) {
     }
 
     html = injectSocialMeta(html);
-    html = injectSeoGuard(html, isChinese);
+    html = injectSeoGuard(html);
     html = injectSearchRuntime(html);
 
-    if (isChinese) {
-      html = localizeSerializedFooter(localizeFooterMarkup(html));
-      chinesePages += 1;
-    }
+    if (isChinese) chinesePages += 1;
 
     fs.writeFileSync(filePath, html);
   }

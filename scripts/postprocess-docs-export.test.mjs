@@ -23,9 +23,9 @@ function writePage(exportDir, route, body) {
   return filePath;
 }
 
-function fixturePage(markdownHref, footer = "") {
+function fixturePage(markdownHref, footer = "", language = "en") {
   return [
-    '<!doctype html><html lang="en"><head>',
+    `<!doctype html><html lang="${language}"><head>`,
     '<link rel="alternate" type="application/xml" href="/sitemap.xml"/>',
     `<link rel="alternate" type="text/markdown" href="${markdownHref}"/>`,
     '<meta property="og:image" content="https://mintlify.example/generated-card.png"/>',
@@ -44,7 +44,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     runtimeChunkPath,
     'const runtime={ENV:"cli"};let o=false;o||(console.warn("Connected to Socket.io"),connect());let i=false;i||(console.warn("Connected to Socket.io"),connect());',
   );
-  const footer = [
+  const englishFooter = [
     "<h3>Docs</h3>",
     '<a href="/get-started/installation">Quick Start</a>',
     "<h3>Product</h3>",
@@ -55,9 +55,20 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     '<a href="/releases">Changelog</a>',
     '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"header\\\":\\\"Docs\\\",\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"}]},{\\\"header\\\":\\\"Product\\\",\\\"items\\\":[{\\\"label\\\":\\\"Built-in Browser\\\",\\\"href\\\":\\\"/concepts/built-in-browser\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"}]},{\\\"header\\\":\\\"Project\\\",\\\"items\\\":[{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
   ].join("");
+  const chineseFooter = [
+    "<h3>文档</h3>",
+    '<a href="/zh/get-started/installation">快速开始</a>',
+    "<h3>产品</h3>",
+    '<a href="/zh/concepts/built-in-browser">内置浏览器</a>',
+    '<a href="/zh/concepts/calendar">日历</a>',
+    "<h3>项目</h3>",
+    '<a href="/zh/contact">联系方式</a>',
+    '<a href="/zh/releases">更新日志</a>',
+    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"header\\\":\\\"文档\\\",\\\"items\\\":[{\\\"label\\\":\\\"快速开始\\\",\\\"href\\\":\\\"/zh/get-started/installation\\\"}]},{\\\"header\\\":\\\"产品\\\",\\\"items\\\":[{\\\"label\\\":\\\"内置浏览器\\\",\\\"href\\\":\\\"/zh/concepts/built-in-browser\\\"},{\\\"label\\\":\\\"日历\\\",\\\"href\\\":\\\"/zh/concepts/calendar\\\"}]},{\\\"header\\\":\\\"项目\\\",\\\"items\\\":[{\\\"label\\\":\\\"联系方式\\\",\\\"href\\\":\\\"/zh/contact\\\"},{\\\"label\\\":\\\"更新日志\\\",\\\"href\\\":\\\"/zh/releases\\\"}]}]}"])</script>',
+  ].join("");
 
-  const englishPath = writePage(exportDir, "/", fixturePage("/index.md", footer));
-  const chinesePath = writePage(exportDir, "/zh", fixturePage("/zh.md", footer));
+  const englishPath = writePage(exportDir, "/", fixturePage("/index.md", englishFooter));
+  const chinesePath = writePage(exportDir, "/zh", fixturePage("/zh.md", chineseFooter, "cn"));
   const englishGuidePath = writePage(
     exportDir,
     "/get-started/installation",
@@ -66,7 +77,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   const chineseGuidePath = writePage(
     exportDir,
     "/zh/get-started/installation",
-    fixturePage("/zh/get-started/installation.md", footer),
+    fixturePage("/zh/get-started/installation.md", chineseFooter, "cn"),
   );
   const unpairedPath = writePage(
     exportDir,
@@ -109,16 +120,15 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     );
     assert.match(html, /setMeta\("property","og:image"/);
     assert.match(html, /setMeta\("name","twitter:image"/);
-    assert.match(html, /attributeFilter:\["lang","content","name","property"\]/);
+    assert.match(html, /attributeFilter:\["content","name","property"\]/);
     assert.doesNotMatch(html, /mintlify\.example\/generated-card\.png/);
     assert.equal((html.match(/<meta property="og:image"/g) ?? []).length, 1);
     assert.equal((html.match(/<meta name="twitter:image"/g) ?? []).length, 1);
   }
 
   assert.match(english, /<html lang="en">/);
-  assert.match(chinese, /<html lang="zh-CN">/);
-  assert.match(chinese, /document\.documentElement\.lang!=="zh-CN"/);
-  assert.match(chinese, /document\.documentElement\.lang="zh-CN"/);
+  assert.match(chinese, /<html lang="cn">/);
+  assert.doesNotMatch(chinese, /document\.documentElement\.lang/);
   assert.match(englishGuide, /hreflang="zh-CN" href="https:\/\/docs\.rudderhq\.dev\/zh\/get-started\/installation"/);
   assert.match(chineseGuide, /hreflang="en" href="https:\/\/docs\.rudderhq\.dev\/get-started\/installation"/);
   assert.match(chineseGuide, /hreflang="x-default" href="https:\/\/docs\.rudderhq\.dev\/get-started\/installation"/);
@@ -230,6 +240,10 @@ test("docs config declares the shared social preview image", () => {
   assert.equal(config.seo.metatags["og:image:height"], "630");
   assert.equal(config.seo.metatags["twitter:card"], "summary_large_image");
   assert.equal(config.seo.metatags["twitter:image"], "https://docs.rudderhq.dev/images/rudder-social-card.png");
+  assert.deepEqual(
+    config.navigation.languages.map(({ language }) => language),
+    ["en", "cn"],
+  );
 });
 
 test("staging and production workflows postprocess exported docs", () => {
