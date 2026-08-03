@@ -153,10 +153,6 @@ describe("automation service live-execution coalescing", () => {
   });
 
   async function seedFixture(opts?: {
-    runtimeOverrides?: {
-      agentRuntimeConfig?: Record<string, unknown>;
-      useProjectWorkspace?: boolean;
-    } | null;
     wakeup?: (
       agentId: string,
       wakeupOpts: {
@@ -264,7 +260,6 @@ describe("automation service live-execution coalescing", () => {
         title: "ascii frog",
         description: "Run the frog automation",
         assigneeAgentId: agentId,
-        assigneeAgentRuntimeOverrides: opts?.runtimeOverrides ?? null,
         outputMode: "track_issue",
         chatConversationId: null,
         notifyOnIssueCreated: false,
@@ -474,25 +469,6 @@ describe("automation service live-execution coalescing", () => {
       .from(issueFollows)
       .where(eq(issueFollows.issueId, run.linkedIssueId!));
     expect(follows).toHaveLength(0);
-  });
-
-  it("copies the automation runtime override to a newly created execution issue", async () => {
-    const runtimeOverrides = {
-      agentRuntimeConfig: {
-        model: "gpt-5.6-sol",
-        modelReasoningEffort: "high",
-      },
-    };
-    const { automation, svc } = await seedFixture({ runtimeOverrides });
-
-    const run = await svc.runAutomation(automation.id, { source: "manual" });
-
-    const createdIssue = await db
-      .select({ assigneeAgentRuntimeOverrides: issues.assigneeAgentRuntimeOverrides })
-      .from(issues)
-      .where(eq(issues.id, run.linkedIssueId!))
-      .then((rows) => rows[0] ?? null);
-    expect(createdIssue?.assigneeAgentRuntimeOverrides).toEqual(runtimeOverrides);
   });
 
   it("surfaces a fresh execution issue as unread in Messenger without pinning it when issue-created notifications are enabled", async () => {
@@ -788,28 +764,6 @@ describe("automation service live-execution coalescing", () => {
         source: "manual",
       }),
     }));
-  });
-
-  it("snapshots the automation runtime override on a new chat output conversation", async () => {
-    const { automation, svc } = await seedFixture({
-      runtimeOverrides: {
-        agentRuntimeConfig: {
-          model: "gpt-5.6-sol",
-          modelReasoningEffort: "high",
-        },
-      },
-      chatAssistant: createChatAssistantStub(),
-    });
-    await svc.update(automation.id, { outputMode: "chat_output" }, { userId: "board-user" });
-
-    const run = await svc.runAutomation(automation.id, { source: "manual" });
-    const conversation = await db
-      .select({ modelOverride: chatConversations.modelOverride, effortOverride: chatConversations.effortOverride })
-      .from(chatConversations)
-      .where(eq(chatConversations.id, run.linkedChatConversationId!))
-      .then((rows) => rows[0] ?? null);
-
-    expect(conversation).toEqual({ modelOverride: "gpt-5.6-sol", effortOverride: "high" });
   });
 
   it("keeps process transcript text out of failed chat output bodies", async () => {

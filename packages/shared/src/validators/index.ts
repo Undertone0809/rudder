@@ -28,6 +28,7 @@ export {
 } from "./adapter-skills.js";
 export {
   aiSearchRequestSchema,
+  aiSearchScopeSchema,
   type AiSearchRequest
 } from "./ai-search.js";
 export {

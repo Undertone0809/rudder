@@ -1,3 +1,11 @@
+export type AiSearchScope =
+  | "issue"
+  | "chat"
+  | "project"
+  | "agent"
+  | "skill"
+  | "library";
+
 export type AiSearchResultKind =
   | "issue"
   | "chat"

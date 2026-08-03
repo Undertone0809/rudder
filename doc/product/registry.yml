@@ -2205,6 +2205,27 @@ contracts:
       - tests/e2e/messenger-contract.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  SEARCH.AI.001:
+    owner: product
+    domain: governance-and-visibility
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/governance-and-visibility/command-palette-search.md
+    related_code:
+      - packages/shared/src/types/ai-search.ts
+      - packages/shared/src/validators/ai-search.ts
+      - server/src/routes/ai-search.ts
+      - server/src/services/ai-search.ts
+      - ui/src/api/orgs.ts
+      - ui/src/components/CommandPalette.tsx
+      - ui/src/lib/global-search-scope.ts
+    related_tests:
+      - server/src/__tests__/ai-search-routes.test.ts
+      - server/src/services/ai-search.test.ts
+      - ui/src/components/CommandPalette.test.tsx
+      - tests/e2e/global-search-chat.spec.ts
+    related_plans: []
   ORG.SETTINGS.001:
     owner: product
     domain: organizations-and-goals

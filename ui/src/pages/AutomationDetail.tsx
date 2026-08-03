@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/select";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Link, useNavigate, useParams } from "@/lib/router";
-import type { ActivityEvent, AutomationRunSummary, AutomationTrigger, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
+import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity as ActivityIcon,
@@ -46,7 +46,6 @@ import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { EmptyState } from "../components/EmptyState";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
-import { IssueRuntimeSelector } from "../components/IssueRuntimeSelector";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -154,24 +153,11 @@ export function AutomationDetail({
     signingMode: "bearer",
     replayWindowSec: "300",
   });
-  const [editDraft, setEditDraft] = useState<{
-    title: string;
-    description: string;
-    projectId: string;
-    assigneeAgentId: string;
-    assigneeAgentRuntimeOverrides: IssueAssigneeAgentRuntimeOverrides | null;
-    priority: string;
-    concurrencyPolicy: string;
-    catchUpPolicy: string;
-    outputMode: string;
-    chatConversationId: string;
-    notifyOnIssueCreated: boolean;
-  }>({
+  const [editDraft, setEditDraft] = useState({
     title: "",
     description: "",
     projectId: "",
     assigneeAgentId: "",
-    assigneeAgentRuntimeOverrides: null,
     priority: "medium",
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
@@ -249,7 +235,6 @@ export function AutomationDetail({
             description: automation.description ?? "",
             projectId: automation.projectId ?? "",
             assigneeAgentId: automation.assigneeAgentId,
-            assigneeAgentRuntimeOverrides: automation.assigneeAgentRuntimeOverrides ?? null,
             priority: automation.priority,
             concurrencyPolicy: automation.concurrencyPolicy,
             catchUpPolicy: automation.catchUpPolicy,
@@ -267,7 +252,6 @@ export function AutomationDetail({
       editDraft.description !== automationDefaults.description ||
       editDraft.projectId !== automationDefaults.projectId ||
       editDraft.assigneeAgentId !== automationDefaults.assigneeAgentId ||
-      JSON.stringify(editDraft.assigneeAgentRuntimeOverrides) !== JSON.stringify(automationDefaults.assigneeAgentRuntimeOverrides) ||
       editDraft.priority !== automationDefaults.priority ||
       editDraft.concurrencyPolicy !== automationDefaults.concurrencyPolicy ||
       editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy ||
@@ -285,7 +269,6 @@ export function AutomationDetail({
       description: editDraft.description.trim() ? editDraft.description : null,
       projectId: editDraft.projectId || null,
       assigneeAgentId: editDraft.assigneeAgentId,
-      assigneeAgentRuntimeOverrides: editDraft.assigneeAgentRuntimeOverrides,
       priority: editDraft.priority,
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
@@ -1315,13 +1298,7 @@ export function AutomationDetail({
                     className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                      setEditDraft((current) => ({
-                        ...current,
-                        assigneeAgentId,
-                        assigneeAgentRuntimeOverrides: assigneeAgentId === current.assigneeAgentId
-                          ? current.assigneeAgentRuntimeOverrides
-                          : null,
-                      }));
+                      setEditDraft((current) => ({ ...current, assigneeAgentId }));
                     }}
                     onConfirm={() => {
                       if (editDraft.projectId) {
@@ -1359,17 +1336,6 @@ export function AutomationDetail({
                       );
                     }}
                   />
-                  {currentAssignee && selectedOrganizationId ? (
-                    <IssueRuntimeSelector
-                      agent={currentAssignee}
-                      orgId={selectedOrganizationId}
-                      overrides={editDraft.assigneeAgentRuntimeOverrides}
-                      variant="menu"
-                      onApply={(assigneeAgentRuntimeOverrides) => {
-                        setEditDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
-                      }}
-                    />
-                  ) : null}
                 </div>
               </SidebarPropertyRow>
 

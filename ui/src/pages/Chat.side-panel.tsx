@@ -1832,10 +1832,6 @@ export function ChatSidePanel({
   }, [navigate, pushToast, selectedOrganizationId, sidePanel]);
 
   const visibleTabs = sidePanel.tabs;
-  const sideChatTargets = useMemo(
-    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "side_chat" }> => candidate.kind === "side_chat"),
-    [visibleTabs],
-  );
   const browserTargets = useMemo(
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
     [visibleTabs],
@@ -2562,25 +2558,6 @@ export function ChatSidePanel({
               </div>
             );
           }) : null}
-          {selectedOrganizationId ? sideChatTargets.map((target) => {
-            const active = sidePanelTargetKey(target) === activeTargetKey;
-            return (
-              <div
-                key={`side-chat-view:${target.clientMutationId}`}
-                className={cn("h-full min-h-0", active ? "block" : "hidden")}
-                aria-hidden={!active}
-              >
-                <SideChatPanelView
-                  active={active}
-                  organizationId={selectedOrganizationId}
-                  target={target}
-                  onRegisterCloseHandler={registerSideChatCloseHandler}
-                  onReplaceTarget={replaceSidePanelTarget}
-                  onSelectResponseAnnotation={selectSideChatResponseAnnotation}
-                />
-              </div>
-            );
-          }) : null}
           {activeLiveSurfaceTarget ? null : !activeTarget ? (
             <SidePanelEmptyState
               browserAvailable={browserAvailable}
@@ -2642,7 +2619,15 @@ export function ChatSidePanel({
             <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
-          ) : sideChatTarget ? null : runFeedbackTarget && selectedOrganizationId ? (
+          ) : sideChatTarget && selectedOrganizationId ? (
+            <SideChatPanelView
+              organizationId={selectedOrganizationId}
+              target={sideChatTarget}
+              onRegisterCloseHandler={registerSideChatCloseHandler}
+              onReplaceTarget={replaceSidePanelTarget}
+              onSelectResponseAnnotation={selectSideChatResponseAnnotation}
+            />
+          ) : runFeedbackTarget && selectedOrganizationId ? (
             <RunFeedbackChatPanel
               organizationId={selectedOrganizationId}
               target={runFeedbackTarget}
@@ -2716,14 +2701,13 @@ export function ChatSidePanel({
   );
 
   if (isMobile) {
-    if (!sidePanel.open && !exiting && sideChatTargets.length === 0) return null;
+    if (!sidePanel.open && !exiting) return null;
     return typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
   }
   if (sidePanel.open) {
     lastOpenDesktopPanelRef.current = panel;
     return panel;
   }
-  if (sideChatTargets.length > 0) return panel;
   if (
     !desktopExitComplete
     || liveSurfaceTargets.length > 0

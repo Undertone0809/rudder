@@ -15,7 +15,6 @@ import {
   AUTOMATION_TRIGGER_SIGNING_MODES,
   ISSUE_PRIORITIES,
 } from "../constants.js";
-import { issueAssigneeAdapterOverridesSchema } from "./issue.js";
 
 const automationTextFieldSchema = z.string().optional().nullable();
 
@@ -27,7 +26,6 @@ const automationBodyFieldsSchema = z.object({
   instructions: automationTextFieldSchema,
   description: automationTextFieldSchema,
   assigneeAgentId: z.string().uuid(),
-  assigneeAgentRuntimeOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   status: z.enum(AUTOMATION_STATUSES).optional().default("active"),
   concurrencyPolicy: z.enum(AUTOMATION_CONCURRENCY_POLICIES).optional().default("coalesce_if_active"),

@@ -1,5 +1,4 @@
 import type { IssueOriginKind } from "../constants.js";
-import type { IssueAssigneeAgentRuntimeOverrides } from "./issue.js";
 
 export interface AutomationProjectSummary {
   id: string;
@@ -43,7 +42,6 @@ export interface Automation {
   title: string;
   description: string | null;
   assigneeAgentId: string;
-  assigneeAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
   outputMode: "track_issue" | "chat_output";
   chatConversationId: string | null;
   notifyOnIssueCreated: boolean;

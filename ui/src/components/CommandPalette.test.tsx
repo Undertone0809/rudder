@@ -323,7 +323,7 @@ function flushRemoteSearchDebounce() {
 }
 
 describe("CommandPalette", () => {
-  it("offers Smart Search only after regular search has no results and navigates its match", async () => {
+  it("offers AI Search only after regular search has no results and navigates its match", async () => {
     queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
       { purpose: "reasoning", status: "configured" },
     ]);
@@ -347,7 +347,7 @@ describe("CommandPalette", () => {
     flushRemoteSearchDebounce();
 
     const askButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Ask Smart Model"));
+      .find((button) => button.textContent?.includes("AI Search"));
     expect(askButton).not.toBeUndefined();
 
     await act(async () => {
@@ -366,7 +366,7 @@ describe("CommandPalette", () => {
     expect(navigateMock).toHaveBeenCalledWith("/projects/project-1");
   });
 
-  it("does not offer Smart Search when the organization reasoning profile is disabled", () => {
+  it("does not offer AI Search when the organization reasoning profile is disabled", () => {
     queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
       { purpose: "reasoning", status: "disabled" },
     ]);
@@ -376,13 +376,18 @@ describe("CommandPalette", () => {
     changeInput(input, "disabled smart search");
     flushRemoteSearchDebounce();
 
-    expect(container.textContent).not.toContain("Ask Smart Model");
+    expect(container.textContent).not.toContain("AI Search");
   });
 
-  it("does not offer Smart Search inside an explicit search scope", () => {
+  it("offers AI Search inside an explicit search scope and passes that scope to the model", async () => {
     queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
       { purpose: "reasoning", status: "configured" },
     ]);
+    aiSearchMock.mockResolvedValue({
+      query: "missing issue concept",
+      answer: null,
+      results: [],
+    });
     const container = renderCommandPalette();
     const input = openCommandPalette(container);
 
@@ -392,10 +397,23 @@ describe("CommandPalette", () => {
     changeInput(scopedInput!, "missing issue concept");
     flushRemoteSearchDebounce();
 
-    expect(container.textContent).not.toContain("Ask Smart Model");
+    const aiSearchButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "AI Search");
+    expect(aiSearchButton).not.toBeUndefined();
+    expect(container.textContent).not.toContain("Search organization content");
+
+    await act(async () => {
+      aiSearchButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(aiSearchMock).toHaveBeenCalledWith("org-1", {
+      query: "missing issue concept",
+      scope: "issue",
+    });
   });
 
-  it("keeps Smart Search hidden while regular search is fetching cached data", () => {
+  it("keeps AI Search hidden while regular search is fetching cached data", () => {
     queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
       { purpose: "reasoning", status: "configured" },
     ]);
@@ -427,31 +445,31 @@ describe("CommandPalette", () => {
     changeInput(input, query);
     flushRemoteSearchDebounce();
 
-    expect(container.textContent).not.toContain("Ask Smart Model");
+    expect(container.textContent).not.toContain("AI Search");
   });
 
-  it("offers a retry action when Smart Search fails before returning results", async () => {
+  it("offers a retry action when AI Search fails before returning results", async () => {
     queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
       { purpose: "reasoning", status: "configured" },
     ]);
-    aiSearchMock.mockRejectedValue(new Error("Smart Search failed"));
+    aiSearchMock.mockRejectedValue(new Error("AI Search failed"));
     const container = renderCommandPalette();
     const input = openCommandPalette(container);
 
     changeInput(input, "retryable architecture query");
     flushRemoteSearchDebounce();
     const askButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Ask Smart Model"));
+      .find((button) => button.textContent?.includes("AI Search"));
     expect(askButton).not.toBeUndefined();
 
     await act(async () => {
       askButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("Try Smart Search again");
+    expect(container.textContent).toContain("Try AI Search again");
 
     const retryButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Try Smart Search again"));
+      .find((button) => button.textContent?.includes("Try AI Search again"));
     await act(async () => {
       retryButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();

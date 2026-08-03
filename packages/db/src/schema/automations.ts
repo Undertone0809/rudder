@@ -29,7 +29,6 @@ export const automations = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     assigneeAgentId: uuid("assignee_agent_id").notNull().references(() => agents.id),
-    assigneeAgentRuntimeOverrides: jsonb("assignee_agent_runtime_overrides").$type<Record<string, unknown>>(),
     outputMode: text("output_mode").notNull().default("chat_output"),
     chatConversationId: uuid("chat_conversation_id").references(() => chatConversations.id, { onDelete: "set null" }),
     notifyOnIssueCreated: boolean("notify_on_issue_created").notNull().default(false),

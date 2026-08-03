@@ -37,3 +37,5 @@ edit_policy: user_confirmed_only
   domain records.
 - `CALENDAR.SOURCE.001`: calendar events preserve source-object identity.
 - `INBOX.ATTENTION.001`: human inbox aggregates user-scoped operator attention.
+- `SEARCH.AI.001`: command-palette deterministic search can explicitly fall
+  back to organization Smart Model search, including selected category scopes.

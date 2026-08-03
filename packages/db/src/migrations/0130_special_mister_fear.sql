@@ -1,1 +1,0 @@
-ALTER TABLE "automations" ADD COLUMN "assignee_agent_runtime_overrides" jsonb;

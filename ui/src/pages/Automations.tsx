@@ -19,7 +19,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useNavigate, useParams } from "@/lib/router";
-import type { InstanceLocale, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
+import type { InstanceLocale } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
@@ -49,7 +49,6 @@ import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { EmptyState } from "../components/EmptyState";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
-import { IssueRuntimeSelector } from "../components/IssueRuntimeSelector";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
@@ -362,24 +361,11 @@ export function Automations() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [statusFilter, setStatusFilter] = useState<AutomationStatusFilter>("all");
-  const [draft, setDraft] = useState<{
-    title: string;
-    description: string;
-    projectId: string;
-    assigneeAgentId: string;
-    assigneeAgentRuntimeOverrides: IssueAssigneeAgentRuntimeOverrides | null;
-    priority: string;
-    concurrencyPolicy: string;
-    catchUpPolicy: string;
-    scheduleCron: string;
-    outputMode: AutomationOutputMode;
-    chatConversationId: string;
-  }>({
+  const [draft, setDraft] = useState({
     title: "",
     description: "",
     projectId: "",
     assigneeAgentId: "",
-    assigneeAgentRuntimeOverrides: null,
     priority: "medium",
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
@@ -395,7 +381,6 @@ export function Automations() {
       description: "",
       projectId: "",
       assigneeAgentId: "",
-      assigneeAgentRuntimeOverrides: null,
       priority: "medium",
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
@@ -523,7 +508,6 @@ export function Automations() {
         instructions: markdownDocumentOrNull(currentInstructions),
         projectId: draft.projectId || null,
         assigneeAgentId: draft.assigneeAgentId,
-        assigneeAgentRuntimeOverrides: draft.assigneeAgentRuntimeOverrides,
         priority: draft.priority,
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
@@ -844,13 +828,7 @@ export function Automations() {
                 sideOffset={8}
                 onChange={(assigneeAgentId) => {
                   if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                  setDraft((current) => ({
-                    ...current,
-                    assigneeAgentId,
-                    assigneeAgentRuntimeOverrides: assigneeAgentId === current.assigneeAgentId
-                      ? current.assigneeAgentRuntimeOverrides
-                      : null,
-                  }));
+                  setDraft((current) => ({ ...current, assigneeAgentId }));
                 }}
                 onConfirm={() => projectSelectorRef.current?.focus()}
                 renderTriggerValue={(option) =>
@@ -881,18 +859,6 @@ export function Automations() {
                   );
                 }}
               />
-
-              {currentAssignee && selectedOrganizationId ? (
-                <IssueRuntimeSelector
-                  agent={currentAssignee}
-                  orgId={selectedOrganizationId}
-                  overrides={draft.assigneeAgentRuntimeOverrides}
-                  variant="menu"
-                  onApply={(assigneeAgentRuntimeOverrides) => {
-                    setDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
-                  }}
-                />
-              ) : null}
 
               <InlineEntitySelector
                 ref={projectSelectorRef}
