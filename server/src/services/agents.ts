@@ -17,6 +17,7 @@ import {
   costEvents,
   heartbeatRunEvents,
   heartbeatRuns,
+  productAnalyticsEvents,
 } from "@rudderhq/db";
 import {
   AGENT_OREO_DEFAULT_PALETTE_ID,
@@ -40,6 +41,7 @@ import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { pickUniqueAgentName } from "./agent-name-pool.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
 import { ensureOrganizationManagedMcpBindingsForAgent } from "./mcp/managed-bindings.js";
+import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -576,6 +578,42 @@ export function agentService(db: Db) {
         return row;
       });
       return normalizeAgentRow(created);
+    },
+
+    markReady: async (id: string, input: { resultCode?: string; isDefaultAgent?: boolean } = {}) => {
+      return db.transaction(async (tx) => {
+        const [agent] = await tx.select().from(agents).where(eq(agents.id, id)).limit(1);
+        if (!agent) return null;
+        const [updated] = await tx.update(agents).set({
+          readinessState: "ready",
+          readinessCheckedAt: new Date(),
+          readinessResultCode: input.resultCode ?? "preflight_ok",
+          updatedAt: new Date(),
+        }).where(eq(agents.id, id)).returning();
+        const [existingReady] = await tx.select({ id: productAnalyticsEvents.id }).from(productAnalyticsEvents).where(and(
+          eq(productAnalyticsEvents.orgId, agent.orgId),
+          eq(productAnalyticsEvents.eventName, "first_agent_ready"),
+        )).limit(1);
+        if (!existingReady) {
+          await recordProductAnalyticsEvent(tx as unknown as Db, {
+            orgId: agent.orgId,
+            eventName: "first_agent_ready",
+            sourceTransition: "agent.readiness.confirmed",
+            confidence: "exact",
+            actorType: "system",
+            entityType: "agent",
+            entityId: agent.id,
+            dedupeKey: `first_agent_ready:${agent.orgId}`,
+            properties: {
+              runtime_adapter: agent.agentRuntimeType,
+              is_default_agent: input.isDefaultAgent ?? false,
+              preflight_result_code: input.resultCode ?? "preflight_ok",
+              is_first_for_installation: false,
+            },
+          });
+        }
+        return updated ? normalizeAgentRow(updated) : null;
+      });
     },
 
     update: updateAgent,

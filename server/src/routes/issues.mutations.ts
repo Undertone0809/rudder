@@ -1,4 +1,4 @@
-import type { Db } from "@rudderhq/db";
+import { productAnalyticsWorkCycles, type Db } from "@rudderhq/db";
 import {
   checkoutIssueSchema,
   createIssueSchema,
@@ -6,11 +6,15 @@ import {
   reportIssueCommitSchema,
   updateIssueSchema
 } from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
 import { Router } from "express";
 import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
+  completeProductAnalyticsWorkCycle,
+  ensureProductAnalyticsWorkCycle,
+  invalidateProductAnalyticsWorkCycle,
   logActivity,
   recordProductAnalyticsEvent,
 } from "../services/index.js";
@@ -510,21 +514,73 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       });
       // Review status, comment, and audit activity currently commit in separate transactions;
       // keep this fact explicitly derived and non-blocking until they share one transition transaction.
-      if (reviewActivity && comment) void recordProductAnalyticsEvent(db, {
+      if (reviewActivity && comment) {
+        try {
+          await recordProductAnalyticsEvent(db, {
+            orgId: issue.orgId,
+            eventName: "review_decision_recorded",
+            occurredAt: comment?.createdAt ?? new Date(),
+            sourceTransition: "issue.review_decision_recorded",
+            confidence: "derived",
+            actorType: actor.actorType === "user" ? "human" : "agent",
+            actorId: actor.actorId,
+            entityType: "issue",
+            entityId: issue.id,
+            workSurface: "issue",
+            workId: issue.id,
+            workCycleId: `issue:${issue.id}`,
+            dedupeKey: `review_decision_recorded:${reviewActivity.id}`,
+            properties: { decision: reviewDecision, review_surface: "issue" },
+          });
+        } catch (error) {
+          logger.warn({ error, issueId: issue.id }, "failed to record derived product analytics review event");
+        }
+      }
+    }
+
+    if (issue.status === "done" && actor.actorType === "user" && issue.createdByUserId) {
+      await ensureProductAnalyticsWorkCycle(db, {
         orgId: issue.orgId,
-        eventName: "review_decision_recorded",
-        occurredAt: comment?.createdAt ?? new Date(),
-        sourceTransition: "issue.review_decision_recorded",
-        confidence: "derived",
-        actorType: actor.actorType === "user" ? "human" : "agent",
-        actorId: actor.actorId,
-        entityType: "issue",
-        entityId: issue.id,
-        dedupeKey: `review_decision_recorded:${reviewActivity.id}`,
-        properties: { decision: reviewDecision, review_surface: "issue" },
-      }).catch((error: unknown) => {
-        logger.warn({ error, issueId: issue.id }, "failed to record derived product analytics review event");
+        workSurface: "issue",
+        workId: issue.id,
+        workCycleId: `issue:${issue.id}`,
+        actorId: issue.createdByUserId,
       });
+      await completeProductAnalyticsWorkCycle(db, {
+        orgId: issue.orgId,
+        workSurface: "issue",
+        workId: issue.id,
+        workCycleId: `issue:${issue.id}`,
+        actorId: actor.actorId,
+        actorType: "human",
+        sourceTransition: "issue.complete",
+        properties: {
+          work_surface: "issue",
+          origin: "human",
+          review_required: issueHasReviewer(issue),
+        },
+      }).catch((error: unknown) => {
+        if (!(error instanceof HttpError) || error.status !== 422) throw error;
+      });
+    }
+
+    if (reopened) {
+      const [cycle] = await db.select({ completionRevision: productAnalyticsWorkCycles.completionRevision })
+        .from(productAnalyticsWorkCycles)
+        .where(and(
+          eq(productAnalyticsWorkCycles.orgId, issue.orgId),
+          eq(productAnalyticsWorkCycles.workCycleId, `issue:${issue.id}`),
+        )).limit(1);
+      if (cycle && cycle.completionRevision > 0) {
+        await invalidateProductAnalyticsWorkCycle(db, {
+          orgId: issue.orgId,
+          workSurface: "issue",
+          workId: issue.id,
+          workCycleId: `issue:${issue.id}`,
+          completionRevision: cycle.completionRevision,
+          reasonCode: "reopened",
+        });
+      }
     }
 
     const assigneeChanged = assigneeWillChange;

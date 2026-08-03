@@ -86,9 +86,15 @@ export { organizationSkillFacade, organizationSkillService } from "./organizatio
 export { organizationService } from "./orgs.js";
 export {
   PRODUCT_ANALYTICS_DEFERRED_EVENT_NAMES, PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES, PRODUCT_ANALYTICS_EVENT_NAMES, PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES,
-  productAnalyticsService,
-  recordProductAnalyticsEvent,
-  type ProductAnalyticsActorType,
+  acknowledgeProductAnalyticsOutbox, acknowledgeProductAnalyticsOutboxClaim, assertProductAnalyticsInstallationSecret,
+  buildProductAnalyticsExportPayload,
+  claimProductAnalyticsOutbox, claimProductAnalyticsOutboxBatch,
+  completeProductAnalyticsWorkCycle,
+  enqueueProductAnalyticsEvent,
+  ensureProductAnalyticsWorkCycle,
+  getProductAnalyticsInstallationState,
+  invalidateProductAnalyticsWorkCycle, productAnalyticsService, pseudonymizeProductAnalyticsId, reconcileProductAnalyticsInstallationMode, recordProductAnalyticsConsent, recordProductAnalyticsEvent, registerProductAnalyticsInstallation,
+  setProductAnalyticsInstallationMode, type ProductAnalyticsActorType,
   type ProductAnalyticsConfidence,
   type ProductAnalyticsEventName,
   type RecordProductAnalyticsEventInput

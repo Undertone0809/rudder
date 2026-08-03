@@ -28,6 +28,7 @@ import {
   desktopIdentityMemoryFallbackAllowed,
 } from "./identity-session-store.js";
 import { desktopAccountBypassAllowed } from "./identity-startup-policy.js";
+import { loadOrCreateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 
 export type DesktopLocalAccountAuth = {
   identityOrigin: string;
@@ -169,9 +170,11 @@ export function createDesktopIdentityRuntime(options: {
     bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
   });
   const sessionSecret = randomBytes(32).toString("base64url");
+  const telemetryStatePromise = loadOrCreateDesktopTelemetryState(app.getPath("userData"));
 
   return {
     accountRequired,
+    telemetryStatePromise,
     controller,
     getAuthProviders(): Promise<DesktopIdentityAuthProviders> {
       return client.getAuthProviders();

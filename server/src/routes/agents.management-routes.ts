@@ -406,6 +406,20 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.status(201).json(agent);
   });
 
+  router.post("/agents/:id/readiness", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+    assertBoard(req);
+    const resultCode = typeof req.body?.resultCode === "string" ? req.body.resultCode : "preflight_ok";
+    const agent = await svc.markReady(id, { resultCode, isDefaultAgent: req.body?.isDefaultAgent === true });
+    res.json(agent);
+  });
+
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getById(id);

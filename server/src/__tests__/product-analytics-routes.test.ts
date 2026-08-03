@@ -8,8 +8,16 @@ const mockService = vi.hoisted(() => ({
   summary: vi.fn(),
   listEvents: vi.fn(),
 }));
+const mockOutbox = vi.hoisted(() => ({
+  acknowledge: vi.fn(),
+  assertSecret: vi.fn(),
+  claim: vi.fn(),
+}));
 
 vi.mock("../services/product-analytics.js", () => ({
+  acknowledgeProductAnalyticsOutboxClaim: mockOutbox.acknowledge,
+  assertProductAnalyticsInstallationSecret: mockOutbox.assertSecret,
+  claimProductAnalyticsOutboxBatch: mockOutbox.claim,
   PRODUCT_ANALYTICS_EVENT_NAMES: [
     "organization_created",
     "human_work_started",
@@ -20,12 +28,14 @@ vi.mock("../services/product-analytics.js", () => ({
     "review_decision_recorded",
   ],
   productAnalyticsService: () => mockService,
+  reconcileProductAnalyticsInstallationMode: vi.fn(),
 }));
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
 
 function createApp(actor: Record<string, unknown>) {
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => {
     (req as typeof req & { actor: Record<string, unknown> }).actor = actor;
     next();
@@ -39,6 +49,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockService.summary.mockResolvedValue({ metrics: { ledger_event_count: 0 } });
   mockService.listEvents.mockResolvedValue([]);
+  mockOutbox.acknowledge.mockResolvedValue({ updatedCount: 1, state: "delivered" });
+  mockOutbox.assertSecret.mockResolvedValue(undefined);
+  mockOutbox.claim.mockResolvedValue(null);
 });
 
 describe("product analytics routes", () => {
@@ -69,5 +82,28 @@ describe("product analytics routes", () => {
 
     expect(response.status).toBe(403);
     expect(mockService.summary).not.toHaveBeenCalled();
+  });
+
+  it("forwards the installation secret when acknowledging an outbox claim", async () => {
+    const installationId = "installation-1";
+    const eventId = "22222222-2222-4222-8222-222222222222";
+    const response = await request(createApp({
+      type: "board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/${installationId}/outbox/ack`).send({
+      installationSecret: "secret-1",
+      eventIds: [eventId],
+      claimToken: "claim-1",
+      delivered: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockOutbox.acknowledge).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      installationId,
+      installationSecret: "secret-1",
+      eventIds: [eventId],
+      claimToken: "claim-1",
+    }));
   });
 });

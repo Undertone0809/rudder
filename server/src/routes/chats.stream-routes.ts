@@ -1590,8 +1590,11 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    const resolved = await svc.resolve(conversation.id);
     const actor = getActorInfo(req);
+    const resolved = await svc.resolve(conversation.id, {
+      actorType: actor.actorType === "user" ? "human" : actor.actorType,
+      actorId: actor.actorId,
+    });
     await logActivity(db, {
       orgId: conversation.orgId,
       actorType: actor.actorType,

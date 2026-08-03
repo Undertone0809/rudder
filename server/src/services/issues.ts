@@ -45,7 +45,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
-import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 import {
@@ -931,6 +931,15 @@ export function issueService(db: Db) {
           await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
         }
         if (issue.createdByUserId && (issue.status === "in_progress" || issue.executionRunId !== null)) {
+          const workCycleId = `issue:${issue.id}`;
+          await ensureProductAnalyticsWorkCycle(tx as unknown as Db, {
+            orgId,
+            workSurface: "issue",
+            workId: issue.id,
+            workCycleId,
+            actorId: issue.createdByUserId,
+            startedAt: issue.createdAt,
+          });
           await recordProductAnalyticsEvent(tx as unknown as Db, {
             orgId,
             eventName: "human_work_started",
@@ -941,7 +950,11 @@ export function issueService(db: Db) {
             actorId: issue.createdByUserId,
             entityType: "issue",
             entityId: issue.id,
-            dedupeKey: `human_work_started:issue:${issue.id}`,
+            workSurface: "issue",
+            workId: issue.id,
+            workCycleId,
+            origin: "human",
+            dedupeKey: `human_work_started:${workCycleId}`,
             properties: { work_surface: "issue", origin: "human" },
           });
         }
@@ -1180,6 +1193,15 @@ export function issueService(db: Db) {
             || (existing.executionRunId === null && updated.executionRunId !== null)
           );
         if (humanWorkStarted) {
+          const workCycleId = `issue:${updated.id}`;
+          await ensureProductAnalyticsWorkCycle(tx as unknown as Db, {
+            orgId: updated.orgId,
+            workSurface: "issue",
+            workId: updated.id,
+            workCycleId,
+            actorId: updated.createdByUserId,
+            startedAt: updated.updatedAt,
+          });
           await recordProductAnalyticsEvent(tx as unknown as Db, {
             orgId: updated.orgId,
             eventName: "human_work_started",
@@ -1190,7 +1212,11 @@ export function issueService(db: Db) {
             actorId: updated.createdByUserId,
             entityType: "issue",
             entityId: updated.id,
-            dedupeKey: `human_work_started:issue:${updated.id}`,
+            workSurface: "issue",
+            workId: updated.id,
+            workCycleId,
+            origin: "human",
+            dedupeKey: `human_work_started:${workCycleId}`,
             properties: { work_surface: "issue", origin: "human" },
           });
         }

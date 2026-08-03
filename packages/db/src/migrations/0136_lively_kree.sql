@@ -1,0 +1,1 @@
+ALTER TABLE "product_analytics_outbox" ALTER COLUMN "installation_id" SET DEFAULT 'unknown';

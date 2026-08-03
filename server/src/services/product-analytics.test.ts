@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
-import { productAnalyticsRunTerminalEventName, recordProductAnalyticsEvent } from "./product-analytics.js";
+import { buildProductAnalyticsExportPayload, productAnalyticsRunTerminalEventName, pseudonymizeProductAnalyticsId, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 function createInsertDb(returnedRows: Array<{ id: string }>) {
   const returning = vi.fn().mockResolvedValue(returnedRows);
@@ -41,7 +41,7 @@ describe("product analytics local ledger", () => {
     const stub = createInsertDb([{ id: "event-1" }]);
 
     await expect(recordProductAnalyticsEvent(stub.db, baseEvent)).resolves.toEqual({ id: "event-1" });
-    expect(stub.onConflictDoNothing).toHaveBeenCalledWith({ target: expect.any(Array) });
+    expect(stub.onConflictDoNothing).toHaveBeenCalledWith({ target: expect.anything() });
     expect(stub.values).toHaveBeenCalledWith(expect.objectContaining({
       orgId: "org-1",
       eventName: "human_work_started",
@@ -112,5 +112,38 @@ describe("product analytics local ledger", () => {
         is_user_initiated: true,
       },
     })).resolves.toEqual({ id: "organization-event" });
+  });
+
+  it("records work-loop events without treating deferred names as unavailable", async () => {
+    const stub = createInsertDb([{ id: "loop-event" }]);
+    await expect(recordProductAnalyticsEvent(stub.db, {
+      ...baseEvent,
+      eventName: "work_loop_completed",
+      workSurface: "issue",
+      workId: "issue-1",
+      workCycleId: "issue:issue-1",
+      completionRevision: 1,
+      dedupeKey: "work_loop_completed:issue:issue-1:1",
+      properties: { work_surface: "issue", origin: "human", review_required: false },
+    })).resolves.toEqual({ id: "loop-event" });
+  });
+
+  it("exports only pseudonymous identifiers and rejects sensitive payloads", () => {
+    const first = pseudonymizeProductAnalyticsId("secret", "org-1");
+    expect(first).toBe(pseudonymizeProductAnalyticsId("secret", "org-1"));
+    expect(first).not.toBe("org-1");
+    expect(buildProductAnalyticsExportPayload("secret", {
+      id: "event-1",
+      eventName: "human_work_started",
+      occurredAt: new Date("2026-01-01T00:00:00Z"),
+      orgId: "org-1",
+      properties: { work_surface: "issue" },
+    })).toMatchObject({ pseudonymousOrgId: first });
+    expect(() => buildProductAnalyticsExportPayload("secret", {
+      id: "event-2",
+      eventName: "human_work_started",
+      occurredAt: new Date("2026-01-01T00:00:00Z"),
+      properties: { work_surface: "issue", body: "secret" },
+    })).toThrow();
   });
 });

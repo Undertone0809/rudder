@@ -91,6 +91,7 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
+import { completeProductAnalyticsWorkCycle } from "./product-analytics.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -3973,8 +3974,9 @@ export function chatService(db: Db) {
     });
   }
 
-  async function resolve(id: string) {
-      const [updated] = await db
+  async function resolve(id: string, input: { actorType?: "human" | "agent" | "system"; actorId?: string | null } = {}) {
+    const updated = await db.transaction(async (tx) => {
+      const [next] = await tx
         .update(chatConversations)
         .set({
           status: "resolved",
@@ -3983,8 +3985,24 @@ export function chatService(db: Db) {
         })
         .where(eq(chatConversations.id, id))
         .returning();
-      if (!updated) return null;
-      return getById(id);
+      if (!next) return null;
+      if (input.actorType === "human" && input.actorId) {
+        await completeProductAnalyticsWorkCycle(tx as unknown as Db, {
+          orgId: next.orgId,
+          workSurface: "chat",
+          workId: next.id,
+          workCycleId: `chat:${next.id}`,
+          actorId: input.actorId,
+          actorType: "human",
+          sourceTransition: "chat.resolve",
+          properties: { work_surface: "chat", origin: "human", review_required: false },
+        }).catch((error: unknown) => {
+          if (!(error instanceof HttpError) || error.status !== 422) throw error;
+        });
+      }
+      return next;
+    });
+    return updated ? getById(id) : null;
   }
 
   async function markRead(conversationId: string, orgId: string, userId: string, readAt = new Date()) {

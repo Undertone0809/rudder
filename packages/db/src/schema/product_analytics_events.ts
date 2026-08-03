@@ -1,11 +1,11 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 export const productAnalyticsEvents = pgTable(
   "product_analytics_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id"),
+    installationId: text("installation_id"),
     eventName: text("event_name").notNull(),
     schemaVersion: integer("schema_version").notNull().default(1),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
@@ -14,10 +14,23 @@ export const productAnalyticsEvents = pgTable(
     confidence: text("confidence").notNull(),
     actorType: text("actor_type").notNull(),
     actorId: text("actor_id"),
+    localUserId: text("local_user_id"),
+    environment: text("environment").notNull().default("production"),
+    appVersion: text("app_version").notNull().default("unknown"),
+    releaseChannel: text("release_channel").notNull().default("stable"),
+    deploymentMode: text("deployment_mode").notNull().default("self_hosted"),
+    origin: text("origin").notNull().default("human"),
+    workSurface: text("work_surface"),
+    workId: text("work_id"),
+    workCycleId: text("work_cycle_id"),
+    rootRunId: uuid("root_run_id"),
+    runId: uuid("run_id"),
+    completionRevision: integer("completion_revision"),
     entityType: text("entity_type"),
     entityId: text("entity_id"),
     dedupeKey: text("dedupe_key").notNull(),
     properties: jsonb("properties").$type<Record<string, string | number | boolean | null>>().notNull().default({}),
+    isBackfill: boolean("is_backfill").notNull().default(false),
   },
   (table) => ({
     orgOccurredIdx: index("product_analytics_events_org_occurred_idx").on(table.orgId, table.occurredAt),
@@ -32,6 +45,6 @@ export const productAnalyticsEvents = pgTable(
       table.actorId,
       table.occurredAt,
     ),
-    orgDedupeKeyUniqueIdx: uniqueIndex("product_analytics_events_org_dedupe_key_uq").on(table.orgId, table.dedupeKey),
+    dedupeKeyUniqueIdx: uniqueIndex("product_analytics_events_dedupe_key_uq").on(table.dedupeKey),
   }),
 );

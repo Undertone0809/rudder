@@ -329,6 +329,14 @@ export async function transitionHeartbeatRunToTerminal(
       .then((rows) => rows[0] ?? null);
     if (!updated) return null;
 
+    const [workIssue] = await tx.select({ id: issues.id }).from(issues).where(or(
+      eq(issues.executionRunId, updated.id),
+      eq(issues.checkoutRunId, updated.id),
+    )).limit(1);
+    const workSurface = workIssue ? "issue" : updated.chatConversationId ? "chat" : null;
+    const workId = workIssue?.id ?? updated.chatConversationId;
+    const workCycleId = workIssue ? `issue:${workIssue.id}` : updated.chatConversationId ? `chat:${updated.chatConversationId}` : null;
+
     const terminalAnalyticsEvent = productAnalyticsRunTerminalEventName(updated.status);
     if (terminalAnalyticsEvent) {
       await recordProductAnalyticsEvent(tx as unknown as Db, {
@@ -339,6 +347,12 @@ export async function transitionHeartbeatRunToTerminal(
         confidence: "exact",
         actorType: updated.invocationSource.includes("automation") ? "automation" : "agent",
         actorId: updated.agentId,
+        runId: updated.id,
+        rootRunId: updated.retryOfRunId ?? updated.id,
+        origin: updated.invocationSource.includes("automation") ? "automation" : updated.retryOfRunId ? "retry" : "human",
+        workSurface,
+        workId,
+        workCycleId,
         entityType: "run",
         entityId: updated.id,
         dedupeKey: terminalAnalyticsEvent === "run_succeeded"
@@ -363,7 +377,12 @@ export async function transitionHeartbeatRunToTerminal(
         actorId: updated.agentId,
         entityType: "run",
         entityId: updated.id,
-        dedupeKey: `output_ready:${updated.id}`,
+        runId: updated.id,
+        rootRunId: updated.retryOfRunId ?? updated.id,
+        workSurface,
+        workId,
+        workCycleId,
+        dedupeKey: `output_ready:${updated.chatConversationId ? `chat:${updated.chatConversationId}` : `run:${updated.id}`}:structured_result:${updated.id}`,
         properties: { output_kind: "structured_result" },
       });
     }

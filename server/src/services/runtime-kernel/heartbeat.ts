@@ -1005,6 +1005,13 @@ export function heartbeatService(
         .update(agents)
         .set({ status: "running", updatedAt: claimedAt })
         .where(eq(agents.id, run.agentId));
+      const [workIssue] = await tx.select({ id: issues.id }).from(issues).where(or(
+        eq(issues.executionRunId, claimedRun.id),
+        eq(issues.checkoutRunId, claimedRun.id),
+      )).limit(1);
+      const workSurface = workIssue ? "issue" : claimedRun.chatConversationId ? "chat" : null;
+      const workId = workIssue?.id ?? claimedRun.chatConversationId;
+      const workCycleId = workIssue ? `issue:${workIssue.id}` : claimedRun.chatConversationId ? `chat:${claimedRun.chatConversationId}` : null;
       await recordProductAnalyticsEvent(tx as unknown as Db, {
         orgId: claimedRun.orgId,
         eventName: "run_started",
@@ -1013,6 +1020,12 @@ export function heartbeatService(
         confidence: "exact",
         actorType: claimedRun.invocationSource.includes("automation") ? "automation" : "agent",
         actorId: claimedRun.agentId,
+        runId: claimedRun.id,
+        rootRunId: claimedRun.retryOfRunId ?? claimedRun.id,
+        origin: claimedRun.invocationSource.includes("automation") ? "automation" : claimedRun.retryOfRunId ? "retry" : "human",
+        workSurface,
+        workId,
+        workCycleId,
         entityType: "run",
         entityId: claimedRun.id,
         dedupeKey: `run_started:${claimedRun.id}`,

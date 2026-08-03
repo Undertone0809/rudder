@@ -5,8 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
-import { recordProductAnalyticsEvent } from "./product-analytics.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 
@@ -28,9 +28,11 @@ export type CreateChatInput = {
 
 export async function createChatConversation(db: Db, orgId: string, data: CreateChatInput) {
   const created = await db.transaction(async (tx) => {
+    const conversationId = randomUUID();
     const [conversation] = await tx
       .insert(chatConversations)
       .values({
+        id: conversationId,
         orgId,
         title: data.title?.trim() || "New chat",
         summary: data.summary ?? null,
@@ -137,9 +139,11 @@ export async function createChatWithInitialMessage(
         }
       }
     }
+    const conversationId = randomUUID();
     const [conversationRow] = await client
       .insert(chatConversations)
       .values({
+        id: conversationId,
         orgId,
         title: data.title?.trim() || deterministicTitle,
         summary: data.summary ?? null,
@@ -205,6 +209,15 @@ export async function createChatWithInitialMessage(
     if (!messageRow) throw new Error("Failed to create initial chat message");
 
     if (data.initialMessage.role === "user" && data.createdByUserId) {
+      const workCycleId = `chat:${conversationRow.id}`;
+      await ensureProductAnalyticsWorkCycle(client, {
+        orgId,
+        workSurface: "chat",
+        workId: conversationRow.id,
+        workCycleId,
+        actorId: data.createdByUserId,
+        startedAt: messageRow.createdAt,
+      });
       await recordProductAnalyticsEvent(client, {
         orgId,
         eventName: "human_work_started",
@@ -215,7 +228,11 @@ export async function createChatWithInitialMessage(
         actorId: data.createdByUserId,
         entityType: "chat",
         entityId: conversationRow.id,
-        dedupeKey: `human_work_started:chat:${conversationRow.id}:${messageRow.id}`,
+        workSurface: "chat",
+        workId: conversationRow.id,
+        workCycleId,
+        origin: "human",
+        dedupeKey: `human_work_started:${workCycleId}`,
         properties: { work_surface: "chat", origin: "human" },
       });
     }
