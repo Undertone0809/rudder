@@ -2153,6 +2153,11 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.getByRole("button", { name: "Continue with email" }).waitFor();
     assert.equal(
+      await page.getByText("Secure credential storage is unavailable on this device.", { exact: true }).count(),
+      0,
+      "unsigned macOS packaged Desktop must keep online sign-in available through process-only storage",
+    );
+    assert.equal(
       await page.getByText(/Sign in or create an account/i).count(),
       0,
       "the account gate must not show redundant introductory copy",
