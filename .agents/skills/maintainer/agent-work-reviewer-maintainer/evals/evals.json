@@ -1,0 +1,52 @@
+{
+  "skill_name": "agent-work-reviewer-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this Rudder settings UI for final handoff. Typecheck and the happy-path E2E pass. The screenshot shows a large nested card, an oversized title, persistent helper paragraphs, three equally prominent buttons, and only the normal desktop state. The implementer says it looks polished.",
+      "expected_output": "Uses Rudder's design contract and first-principles operator-tool framing, identifies concrete hierarchy/density/control-weight/progressive-disclosure issues, requests the risk-based state evidence that is missing, and gives a convergence direction rather than a generic polish list.",
+      "files": [],
+      "expectations": [
+        "The review treats hierarchy, density, control weight, whitespace, and progressive disclosure as product-quality criteria rather than optional nitpicks.",
+        "The review requires current rendered evidence for relevant interaction, content, viewport, and theme states instead of accepting one normal-state screenshot.",
+        "The review gives one smallest coherent redesign or convergence direction.",
+        "The final handoff verdict is not accept solely because typecheck and a happy-path E2E passed."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "You are the final reviewer. Verifier PASS was recorded for commit abc123 and build A. The implementer then changed the popover submenu, rebuilt as build B, and did not rerun verification. The new diff is small and code review looks clean. Can this be final accepted?",
+      "expected_output": "Detects candidate drift, marks the verifier lease stale, refuses final accept, and asks for the smallest targeted verifier rerun on build B before a final review round.",
+      "files": [],
+      "expectations": [
+        "The review states that the old verifier PASS applies only to commit abc123/build A.",
+        "The review refuses final accept for build B even though the later diff is small and clean.",
+        "The convergence direction is a targeted verifier rerun on the changed interaction followed by final review, not a broad restart."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review this new Rudder dashboard. It is implemented correctly and all tests pass, but it opens with a marketing-style hero, six decorative cards, sparse oversized metrics, and explanatory copy above every control. There is no evidence that the design was compared with an existing Rudder operator surface.",
+      "expected_output": "Separates functional correctness from product correctness, rejects or conditionally accepts the UI direction under Rudder's operational design principles, and recommends a denser comparison-oriented work surface anchored to an existing sibling.",
+      "files": [],
+      "expectations": [
+        "The review asks whether the UI solves the operator's scanning and intervention job rather than judging only implementation quality.",
+        "The review identifies the marketing-style composition as inconsistent with Rudder's calm, dense, operational character.",
+        "The review recommends comparison against a nearest shipped sibling and a concrete denser information hierarchy.",
+        "Passing tests does not produce an unconditional accept verdict."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Review the lifecycle status for a non-trivial Rudder UI change. The implementation has not had acceptance testing yet. The reviewer finds no blocking issue in the diff or proposed acceptance packet. The implementer asks whether this stage can pass, whether they may commit now, and what must happen after any review fix.",
+      "expected_output": "Returns a stage accept without demanding a verifier PASS at this stage, but blocks commit and final handoff. It requires review fixes before freezing a new candidate, then a distinct verifier PASS on that exact candidate, then a final reviewer accept on unchanged evidence before commit or push.",
+      "files": [],
+      "expectations": [
+        "The review distinguishes a stage verdict from a final handoff verdict and allows stage accept without verifier evidence.",
+        "The result states that any review-requested fix must occur before the candidate is frozen for verification.",
+        "The result requires a distinct verifier to black-box the exact frozen candidate and does not treat reviewer inspection as a substitute.",
+        "The result blocks commit and push until verifier PASS and final reviewer accept both apply to the same unchanged candidate."
+      ]
+    }
+  ]
+}

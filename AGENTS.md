@@ -303,9 +303,41 @@ When adding endpoints:
 
 ## 9. Review and verify
 
-For the every task, you must spawn agents as the reviewer and conduct verifier; carry out exploratory, adversarial reviews and verify. The verifier needs to perform Black box testing and run the changes in a real local environment to confirm the effect before the acceptance can be deemed passed, especially for UI-related modifications.
+For every non-trivial task, spawn distinct reviewer and verifier agents. Use
+`.agents/skills/maintainer/agent-work-reviewer-maintainer` for first-principles,
+functional, adversarial, product-taste, and evidence-integrity review. Use
+`.agents/skills/maintainer/product-acceptance-verifier-maintainer` for read-only
+black-box acceptance in the real local or otherwise named terminal environment.
 
-For simple small tasks, you don't need to spawn an agent, like tweaking some text in the README.
+The gate order is:
+
+1. Before acceptance testing, the reviewer returns a stage verdict on intent,
+   implementation, product taste, risk, and the proposed acceptance packet.
+2. Resolve blocking review findings, then freeze the final candidate and record
+   its SHA or dirty diff fingerprint, build/runtime identity,
+   organization/data identity, and acceptance packet.
+3. The verifier exercises the real public workflow and returns terminal
+   `PASS`, `FAIL`, or `QUESTION` for that exact candidate.
+4. Only after verifier `PASS`, the reviewer runs a final round, reads the
+   verifier evidence, inspects the exact candidate, and returns a final handoff
+   verdict.
+5. Commit and push only after reviewer `accept` and verifier `PASS` both apply
+   to the same unchanged candidate.
+
+`FAIL`, `QUESTION`, `conditional accept`, `needs more evidence`, and `reject`
+all block final handoff. Any relevant code, build, runtime, organization/data,
+or acceptance-criteria change invalidates prior verdicts. Fix the blocker, rerun
+the verifier on the new candidate, then rerun final review. Spawning an agent is
+not proof that either gate completed; the parent must read and reconcile each
+terminal verdict.
+
+For visible UI changes, the reviewer must inspect current rendered evidence
+against `doc/engineering/DESIGN.md`, and the verifier must black-box the primary
+journey plus the highest-risk content, async, interaction, continuity, viewport,
+and theme states. Include current final screenshots in the handoff.
+
+Simple mechanical changes such as correcting one README typo may omit spawned
+agents when no product behavior, runtime, release, or layout claim is involved.
 
 ## 10. Definition of Done
 
