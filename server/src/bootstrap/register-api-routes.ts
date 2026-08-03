@@ -106,7 +106,7 @@ export function registerApiRoutes(
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(websiteMetadataRoutes());
-  api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode }));
+  api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId }));
   api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(
     pluginRoutes(

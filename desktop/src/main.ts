@@ -107,6 +107,8 @@ import {
   reconcilePackagedDesktopPostgresBinDir,
   restoreDesktopPostgresEnvironment,
 } from "./postgres-runtime.js";
+import { createDesktopProductAnalyticsScheduler, type DesktopProductAnalyticsScheduler } from "./product-analytics-scheduler.js";
+import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.js";
 import {
   markReleaseNotesShown,
   readReleaseNotes,
@@ -525,6 +527,7 @@ let currentBootState: BootState = {
   },
 };
 let serverHandle: StartedServer | null = null;
+let productAnalyticsScheduler: DesktopProductAnalyticsScheduler | null = null;
 let startInFlight: Promise<void> | null = null;
 let restartInFlight: Promise<void> | null = null;
 let supportDraftInFlight: { contextId: string; promise: Promise<void> } | null = null;
@@ -1999,6 +2002,9 @@ async function startLocalRudder(): Promise<void> {
         }
       }
       await localAccountSession.connect(serverHandle.apiUrl);
+      void startProductAnalyticsScheduler(serverHandle.apiUrl).catch((error) => {
+        console.warn("[rudder-desktop] Product analytics scheduler unavailable; continuing without telemetry upload", error);
+      });
       await startLocalAppsFeatureGateWatcher();
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
@@ -2127,9 +2133,52 @@ async function importCliModule(): Promise<CliModule> {
   return tsImport(pathToFileURL(repoCliEntry).href, import.meta.url) as Promise<CliModule>;
 }
 
+async function startProductAnalyticsScheduler(apiUrl: string): Promise<void> {
+  const collectorUrl = process.env.RUDDER_TELEMETRY_COLLECTOR_URL?.trim();
+  if (!collectorUrl || productAnalyticsScheduler) return;
+  const identityRuntime = requireDesktopIdentityRuntime();
+  const telemetry = await identityRuntime.telemetryStatePromise;
+  if (telemetry.state.mode === "off") return;
+  let orgId: string | null = null;
+  try {
+    const organizationsResponse = await fetch(new URL("/api/orgs", apiUrl));
+    if (organizationsResponse.ok) {
+      const payload = await organizationsResponse.json() as unknown;
+      const first = Array.isArray(payload) ? payload[0] : (payload && typeof payload === "object" && Array.isArray((payload as { organizations?: unknown }).organizations) ? (payload as { organizations: unknown[] }).organizations[0] : null);
+      orgId = first && typeof first === "object" && typeof (first as { id?: unknown }).id === "string" ? (first as { id: string }).id : null;
+    }
+  } catch (error) {
+    console.warn("[rudder-desktop] Unable to resolve an organization for telemetry upload", error);
+  }
+  if (!orgId) return;
+  const localApiUrl = apiUrl.replace(/\/$/, "");
+  const registrationPath = `/api/orgs/${encodeURIComponent(orgId)}/analytics/product/installation`;
+  try {
+    await fetch(`${localApiUrl}${registrationPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ installationId: telemetry.installationId, installationSecret: telemetry.installationSecret, mode: "off" }),
+    });
+    await fetch(`${localApiUrl}${registrationPath}/${encodeURIComponent(telemetry.installationId)}/consent`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ installationSecret: telemetry.installationSecret, scope: telemetry.state.mode === "account_linked" ? "account_linked_user" : "anonymous_installation", decision: "granted", policyVersion: telemetry.state.consentVersion }),
+    });
+  } catch (error) {
+    console.warn("[rudder-desktop] Product analytics registration failed", error);
+  }
+  const base = { localApiUrl, orgId, installationId: telemetry.installationId, installationSecret: telemetry.installationSecret, statePath: telemetry.statePath, collectorUrl, collectorAuthorization: process.env.RUDDER_TELEMETRY_COLLECTOR_AUTHORIZATION?.trim() || `Bearer ${telemetry.installationSecret}`, deliveryMode: telemetry.state.mode === "account_linked" ? "account_linked" as const : "anonymous" as const };
+  productAnalyticsScheduler = createDesktopProductAnalyticsScheduler({
+    upload: () => uploadDesktopProductAnalyticsOnce(base),
+  });
+  productAnalyticsScheduler.start();
+}
+
 async function stopLocalRudder(): Promise<void> {
   const browserLifecycle = browserRuntimeLifecycle;
   const handle = serverHandle;
+  productAnalyticsScheduler?.stop();
+  productAnalyticsScheduler = null;
   stopLocalAppsFeatureGateWatcher();
   await localAppsController?.setFeatureEnabled(false).catch((error) => {
     console.warn("[rudder-desktop] failed to stop Local Apps while the runtime was stopping", error);

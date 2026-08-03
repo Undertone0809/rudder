@@ -38,6 +38,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
       experimentalSitesEnabled: parsed.data.experimentalSitesEnabled ?? false,
       locale: parsed.data.locale ?? "en",
+      productAnalyticsMode: parsed.data.productAnalyticsMode ?? "off",
+      productAnalyticsConsentEpoch: parsed.data.productAnalyticsConsentEpoch ?? 1,
     };
   }
   return {
@@ -45,6 +47,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     showDeveloperDiagnostics: false,
     experimentalSitesEnabled: false,
     locale: "en",
+    productAnalyticsMode: "off",
+    productAnalyticsConsentEpoch: 1,
   };
 }
 

@@ -19,6 +19,12 @@ import {
   operatorProfileService,
 } from "../services/index.js";
 import { createNativePathPicker, NativePathPickerUnsupportedError } from "../services/native-path-picker.js";
+import {
+  getProductAnalyticsInstallationState,
+  reconcileProductAnalyticsInstallationMode,
+  recordProductAnalyticsConsent,
+  registerProductAnalyticsInstallation,
+} from "../services/product-analytics.js";
 import { assertBoard, getActorInfo } from "./authz.js";
 
 function assertCanManageInstanceSettings(req: Request) {
@@ -39,13 +45,62 @@ function assertLocalBrowserSettings(deploymentMode: DeploymentMode) {
 
 export function instanceSettingsRoutes(
   db: Db,
-  opts: { deploymentMode: DeploymentMode },
+  opts: { deploymentMode: DeploymentMode; instanceId?: string },
 ) {
   const router = Router();
   const svc = instanceSettingsService(db);
   const operatorProfiles = operatorProfileService(db);
   const boardAuth = boardAuthService(db);
   const pathPicker = createNativePathPicker();
+  const telemetryInstallationId = opts.instanceId ?? process.env.RUDDER_INSTANCE_ID ?? "default";
+
+  router.get("/instance/settings/product-analytics", async (req, res) => {
+    assertCanManageInstanceSettings(req);
+    const state = await getProductAnalyticsInstallationState(db, telemetryInstallationId);
+    const general = await svc.getGeneral();
+    res.json({
+      mode: general.productAnalyticsMode,
+      consentVersion: "v1",
+      consentEpoch: general.productAnalyticsConsentEpoch,
+      pendingCount: state?.pendingCount ?? 0,
+      lastAttemptedAt: state?.installation.state?.lastAttemptedAt ?? null,
+      lastSucceededAt: state?.installation.state?.lastSucceededAt ?? null,
+      lastErrorCode: state?.installation.state?.lastErrorCode ?? null,
+      coverageGap: state?.installation.state?.coverageGap === true,
+      disclosure: {
+        collected: ["event names", "coarse version/platform dimensions", "pseudonymous ids"],
+        excluded: ["prompts", "transcripts", "file paths", "issue titles", "output content", "credentials"],
+      },
+    });
+  });
+
+  router.patch("/instance/settings/product-analytics", async (req, res) => {
+    assertCanManageInstanceSettings(req);
+    const mode = req.body?.mode;
+    if (mode !== "off" && mode !== "anonymous" && mode !== "account_linked") {
+      throw unprocessable("Product analytics mode is invalid");
+    }
+    const installation = await registerProductAnalyticsInstallation(db, { installationId: telemetryInstallationId });
+    if (!installation.installation && !installation.installationSecret) {
+      // Existing registrations are intentionally not returned with their secret.
+      // The local uploader keeps its credential separately.
+    }
+    const actor = getActorInfo(req);
+    const localUserId = mode === "account_linked" && actor.actorType === "user" ? actor.actorId : null;
+    if (mode === "account_linked" && !localUserId) throw forbidden("Account-linked telemetry requires a signed-in user");
+    const scope = mode === "account_linked" ? "account_linked_user" : "anonymous_installation";
+    await recordProductAnalyticsConsent(db, {
+      installationId: telemetryInstallationId,
+      scope,
+      localUserId,
+      decision: mode === "off" ? "revoked" : "granted",
+      policyVersion: "v1",
+      decidedByLocalUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    await reconcileProductAnalyticsInstallationMode(db, telemetryInstallationId);
+    const updated = await svc.updateGeneral({ productAnalyticsMode: mode });
+    res.json({ mode: updated.general.productAnalyticsMode, consentEpoch: updated.general.productAnalyticsConsentEpoch });
+  });
 
   router.get("/instance/settings/general", async (req, res) => {
     assertCanManageInstanceSettings(req);

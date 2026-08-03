@@ -23,6 +23,6 @@ describe("desktop product analytics telemetry state", () => {
     const updated = await updateDesktopTelemetryState(first.statePath, { mode: "anonymous", lastErrorCode: "offline" });
     expect(updated.mode).toBe("anonymous");
     expect(updated.lastErrorCode).toBe("offline");
-    expect(updated.installationSecret).toBe(first.installationSecret);
+    expect(updated).not.toHaveProperty("installationSecret");
   });
 });

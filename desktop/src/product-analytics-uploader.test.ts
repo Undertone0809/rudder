@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadOrCreateDesktopTelemetryState } from "./product-analytics-telemetry.js";
+import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.js";
 
 const eventId = "22222222-2222-4222-8222-222222222222";
@@ -11,6 +11,7 @@ describe("desktop product analytics uploader", () => {
   it("keeps the installation secret on the local claim request and ACKs a delivered batch", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-"));
     const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "anonymous" });
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl = async (url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
@@ -47,6 +48,7 @@ describe("desktop product analytics uploader", () => {
   it("leaves the batch retryable when the collector is unavailable", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-"));
     const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "anonymous" });
     let calls = 0;
     const result = await uploadDesktopProductAnalyticsOnce({
       localApiUrl: "http://127.0.0.1:3100",
