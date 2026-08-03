@@ -93,6 +93,7 @@ describe("product analytics routes", () => {
       isInstanceAdmin: true,
     })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/${installationId}/outbox/ack`).send({
       installationSecret: "secret-1",
+      deliveryMode: "anonymous",
       eventIds: [eventId],
       claimToken: "claim-1",
       delivered: true,
@@ -104,6 +105,28 @@ describe("product analytics routes", () => {
       installationSecret: "secret-1",
       eventIds: [eventId],
       claimToken: "claim-1",
+      consentedLocalUserId: null,
+    }));
+  });
+
+  it("binds account-linked outbox claims to the signed-in local user", async () => {
+    const installationId = "installation-1";
+    const response = await request(createApp({
+      type: "board",
+      source: "session",
+      userId: "user-a",
+      orgIds: [ORG_ID],
+    })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/${installationId}/outbox/claim`).send({
+      installationSecret: "secret-1",
+      deliveryMode: "account_linked",
+      limit: 100,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockOutbox.claim).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      installationId,
+      deliveryMode: "account_linked",
+      consentedLocalUserId: "user-a",
     }));
   });
 });

@@ -663,7 +663,7 @@ export async function acknowledgeProductAnalyticsOutbox(db: Db, input: { install
 
 export async function acknowledgeProductAnalyticsOutboxClaim(
   db: Db,
-  input: { installationId: string; installationSecret: string; eventIds: string[]; claimToken: string; delivered?: boolean; errorCode?: string },
+  input: { installationId: string; installationSecret: string; eventIds: string[]; claimToken: string; consentedLocalUserId?: string | null; delivered?: boolean; errorCode?: string },
 ) {
   await assertProductAnalyticsInstallationSecret(db, input.installationId, input.installationSecret);
   const rows = await db.select({
@@ -675,6 +675,11 @@ export async function acknowledgeProductAnalyticsOutboxClaim(
     eq(productAnalyticsOutbox.installationId, input.installationId),
     eq(productAnalyticsOutbox.claimToken, input.claimToken),
     inArray(productAnalyticsOutbox.eventId, input.eventIds),
+    input.consentedLocalUserId === undefined
+      ? undefined
+      : input.consentedLocalUserId
+        ? eq(productAnalyticsOutbox.consentedLocalUserId, input.consentedLocalUserId)
+        : isNull(productAnalyticsOutbox.consentedLocalUserId),
   ));
   if (rows.length === 0) return { updatedCount: 0, state: input.delivered === false ? "retry_wait" : "delivered" };
   const first = rows[0];

@@ -114,10 +114,17 @@ export function productAnalyticsRoutes(db: Db) {
     if (deliveryMode !== "anonymous" && deliveryMode !== "account_linked") {
       throw unprocessable("Product analytics delivery mode is invalid");
     }
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
+    if (deliveryMode === "account_linked" && !accountLinkedUserId) {
+      throw unprocessable("Account-linked product analytics requires a signed-in user");
+    }
     const result = await claimProductAnalyticsOutboxBatch(db, {
       installationId,
       installationSecret,
       deliveryMode,
+      consentedLocalUserId: deliveryMode === "account_linked" ? accountLinkedUserId : null,
       limit: typeof req.body?.limit === "number" ? req.body.limit : undefined,
       leaseSeconds: typeof req.body?.leaseSeconds === "number" ? req.body.leaseSeconds : undefined,
     });
@@ -130,15 +137,26 @@ export function productAnalyticsRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
     const installationId = req.params.installationId as string;
     const installationSecret = typeof req.body?.installationSecret === "string" ? req.body.installationSecret : "";
+    const deliveryMode = req.body?.deliveryMode;
+    if (deliveryMode !== "anonymous" && deliveryMode !== "account_linked") {
+      throw unprocessable("Product analytics delivery mode is invalid");
+    }
     const eventIds = req.body?.eventIds;
     const claimToken = typeof req.body?.claimToken === "string" ? req.body.claimToken : "";
     if (!Array.isArray(eventIds) || eventIds.length < 1 || eventIds.length > 100 || !eventIds.every((id) => typeof id === "string" && isUuidLike(id))) {
       throw unprocessable("Product analytics event ids are invalid");
     }
     if (!claimToken) throw unprocessable("Product analytics claim token is required");
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
+    if (deliveryMode === "account_linked" && !accountLinkedUserId) {
+      throw unprocessable("Account-linked product analytics requires a signed-in user");
+    }
     const result = await acknowledgeProductAnalyticsOutboxClaim(db, {
       installationId,
       installationSecret,
+      consentedLocalUserId: deliveryMode === "account_linked" ? accountLinkedUserId : null,
       eventIds,
       claimToken,
       delivered: req.body?.delivered !== false,

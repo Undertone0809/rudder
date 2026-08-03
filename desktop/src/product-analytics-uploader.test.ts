@@ -40,7 +40,7 @@ describe("desktop product analytics uploader", () => {
     expect(calls[0]?.body).toMatchObject({ installationSecret: telemetry.installationSecret });
     expect(calls[1]?.body).toEqual({ events: [{ eventId, eventName: "work_loop_completed" }] });
     expect(calls[1]?.body).not.toHaveProperty("installationSecret");
-    expect(calls[2]?.body).toMatchObject({ installationSecret: telemetry.installationSecret, claimToken: "claim-1", eventIds: [eventId], delivered: true });
+    expect(calls[2]?.body).toMatchObject({ installationSecret: telemetry.installationSecret, deliveryMode: "anonymous", claimToken: "claim-1", eventIds: [eventId], delivered: true });
     const persisted = JSON.parse(await readFile(telemetry.statePath, "utf8")) as { lastSucceededAt: string | null };
     expect(persisted.lastSucceededAt).toBe("2026-08-03T00:00:00.000Z");
   });

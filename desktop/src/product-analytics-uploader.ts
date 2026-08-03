@@ -108,7 +108,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
     ackResponse = await fetchImpl(`${options.localApiUrl.replace(/\/$/, "")}/api/orgs/${encodeURIComponent(options.orgId)}/analytics/product/installation/${encodeURIComponent(options.installationId)}/outbox/ack`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(options.localHeaders ?? {}) },
-      body: JSON.stringify({ installationSecret: options.installationSecret, claimToken, eventIds, delivered, errorCode }),
+      body: JSON.stringify({ installationSecret: options.installationSecret, deliveryMode: options.deliveryMode, claimToken, eventIds, delivered, errorCode }),
     });
   } catch {
     await updateDesktopTelemetryState(options.statePath, { lastErrorCode: "local_ack_network" });
