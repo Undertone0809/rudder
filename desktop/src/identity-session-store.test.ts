@@ -18,12 +18,13 @@ const credential: IdentityDeviceCredential = {
 
 describe("Desktop Identity session store", () => {
   it.each([
-    { isPackaged: false, platform: "darwin" as const, expected: true },
-    { isPackaged: false, platform: "win32" as const, expected: true },
-    { isPackaged: false, platform: "linux" as const, expected: true },
-    { isPackaged: true, platform: "linux" as const, expected: true },
-    { isPackaged: true, platform: "darwin" as const, expected: false },
-    { isPackaged: true, platform: "win32" as const, expected: false },
+    { isPackaged: false, platform: "darwin" as const, storageBackend: "mac_memory_only", expected: true },
+    { isPackaged: false, platform: "win32" as const, storageBackend: "unavailable", expected: true },
+    { isPackaged: false, platform: "linux" as const, storageBackend: "basic_text", expected: true },
+    { isPackaged: true, platform: "linux" as const, storageBackend: "basic_text", expected: true },
+    { isPackaged: true, platform: "darwin" as const, storageBackend: "mac_memory_only", expected: true },
+    { isPackaged: true, platform: "darwin" as const, storageBackend: "keychain", expected: false },
+    { isPackaged: true, platform: "win32" as const, storageBackend: "unavailable", expected: false },
   ])("selects the platform memory fallback policy (%o)", ({ expected, ...input }) => {
     expect(desktopIdentityMemoryFallbackAllowed(input)).toBe(expected);
   });
@@ -37,6 +38,12 @@ describe("Desktop Identity session store", () => {
       read,
       write,
       clear,
+    }, {
+      allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+        isPackaged: true,
+        platform: "darwin",
+        storageBackend: "keychain",
+      }),
     });
 
     expect(store.persistence).toBe("secure");
@@ -71,6 +78,68 @@ describe("Desktop Identity session store", () => {
     expect(store.read()).toEqual(credential);
     expect(store.read()).not.toBe(credential);
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it("uses process-only memory for a packaged macOS memory-only backend", () => {
+    const store = createDesktopIdentitySessionStore({
+      status: () => ({
+        available: false,
+        backend: "mac_memory_only",
+        reason: "encryption_unavailable",
+      }),
+      read: vi.fn(() => null),
+      write: vi.fn(),
+      clear: vi.fn(),
+    }, {
+      allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+        isPackaged: true,
+        platform: "darwin",
+        storageBackend: "mac_memory_only",
+      }),
+    });
+
+    expect(store.persistence).toBe("memory");
+    expect(store.status()).toMatchObject({
+      available: true,
+      backend: "memory",
+      persistence: "process-only",
+    });
+    store.write(credential);
+    expect(store.read()).toEqual(credential);
+  });
+
+  it("fails closed when a packaged macOS keychain backend is unavailable", () => {
+    const clear = vi.fn();
+    const keychainVault = {
+      status: () => ({
+        available: false as const,
+        backend: "keychain",
+        reason: "encryption_unavailable" as const,
+      }),
+      read: vi.fn(() => null),
+      write: vi.fn(),
+      clear,
+    };
+    const store = createDesktopIdentitySessionStore(keychainVault, {
+      allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+        isPackaged: true,
+        platform: "darwin",
+        storageBackend: "keychain",
+      }),
+    });
+
+    expect(store.persistence).toBe("unavailable");
+    expect(store.status()).toEqual({
+      available: false,
+      backend: "keychain",
+      reason: "encryption_unavailable",
+    });
+    expect(() => store.write(credential)).toThrow(
+      "Secure credential storage is unavailable on this device",
+    );
+    expect(keychainVault.write).not.toHaveBeenCalled();
+    store.clear();
+    expect(clear).toHaveBeenCalledOnce();
   });
 
   it("loses a memory session on restart and clears stale durable state on sign-out", () => {

@@ -1,5 +1,8 @@
+import type { Db } from "@rudderhq/db";
+import { productAnalyticsCollectorDailyRollups, productAnalyticsCollectorEvents, productAnalyticsCollectorInstallations, productAnalyticsCollectorSubjects } from "@rudderhq/db";
+import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { PRODUCT_ANALYTICS_EVENT_NAMES } from "./product-analytics.js";
+import { PRODUCT_ANALYTICS_EVENT_NAMES, PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST } from "./product-analytics.js";
 
 const MAX_BATCH_EVENTS = 100;
 const MAX_BATCH_BYTES = 64 * 1024;
@@ -16,6 +19,7 @@ export type ProductAnalyticsCollectorAuthorization = {
   consentVersion: string;
   consentEpoch: number;
   analyticsSubject?: string | null;
+  pseudonymousInstallationId?: string | null;
 };
 
 export type ProductAnalyticsCollectorEvent = {
@@ -48,7 +52,7 @@ export type ProductAnalyticsCollectorAck = {
   late: boolean;
 };
 
-type StoredCollectorEvent = ProductAnalyticsCollectorEvent & {
+export type StoredCollectorEvent = ProductAnalyticsCollectorEvent & {
   installationId: string;
   analyticsSubject: string | null;
   consentVersion: string;
@@ -57,7 +61,7 @@ type StoredCollectorEvent = ProductAnalyticsCollectorEvent & {
   receivedAt: string;
 };
 
-type InstallationState = {
+export type InstallationState = {
   consentVersion: string;
   consentEpoch: number;
   revoked: boolean;
@@ -111,7 +115,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function hashPayload(value: unknown) {
+export function hashProductAnalyticsCollectorPayload(value: unknown) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
@@ -119,7 +123,7 @@ function reject(code: ProductAnalyticsCollectorAck["errorCode"], eventId: string
   return { eventId, status: "rejected", errorCode: code, late };
 }
 
-function validateEvent(value: unknown): { event: ProductAnalyticsCollectorEvent; serialized: string; late: boolean } | ProductAnalyticsCollectorAck {
+export function validateProductAnalyticsCollectorEvent(value: unknown): { event: ProductAnalyticsCollectorEvent; serialized: string; late: boolean } | ProductAnalyticsCollectorAck {
   if (!value || typeof value !== "object" || Array.isArray(value)) return reject("invalid_schema", "unknown");
   const event = value as Record<string, unknown>;
   const requiredKeys = [
@@ -152,10 +156,12 @@ function validateEvent(value: unknown): { event: ProductAnalyticsCollectorEvent;
   }
   if (!event.properties || typeof event.properties !== "object" || Array.isArray(event.properties)) return reject("invalid_event", event.eventId, late);
   for (const [key, property] of Object.entries(event.properties as Record<string, unknown>)) {
-    if (SENSITIVE_KEY.test(key) || !isScalar(property) || (typeof property === "string" && property.length > 80) || (typeof property === "number" && !Number.isFinite(property))) {
+    const allowlist = PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST[event.eventName as keyof typeof PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST];
+    if (!allowlist?.has(key) || SENSITIVE_KEY.test(key) || !isScalar(property) || (typeof property === "string" && property.length > 80) || (typeof property === "number" && !Number.isFinite(property))) {
       return reject("invalid_event", event.eventId, late);
     }
   }
+  if (event.pseudonymousInstallationId === null || typeof event.pseudonymousInstallationId !== "string") return reject("invalid_event", event.eventId, late);
   const serialized = JSON.stringify(event);
   if (Buffer.byteLength(serialized, "utf8") > MAX_EVENT_BYTES) return reject("too_large", event.eventId, late);
   return { event: event as unknown as ProductAnalyticsCollectorEvent, serialized, late };
@@ -182,13 +188,17 @@ export function createProductAnalyticsCollector(store: ProductAnalyticsCollector
     }
     const acks: ProductAnalyticsCollectorAck[] = [];
     for (const value of events) {
-      const result = validateEvent(value);
+      const result = validateProductAnalyticsCollectorEvent(value);
       if ("status" in result) {
         acks.push(result);
         continue;
       }
+      if (authorization.pseudonymousInstallationId && result.event.pseudonymousInstallationId !== authorization.pseudonymousInstallationId) {
+        acks.push(reject("invalid_event", result.event.eventId, result.late));
+        continue;
+      }
       const existing = store.getEvent(result.event.eventId);
-      const payloadSha256 = hashPayload(result.event);
+      const payloadSha256 = hashProductAnalyticsCollectorPayload(result.event);
       if (existing) {
         acks.push(existing.payloadSha256 === payloadSha256
           ? { eventId: result.event.eventId, status: "duplicate", late: result.late }
@@ -228,3 +238,203 @@ export function createProductAnalyticsCollector(store: ProductAnalyticsCollector
 }
 
 export type ProductAnalyticsCollector = ReturnType<typeof createProductAnalyticsCollector>;
+
+export type ProductAnalyticsPersistentCollector = {
+  ingestBatch(input: { authorization: ProductAnalyticsCollectorAuthorization; events: unknown; now?: Date }): Promise<{
+    accepted: number;
+    duplicate: number;
+    rejected: ProductAnalyticsCollectorAck[];
+    receivedAt: string;
+  }>;
+  advanceConsent(input: { installationId: string; consentVersion: string; consentEpoch: number; revoked: boolean }): Promise<InstallationState>;
+};
+
+/**
+ * PostgreSQL-backed collector used by the private telemetry deployment. The
+ * local app never mounts this route, so these tables can live in a separately
+ * permissioned database/schema in production while sharing the same contract.
+ */
+export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyticsPersistentCollector {
+  async function readState(installationId: string) {
+    const [row] = await db.select({
+      consentVersion: productAnalyticsCollectorInstallations.consentVersion,
+      consentEpoch: productAnalyticsCollectorInstallations.consentEpoch,
+      revoked: productAnalyticsCollectorInstallations.revoked,
+      analyticsSubject: productAnalyticsCollectorInstallations.analyticsSubject,
+    }).from(productAnalyticsCollectorInstallations)
+      .where(eq(productAnalyticsCollectorInstallations.installationId, installationId)).limit(1);
+    return row ?? null;
+  }
+
+  async function ensureState(authorization: ProductAnalyticsCollectorAuthorization, now: Date) {
+    const existing = await readState(authorization.installationId);
+    if (existing) return existing;
+    const [created] = await db.insert(productAnalyticsCollectorInstallations).values({
+      installationId: authorization.installationId,
+      mode: authorization.mode,
+      consentVersion: authorization.consentVersion,
+      consentEpoch: authorization.consentEpoch,
+      analyticsSubject: authorization.mode === "account_linked" ? authorization.analyticsSubject ?? null : null,
+      revoked: false,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing({ target: productAnalyticsCollectorInstallations.installationId }).returning({
+      consentVersion: productAnalyticsCollectorInstallations.consentVersion,
+      consentEpoch: productAnalyticsCollectorInstallations.consentEpoch,
+      revoked: productAnalyticsCollectorInstallations.revoked,
+      analyticsSubject: productAnalyticsCollectorInstallations.analyticsSubject,
+    });
+    if (created && authorization.analyticsSubject) {
+      await db.insert(productAnalyticsCollectorSubjects).values({
+        installationId: authorization.installationId,
+        analyticsSubject: authorization.analyticsSubject,
+        consentVersion: authorization.consentVersion,
+        consentEpoch: authorization.consentEpoch,
+      }).onConflictDoUpdate({
+        target: [productAnalyticsCollectorSubjects.installationId, productAnalyticsCollectorSubjects.analyticsSubject],
+        set: { consentVersion: authorization.consentVersion, consentEpoch: authorization.consentEpoch, revokedAt: null, updatedAt: now },
+      });
+    }
+    return created ?? await readState(authorization.installationId);
+  }
+
+  async function ingestBatch(input: { authorization: ProductAnalyticsCollectorAuthorization; events: unknown; now?: Date }) {
+    const now = input.now ?? new Date();
+    const events = Array.isArray(input.events) ? input.events : null;
+    if (!events) return { accepted: 0, duplicate: 0, rejected: [{ eventId: "batch", status: "rejected" as const, errorCode: "invalid_schema" as const, late: false }], receivedAt: now.toISOString() };
+    const serializedBatch = JSON.stringify(events) ?? "";
+    if (events.length > MAX_BATCH_EVENTS || Buffer.byteLength(serializedBatch, "utf8") > MAX_BATCH_BYTES) {
+      return { accepted: 0, duplicate: 0, rejected: [{ eventId: "batch", status: "rejected" as const, errorCode: "too_large" as const, late: false }], receivedAt: now.toISOString() };
+    }
+    const state = await ensureState(input.authorization, now);
+    if (input.authorization.mode === "account_linked" && (!input.authorization.analyticsSubject || (state?.analyticsSubject && state.analyticsSubject !== input.authorization.analyticsSubject))) {
+      return { accepted: 0, duplicate: 0, rejected: events.map((value) => reject("invalid_schema", typeof (value as Record<string, unknown>)?.eventId === "string" ? String((value as Record<string, unknown>).eventId) : "unknown")), receivedAt: now.toISOString() };
+    }
+    if (!state || state.revoked || state.consentEpoch !== input.authorization.consentEpoch || state.consentVersion !== input.authorization.consentVersion) {
+      return { accepted: 0, duplicate: 0, rejected: events.map((value) => reject("revoked", typeof (value as Record<string, unknown>)?.eventId === "string" ? String((value as Record<string, unknown>).eventId) : "unknown")), receivedAt: now.toISOString() };
+    }
+    const acknowledgements: ProductAnalyticsCollectorAck[] = [];
+    for (const value of events) {
+      const result = validateProductAnalyticsCollectorEvent(value);
+      if ("status" in result) {
+        acknowledgements.push(result);
+        continue;
+      }
+      if (input.authorization.pseudonymousInstallationId && result.event.pseudonymousInstallationId !== input.authorization.pseudonymousInstallationId) {
+        acknowledgements.push(reject("invalid_event", result.event.eventId, result.late));
+        continue;
+      }
+      const payloadSha256 = hashProductAnalyticsCollectorPayload(result.event);
+      const [existing] = await db.select({ payloadSha256: productAnalyticsCollectorEvents.payloadSha256 })
+        .from(productAnalyticsCollectorEvents).where(eq(productAnalyticsCollectorEvents.eventId, result.event.eventId)).limit(1);
+      if (existing) {
+        acknowledgements.push(existing.payloadSha256 === payloadSha256
+          ? { eventId: result.event.eventId, status: "duplicate", late: result.late }
+          : { eventId: result.event.eventId, status: "rejected", errorCode: "conflict", late: result.late });
+        continue;
+      }
+      await db.insert(productAnalyticsCollectorEvents).values({
+        eventId: result.event.eventId,
+        installationId: input.authorization.installationId,
+        analyticsSubject: input.authorization.mode === "account_linked" ? input.authorization.analyticsSubject ?? null : null,
+        eventName: result.event.eventName,
+        schemaVersion: result.event.schemaVersion,
+        occurredAt: new Date(result.event.occurredAt),
+        receivedAt: now,
+        effectiveAt: result.late ? now : new Date(result.event.occurredAt),
+        environment: result.event.environment,
+        appVersion: result.event.appVersion,
+        releaseChannel: result.event.releaseChannel,
+        deploymentMode: result.event.deploymentMode,
+        coarsePlatform: null,
+        actorKind: result.event.actorKind,
+        origin: result.event.origin,
+        isInternal: false,
+        pseudonymousInstallationId: result.event.pseudonymousInstallationId,
+        pseudonymousOrgId: result.event.pseudonymousOrgId,
+        pseudonymousWorkId: result.event.pseudonymousWorkId,
+        pseudonymousWorkCycleId: result.event.pseudonymousWorkCycleId,
+        pseudonymousRootRunId: result.event.pseudonymousRootRunId,
+        pseudonymousRunId: result.event.pseudonymousRunId,
+        completionRevision: result.event.completionRevision,
+        properties: result.event.properties,
+        confidence: result.event.confidence,
+        isBackfill: result.event.isBackfill,
+        late: result.late,
+        consentVersion: input.authorization.consentVersion,
+        consentEpoch: input.authorization.consentEpoch,
+        payloadSha256,
+      }).onConflictDoNothing({ target: productAnalyticsCollectorEvents.eventId });
+      const occurredAt = new Date(result.event.occurredAt);
+      const dimensions = {
+        environment: result.event.environment,
+        app_version: result.event.appVersion,
+        release_channel: result.event.releaseChannel,
+        deployment_mode: result.event.deploymentMode,
+        confidence: result.event.confidence,
+      } as const;
+      const dimensionHash = hashProductAnalyticsCollectorPayload(dimensions);
+      await db.insert(productAnalyticsCollectorDailyRollups).values({
+        day: occurredAt.toISOString().slice(0, 10),
+        installationId: input.authorization.installationId,
+        eventName: result.event.eventName,
+        origin: result.event.origin,
+        dimensionHash,
+        dimensions,
+        eventCount: 1,
+        firstOccurredAt: occurredAt,
+        lastOccurredAt: occurredAt,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [productAnalyticsCollectorDailyRollups.day, productAnalyticsCollectorDailyRollups.installationId, productAnalyticsCollectorDailyRollups.eventName, productAnalyticsCollectorDailyRollups.origin, productAnalyticsCollectorDailyRollups.dimensionHash],
+        set: {
+          eventCount: sql`${productAnalyticsCollectorDailyRollups.eventCount} + 1`,
+          firstOccurredAt: sql`least(${productAnalyticsCollectorDailyRollups.firstOccurredAt}, ${occurredAt})`,
+          lastOccurredAt: sql`greatest(${productAnalyticsCollectorDailyRollups.lastOccurredAt}, ${occurredAt})`,
+          updatedAt: now,
+        },
+      });
+      acknowledgements.push({ eventId: result.event.eventId, status: "accepted", late: result.late });
+    }
+    await db.update(productAnalyticsCollectorInstallations).set({ lastSeenAt: now, updatedAt: now }).where(eq(productAnalyticsCollectorInstallations.installationId, input.authorization.installationId));
+    return {
+      accepted: acknowledgements.filter((ack) => ack.status === "accepted").length,
+      duplicate: acknowledgements.filter((ack) => ack.status === "duplicate").length,
+      rejected: acknowledgements.filter((ack) => ack.status === "rejected"),
+      receivedAt: now.toISOString(),
+    };
+  }
+
+  async function advanceConsent(input: { installationId: string; consentVersion: string; consentEpoch: number; revoked: boolean }) {
+    const current = await readState(input.installationId);
+    if (current && input.consentEpoch <= current.consentEpoch) return current;
+    const [row] = await db.update(productAnalyticsCollectorInstallations).set({
+      consentVersion: input.consentVersion,
+      consentEpoch: input.consentEpoch,
+      revoked: input.revoked,
+      updatedAt: new Date(),
+    }).where(current
+      ? and(eq(productAnalyticsCollectorInstallations.installationId, input.installationId), eq(productAnalyticsCollectorInstallations.consentEpoch, current.consentEpoch))
+      : eq(productAnalyticsCollectorInstallations.installationId, input.installationId)).returning({
+      consentVersion: productAnalyticsCollectorInstallations.consentVersion,
+      consentEpoch: productAnalyticsCollectorInstallations.consentEpoch,
+      revoked: productAnalyticsCollectorInstallations.revoked,
+    });
+    if (row) return row;
+    const [created] = await db.insert(productAnalyticsCollectorInstallations).values({
+      installationId: input.installationId,
+      mode: "anonymous",
+      consentVersion: input.consentVersion,
+      consentEpoch: input.consentEpoch,
+      revoked: input.revoked,
+    }).onConflictDoNothing({ target: productAnalyticsCollectorInstallations.installationId }).returning({
+      consentVersion: productAnalyticsCollectorInstallations.consentVersion,
+      consentEpoch: productAnalyticsCollectorInstallations.consentEpoch,
+      revoked: productAnalyticsCollectorInstallations.revoked,
+    });
+    return created ?? await readState(input.installationId) ?? { consentVersion: input.consentVersion, consentEpoch: input.consentEpoch, revoked: input.revoked };
+  }
+
+  return { ingestBatch, advanceConsent };
+}

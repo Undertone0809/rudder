@@ -142,7 +142,13 @@ test.describe("Onboarding wizard", () => {
     await page.goto("/onboarding");
     await expectOnboardingStep(page, "Name your organization");
     await page.locator('input[placeholder="Acme Corp"]').fill(`E2E-Reasoning-${Date.now()}`);
+    const createOrganizationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith("/api/orgs")
+      && response.ok(),
+    );
     await page.getByRole("button", { name: "Next" }).click();
+    const organization = await (await createOrganizationResponse).json() as { id: string };
 
     await expectOnboardingStep(page, "Create your first agent");
     await page.getByRole("button", { name: "Codex" }).click();
@@ -196,6 +202,56 @@ test.describe("Onboarding wizard", () => {
     expect(agent.agentRuntimeConfig.model).toBe("gpt-5.6-sol");
     expect(agent.agentRuntimeConfig.modelReasoningEffort).toBe("ultra");
     await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
+
+    const cleanupResponse = await page.request.delete(`/api/orgs/${organization.id}`);
+    expect(cleanupResponse.ok()).toBe(true);
+  });
+
+  test("shows runtime-specific reasoning controls during first-agent setup", async ({ page }) => {
+    await page.goto("/onboarding");
+    await expectOnboardingStep(page, "Name your organization");
+    await page.locator('input[placeholder="Acme Corp"]').fill(`E2E-Runtime-Effort-${Date.now()}`);
+    await page.getByRole("button", { name: "Next" }).click();
+
+    const onboardingDialog = page.getByTestId("onboarding-dialog");
+    await expectOnboardingStep(page, "Create your first agent");
+    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toBeVisible();
+
+    let moreRuntimesOpened = false;
+    const selectRuntime = async (runtimeLabel: string) => {
+      if (runtimeLabel !== "Claude Code" && runtimeLabel !== "Codex") {
+        const moreRuntimes = page.getByRole("button", { name: "More Agent Runtime Types" });
+        if (!moreRuntimesOpened) {
+          await moreRuntimes.click();
+          moreRuntimesOpened = true;
+        }
+      }
+      await page.getByRole("button", { name: runtimeLabel }).click();
+    };
+
+    const expectEffortOptions = async (options: string[]) => {
+      const effortButton = onboardingDialog.getByRole("button", { name: /^(Auto|Off|Low|Ultra|Plan)$/ }).last();
+      await effortButton.click();
+      const popover = page.locator("[data-radix-popper-content-wrapper]").last();
+      for (const option of options) {
+        await expect(popover.getByText(option, { exact: true })).toBeVisible();
+      }
+      await page.keyboard.press("Escape");
+    };
+
+    await expectEffortOptions(["Low", "Medium", "High"]);
+    await selectRuntime("Codex");
+    await expectEffortOptions(["Light", "Medium", "High", "Extra High", "Max", "Ultra"]);
+    await selectRuntime("OpenCode");
+    await expectEffortOptions(["Minimal", "Low", "Medium", "High", "Max"]);
+    await selectRuntime("Pi");
+    await expectEffortOptions(["Off", "Minimal", "Low", "Medium", "High", "Extra High"]);
+    await selectRuntime("Cursor");
+    await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toBeVisible();
+    await expectEffortOptions(["Plan", "Ask"]);
+    await selectRuntime("Gemini CLI");
+    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
+    await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toHaveCount(0);
   });
 
   test("explains each slow setup stage while creating a starter organization", async ({

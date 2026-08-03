@@ -80,6 +80,12 @@ describe("product analytics collector", () => {
     expect(collector.store.listEvents()).toHaveLength(0);
   });
 
+  it("rejects properties outside the event contract", () => {
+    const collector = createCollector();
+    const result = collector.ingestBatch({ authorization, events: [event({ properties: { unexpected_dimension: true } })] });
+    expect(result.rejected[0]).toMatchObject({ errorCode: "invalid_event" });
+  });
+
   it("rejects old consent epochs after revocation", () => {
     const collector = createCollector();
     collector.advanceConsent({ installationId, consentVersion: "v1", consentEpoch: 2, revoked: true });

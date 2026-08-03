@@ -136,12 +136,50 @@ export const cursorModeOptions = [
   { id: "ask", label: "Ask" },
 ] as const;
 
+export const piThinkingEffortOptions = [
+  { id: "", label: "Auto" },
+  { id: "off", label: "Off" },
+  { id: "minimal", label: "Minimal" },
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra High" },
+] as const;
+
 export const claudeThinkingEffortOptions = [
   { id: "", label: "Auto" },
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
 ] as const;
+
+const RUNTIME_THINKING_EFFORT_DEFINITIONS = {
+  claude_local: {
+    key: "effort",
+    label: "Thinking effort",
+    options: claudeThinkingEffortOptions,
+  },
+  codex_local: {
+    key: "modelReasoningEffort",
+    label: "Thinking effort",
+    options: codexThinkingEffortOptions,
+  },
+  cursor: {
+    key: "mode",
+    label: "Execution mode",
+    options: cursorModeOptions,
+  },
+  opencode_local: {
+    key: "variant",
+    label: "Thinking effort",
+    options: openCodeThinkingEffortOptions,
+  },
+  pi_local: {
+    key: "thinking",
+    label: "Thinking effort",
+    options: piThinkingEffortOptions,
+  },
+} as const;
 
 export const LOCAL_MODEL_RUNTIME_TYPES = [
   "claude_local",
@@ -249,29 +287,32 @@ export function defaultFallbackItemForChain(
 }
 
 export function thinkingEffortKeyForRuntime(agentRuntimeType: string) {
-  if (agentRuntimeType === "codex_local") return "modelReasoningEffort";
-  if (agentRuntimeType === "cursor") return "mode";
-  if (agentRuntimeType === "opencode_local") return "variant";
-  if (agentRuntimeType === "pi_local") return "thinking";
-  return "effort";
+  return RUNTIME_THINKING_EFFORT_DEFINITIONS[agentRuntimeType as keyof typeof RUNTIME_THINKING_EFFORT_DEFINITIONS]?.key
+    ?? "effort";
 }
 
 export function thinkingEffortOptionsForRuntime(agentRuntimeType: string, model = "") {
+  const definition = RUNTIME_THINKING_EFFORT_DEFINITIONS[
+    agentRuntimeType as keyof typeof RUNTIME_THINKING_EFFORT_DEFINITIONS
+  ];
+  if (!definition) return [];
   if (agentRuntimeType === "codex_local") {
     return withDefaultThinkingEffortOption(
       "Auto",
       codexLocalReasoningEffortOptionsForModel(model),
     ).map((option) => ({ id: option.value, label: option.label }));
   }
-  if (agentRuntimeType === "cursor") return cursorModeOptions;
-  if (agentRuntimeType === "opencode_local" || agentRuntimeType === "pi_local") {
-    return openCodeThinkingEffortOptions;
-  }
-  return claudeThinkingEffortOptions;
+  return definition.options;
+}
+
+export function thinkingEffortLabelForRuntime(agentRuntimeType: string) {
+  return RUNTIME_THINKING_EFFORT_DEFINITIONS[
+    agentRuntimeType as keyof typeof RUNTIME_THINKING_EFFORT_DEFINITIONS
+  ]?.label ?? "Thinking effort";
 }
 
 export function shouldShowThinkingEffort(agentRuntimeType: string) {
-  return agentRuntimeType !== "gemini_local";
+  return agentRuntimeType in RUNTIME_THINKING_EFFORT_DEFINITIONS;
 }
 
 export function hasClearedConfigValue(configPatch: Record<string, unknown>) {
