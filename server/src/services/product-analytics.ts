@@ -50,7 +50,10 @@ type AnalyticsProperties = Record<string, ProductAnalyticsPropertyValue>;
 const EVENT_NAME_SET = new Set<string>(PRODUCT_ANALYTICS_EVENT_NAMES);
 const CONFIDENCE_SET = new Set<ProductAnalyticsConfidence>(["exact", "derived", "unknown"]);
 const ACTOR_TYPE_SET = new Set<ProductAnalyticsActorType>(["human", "agent", "system", "automation"]);
-const SENSITIVE_PROPERTY_KEY = /(prompt|transcript|title|description|body|content|path|url|token|secret|password|credential|email|hostname|username)/i;
+// Unknown keys are rejected by the event-specific allowlist. Keep this scan
+// focused on content-bearing names so safe dimensions such as creation_path do
+// not get rejected by a substring match.
+const SENSITIVE_PROPERTY_KEY = /(prompt|transcript|title|description|body|content|url|token|secret|password|credential|email|hostname|username)/i;
 const EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalyticsEventName, ReadonlySet<string>> = {
   organization_created: new Set([
     "creation_path",

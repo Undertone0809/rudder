@@ -93,4 +93,24 @@ describe("product analytics local ledger", () => {
       properties: { output_kind: "structured_result" },
     })).resolves.toEqual({ id: "output-event" });
   });
+
+  it("allows the safe organization provenance dimensions", async () => {
+    const stub = createInsertDb([{ id: "organization-event" }]);
+    await expect(recordProductAnalyticsEvent(stub.db, {
+      orgId: "org-1",
+      eventName: "organization_created",
+      sourceTransition: "organization.create",
+      confidence: "exact",
+      actorType: "system",
+      entityType: "organization",
+      entityId: "org-1",
+      dedupeKey: "organization_created:org-1",
+      properties: {
+        creation_path: "manual",
+        template_kind: "custom",
+        is_first_organization: true,
+        is_user_initiated: true,
+      },
+    })).resolves.toEqual({ id: "organization-event" });
+  });
 });
