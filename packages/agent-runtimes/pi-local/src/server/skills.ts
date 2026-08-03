@@ -8,6 +8,7 @@ import {
   cleanupRetiredRudderManagedEntries,
   ensureRudderSkillSymlink,
   formatRetiredRudderManagedEntryCleanupWarnings,
+  pruneLegacyLocalCliCredentialHomeEntries,
   readInstalledSkillTargets,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
@@ -20,8 +21,108 @@ import { fileURLToPath } from "node:url";
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
 
+type PiRuntimeLog = (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return fs.access(candidate).then(() => true).catch(() => false);
+}
+
+async function ensureParentDir(target: string) {
+  await fs.mkdir(path.dirname(target), { recursive: true });
+}
+
+async function ensureSymlink(target: string, source: string) {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) {
+    await ensureParentDir(target);
+    await fs.symlink(source, target);
+    return;
+  }
+  if (!existing.isSymbolicLink()) return;
+
+  const linkedPath = await fs.readlink(target).catch(() => null);
+  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
+  if (resolvedLinkedPath === source) return;
+  await fs.unlink(target);
+  await fs.symlink(source, target);
+}
+
+function resolvePiRoot(homeDir: string): string {
+  return path.join(homeDir, ".pi");
+}
+
+function resolvePiSessionsDir(homeDir: string): string {
+  return path.join(resolvePiRoot(homeDir), "paperclips");
+}
+
+function resolvePiSkillsDir(homeDir: string): string {
+  return path.join(resolvePiRoot(homeDir), "agent", "skills");
+}
+
+async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
+  const sourcePiDir = resolvePiRoot(sourceHome);
+  const targetPiDir = resolvePiRoot(targetHome);
+  await fs.mkdir(targetPiDir, { recursive: true });
+
+  const topEntries = await fs.readdir(sourcePiDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of topEntries) {
+    if (entry.name === "agent" || entry.name === "paperclips") continue;
+    await ensureSymlink(
+      path.join(targetPiDir, entry.name),
+      path.join(sourcePiDir, entry.name),
+    );
+  }
+
+  const sourceAgentDir = path.join(sourcePiDir, "agent");
+  if (!(await pathExists(sourceAgentDir))) return;
+  const targetAgentDir = path.join(targetPiDir, "agent");
+  await fs.mkdir(targetAgentDir, { recursive: true });
+  const agentEntries = await fs.readdir(sourceAgentDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of agentEntries) {
+    if (entry.name === "skills") continue;
+    await ensureSymlink(
+      path.join(targetAgentDir, entry.name),
+      path.join(sourceAgentDir, entry.name),
+    );
+  }
+}
+
+/**
+ * Prepare the same narrow Pi state used by execution before running a probe.
+ *
+ * Reasoning:
+ * - Pi resolves auth.json and models.json from PI_CODING_AGENT_DIR, so a probe
+ *   that only switches to the managed directory would hide the operator's
+ *   existing Pi login and report a false missing-key error.
+ * - Keep the operator HOME unchanged while bridging only Pi-owned state; broad
+ *   host credential/tooling directories remain outside the managed home.
+ */
+export async function prepareManagedPiHome(
+  env: NodeJS.ProcessEnv,
+  operatorHome: string,
+  onLog: PiRuntimeLog,
+  orgId: string,
+): Promise<string> {
+  const sourceHome = path.resolve(operatorHome);
+  const targetHome = resolveManagedPiHomeDir({ env }, orgId);
+  if (targetHome === sourceHome) return targetHome;
+
+  await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
+  await fs.mkdir(resolvePiSessionsDir(targetHome), { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
+  if (await pathExists(resolvePiRoot(sourceHome))) {
+    await syncPiSharedHomeEntries(sourceHome, targetHome);
+  }
+
+  await onLog(
+    "stdout",
+    `[rudder] Using adapter-managed Pi runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
+  );
+  return targetHome;
 }
 
 export function resolveManagedPiHomeDir(config: Record<string, unknown>, orgId: string) {

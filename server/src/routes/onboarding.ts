@@ -9,6 +9,10 @@ import {
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router } from "express";
 import { agentService, issueService, logActivity, organizationService, projectService } from "../services/index.js";
+import {
+  lockMessengerCustomGroupPlacement,
+  lockMessengerOwnerPlacement,
+} from "../services/messenger-saved-views.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
@@ -569,45 +573,48 @@ async function seedGettingStartedMessengerState(
   if (issueIds.length === 0) return;
 
   const now = new Date();
-  let [group] = await db
-    .select()
-    .from(messengerCustomGroups)
-    .where(and(
-      eq(messengerCustomGroups.orgId, input.orgId),
-      eq(messengerCustomGroups.userId, input.userId),
-      eq(messengerCustomGroups.name, ONBOARDING_PROJECT_NAME),
-    ))
-    .orderBy(asc(messengerCustomGroups.createdAt))
-    .limit(1);
-
-  if (!group) {
-    const [lastGroup] = await db
-      .select({ sortOrder: messengerCustomGroups.sortOrder })
+  await db.transaction(async (tx) => {
+    await lockMessengerOwnerPlacement(tx, input.orgId, input.userId);
+    let [group] = await tx
+      .select()
       .from(messengerCustomGroups)
       .where(and(
         eq(messengerCustomGroups.orgId, input.orgId),
         eq(messengerCustomGroups.userId, input.userId),
+        eq(messengerCustomGroups.name, ONBOARDING_PROJECT_NAME),
       ))
-      .orderBy(desc(messengerCustomGroups.sortOrder))
+      .orderBy(asc(messengerCustomGroups.createdAt))
       .limit(1);
 
-    [group] = await db
-      .insert(messengerCustomGroups)
-      .values({
-        orgId: input.orgId,
-        userId: input.userId,
-        name: ONBOARDING_PROJECT_NAME,
-        icon: ONBOARDING_MESSENGER_GROUP_ICON,
-        sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
-        pinnedAt: now,
-        updatedAt: now,
-      })
-      .returning();
-  }
+    if (!group) {
+      const [lastGroup] = await tx
+        .select({ sortOrder: messengerCustomGroups.sortOrder })
+        .from(messengerCustomGroups)
+        .where(and(
+          eq(messengerCustomGroups.orgId, input.orgId),
+          eq(messengerCustomGroups.userId, input.userId),
+        ))
+        .orderBy(desc(messengerCustomGroups.sortOrder))
+        .limit(1);
 
-  if (!group) return;
+      [group] = await tx
+        .insert(messengerCustomGroups)
+        .values({
+          orgId: input.orgId,
+          userId: input.userId,
+          name: ONBOARDING_PROJECT_NAME,
+          icon: ONBOARDING_MESSENGER_GROUP_ICON,
+          sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
+          pinnedAt: now,
+          updatedAt: now,
+        })
+        .returning();
+    }
 
-  const latestIssueActivityRows = (await db.execute(sql<{ issueId: string; latestActivityAt: Date | string | null }>`
+    if (!group) return;
+    await lockMessengerCustomGroupPlacement(tx, input.orgId, input.userId, group.id);
+
+    const latestIssueActivityRows = (await tx.execute(sql<{ issueId: string; latestActivityAt: Date | string | null }>`
     select
       ${issueRows.id} as "issueId",
       greatest(
@@ -623,14 +630,13 @@ async function seedGettingStartedMessengerState(
     where ${issueRows.orgId} = ${input.orgId}
       and ${inArray(issueRows.id, issueIds)}
     group by ${issueRows.id}, ${issueRows.createdAt}, ${issueRows.updatedAt}
-  `)) as Array<{ issueId: string; latestActivityAt: Date | string | null }>;
-  const latestActivityByIssueId = new Map(
-    latestIssueActivityRows.map((row) => [row.issueId, normalizeDate(row.latestActivityAt) ?? now]),
-  );
-  const aggregateReadAt = [...latestActivityByIssueId.values()]
-    .sort((a, b) => b.getTime() - a.getTime())[0] ?? now;
+    `)) as Array<{ issueId: string; latestActivityAt: Date | string | null }>;
+    const latestActivityByIssueId = new Map(
+      latestIssueActivityRows.map((row) => [row.issueId, normalizeDate(row.latestActivityAt) ?? now]),
+    );
+    const aggregateReadAt = [...latestActivityByIssueId.values()]
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? now;
 
-  await db.transaction(async (tx) => {
     for (const [index, issueId] of issueIds.entries()) {
       const threadKey = `issue:${issueId}`;
       const readAt = latestActivityByIssueId.get(issueId) ?? aggregateReadAt;

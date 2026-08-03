@@ -2138,6 +2138,9 @@ describe("issueService.list participantAgentId", () => {
       priority: "high",
       assigneeAgentId: oldAgentId,
       createdByAgentId: oldAgentId,
+      assigneeAgentRuntimeOverrides: {
+        agentRuntimeConfig: { model: "old-model", modelReasoningEffort: "high" },
+      },
       executionRunId: oldRunId,
       executionAgentNameKey: "previousowner",
       executionLockedAt: new Date(),
@@ -2150,6 +2153,7 @@ describe("issueService.list participantAgentId", () => {
     expect(reassigned?.executionRunId).toBeNull();
     expect(reassigned?.executionAgentNameKey).toBeNull();
     expect(reassigned?.executionLockedAt).toBeNull();
+    expect(reassigned?.assigneeAgentRuntimeOverrides).toBeNull();
 
     const checkedOut = await svc.checkout(issueId, newAgentId, ["todo", "backlog", "blocked"], newRunId);
     expect(checkedOut.assigneeAgentId).toBe(newAgentId);

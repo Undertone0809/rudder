@@ -3023,6 +3023,7 @@ describe("Chat Side Panel link handling", () => {
       issueId: "issue-1",
       data: {
         assigneeAgentId: "agent-2",
+        assigneeAgentRuntimeOverrides: null,
         assigneeUserId: null,
       },
     });

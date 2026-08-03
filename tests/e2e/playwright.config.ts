@@ -158,7 +158,7 @@ process.stdin.on("end", async () => {
       item: { id: "msg-1", type: "agent_message", text: "Streaming reply " },
     }) + "\\n",
   );
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
   process.stdout.write(
     JSON.stringify({
       type: "item.completed",

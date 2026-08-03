@@ -14,6 +14,7 @@ import {
 } from "@rudderhq/db";
 import { and, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import { lockMessengerOwnerPlacement } from "./messenger-saved-views.js";
 
 const LEGACY_BOARD_USER_ID = "local-board";
 const LEGACY_STATE_COPIED_ACTION = "installation.legacy_operator_state_copied";
@@ -55,6 +56,11 @@ export async function copyLegacyOperatorState(
     ));
   const orgIds = Array.from(new Set(scopedMemberships.map((row) => row.orgId)));
   if (orgIds.length === 0) return { status: "no_scoped_organizations" as const, orgIds };
+  for (const orgId of [...orgIds].sort()) {
+    for (const userId of [LEGACY_BOARD_USER_ID, input.targetUserId].sort()) {
+      await lockMessengerOwnerPlacement(tx, orgId, userId);
+    }
+  }
   const inScope = (orgId: SQLWrapper) =>
     sql`${orgId} in (${sql.join(orgIds.map((orgId) => sql`${orgId}`), sql`, `)})`;
 

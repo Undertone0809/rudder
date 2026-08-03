@@ -556,6 +556,9 @@ describe("applyPendingMigrations", () => {
           "0125_ambiguous_winter_soldier.sql",
           "0126_flashy_sentinels.sql",
           "0127_remove_project_budgets.sql",
+          "0128_modern_jetstream.sql",
+          "0128_run_feedback_initial_mutation.sql",
+          "0129_product_analytics_local_ledger.sql",
         ],
         reason: "pending-migrations",
       });
@@ -703,6 +706,9 @@ describe("applyPendingMigrations", () => {
           "0125_ambiguous_winter_soldier.sql",
           "0126_flashy_sentinels.sql",
           "0127_remove_project_budgets.sql",
+          "0128_modern_jetstream.sql",
+          "0128_run_feedback_initial_mutation.sql",
+          "0129_product_analytics_local_ledger.sql",
         ],
         reason: "pending-migrations",
       });

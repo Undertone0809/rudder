@@ -1653,6 +1653,7 @@ describe("chat routes", () => {
     mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
     mockChatService.addMessage.mockResolvedValue(assistantMessage);
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
@@ -1849,6 +1850,82 @@ describe("chat routes", () => {
         contextLinks: [expect.objectContaining({ entityType: "project", entityId: projectId })],
       }),
     );
+  });
+
+  it("binds first-turn Annotation files into the canonical user message before ack", async () => {
+    const conversation = createConversation({ id: "10000000-0000-4000-8000-000000000020" });
+    const annotationId = "10000000-0000-4000-8000-000000000021";
+    const attachmentId = "10000000-0000-4000-8000-000000000022";
+    const annotationInput = createInlineAnnotation({
+      id: annotationId,
+      attachmentFileIndexes: [0],
+    });
+    const userMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000023", "user", "message", "Review this run"),
+      conversationId: conversation.id,
+      structuredPayload: {
+        inlineAnnotations: [createInlineAnnotation({ id: annotationId })],
+      },
+    };
+    const assistantMessage = createMessage("10000000-0000-4000-8000-000000000024", "assistant", "message", "Done.");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.createAttachment.mockResolvedValueOnce({ id: attachmentId });
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.updateMessageStructuredPayload.mockImplementationOnce(async (
+      _conversationId: string,
+      messageId: string,
+      structuredPayload: Record<string, unknown> | null,
+    ) => ({
+      ...userMessage,
+      id: messageId,
+      structuredPayload,
+      attachments: [{ id: attachmentId }],
+    }));
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: "Done.",
+      replyingAgentId: "agent-1",
+      reply: { kind: "message", body: "Done.", structuredPayload: null, replyingAgentId: "agent-1" },
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .field("body", "Review this run")
+      .field("inlineAnnotations", JSON.stringify([annotationInput]))
+      .attach("files", Buffer.from("run evidence"), {
+        filename: "run-evidence.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.updateMessageStructuredPayload).toHaveBeenCalledWith(
+      conversation.id,
+      userMessage.id,
+      expect.objectContaining({
+        inlineAnnotations: [expect.objectContaining({
+          id: annotationId,
+          attachmentIds: [attachmentId],
+        })],
+      }),
+    );
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events[0]).toMatchObject({
+      type: "ack",
+      userMessage: {
+        structuredPayload: {
+          inlineAnnotations: [expect.objectContaining({ attachmentIds: [attachmentId] })],
+        },
+      },
+    });
   });
 
   it("keeps the accepted first message and records failure evidence when generation startup fails", async () => {

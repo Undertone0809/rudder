@@ -34,8 +34,9 @@ describe("CodeMirror Markdown document surface routing", () => {
   });
 
   it("keeps chat composer fields on the explicit plain-text route", () => {
-    expect(source("pages/Chat.tsx")).toContain("plainText");
-    expect(source("components/side-panel/SideChatPanelView.tsx")).toContain("plainText");
+    expect(source("pages/Chat.tsx")).toContain("ChatComposerEditor");
+    expect(source("components/side-panel/SideChatPanelView.tsx")).toContain("ChatComposerEditor");
+    expect(source("components/chat/ChatComposer.tsx")).toContain("plainText");
   });
 
   it("navigates the Library outline through source line positions", () => {

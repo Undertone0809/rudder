@@ -174,7 +174,6 @@ import {
   ChevronRight,
   Folder,
   FolderInput,
-  FolderPlus,
   ListFilter,
   Loader2,
   MoreHorizontal,
@@ -556,7 +555,6 @@ function MessengerThreadSectionHeader({
   onRuleChange,
   onDensityChange,
   onSplitIssueNotificationsChange,
-  onCreateCustomGroup,
 }: {
   rule: ThreadOrganizationRule;
   density: MessengerThreadDensity;
@@ -564,10 +562,7 @@ function MessengerThreadSectionHeader({
   onRuleChange: (rule: ThreadOrganizationRule) => void;
   onDensityChange: (density: MessengerThreadDensity) => void;
   onSplitIssueNotificationsChange: (enabled: boolean) => void;
-  onCreateCustomGroup: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
 }) {
-  const organizerTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const customGroupHandoffRef = useRef(false);
   const activeRule = rule !== DEFAULT_THREAD_ORGANIZATION_RULE && rule !== "custom";
   const compact = density === "compact";
   const statusLabels = [
@@ -586,7 +581,6 @@ function MessengerThreadSectionHeader({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            ref={organizerTriggerRef}
             type="button"
             data-testid="messenger-thread-organization-trigger"
             className={cn(
@@ -601,11 +595,6 @@ function MessengerThreadSectionHeader({
         <DropdownMenuContent
           align="end"
           className="morph-popover morph-popover--from-right surface-overlay w-48 text-foreground"
-          onCloseAutoFocus={(event) => {
-            if (!customGroupHandoffRef.current) return;
-            event.preventDefault();
-            customGroupHandoffRef.current = false;
-          }}
         >
           <DropdownMenuLabel className="text-xs text-muted-foreground">View</DropdownMenuLabel>
           <DropdownMenuCheckboxItem
@@ -629,15 +618,6 @@ function MessengerThreadSectionHeader({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => {
-            if (!organizerTriggerRef.current) return;
-            customGroupHandoffRef.current = true;
-            onCreateCustomGroup(organizerTriggerRef.current, organizerTriggerRef.current);
-          }}>
-            <FolderPlus className="h-4 w-4" />
-            New group
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -1794,13 +1774,14 @@ export function MessengerContextSidebar() {
   }, [loadedSavedViewPages, queryClient, savedViewPageOffset]);
 
   const createCustomGroupMutation = useMutation({
-    mutationFn: async ({ name, icon, threadKey }: { name: string; icon: string | null; threadKey?: string }) => {
+    mutationFn: async ({ name, icon, threadKey }: { name: string; icon: string | null; threadKey: string }) => {
       if (!model.selectedOrganizationId) throw new Error("Organization is required to create a Messenger group");
-      const group = await messengerApi.createCustomGroup(model.selectedOrganizationId, { name, icon });
-      if (threadKey) {
-        await messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, group.id, threadKey);
-      }
-      return group;
+      return messengerApi.createCustomGroupWithEntries(model.selectedOrganizationId, {
+        autoGenerateName: false,
+        icon,
+        itemKeys: [threadKey],
+        name,
+      });
     },
     onSuccess: async () => {
       if (model.selectedOrganizationId) {
@@ -2754,7 +2735,7 @@ export function MessengerContextSidebar() {
   }, []);
 
   const submitCustomGroupEditor = () => {
-    if (!customGroupEditor) return;
+    if (!customGroupEditor?.threadKey) return;
     const name = customGroupNameDraft.trim();
     if (!name) return;
     const icon = composeCustomGroupIconValue(customGroupIconDraft, customGroupColorDraft);
@@ -4089,7 +4070,6 @@ export function MessengerContextSidebar() {
         onRuleChange={handleThreadOrganizationRuleChange}
         onDensityChange={handleThreadDensityChange}
         onSplitIssueNotificationsChange={handleSplitIssueNotificationsChange}
-        onCreateCustomGroup={(anchor, invoker) => handleCreateCustomGroup(anchor, invoker)}
       />
       <Popover
         open={Boolean(customGroupEditor)}

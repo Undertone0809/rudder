@@ -392,7 +392,7 @@ export function ProjectDetail() {
       </Tabs>
 
       {activeTab === "configuration" && (
-        <div className="max-w-4xl">
+        <div className="max-w-4xl space-y-5">
           <ProjectProperties
             project={project}
             onUpdate={(data) => updateProject.mutate(data)}

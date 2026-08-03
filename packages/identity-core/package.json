@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/identity-core",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
   "bugs": {
@@ -13,7 +13,8 @@
   },
   "type": "module",
   "exports": {
-    ".": {
+    ".": "./src/index.ts",
+    "./electron": {
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     }
@@ -22,6 +23,10 @@
     "access": "public",
     "exports": {
       ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./electron": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
       }

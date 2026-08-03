@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 async function writeFakePiCommand(
   binDir: string,
-  mode: "success" | "opencode-anonymous-success" | "auth-required" | "membership-required" | "stale-package",
+  mode: "success" | "managed-auth-success" | "opencode-anonymous-success" | "auth-required" | "membership-required" | "stale-package",
 ): Promise<void> {
   const commandPath = path.join(binDir, "pi");
   const script =
@@ -16,6 +16,33 @@ if (process.argv.includes("--list-models")) {
   console.log("provider  model");
   console.log("openai    gpt-4.1-mini");
   process.exit(0);
+}
+console.log(JSON.stringify({ type: "session", version: 3, id: "session-1", timestamp: new Date().toISOString(), cwd: process.cwd() }));
+console.log(JSON.stringify({ type: "agent_start" }));
+console.log(JSON.stringify({ type: "turn_start" }));
+console.log(JSON.stringify({
+  type: "turn_end",
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: "hello" }],
+    usage: { input: 1, output: 1, cacheRead: 0, cost: { total: 0 } }
+  },
+  toolResults: []
+}));
+`
+      : mode === "managed-auth-success"
+        ? `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+if (process.argv.includes("--list-models")) {
+  console.log("provider  model");
+  console.log("deepseek  deepseek-v4-pro");
+  process.exit(0);
+}
+const authPath = path.join(process.env.PI_CODING_AGENT_DIR || "", "auth.json");
+if (!fs.existsSync(authPath)) {
+  console.error("No API key found for deepseek.");
+  process.exit(1);
 }
 console.log(JSON.stringify({ type: "session", version: 3, id: "session-1", timestamp: new Date().toISOString(), cwd: process.cwd() }));
 console.log(JSON.stringify({ type: "agent_start" }));
@@ -165,6 +192,79 @@ describe("pi_local environment diagnostics", () => {
     expect(customModelCheck?.hint).toContain("hello probe");
     expect(result.checks.some((check) => check.code === "pi_hello_probe_passed")).toBe(true);
     await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("uses an existing operator Pi login from the managed probe home", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `rudder-pi-local-managed-auth-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const operatorHome = path.join(root, "operator-home");
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    const rudderHome = path.join(root, ".rudder");
+    const managedAuthPath = path.join(
+      rudderHome,
+      "instances",
+      "auth-repro",
+      "organizations",
+      "auth-repro-org",
+      "pi-home",
+      ".pi",
+      "agent",
+      "auth.json",
+    );
+    await fs.mkdir(path.join(operatorHome, ".pi", "agent"), { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(cwd, { recursive: true });
+    await fs.writeFile(
+      path.join(operatorHome, ".pi", "agent", "auth.json"),
+      JSON.stringify({ deepseek: { type: "api_key", key: "fixture-key" } }),
+      "utf8",
+    );
+    await writeFakePiCommand(binDir, "managed-auth-success");
+
+    const previous = {
+      HOME: process.env.HOME,
+      RUDDER_OPERATOR_HOME: process.env.RUDDER_OPERATOR_HOME,
+      RUDDER_HOME: process.env.RUDDER_HOME,
+      RUDDER_INSTANCE_ID: process.env.RUDDER_INSTANCE_ID,
+    };
+    process.env.HOME = operatorHome;
+    process.env.RUDDER_OPERATOR_HOME = operatorHome;
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "auth-repro";
+
+    try {
+      const result = await testEnvironment({
+        orgId: "auth-repro-org",
+        agentRuntimeType: "pi_local",
+        config: {
+          command: "pi",
+          cwd,
+          model: "deepseek/deepseek-v4-pro",
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_HOME: rudderHome,
+            RUDDER_INSTANCE_ID: "auth-repro",
+          },
+        },
+      });
+
+      expect(result.status).toBe("pass");
+      expect(result.checks.some((check) => check.code === "pi_hello_probe_passed")).toBe(true);
+      expect((await fs.lstat(managedAuthPath)).isSymbolicLink()).toBe(true);
+    } finally {
+      if (previous.HOME === undefined) delete process.env.HOME;
+      else process.env.HOME = previous.HOME;
+      if (previous.RUDDER_OPERATOR_HOME === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previous.RUDDER_OPERATOR_HOME;
+      if (previous.RUDDER_HOME === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previous.RUDDER_HOME;
+      if (previous.RUDDER_INSTANCE_ID === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previous.RUDDER_INSTANCE_ID;
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("prepares managed OpenCode anonymous model config before the Pi hello probe", async () => {

@@ -1,6 +1,6 @@
 ---
 name: rudder-desktop-dev-recovery-maintainer
-description: "Use when Rudder Desktop or its development shell will not launch, points at the wrong instance, fails during update/restart, or differs between dev and packaged execution. Recovers one verified Desktop path and returns RECOVERED or BLOCKED."
+description: "Use when Rudder Desktop or its development shell will not launch, gets stuck at login/account gate, has pending device approval or local-session exchange, returns 401 during update, points at the wrong instance, fails during update/restart, triggers macOS Keychain/safeStorage alerts, or differs between dev and packaged execution. Recover one exact Desktop path and return RECOVERED or BLOCKED with runtime, identity, storage, and visible-workspace evidence."
 ---
 
 # Rudder Desktop Dev Recovery Maintainer
@@ -58,6 +58,57 @@ pnpm desktop:verify
 In either mode, verify that health matches the expected `instanceId`,
 `localEnv`, and `runtimeOwnerKind` before inspecting product data.
 
+## Identity Continuity Route
+
+Use this route whenever the symptom mentions login, account gate, device
+approval, session exchange, a local `401`, Keychain/safeStorage, or a packaged
+restart. A healthy API is only one stage in the path:
+
+Before acting on one of these identity, session, or storage cases, read
+`references/identity-continuity.md` for the non-secret state ledger and
+evidence boundaries.
+
+```text
+target identity
+-> API health
+-> account authorization
+-> device approval
+-> server exchange
+-> local claim
+-> renderer session
+-> Electron main-process session
+-> storage/codesign capability
+-> first usable workspace
+-> restart persistence
+```
+
+Record the first missing transition without reading or exporting credentials.
+Do not treat a `local-board` compatibility session, a healthy Identity facade,
+or an existing Electron process as proof of Rudder Account login. For a real
+login claim, require observable evidence of the named account/session path,
+`local-exchange`/`local-claim` when applicable, and a visible post-login
+workspace. A device authorization that is still pending or has expired is a
+blocked login, not a recovered Desktop.
+
+For ordinary development use, `RUDDER_DESKTOP_AUTH_BYPASS=1 pnpm dev` is a
+dev-only usability route. Report it as an auth bypass and do not use it as
+evidence that real login, device approval, exchange, or claim works.
+
+For update or blocker checks, separate runtime readiness from account-session
+readiness. A healthy `/api/health` plus anonymous `/api/orgs` 401 usually means
+the caller did not reuse the Electron session cookie; verify the actual
+main-process session request path before blaming the runtime.
+
+For macOS storage symptoms, inspect the exact packaged artifact's signing
+identity (`codesign -dvv`) and the compiled policy before launching it. An
+ad-hoc/unsigned packaged app is not equivalent to a signed package. If the
+policy is memory-only, report the restart/login persistence consequence. A
+renderer screenshot, API health check, dev smoke, or synthetic Chromium fixture
+cannot prove that a native Keychain NSAlert did not appear. For that claim,
+rebuild the candidate, repeat packaged launches, and observe the native dialog
+surface with an available system/UI observation path; otherwise return
+`BLOCKED` with the missing proof.
+
 ## Failure Layers
 
 Classify the first failing boundary:
@@ -79,12 +130,17 @@ Never reset or delete `~/.rudder` as a diagnostic shortcut.
 
 1. Capture exact command, checkout, target mode, logs, and current processes.
 2. Resolve the correct descriptor and health payload.
-3. Find the first failing layer.
-4. Apply only a safe, reversible runtime recovery within the user's requested
+3. If the symptom is identity-related, record each continuity transition and
+   stop at the first missing one.
+4. Find the first failing layer.
+5. Apply only a safe, reversible runtime recovery within the user's requested
    scope. Do not edit product source unless the user separately asked for a fix.
-5. Restart the same target path.
-6. Observe the Electron window or installed application.
-7. Verify runtime identity and the original symptom.
+6. Restart the same target path.
+7. Observe the Electron window or installed application.
+8. Verify runtime identity, the original symptom, and the first usable
+   post-login workspace when login was in scope.
+9. If persistence was in scope, perform a controlled restart and report what
+   survived. Do not infer persistence from an in-process success.
 
 For update failures, reconstruct download, replacement, old-app exit,
 progress-pipe behavior, and relaunch. Treat `EPIPE` as benign only when
@@ -96,8 +152,10 @@ lifecycle evidence proves the reader exited normally and the new app reopened.
 RESULT: RECOVERED | BLOCKED
 Target mode:
 Runtime identity:
+Identity continuity:
 First failing layer:
 Action:
 Observed Desktop proof:
+Restart/persistence proof:
 Remaining blocker:
 ```

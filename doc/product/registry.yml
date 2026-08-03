@@ -2620,3 +2620,33 @@ contracts:
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-29-rudder-account-production-login.md
+  ANALYTICS.TELEMETRY.001:
+    owner: product
+    domain: governance-and-visibility
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/governance-and-visibility/product-analytics-telemetry.md
+    related_code:
+      - packages/db/src/schema/product_analytics_events.ts
+      - packages/db/src/schema/product_analytics_consent.ts
+      - packages/db/src/schema/product_analytics_installations.ts
+      - packages/db/src/schema/product_analytics_outbox.ts
+      - packages/db/src/schema/product_analytics_work_cycles.ts
+      - packages/identity-db/src/product-analytics.ts
+      - server/src/services/product-analytics.ts
+      - server/src/services/product-analytics-collector.ts
+      - server/src/routes/product-analytics.ts
+      - server/src/routes/product-analytics-collector.ts
+      - desktop/src/product-analytics-telemetry.ts
+      - desktop/src/product-analytics-uploader.ts
+    related_tests:
+      - server/src/services/product-analytics.test.ts
+      - server/src/services/product-analytics-collector.test.ts
+      - server/src/__tests__/product-analytics-routes.test.ts
+      - server/src/__tests__/product-analytics-collector-routes.test.ts
+      - desktop/src/product-analytics-telemetry.test.ts
+      - desktop/src/product-analytics-uploader.test.ts
+      - tests/e2e/product-analytics.spec.ts
+    related_plans:
+      - doc/plans/2026-08-03-product-analytics-telemetry-full-implementation.md

@@ -498,7 +498,7 @@ export function createBootScreenHtml(
             <input id="account-email-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Email code">
           </label>
           <button class="auth-primary auth-entry" type="submit">Verify and sign in</button>
-          <button class="password-recovery auth-navigation" id="email-code-back-button" type="button">Use a different email</button>
+          <button class="password-recovery auth-navigation" id="email-code-back-button" type="button">换一个登录方式</button>
         </form>
         <div class="password-panel auth-page" id="password-panel" hidden>
           <form class="email-form" id="password-sign-in-form">
@@ -510,7 +510,7 @@ export function createBootScreenHtml(
             </label>
             <button class="auth-primary auth-entry" type="submit">Sign in with password</button>
           </form>
-          <button class="password-recovery auth-entry" id="password-reset-button" type="button">Forgot or need to set a password?</button>
+          <button class="password-recovery auth-entry" id="password-reset-button" type="button">forgot password</button>
           <form class="email-form" id="password-reset-form" hidden>
             <label>Reset code
               <input id="password-reset-code" required type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" placeholder="Reset code">
@@ -821,7 +821,7 @@ export function createBootScreenHtml(
         accountStatus.textContent = "Sending a verification code…";
         void window.rudderBoot.sendEmailOtp(email).then(() => {
           showAuthPage("code");
-          accountStatus.textContent = "Enter the code sent to " + email + ".";
+          accountStatus.textContent = "";
           setAuthBusy(false);
           accountEmailCode.focus();
         }).catch((error) => {
@@ -840,6 +840,7 @@ export function createBootScreenHtml(
       emailCodeBackButton.addEventListener("click", () => {
         showAuthPage("options");
         emailCodeEmail = "";
+        accountEmail.value = "";
         accountEmailCode.value = "";
         accountStatus.textContent = "";
         accountEmail.focus();

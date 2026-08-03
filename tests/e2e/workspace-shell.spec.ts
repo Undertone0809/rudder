@@ -481,11 +481,11 @@ test.describe("Workspace shell", () => {
 
     await expect(contextCard).toHaveAttribute("aria-hidden", "true");
     await expect(contextCard).toHaveCSS("opacity", "0");
-    await expect(contextCard).toHaveJSProperty("offsetWidth", 0);
+    await expect.poll(async () => contextCard.evaluate((element) => element.offsetWidth)).toBe(0);
     const resizer = page.getByTestId("workspace-column-resizer");
     await expect(resizer).toHaveCSS("opacity", "0");
-    await expect(resizer).toHaveJSProperty("offsetWidth", 0);
-    const openButton = page.getByRole("button", { name: "Open workspace sidebar" });
+    await expect.poll(async () => resizer.evaluate((element) => element.offsetWidth)).toBe(0);
+    const openButton = page.getByRole("button", { name: "Open context sidebar" });
     await expect(openButton).toBeVisible();
 
     await openButton.click();
