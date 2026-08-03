@@ -356,6 +356,8 @@ describe("CommandPalette", () => {
     });
 
     expect(aiSearchMock).toHaveBeenCalledWith("org-1", { query: "architecture note" });
+    expect(container.textContent).toContain("AI SearchFound 1 result");
+    expect(container.textContent).not.toContain("The architecture note is in the project record.");
     expect(container.textContent).toContain("Architecture project");
 
     const resultButton = Array.from(container.querySelectorAll("button"))
@@ -411,6 +413,7 @@ describe("CommandPalette", () => {
       query: "missing issue concept",
       scope: "issue",
     });
+    expect(container.textContent).toContain("Found 0 results");
   });
 
   it("keeps AI Search hidden while regular search is fetching cached data", () => {

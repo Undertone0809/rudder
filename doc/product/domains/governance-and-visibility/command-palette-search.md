@@ -92,9 +92,9 @@ search cannot return an unrelated Chat or Project.
 6. The server accepts only model match keys from the candidate allow-list and
    returns canonical titles, previews/reasons, and server-selected navigation
    hrefs. Unknown model keys are discarded.
-7. The palette shows the answer and navigable result rows under `AI Search`.
-   A model failure keeps a retry action available; an empty model response
-   remains an empty state.
+7. The palette shows a single-line `AI Search` summary with the number of
+   matched records and navigable result rows. A model failure keeps a retry
+   action available; an empty model response shows `Found 0 results`.
 
 ### Decision Table
 
@@ -116,10 +116,10 @@ does not see the model prompt or the bounded candidate payload.
 
 ### Operator-Visible Output
 
-AI Search may show a short answer and result rows with titles, compact context,
-and category labels. Selecting a row navigates within the selected organization
-using the validated href. Disabled or unavailable Intelligence leaves the
-regular search experience unchanged.
+AI Search shows its label, the number of matched records, and result rows with
+titles, compact context, and category labels. Selecting a row navigates within
+the selected organization using the validated href. Disabled or unavailable
+Intelligence leaves the regular search experience unchanged.
 
 ### Persisted Evidence
 
