@@ -75,6 +75,7 @@ test.describe("Automation runtime model selector", () => {
   });
 
   test("selects a model in the new automation composer before creation", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(E2E_BASE_URL);
 
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -106,8 +107,18 @@ test.describe("Automation runtime model selector", () => {
     await expect(composer.getByTestId("issue-runtime-selector")).toBeVisible();
     await composer.getByTestId("issue-runtime-selector").click();
     await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
-    await page.getByTestId("issue-runtime-model-trigger").click();
+    const modelTrigger = page.getByTestId("issue-runtime-model-trigger");
+    await modelTrigger.click();
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
+    const triggerBox = await modelTrigger.boundingBox();
+    const submenuBox = await page.getByTestId("issue-runtime-model-options").boundingBox();
+    expect(triggerBox).not.toBeNull();
+    expect(submenuBox).not.toBeNull();
+    expect(Math.abs(submenuBox!.y - triggerBox!.y)).toBeLessThanOrEqual(12);
+    expect(submenuBox!.x).toBeGreaterThanOrEqual(12);
+    expect(submenuBox!.y).toBeGreaterThanOrEqual(12);
+    expect(submenuBox!.x + submenuBox!.width).toBeLessThanOrEqual(1280 - 12);
+    expect(submenuBox!.y + submenuBox!.height).toBeLessThanOrEqual(720 - 12);
     await page.locator('[data-testid^="issue-runtime-option-model-"]').first().click();
     await page.getByRole("button", { name: /^Create$/ }).click();
 
