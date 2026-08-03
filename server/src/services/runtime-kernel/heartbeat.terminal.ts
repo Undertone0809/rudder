@@ -2,6 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { activityLog, agents, agentWakeupRequests, heartbeatRunEvents, heartbeatRuns, issues } from "@rudderhq/db";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { recordProductAnalyticsEvent } from "../product-analytics.js";
 
 const TERMINAL_WAKEUP_STATUSES = ["completed", "failed", "cancelled", "timed_out", "skipped", "coalesced"];
 export const RUN_EXECUTION_LEASE_MS = 5 * 60_000;
@@ -326,7 +327,44 @@ export async function transitionHeartbeatRunToTerminal(
       .where(and(...conditions))
       .returning()
       .then((rows) => rows[0] ?? null);
-    if (!updated?.wakeupRequestId) return updated;
+    if (!updated) return null;
+
+    if (updated.status === "succeeded" || updated.status === "failed") {
+      await recordProductAnalyticsEvent(tx as unknown as Db, {
+        orgId: updated.orgId,
+        eventName: updated.status === "succeeded" ? "run_succeeded" : "run_failed",
+        occurredAt: updated.finishedAt ?? new Date(),
+        sourceTransition: "heartbeat.run.terminal",
+        confidence: "exact",
+        actorType: updated.invocationSource.includes("automation") ? "automation" : "agent",
+        actorId: updated.agentId,
+        entityType: "run",
+        entityId: updated.id,
+        dedupeKey: `run_terminal:${updated.id}:${updated.status}`,
+        properties: {
+          run_kind: updated.invocationSource,
+          attempt_kind: updated.retryOfRunId ? "retry" : "root",
+        },
+      });
+    }
+
+    if (updated.status === "succeeded" && updated.resultSummaryJson !== null) {
+      await recordProductAnalyticsEvent(tx as unknown as Db, {
+        orgId: updated.orgId,
+        eventName: "output_ready",
+        occurredAt: updated.finishedAt ?? new Date(),
+        sourceTransition: "heartbeat.run.terminal",
+        confidence: "exact",
+        actorType: updated.invocationSource.includes("automation") ? "automation" : "agent",
+        actorId: updated.agentId,
+        entityType: "run",
+        entityId: updated.id,
+        dedupeKey: `output_ready:${updated.id}`,
+        properties: { output_kind: "structured_result" },
+      });
+    }
+
+    if (!updated.wakeupRequestId) return updated;
 
     const wakeupStatus = input.status === "succeeded" ? "completed" : input.status;
     await tx

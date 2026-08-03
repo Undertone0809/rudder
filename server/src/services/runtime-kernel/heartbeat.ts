@@ -39,6 +39,7 @@ import { instanceSettingsService } from "../instance-settings.js";
 import { issueService } from "../issues.js";
 import { publishLiveEvent } from "../live-events.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "../operator-event-visibility.js";
+import { recordProductAnalyticsEvent } from "../product-analytics.js";
 import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
@@ -1004,6 +1005,22 @@ export function heartbeatService(
         .update(agents)
         .set({ status: "running", updatedAt: claimedAt })
         .where(eq(agents.id, run.agentId));
+      await recordProductAnalyticsEvent(tx as unknown as Db, {
+        orgId: claimedRun.orgId,
+        eventName: "run_started",
+        occurredAt: claimedRun.startedAt ?? claimedAt,
+        sourceTransition: "heartbeat.run.claim",
+        confidence: "exact",
+        actorType: claimedRun.invocationSource.includes("automation") ? "automation" : "agent",
+        actorId: claimedRun.agentId,
+        entityType: "run",
+        entityId: claimedRun.id,
+        dedupeKey: `run_started:${claimedRun.id}`,
+        properties: {
+          run_kind: claimedRun.invocationSource,
+          attempt_kind: claimedRun.retryOfRunId ? "retry" : "root",
+        },
+      });
       return claimedRun;
     });
     if (!claimed) return null;

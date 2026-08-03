@@ -4,6 +4,7 @@ import { sanitizeChatStructuredPayload, type ChatConversation, type ChatMessage 
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
+import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 
@@ -154,6 +155,22 @@ export async function createChatWithInitialMessage(
       })
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
+
+    if (data.initialMessage.role === "user" && data.createdByUserId) {
+      await recordProductAnalyticsEvent(client, {
+        orgId,
+        eventName: "human_work_started",
+        occurredAt: messageRow.createdAt,
+        sourceTransition: "chat.initial_message.create",
+        confidence: "exact",
+        actorType: "human",
+        actorId: data.createdByUserId,
+        entityType: "chat",
+        entityId: conversationRow.id,
+        dedupeKey: `human_work_started:chat:${conversationRow.id}:${messageRow.id}`,
+        properties: { work_surface: "chat", origin: "human" },
+      });
+    }
 
     if (data.activity) {
       const activity = data.activity;

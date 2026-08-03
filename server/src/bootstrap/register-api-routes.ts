@@ -29,6 +29,7 @@ import { onboardingRoutes } from "../routes/onboarding.js";
 import { organizationSkillRoutes } from "../routes/organization-skills.js";
 import { organizationRoutes } from "../routes/orgs.js";
 import { pluginRoutes } from "../routes/plugins.js";
+import { productAnalyticsRoutes } from "../routes/product-analytics.js";
 import { projectRoutes } from "../routes/projects.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
@@ -76,6 +77,7 @@ export function registerApiRoutes(
   api.use(projectRoutes(db));
   api.use(appBuilderRoutes(db));
   api.use(onboardingRoutes(db));
+  api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));
   api.use(chatRoutes(db, opts.storageService, chatBackgroundRuntime));

@@ -44,6 +44,7 @@ import { getDefaultCompanyGoal } from "./goals.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
+import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 import {
@@ -927,6 +928,21 @@ export function issueService(db: Db) {
         const [issue] = await tx.insert(issues).values(values).returning();
         if (resolvedLabelIds) {
           await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
+        }
+        if (issue.createdByUserId && (issue.status === "in_progress" || issue.executionRunId !== null)) {
+          await recordProductAnalyticsEvent(tx as unknown as Db, {
+            orgId,
+            eventName: "human_work_started",
+            occurredAt: issue.createdAt,
+            sourceTransition: "issue.create",
+            confidence: "exact",
+            actorType: "human",
+            actorId: issue.createdByUserId,
+            entityType: "issue",
+            entityId: issue.id,
+            dedupeKey: `human_work_started:issue:${issue.id}`,
+            properties: { work_surface: "issue", origin: "human" },
+          });
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;

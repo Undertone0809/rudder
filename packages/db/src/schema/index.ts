@@ -94,6 +94,7 @@ export { pluginState } from "./plugin_state.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { plugins } from "./plugins.js";
 export { principalPermissionGrants } from "./principal_permission_grants.js";
+export { productAnalyticsEvents } from "./product_analytics_events.js";
 export { projectGoals } from "./project_goals.js";
 export { projectResourceAttachments } from "./project_resource_attachments.js";
 export { projectWorkspaces } from "./project_workspaces.js";

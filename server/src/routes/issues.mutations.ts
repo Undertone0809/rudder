@@ -11,7 +11,8 @@ import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
-  logActivity
+  logActivity,
+  recordProductAnalyticsEvent,
 } from "../services/index.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
@@ -490,7 +491,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
     }
     if (reviewDecision !== undefined) {
-      await logActivity(db, {
+      const reviewActivity = await logActivity(db, {
         orgId: issue.orgId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -506,6 +507,23 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
           identifier: issue.identifier,
           commentId: comment?.id ?? null,
         },
+      });
+      // Review status, comment, and audit activity currently commit in separate transactions;
+      // keep this fact explicitly derived and non-blocking until they share one transition transaction.
+      if (reviewActivity && comment) void recordProductAnalyticsEvent(db, {
+        orgId: issue.orgId,
+        eventName: "review_decision_recorded",
+        occurredAt: comment?.createdAt ?? new Date(),
+        sourceTransition: "issue.review_decision_recorded",
+        confidence: "derived",
+        actorType: actor.actorType === "user" ? "human" : "agent",
+        actorId: actor.actorId,
+        entityType: "issue",
+        entityId: issue.id,
+        dedupeKey: `review_decision_recorded:${reviewActivity.id}`,
+        properties: { decision: reviewDecision, review_surface: "issue" },
+      }).catch((error: unknown) => {
+        logger.warn({ error, issueId: issue.id }, "failed to record derived product analytics review event");
       });
     }
 

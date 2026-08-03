@@ -84,6 +84,15 @@ export { organizationIntelligenceRuntimeChainService } from "./organization-inte
 export { organizationPortabilityFacade, organizationPortabilityService } from "./organization-portability.js";
 export { organizationSkillFacade, organizationSkillService } from "./organization-skills.js";
 export { organizationService } from "./orgs.js";
+export {
+  PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES, PRODUCT_ANALYTICS_EVENT_NAMES, PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES,
+  productAnalyticsService,
+  recordProductAnalyticsEvent,
+  type ProductAnalyticsActorType,
+  type ProductAnalyticsConfidence,
+  type ProductAnalyticsEventName,
+  type RecordProductAnalyticsEventInput
+} from "./product-analytics.js";
 export { productIntelligenceService } from "./product-intelligence.js";
 export { projectService } from "./projects.js";
 export { resourceCatalogService } from "./resource-catalog.js";

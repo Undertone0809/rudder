@@ -58,6 +58,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
 import { isPostgresError } from "./postgres-errors.js";
+import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 export function organizationService(db: Db) {
   const DEFAULT_ISSUE_LABELS = [
@@ -294,6 +295,19 @@ export function organizationService(db: Db) {
           id: created.id,
           name: created.name,
           urlKey: created.urlKey,
+        });
+
+        await recordProductAnalyticsEvent(tx as unknown as Db, {
+          orgId: created.id,
+          eventName: "organization_created",
+          occurredAt: created.createdAt,
+          sourceTransition: "organization.create",
+          confidence: "exact",
+          actorType: "system",
+          entityType: "organization",
+          entityId: created.id,
+          dedupeKey: `organization_created:${created.id}`,
+          properties: { creation_source: "organization_service" },
         });
 
         const row = await getCompanyQuery(tx)
