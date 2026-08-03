@@ -139,7 +139,7 @@
       "status": "active",
       "files": {"en": "docs/concepts/app-builder.mdx", "zh": "docs/zh/concepts/app-builder.mdx"},
       "urls": {"en": "/concepts/app-builder", "zh": "/zh/concepts/app-builder"},
-      "anchors": {"en": ["describe-the-workflow-not-the-stack", "enable-sites-then-start-from-apps", "the-app-owns-its-data", "development-data-recovery", "machine-resident-not-cloud-hosted"], "zh": ["描述业务不用选择技术栈", "启用-sites然后从-apps-开始", "app-自己管理数据", "开发数据恢复", "在用户设备运行不提供云端版本"]},
+      "anchors": {"en": ["describe-the-workflow-not-the-stack", "enable-apps-then-start-from-apps", "the-app-owns-its-data", "development-data-recovery", "machine-resident-not-cloud-hosted"], "zh": ["描述业务不用选择技术栈", "启用-apps然后从-apps-开始", "app-自己管理数据", "开发数据恢复", "在用户设备运行不提供云端版本"]},
       "composes": ["workspaces"],
       "source_docs": ["doc/product/domains/execution/app-builder.md", "doc/product/domains/execution/desktop-local-apps.md", "doc/product/domains/library-and-context/resources-library-workspaces.md"],
       "llms": true,
