@@ -30,6 +30,12 @@ describe("resolveRuntimeModels", () => {
     expect(models.some((model) => model.id === "gpt-5-pro")).toBe(false);
   });
 
+  it("uses the model id when an adapter omits its label", () => {
+    expect(resolveRuntimeModels("opencode_local", [{ id: "openai/gpt-5.4" } as never])).toEqual([
+      { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
+    ]);
+  });
+
   it("does not add fallback models for runtimes without them", () => {
     expect(resolveRuntimeModels("opencode_local")).toEqual([]);
   });
