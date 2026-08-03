@@ -38,6 +38,12 @@ describe("Desktop Identity session store", () => {
       read,
       write,
       clear,
+    }, {
+      allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+        isPackaged: true,
+        platform: "darwin",
+        storageBackend: "keychain",
+      }),
     });
 
     expect(store.persistence).toBe("secure");
