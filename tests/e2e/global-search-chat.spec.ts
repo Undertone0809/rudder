@@ -90,7 +90,8 @@ test.describe("Global search results", () => {
     await aiSearch.click();
 
     await expect.poll(() => requestedQuery).toBe("unindexed semantic concept");
-    await expect(page.getByText("The architecture discussion is in the selected chat.")).toBeVisible();
+    await expect(page.getByText("Found 1 result")).toBeVisible();
+    await expect(page.getByText("The architecture discussion is in the selected chat.")).toHaveCount(0);
     const chatResult = page.getByRole("option", { name: /AI Search architecture chat/i });
     await expect(chatResult).toBeVisible();
     await chatResult.click();
@@ -211,7 +212,8 @@ test.describe("Global search results", () => {
     await expect(aiSearch).toBeVisible({ timeout: 15_000 });
     await aiSearch.click();
     await expect.poll(() => requestedScope).toBe("issue");
-    await expect(page.getByText("The issue is the scoped AI Search match.")).toBeVisible();
+    await expect(page.getByText("Found 1 result")).toBeVisible();
+    await expect(page.getByText("The issue is the scoped AI Search match.")).toHaveCount(0);
 
     const issueResult = page.getByRole("option", { name: /Scoped AI Search issue match/i });
     await expect(issueResult).toBeVisible();

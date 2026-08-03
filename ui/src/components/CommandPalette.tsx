@@ -458,7 +458,7 @@ export function CommandPalette() {
             ) : aiSearchError ? (
               <span className="text-destructive">{aiSearchError}</span>
             ) : aiSearchRequested && aiSearchResult?.results.length === 0 ? (
-              "AI Search found no matching records."
+              "Found 0 results"
             ) : scopedEmptyLabel}
           </CommandEmpty>
         )}
@@ -476,12 +476,15 @@ export function CommandPalette() {
         {aiSearchRequested && (aiSearchResult || aiSearchError) && (
           <>
             <CommandSeparator />
-            <CommandGroup heading="AI Search">
-              {aiSearchResult?.answer && (
-                <div className="px-2 py-2 text-sm text-muted-foreground">
-                  {aiSearchResult.answer}
-                </div>
+            <div className="flex items-center justify-between gap-3 px-2 py-2 text-sm">
+              <span className="font-medium">AI Search</span>
+              {aiSearchResult && (
+                <span className="text-muted-foreground">
+                  Found {aiSearchResult.results.length} result{aiSearchResult.results.length === 1 ? "" : "s"}
+                </span>
               )}
+            </div>
+            <CommandGroup>
               {(aiSearchResult?.results ?? []).map((result) => (
                 <CommandItem
                   key={result.key}

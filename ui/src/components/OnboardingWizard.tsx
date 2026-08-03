@@ -59,8 +59,12 @@ import {
 } from "../lib/runtime-models";
 import { cn } from "../lib/utils";
 import { defaultCreateValues } from "./agent-config-defaults";
-import { defaultModelForRuntime } from "./AgentConfigForm.helpers";
-import { ModelDropdown } from "./AgentConfigForm.model-dropdown";
+import {
+  defaultModelForRuntime,
+  shouldShowThinkingEffort,
+  thinkingEffortOptionsForRuntime,
+} from "./AgentConfigForm.helpers";
+import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import { AdapterEnvironmentResult } from "./OnboardingWizard.environment";
 import {
@@ -77,6 +81,7 @@ import {
 } from "./OnboardingWizard.progress";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { markProductTourPending } from "./ProductTourOverlay";
+import { TooltipProvider } from "./ui/tooltip";
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
   const { organizations, setSelectedOrganizationId, loading: organizationsLoading } = useOrganization();
@@ -119,6 +124,8 @@ export function OnboardingWizard() {
   >(null);
   const [agentRuntimeType, setAdapterType] = useState<AdapterType>("claude_local");
   const [model, setModel] = useState("");
+  const [thinkingEffort, setThinkingEffort] = useState("");
+  const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
@@ -329,7 +336,7 @@ export function OnboardingWizard() {
     if (step !== 2) return;
     setAdapterEnvResult(null);
     setAdapterEnvError(null);
-  }, [step, agentRuntimeType, model, command, args, providerApiKey, url]);
+  }, [step, agentRuntimeType, model, thinkingEffort, command, args, providerApiKey, url]);
   useEffect(() => {
     if (!effectiveOnboardingOpen) return;
     const handlePageHide = () => {
@@ -343,6 +350,13 @@ export function OnboardingWizard() {
   const availableAdapterModels = useMemo(
     () => resolveRuntimeModels(agentRuntimeType, adapterModels),
     [agentRuntimeType, adapterModels]
+  );
+  const availableThinkingEffortOptions = useMemo(
+    () => thinkingEffortOptionsForRuntime(
+      agentRuntimeType,
+      model || defaultModelForRuntime(agentRuntimeType),
+    ),
+    [agentRuntimeType, model],
   );
   const requiresProviderModel = requiresExplicitProviderModel(agentRuntimeType);
   const providerSetupHint = runtimeProviderSetupHint(agentRuntimeType, model);
@@ -363,13 +377,22 @@ export function OnboardingWizard() {
   function selectRuntimeType(nextType: AdapterType) {
     setAdapterType(nextType);
     setModel(defaultModelForRuntime(nextType));
+    setThinkingEffort("");
+    setThinkingEffortOpen(false);
     setProviderApiKey("");
     setProviderSecretBinding(null);
   }
   function selectModel(nextModel: string) {
     const currentEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, model);
     const nextEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, nextModel);
+    const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(
+      agentRuntimeType,
+      nextModel || defaultModelForRuntime(agentRuntimeType),
+    );
     setModel(nextModel);
+    setThinkingEffort((current) =>
+      nextThinkingEffortOptions.some((option) => option.id === current) ? current : "",
+    );
     if (currentEnvKey !== nextEnvKey) {
       setProviderApiKey("");
       setProviderSecretBinding(null);
@@ -387,6 +410,8 @@ export function OnboardingWizard() {
     hasAppliedInitialAgentNameRef.current = false;
     setAdapterType("claude_local");
     setModel("");
+    setThinkingEffort("");
+    setThinkingEffortOpen(false);
     setCommand("");
     setArgs("");
     setProviderApiKey("");
@@ -445,6 +470,7 @@ export function OnboardingWizard() {
           : agentRuntimeType === "cursor"
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
           : model,
+      thinkingEffort,
       command,
       args,
       url,
@@ -1007,6 +1033,17 @@ export function OnboardingWizard() {
                         )}
                         allowCustom
                       />
+                      {shouldShowThinkingEffort(agentRuntimeType) ? (
+                        <TooltipProvider>
+                          <ThinkingEffortDropdown
+                            value={thinkingEffort}
+                            options={availableThinkingEffortOptions}
+                            onChange={setThinkingEffort}
+                            open={thinkingEffortOpen}
+                            onOpenChange={setThinkingEffortOpen}
+                          />
+                        </TooltipProvider>
+                      ) : null}
                       {providerSetupHint ? (
                         <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                           {providerSetupHint}
