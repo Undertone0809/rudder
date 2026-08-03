@@ -4,7 +4,7 @@ import { createE2EChatAgent } from "./support/chat-agent";
 const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
 test.describe("Chat sidebar layout", () => {
-  test("shows the active agent and a compact conversation title in the chat header", async ({ page }, testInfo) => {
+  test("shows the full conversation title while it fits within one third of the main workspace", async ({ page }, testInfo) => {
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "userAgent", {
         configurable: true,
@@ -51,7 +51,7 @@ test.describe("Chat sidebar layout", () => {
     await expect(page.getByRole("group", { name: `Header Agent chat: ${fullTitle}` })).toBeVisible();
     await expect(header).toHaveCSS("pointer-events", "auto");
     await expect(header.getByTestId("chat-header-agent-name")).toHaveText("Header Agent");
-    await expect(header.getByTestId("chat-header-title")).toHaveText("这是一个超过十个字…");
+    await expect(header.getByTestId("chat-header-title")).toHaveText(fullTitle);
     await expect(header.getByTestId("chat-header-title")).toHaveAttribute("title", fullTitle);
     await expect(header.locator("img")).toBeVisible();
 
@@ -73,13 +73,16 @@ test.describe("Chat sidebar layout", () => {
     }
 
     const headerBox = await header.boundingBox();
+    const mainWorkspaceBox = await page.getByTestId("chat-main-workspace-card").boundingBox();
     const actionsBox = await page.getByTestId("chat-desktop-toolbar-actions").boundingBox();
     const toolbarGlassBox = await page.getByTestId("chat-desktop-toolbar-clearance").boundingBox();
     const messagesScrollBox = await page.getByTestId("chat-messages-scroll-region").boundingBox();
     expect(headerBox).not.toBeNull();
+    expect(mainWorkspaceBox).not.toBeNull();
     expect(actionsBox).not.toBeNull();
     expect(toolbarGlassBox).not.toBeNull();
     expect(messagesScrollBox).not.toBeNull();
+    expect(headerBox!.width).toBeLessThanOrEqual(mainWorkspaceBox!.width / 3 + 1);
     expect(headerBox!.x + headerBox!.width).toBeLessThanOrEqual(actionsBox!.x);
     expect(messagesScrollBox!.y).toBeGreaterThanOrEqual(toolbarGlassBox!.y + toolbarGlassBox!.height);
 

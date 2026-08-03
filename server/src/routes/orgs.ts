@@ -1158,7 +1158,7 @@ export function organizationRoutes(
     if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
       throw forbidden("Instance admin required");
     }
-    const organization = await svc.create(req.body);
+    const organization = await svc.create({ ...req.body, analytics: { creationPath: "manual", isUserInitiated: true } });
     await access.ensureMembership(organization.id, "user", req.actor.userId ?? "local-board", "owner", "active");
     await logActivity(db, {
       orgId: organization.id,

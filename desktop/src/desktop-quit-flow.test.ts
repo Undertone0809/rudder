@@ -55,6 +55,7 @@ describe("desktop quit flow update handoff", () => {
       getMainWindow: () => null,
       setMainWindow: vi.fn(),
       getServerHandle: () => null,
+      fetchApi: globalThis.fetch,
       prepareForQuit,
       stopLocalRudder,
       destroyResidentTray: vi.fn(),
@@ -90,6 +91,7 @@ describe("desktop quit flow update handoff", () => {
       getMainWindow: () => mainWindow as never,
       setMainWindow,
       getServerHandle: () => null,
+      fetchApi: globalThis.fetch,
       prepareForQuit: vi.fn(async () => lifecycle.push("browser:cleanup")),
       prepareLocalAppsForQuit: vi.fn(async () => lifecycle.push("local-apps:cleanup")),
       stopLocalRudder,
@@ -120,6 +122,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => null,
+        fetchApi: globalThis.fetch,
         prepareForQuit,
         prepareLocalAppsForQuit,
         stopLocalRudder,
@@ -148,6 +151,7 @@ describe("desktop quit flow update handoff", () => {
       getMainWindow: () => null,
       setMainWindow: vi.fn(),
       getServerHandle: () => null,
+      fetchApi: globalThis.fetch,
       stopLocalRudder: vi.fn(),
       destroyResidentTray: vi.fn(),
     });
@@ -190,6 +194,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder: vi.fn(),
         destroyResidentTray: vi.fn(),
       });
@@ -278,6 +283,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray: vi.fn(),
       });
@@ -326,6 +332,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray,
       });
@@ -375,6 +382,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray,
       });
@@ -415,6 +423,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray,
       });
@@ -461,6 +470,7 @@ describe("desktop quit flow update handoff", () => {
         getMainWindow: () => null,
         setMainWindow: vi.fn(),
         getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray,
       });

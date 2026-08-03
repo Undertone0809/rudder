@@ -122,6 +122,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         sourceManifest.source?.organizationName ??
         "Imported Organization";
       const created = await organizations.create({
+        analytics: { creationPath: "import", isUserInitiated: false },
         name: organizationName,
         urlKey: deriveOrganizationUrlKey(organizationName),
         issuePrefix: input.target.newOrganizationIssueKey ?? undefined,

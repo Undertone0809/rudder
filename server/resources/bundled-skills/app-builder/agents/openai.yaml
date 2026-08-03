@@ -1,7 +1,7 @@
 interface:
   display_name: "App Builder"
-  short_description: "Build and verify full-stack apps in Rudder"
-  default_prompt: "Use $app-builder to build this app with Rudder's maintained scaffold and verify it in the Browser."
+  short_description: "Create or improve local web Apps for Rudder"
+  default_prompt: "Use $app-builder to create or improve this local web product, prepare it as a Rudder App, and verify it in the Browser."
 
 dependencies:
   tools:

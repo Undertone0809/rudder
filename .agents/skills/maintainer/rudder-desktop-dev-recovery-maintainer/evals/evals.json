@@ -30,6 +30,49 @@
       "prompt": "安装版 Rudder 打不开，但当前 worktree 的隔离 dev instance 是健康的。帮我恢复 Desktop。",
       "expected_output": "Classifies the target as packaged/prod-local before runtime resolution, ignores the checkout dev descriptor as acceptance evidence, inspects installed-app boot evidence and the prod_local/default descriptor unless explicitly overridden, then verifies the installed application and matching runtime identity.",
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Rudder-dev 的 API 和 Identity 都是 healthy，但登录一直停在 device approval pending，刚才的设备码还过期了。帮我恢复，不要读取我的 token。",
+      "expected_output": "Tracks account authorization, fresh device approval, exchange, local claim, and visible post-login workspace separately; reports BLOCKED when approval is pending or expired and does not claim recovery from API health or an existing Electron process.",
+      "files": [],
+      "expectations": [
+        "Pending or expired device approval is reported as BLOCKED, not RECOVERED.",
+        "The report names exchange, local claim, and visible post-login workspace as missing proof.",
+        "The workflow does not read or export tokens, cookies, or passwords."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "我只是想让 pnpm dev 能进入工作区，真实 Rudder 登录之后再测。现在登录页卡住了。",
+      "expected_output": "Offers the dev-only RUDDER_DESKTOP_AUTH_BYPASS route as a usability recovery, labels it as an auth bypass, and explicitly says it is not evidence for real account login, device approval, exchange, or claim.",
+      "files": [],
+      "expectations": [
+        "The dev-only RUDDER_DESKTOP_AUTH_BYPASS route is offered for workspace usability.",
+        "The route is explicitly labeled an auth bypass and not real-login proof."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "安装版更新检查总是 runtime not ready，但 /api/health 是 200，匿名请求 /api/orgs 是 401。请排查 Desktop，不要把 dev server 当成证明。",
+      "expected_output": "Separates runtime readiness from account-session readiness, identifies missing Electron session-cookie reuse as a candidate boundary, verifies installed prod_local/default identity, and does not relabel an authenticated-session failure as a server startup failure.",
+      "files": [],
+      "expectations": [
+        "Runtime readiness and account-session readiness are reported as separate checks.",
+        "The installed prod_local/default target is verified instead of using a dev server.",
+        "The protected-request 401 is not relabeled as a server startup failure."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "未签名 macOS Rudder.app 启动反复弹 Keychain Not Found。单测和 dev smoke 都过了，能不能说已经恢复？",
+      "expected_output": "Rejects stale packaged artifacts, app.isPackaged-only reasoning, renderer screenshots, dev smoke, and synthetic fixtures as proof of native-dialog absence; requires rebuilt artifact signing/policy inspection, repeated packaged launches with native dialog observation, and reports memory-only restart persistence tradeoffs.",
+      "files": [],
+      "expectations": [
+        "The old or stale packaged artifact is rejected as proof.",
+        "The report requires signing/policy inspection and repeated packaged launches with native dialog observation.",
+        "Memory-only storage is reported with its restart persistence tradeoff."
+      ]
     }
   ]
 }

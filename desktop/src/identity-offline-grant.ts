@@ -2,7 +2,7 @@ import {
   generateOfflineDeviceKeyPair,
   offlineDevicePublicKeyThumbprint,
   verifyOfflineGrant,
-} from "@rudderhq/identity-core";
+} from "@rudderhq/identity-core/electron";
 import { createPublicKey } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

@@ -52,10 +52,16 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Sparkles,
   Square,
   Upload,
 } from "lucide-react";
 import { useState } from "react";
+
+const APP_BUILDER_CHAT_PREFILL = [
+  "Use $app-builder to create or improve a Rudder App.",
+  "Help me clarify what this local web app should do before building it.",
+].join(" ");
 
 function AppIdentity({
   entry,
@@ -422,20 +428,57 @@ export function AppsContextSidebar() {
             <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">Apps</h2>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              title="Load an App"
-              aria-label="Load an App"
-              disabled={!sitesEnabled || !localApps?.supported || discoverMutation.isPending}
-              onClick={() => discoverMutation.mutate()}
-              data-testid="apps-load"
-            >
-              {discoverMutation.isPending
-                ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />
-                : <Plus className="h-4 w-4" aria-hidden />}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  title="Add an App"
+                  aria-label="Add an App"
+                  disabled={!sitesEnabled}
+                  data-testid="apps-add"
+                >
+                  <Plus className="h-4 w-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="surface-overlay w-80 max-w-[calc(100vw-1.5rem)] text-foreground"
+              >
+                <DropdownMenuItem
+                  className="items-start gap-3 px-3 py-2.5"
+                  data-testid="apps-build-with-agent"
+                  onSelect={() => navigate(
+                    `/messenger/chat?prefill=${encodeURIComponent(APP_BUILDER_CHAT_PREFILL)}`,
+                  )}
+                >
+                  <Sparkles className="mt-0.5" aria-hidden />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">Build with Agent</span>
+                    <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                      Create or improve a web App with App Builder.
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="items-start gap-3 px-3 py-2.5"
+                  disabled={!localApps?.supported || discoverMutation.isPending}
+                  data-testid="apps-add-local-project"
+                  onSelect={() => discoverMutation.mutate()}
+                >
+                  {discoverMutation.isPending
+                    ? <Loader2 className="mt-0.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                    : <FolderSearch className="mt-0.5" aria-hidden />}
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">Add local web project</span>
+                    <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                      Load a Next.js, React, Vue, or other web project from this computer.
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {!isMobile ? (
               <button
                 type="button"

@@ -93,4 +93,23 @@ describe("product analytics local ledger", () => {
       properties: { output_kind: "structured_result" },
     })).resolves.toEqual({ id: "output-event" });
   });
+
+  it("allows organization creation flow metadata without a sensitive path key", async () => {
+    const stub = createInsertDb([{ id: "organization-event" }]);
+
+    await expect(recordProductAnalyticsEvent(stub.db, {
+      ...baseEvent,
+      eventName: "organization_created",
+      actorType: "system",
+      entityType: "organization",
+      entityId: "org-1",
+      dedupeKey: "organization_created:org-1",
+      properties: {
+        creation_flow: "manual",
+        template_kind: "custom",
+        is_first_organization: true,
+        is_user_initiated: true,
+      },
+    })).resolves.toEqual({ id: "organization-event" });
+  });
 });

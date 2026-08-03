@@ -50,18 +50,21 @@ edit_policy: user_confirmed_only
 
 ### Contract Summary
 
-App Builder turns a natural-language request into an organization-scoped web
-App using one maintained full-stack scaffold. It is an experimental,
-instance-level capability enabled through **Settings > Experimental > Enable
-Sites**. Enabling Sites makes the capability-bundled `app-builder` Skill
-available, permits Desktop Local App loading, and adds the top-level **Apps**
-workspace to the Primary Rail.
+App Builder turns a natural-language request into a new or improved local web
+product that can be used as a Rudder App. New Apps use one maintained full-stack
+scaffold by default; existing web projects keep their framework and conventions.
+It is an experimental, instance-level capability enabled through **Settings >
+Experimental > Enable Apps**. Enabling Apps makes the capability-bundled
+`app-builder` Skill available, permits Desktop Local App loading, and adds the
+top-level **Apps** workspace to the Primary Rail.
 
-Apps are ordinary webpages running on the user's computer. Rudder Desktop owns
-the fixed setup/check process, reviewed local definition, process lifecycle,
-loopback attestation, embedded App guest, and development-data recovery. The
-Server stores organization-scoped App identity, optional originating Chat,
-safe lifecycle state, and opaque Desktop binding only.
+To the operator, these websites are **Rudder Apps**. Underneath, they remain
+ordinary local webpages rather than a new executable or packaging format.
+Rudder Desktop owns the fixed setup/check process, reviewed local definition,
+process lifecycle, loopback attestation, embedded App guest, and
+development-data recovery. The Server stores organization-scoped App identity,
+optional originating Chat, safe lifecycle state, and opaque Desktop binding
+only.
 
 The product name is **App Builder**, without “Local.” V1 has no Rudder cloud
 build, hosting, publishing, public URL, tunnel, managed remote database, or
@@ -75,6 +78,9 @@ cross-device synchronization.
 - A technical operator can inspect and edit generated source, use another
   stack independently, or register an existing local web App through the same
   Apps workspace.
+- Any operator can load a frequently used local web project into Rudder Apps;
+  an Agent may inspect and minimally prepare that project for safe discovery
+  while preserving its existing framework and development workflow.
 - Existing data is normal. The generated App owns its database, records,
   services, integrations, and background behavior. The Skill asks about
   synthetic, copied, redacted, snapshot, or direct data use only when the
@@ -98,7 +104,8 @@ non-authoritative.
 
 - **Operator**: enables Sites, describes an App, approves its local definition,
   opens it directly, and uses its More menu for infrequent management actions.
-- **App Builder Skill**: creates and iterates on source from the business brief.
+- **App Builder Skill**: creates or improves a web product from the business
+  brief and prepares its source for Rudder Apps discovery.
 - **App record**: organization-scoped identity, optional Chat, normalized
   source root, safe build state, and opaque Desktop binding.
 - **Desktop runner**: fixed scaffold setup/check/start implementation.
@@ -126,10 +133,13 @@ promotion, or production rollback UI.
 
 ### Entry Points / Inputs
 
-- Instance **Settings > Experimental > Enable Sites**.
+- Instance **Settings > Experimental > Enable Apps**.
 - Top-level **Apps** Primary Rail destination.
 - Apps Home request composer: **Turn ideas into applications**.
-- Registered App list and **Load an App** action.
+- Registered App list and sidebar **Add an App** menu:
+  - **Build with Agent** opens a new Chat with an editable `$app-builder` brief.
+  - **Add local web project** opens Desktop folder selection and definition
+    review.
 - Natural-language brief, selected organization, and active Agent.
 - Normalized organization-workspace-relative `apps/<slug>` source root.
 - Fixed scaffold revision and explicit local-execution disclosure.
@@ -148,37 +158,45 @@ promotion, or production rollback UI.
    progressively disclosed through a hover/focus More menu on each sidebar
    row; Apps has no persistent right runtime-control column. Subtle
    entry/tab/status motion respects reduced-motion preferences.
-4. Sending a brief reserves one organization-scoped App record under a unique
+4. The context-sidebar **Add an App** menu separates creation from loading:
+   **Build with Agent** navigates to a normal new Chat with an editable, unsent
+   `$app-builder` prompt, while **Add local web project** opens the Desktop
+   folder picker and existing definition-review flow. The menu explains that
+   common local web projects can be loaded and used directly in Rudder.
+5. Sending a brief from Apps Home reserves one organization-scoped App record under a unique
    `apps/<slug>` root, starts an ordinary Chat with `$app-builder` and the
    assigned source root in its first message, attaches the acknowledged Chat,
    and navigates to that Chat. This flow neither creates nor requires a Project.
-5. The Skill uses the maintained scaffold and implements the requested
-   business workflow. If Chat cannot be acknowledged, the reserved App becomes
-   failed rather than pretending that work started.
-6. **Register & preview** never fabricates missing source. Desktop validates
+6. For new source, the Skill uses the maintained scaffold and implements the
+   requested business workflow. For an existing local web project, it first
+   inspects and preserves the framework, package manager, scripts, data
+   boundary, and tests, then adds only the minimal launch/readiness configuration
+   needed by Desktop discovery. If Chat cannot be acknowledged, a reserved App
+   becomes failed rather than pretending that work started.
+7. **Register & preview** never fabricates missing managed source. Desktop validates
    the assigned root and manifest, discloses the fixed install/check/start
    behavior, and performs nothing if the operator cancels.
-7. After confirmation, Desktop installs the locked graph, runs the scaffold's
+8. After confirmation, Desktop installs the locked graph, runs the scaffold's
    verification commands, starts the owned generation, waits for readiness,
    and proves the loopback listener belongs to that generation. Only then may
    the App become ready and receive an opaque local binding.
-8. Registered managed Apps and manually loaded local Apps appear together in
+9. Registered managed Apps and manually loaded local Apps appear together in
    the Apps navigation. Opening one creates or focuses a closable Apps header
    tab and directly opens its reviewed revision. Rudder reuses a running
    generation or automatically starts one, attests its listener, and renders
    the active webpage full-bleed through its isolated Desktop webview.
    Multiple Apps may remain tabbed and running.
-9. Closing or switching an Apps tab closes or parks only the view. It does not
+10. Closing or switching an Apps tab closes or parks only the view. It does not
    stop the App. The process remains available in the background until Desktop
    shutdown, Sites is disabled, a bounded failure occurs, or the operator uses
    **Stop App** in the sidebar row's More menu. Background route hydration and
    Messenger Saved View navigation remain unable to start it.
-10. The sidebar More menu contains settings and infrequent lifecycle actions.
+11. The sidebar More menu contains settings and infrequent lifecycle actions.
     While an App is running, **Copy App link** copies its current attested
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
     to the system browser. It works only on the same computer while that
     generation remains available.
-11. Disabling Sites immediately blocks new App Builder and Local App admission,
+12. Disabling Sites immediately blocks new App Builder and Local App admission,
     reconciles Desktop into the disabled state, stops running/transitioning
     Desktop-owned Apps, hides Apps, and removes the Skill from later run
     projection. It preserves source, definitions, App records, bindings, and
@@ -219,6 +237,9 @@ ownership-unverified failure handling.
 | --- | --- | --- |
 | Sites is disabled | Hide Apps, exclude Skill, reject admission, stop owned Apps | Leave a runnable hidden capability |
 | User requests a CRM | Use maintained defaults and ask only material business/risk questions | Ask them to choose framework or process topology |
+| User selects Build with Agent | Open a normal new Chat with an editable, unsent `$app-builder` brief | Send automatically, create a run, or start local code |
+| User selects Add local web project | Open folder selection, discover the project, and show the existing launch-definition review | Run the project on folder selection or require the maintained scaffold |
+| Agent improves an existing web project | Preserve its stack and add only minimal discovery configuration when needed | Replace it with the maintained scaffold merely to register it |
 | Apps Home sends a brief | Reserve an org App, start normal Chat with `$app-builder`, attach Chat | Create or require a Project |
 | Chat acknowledgement fails | Mark the reservation failed and show the cause | Claim the App is being built |
 | App source is missing or invalid | Return to Chat with a causal failure | Generate generic source during Register |
@@ -236,6 +257,7 @@ ownership-unverified failure handling.
 
 - Experimental Sites toggle.
 - App name/brief through Apps Home.
+- Sidebar Add menu with Build with Agent and Add local web project.
 - Selected organization and available Agent.
 - Fixed local-execution disclosure.
 - App registration and direct-open actions; settings, Stop, Copy, browser,
@@ -247,6 +269,8 @@ ownership-unverified failure handling.
 - Conditional Apps Primary Rail entry and Rudder workspace layout without a
   persistent right runtime-control column.
 - Searchable registered App list, Home composer, and multiple closable tabs.
+- A clear choice between starting an App Builder Chat and loading an existing
+  local web project from the computer.
 - Normal Chat containing the explicit `$app-builder` request.
 - Full-bleed embedded webpage and same-computer browser link.
 - Causal failed/unavailable state with Ask AI for help recovery; source access
@@ -284,6 +308,15 @@ application behavior and is not silently enabled by App Builder.
 The Skill asks only when direct records, a snapshot, or a redacted copy changes
 risk or behavior. App-owned data stays outside Rudder's database; managed
 development recovery does not claim to back up arbitrary external services.
+
+#### Existing Vue project
+
+The operator chooses **Build with Agent** to improve the existing product. The
+Skill keeps Vue and the project's current package manager, changes the requested
+workflow, and prepares a direct supported development script or minimal
+`package.json` `rudder` metadata when discovery needs it. The operator then
+chooses **Add local web project**, selects the folder, reviews the definition,
+and registers the ordinary website as a Rudder App.
 
 #### Same-computer browser
 

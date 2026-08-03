@@ -90,6 +90,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/components/CodeMirrorMarkdownEditor.tsx",
+      "lines": 1501,
+      "owner": "editor-ui",
+      "rationale": "CodeMirror integration still combines editor extensions, commands, persistence, and React lifecycle ownership.",
+      "target": "Extract editor extensions and lifecycle coordination and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "desktop/src/main.ts",
       "lines": 1562,
       "owner": "desktop-runtime",

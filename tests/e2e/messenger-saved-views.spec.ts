@@ -112,6 +112,31 @@ async function listGroups(page: Page, orgId: string) {
   }> }>;
 }
 
+async function createSeededGroup(page: Page, organization: { id: string }, input: {
+  name: string;
+  icon?: string;
+  itemKey: string;
+}) {
+  const response = await page.request.post(
+    `/api/orgs/${organization.id}/messenger/groups/merge`,
+    {
+      data: {
+        name: input.name,
+        icon: input.icon,
+        itemKeys: [input.itemKey],
+        autoGenerateName: false,
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBe(true);
+  const directory = await response.json() as {
+    groups: Array<{ id: string; name: string }>;
+  };
+  const group = directory.groups.find((candidate) => candidate.name === input.name);
+  if (!group) throw new Error(`Expected seeded Messenger group ${input.name}`);
+  return group;
+}
+
 async function keepLooseSavedView(
   page: Page,
   orgId: string,
@@ -242,11 +267,15 @@ test.describe("Messenger Saved Views", () => {
       chatTitle: "Saved view host chat",
       filePath,
     });
-    const secondGroupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
-      data: { name: "Review later", icon: "folder::slate" },
+    const reviewChat = await createHostChatWithFile(page, organization, {
+      chatTitle: "Review later host chat",
+      filePath: `docs/review-later-${randomUUID()}.md`,
     });
-    expect(secondGroupResponse.ok(), await secondGroupResponse.text()).toBe(true);
-    const secondGroup = await secondGroupResponse.json() as { id: string };
+    const secondGroup = await createSeededGroup(page, organization, {
+      name: "Review later",
+      icon: "folder::slate",
+      itemKey: `chat:${reviewChat.id}`,
+    });
     await selectOrganization(page, organization);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
@@ -374,9 +403,18 @@ test.describe("Messenger Saved Views", () => {
     await page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
     await expect.poll(async () => {
       const next = await listGroups(page, organization.id);
-      return next.groups.find((group) => group.id === secondGroup.id)?.entries.some(
-        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === savedEntry.savedView.id,
-      );
+      return next.groups.find((group) => group.id === secondGroup.id)?.entries.map(
+        (entry) => entry.itemKey,
+      ) ?? null;
+    }).toEqual([`chat:${reviewChat.id}`]);
+    const moveReviewChatResponse = await page.request.post(
+      `/api/orgs/${organization.id}/messenger/groups/${firstGroup.id}/entries`,
+      { data: { itemKey: `chat:${reviewChat.id}` } },
+    );
+    expect(moveReviewChatResponse.ok(), await moveReviewChatResponse.text()).toBe(true);
+    await expect.poll(async () => {
+      const next = await listGroups(page, organization.id);
+      return next.groups.some((group) => group.id === secondGroup.id);
     }).toBe(false);
     await expect(page).toHaveURL(/\/messenger\/workbench$/);
     await expect(mainWorkbench.locator(
@@ -493,11 +531,15 @@ test.describe("Messenger Saved Views", () => {
       data: { filePath, content: "# Global chooser\n" },
     });
     expect(fileResponse.ok(), await fileResponse.text()).toBe(true);
-    const groupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
-      data: { name: "Global research", icon: "folder::emerald" },
+    const seedChat = await createHostChatWithFile(page, organization, {
+      chatTitle: "Global research seed",
+      filePath: `global-research-seed-${randomUUID()}.md`,
     });
-    expect(groupResponse.ok(), await groupResponse.text()).toBe(true);
-    const group = await groupResponse.json() as { id: string };
+    const group = await createSeededGroup(page, organization, {
+      name: "Global research",
+      icon: "folder::emerald",
+      itemKey: `chat:${seedChat.id}`,
+    });
 
     await selectOrganization(page, organization);
     await page.goto(`/${organization.issuePrefix}/dashboard`);
@@ -566,11 +608,15 @@ test.describe("Messenger Saved Views", () => {
       data: { filePath: libraryFilePath, content: "# Loose library document\n" },
     });
     expect(fileResponse.ok(), await fileResponse.text()).toBe(true);
-    const groupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
-      data: { name: "Research package", icon: "folder::emerald" },
+    const seedChat = await createHostChatWithFile(page, organization, {
+      chatTitle: "Research package seed",
+      filePath: `loose/research-package-seed-${randomUUID()}.md`,
     });
-    expect(groupResponse.ok(), await groupResponse.text()).toBe(true);
-    const group = await groupResponse.json() as { id: string };
+    const group = await createSeededGroup(page, organization, {
+      name: "Research package",
+      icon: "folder::emerald",
+      itemKey: `chat:${seedChat.id}`,
+    });
     const library = await keepLooseSavedView(page, organization.id, {
       title: libraryTitle,
       target: {

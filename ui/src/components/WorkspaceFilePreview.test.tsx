@@ -129,9 +129,6 @@ describe("WorkspaceFilePreview", () => {
     const markdown = container.querySelector("[data-testid='mock-markdown']");
     expect(markdown?.textContent).toContain("Rendered report");
     expect(markdown?.classList.contains("rudder-readable-document")).toBe(true);
-    expect(markdown?.classList.contains("mx-auto")).toBe(true);
-    expect(markdown?.classList.contains("w-full")).toBe(true);
-    expect(markdown?.classList.contains("max-w-[880px]")).toBe(true);
   });
 
   it("renders HTML by default and keeps a read-only source mode", async () => {

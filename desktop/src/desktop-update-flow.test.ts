@@ -174,6 +174,23 @@ describe("desktop update flow", () => {
     }
   });
 
+  it("fails closed before spawning an updater when protected blocker inspection is unauthorized", async () => {
+    const listRunningRunsForUpdate = vi.fn(async () => {
+      throw new Error("Desktop API request failed (401 Unauthorized) for /orgs");
+    });
+    const { flow } = createFlow({ listRunningRunsForUpdate });
+
+    await expect(flow.installUpdate("0.3.4")).resolves.toEqual({
+      status: "failed",
+      message: "Desktop API request failed (401 Unauthorized) for /orgs",
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({
+      phase: "failed",
+      error: "Desktop API request failed (401 Unauthorized) for /orgs",
+    });
+  });
+
   it("uses the Node-mode CLI runner for macOS update children", () => {
     const launch = resolveDesktopUpdateChildLaunch({
       cliArgs: ["start", "--target-version", "0.6.2"],

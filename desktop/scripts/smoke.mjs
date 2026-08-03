@@ -2091,7 +2091,11 @@ async function runAccountGateScenario(mode) {
     );
     await interactionPage.evaluate(() => window.resolveEmailOtp());
     await interactionPage.getByRole("heading", { name: "Enter verification code" }).waitFor();
-    await interactionPage.getByText("Enter the code sent to smoke@example.com.").waitFor();
+    assert.equal(
+      await interactionPage.getByText(/Enter the code sent to/i).count(),
+      0,
+      "verification-code mode must omit the sent-code explanation",
+    );
     assert.equal(
       await interactionPage.getByRole("button", { name: "Continue with Google" }).isVisible(),
       false,
@@ -2108,6 +2112,23 @@ async function runAccountGateScenario(mode) {
       "verification-code mode must not show the password page",
     );
     await interactionPage.screenshot({ path: emailCodeScreenshotPath, fullPage: true });
+    await interactionPage.getByRole("button", { name: "换一个登录方式" }).click();
+    await interactionPage.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Continue with Google" }).isVisible(),
+      true,
+      "changing sign-in method must return to the provider options",
+    );
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Continue with GitHub" }).isVisible(),
+      true,
+      "changing sign-in method must return to the provider options",
+    );
+    assert.equal(
+      await interactionPage.getByRole("textbox", { name: "Email address" }).inputValue(),
+      "",
+      "changing sign-in method must clear the previous email",
+    );
   } finally {
     await interactionBrowser.close();
   }
@@ -2162,7 +2183,7 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.locator("#account-password").waitFor();
     await page.getByRole("button", { name: "Sign in with password" }).waitFor();
-    await page.getByRole("button", { name: "Forgot or need to set a password?" }).waitFor();
+    await page.getByRole("button", { name: "forgot password" }).waitFor();
     assert.equal(
       await page.getByText(/password is entered securely in your browser/i).count(),
       0,

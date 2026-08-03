@@ -66,6 +66,7 @@ import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueRuntimeSelector, supportsIssueRuntimeOverrides } from "../components/IssueRuntimeSelector";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -1988,7 +1989,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </DropdownMenu>
     </>
   );
-
   const issueFindRefreshKey = [
     issue.id,
     issue.updatedAt,
@@ -2009,12 +2009,12 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     // Keep the nullable lookup local so the guard also narrows the value inside this closure.
     const assigneeAgent = currentAssigneeAgent;
     return (
-    <div
-      className={cn(
-        "flex items-center gap-1 shrink-0",
-        grouped && "rounded-full border border-border bg-background/80 p-1",
-      )}
-    >
+      <div
+        className={cn(
+          "flex items-center gap-1 shrink-0",
+          grouped && "rounded-full border border-border bg-background/80 p-1",
+        )}
+      >
       <Button
         variant="ghost"
         size="sm"
@@ -2046,6 +2046,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-48 p-1" align="end">
+          {issue && assigneeAgent && supportsIssueRuntimeOverrides(assigneeAgent) && resolvedCompanyId ? <div data-testid="issue-runtime-menu-entry" className="mb-1 border-b border-border pb-1"><IssueRuntimeSelector agent={assigneeAgent} orgId={resolvedCompanyId} overrides={issue.assigneeAgentRuntimeOverrides} variant="menu" onApply={(nextOverrides) => updateIssue.mutate({ assigneeAgentRuntimeOverrides: nextOverrides })} /></div> : null}
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
@@ -2076,10 +2077,9 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           </button>
         </PopoverContent>
       </Popover>
-    </div>
-  );
+      </div>
+    );
   };
-
   return (
     <div ref={setIssueDetailRootRef} data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"} className="issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain">
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />

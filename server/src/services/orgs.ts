@@ -60,6 +60,15 @@ import { logger } from "../middleware/logger.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
+type OrganizationCreationPath = "onboarding" | "manual" | "import" | "fixture";
+type OrganizationCreateInput = typeof organizations.$inferInsert & {
+  analytics?: {
+    creationPath?: OrganizationCreationPath;
+    templateKind?: string;
+    isUserInitiated?: boolean;
+  };
+};
+
 export function organizationService(db: Db) {
   const DEFAULT_ISSUE_LABELS = [
     { name: "Bug", color: "#ef4444" },
@@ -273,12 +282,16 @@ export function organizationService(db: Db) {
       return enrichCompany(hydrated, aliases.map((alias) => alias.prefix));
     },
 
-    create: (data: typeof organizations.$inferInsert) =>
+    create: (data: OrganizationCreateInput) =>
       db.transaction(async (tx) => {
-        const { workspace, ...organizationData } = data as typeof organizations.$inferInsert & {
+        const { workspace, analytics, ...organizationData } = data as OrganizationCreateInput & {
           workspace?: unknown;
         };
         void workspace;
+        const existingOrganizations = await tx
+          .select({ id: organizations.id })
+          .from(organizations)
+          .limit(1);
         const created = await createCompanyWithUniqueKeys(tx, {
           ...organizationData,
         });
@@ -307,7 +320,12 @@ export function organizationService(db: Db) {
           entityType: "organization",
           entityId: created.id,
           dedupeKey: `organization_created:${created.id}`,
-          properties: { creation_source: "organization_service" },
+          properties: {
+            creation_flow: analytics?.creationPath ?? "manual",
+            template_kind: analytics?.templateKind ?? "custom",
+            is_first_organization: existingOrganizations.length === 0,
+            is_user_initiated: analytics?.isUserInitiated ?? true,
+          },
         });
 
         const row = await getCompanyQuery(tx)

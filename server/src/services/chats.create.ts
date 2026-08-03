@@ -5,8 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
-import { recordProductAnalyticsEvent } from "./product-analytics.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 

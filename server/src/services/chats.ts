@@ -88,9 +88,9 @@ import type { ChatServerQueueClaim, ConversationSourceMetadata, ConversationSumm
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
-
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
@@ -98,7 +98,6 @@ type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
 type ChatGenerationRow = typeof chatGenerations.$inferSelect;
 type ChatControlActionRow = typeof chatControlActions.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
-
 const CHAT_TITLE_MAX_LENGTH = 200;
 
 class InvalidQueueDeliveryActionLinkError extends Error {}
@@ -3957,8 +3956,9 @@ export function chatService(db: Db) {
         .where(eq(chatConversations.id, id))
         .returning();
       if (!deleted) return null;
+      await removeMessengerCustomGroupEntriesForItem(tx, deleted.orgId, `chat:${deleted.id}`);
       const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
-      if (assetIds.length > 0) {
+        if (assetIds.length > 0) {
         await tx.delete(assets).where(and(
           inArray(assets.id, assetIds),
           sql<boolean>`not exists (

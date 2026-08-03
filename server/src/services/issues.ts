@@ -44,7 +44,8 @@ import { getDefaultCompanyGoal } from "./goals.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
-import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
+import { recordHumanWorkStartedEvent, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 import {
@@ -1134,16 +1135,12 @@ export function issueService(db: Db) {
         patch.executionAgentNameKey = null;
         patch.executionLockedAt = null;
       }
-      if (
-        (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId) ||
-        (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId)
-      ) {
-        patch.checkoutRunId = null;
-        patch.executionRunId = null;
-        patch.executionAgentNameKey = null;
-        patch.executionLockedAt = null;
+      const assigneeChanged = (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId)
+        || (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId);
+      if (assigneeChanged) {
+        patch.checkoutRunId = null; patch.executionRunId = null; patch.executionAgentNameKey = null; patch.executionLockedAt = null;
+        if (issueData.assigneeAgentRuntimeOverrides === undefined) patch.assigneeAgentRuntimeOverrides = null;
       }
-
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, existing.orgId);
         patch.goalId = resolveNextIssueGoalId({
@@ -1172,6 +1169,8 @@ export function issueService(db: Db) {
           }
           return null;
         }
+        const humanWorkStarted = Boolean(!authorization && updated.createdByUserId && ((existing.status !== "in_progress" && updated.status === "in_progress") || (existing.executionRunId === null && updated.executionRunId !== null)));
+        if (humanWorkStarted) await recordHumanWorkStartedEvent(tx as unknown as Db, { ...updated, createdByUserId: updated.createdByUserId! });
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.orgId, nextLabelIds, tx);
         }
@@ -1318,6 +1317,7 @@ export function issueService(db: Db) {
         }
 
         if (!removedIssue) return null;
+        await removeMessengerCustomGroupEntriesForItem(tx, removedIssue.orgId, `issue:${removedIssue.id}`);
         const [enriched] = await withIssueLabels(tx, [removedIssue]);
         return enriched;
       }),
