@@ -15,6 +15,8 @@ import {
   issueComments,
   issueFollows,
   issues,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
   messengerThreadUserStates,
   projects,
 } from "../../packages/db/src/index.ts";
@@ -1853,6 +1855,14 @@ test.describe("Messenger unified threads contract", () => {
       const payload = await groupsRes.json() as { groups: Array<{ id: string }> };
       return payload.groups.some((candidate) => candidate.id === group.id);
     }).toBe(false);
+    expect(await e2eDb
+      .select({ id: messengerCustomGroupEntries.id })
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, group.id))).toEqual([]);
+    expect(await e2eDb
+      .select({ id: messengerCustomGroups.id })
+      .from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
     await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
     await expect(groupedSavedViewRow).toHaveCount(0);
     await expect(savedViewRow).toBeVisible();

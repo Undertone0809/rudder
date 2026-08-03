@@ -1697,6 +1697,9 @@ export function messengerService(db: Db) {
         await lockMessengerCustomGroupPlacement(txDb, orgId, userId, affectedGroupId);
       }
       for (const threadKey of uniqueThreadKeys) {
+        if (!savedViewItemKeys.has(threadKey)) {
+          await ensureMessengerThreadCanBeGroupedWithDb(txDb, orgId, userId, threadKey);
+        }
         if (savedViewItemKeys.has(threadKey) && !await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
           throw notFound("Messenger Saved View not found");
         }
