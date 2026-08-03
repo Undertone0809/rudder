@@ -39,6 +39,15 @@ const FINAL_BODY = [
   "skill-creator",
   "visualize browser",
 ].join("\n");
+const ORDERED_LIST_BODY = [
+  "## 现在必须由你做的",
+  "",
+  "1. 确认未来 7 天采用上面的用户获取 Goal。",
+  "2. 从 X 候选中选择并亲自回复约 20 条。",
+  "3. 恢复 Desktop Browser，在 Apps 中注册并打开任务树 App。",
+  "4. 决定 Goal 系统是否成为下一条产品主线。",
+  "5. 给现金流/兼职事项一个明确状态：继续、已解决或延期。",
+].join("\n");
 const FIRST_PROCESS_TEXT = "可见 Thinking 过程：先核对数据与用户约束。";
 const SECOND_PROCESS_TEXT = "第二个 Thinking 区块：再比较稳定证据。";
 
@@ -61,7 +70,7 @@ function sourceHash(value: string) {
 async function seedAnnotationChat(
   page: Page,
   name: string,
-  options: { nativeSteerRuntime?: boolean } = {},
+  options: { nativeSteerRuntime?: boolean; finalBody?: string; readyText?: string } = {},
 ): Promise<SeededAnnotationChat> {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
@@ -87,6 +96,8 @@ async function seedAnnotationChat(
   const assistantMessageId = randomUUID();
   const generationId = randomUUID();
   const now = Date.now();
+  const finalBody = options.finalBody ?? FINAL_BODY;
+  const readyText = options.readyText ?? "Rudder docs";
 
   await e2eDb.insert(chatConversations).values({
     id: conversationId,
@@ -119,7 +130,7 @@ async function seedAnnotationChat(
       role: "assistant",
       kind: "message",
       status: "completed",
-      body: FINAL_BODY,
+      body: finalBody,
       structuredPayload: {
         __chatTranscript: [
           {
@@ -157,7 +168,7 @@ async function seedAnnotationChat(
     controlVersion: 0,
     controlState: "terminal",
     acceptedThroughSeq: 2,
-    frozenBodyHash: sourceHash(FINAL_BODY),
+    frozenBodyHash: sourceHash(finalBody),
     runtimeTerminalAt: new Date(now - 1_000),
     completedAt: new Date(now - 1_000),
     startedAt: new Date(now - 4_000),
@@ -209,7 +220,7 @@ async function seedAnnotationChat(
     page.locator(
       `[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`,
     ),
-  ).toContainText("Rudder docs", { timeout: 30_000 });
+  ).toContainText(readyText, { timeout: 30_000 });
 
   return {
     organization,
@@ -349,6 +360,43 @@ async function selectVisibleText(
     await expect(annotationToolbar(page)).toBeVisible({ timeout: 5_000 });
   }
   return geometry;
+}
+
+async function selectFromTextToNextBlockStart(
+  page: Page,
+  root: Locator,
+  startNeedle: string,
+  endNeedle: string,
+) {
+  await root.evaluate((sourceRoot, selection) => {
+    const findText = (needle: string) => {
+      const walker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const element = node.parentElement;
+          return element?.closest("[data-chat-annotation-ignore]")
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node.textContent ?? "";
+        const offset = text.indexOf(needle);
+        if (offset >= 0) return { node, offset };
+      }
+      throw new Error(`Could not find block-boundary selection text: ${needle}`);
+    };
+    const start = findText(selection.startNeedle);
+    const end = findText(selection.endNeedle);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    const browserSelection = window.getSelection();
+    browserSelection?.removeAllRanges();
+    browserSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    sourceRoot.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  }, { startNeedle, endNeedle });
+  await expect(annotationToolbar(page)).toBeVisible({ timeout: 5_000 });
 }
 
 async function gateAnnotationSourceDigests(page: Page) {
@@ -788,6 +836,73 @@ test.describe("Chat response annotations", () => {
     await expect(page.getByTestId("chat-response-annotation-unlocatable")).toBeVisible();
     await expect(unlocatableCard).toBeVisible();
     await expect(unlocatableCard).toContainText("第一段包含");
+  });
+
+  test("sends multiple ordered-list annotations when one selection ends at the next block", async ({ page }, testInfo) => {
+    const seeded = await seedAnnotationChat(
+      page,
+      `Response-Annotation-Ordered-List-${Date.now()}`,
+      { finalBody: ORDERED_LIST_BODY, readyText: "现在必须由你做的" },
+    );
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    const orderedItems = [
+      "确认未来 7 天采用上面的用户获取 Goal。",
+      "从 X 候选中选择并亲自回复约 20 条。",
+      "恢复 Desktop Browser，在 Apps 中注册并打开任务树 App。",
+      "决定 Goal 系统是否成为下一条产品主线。",
+      "给现金流/兼职事项一个明确状态：继续、已解决或延期。",
+    ];
+
+    for (const item of orderedItems) {
+      await selectVisibleText(page, finalSource, item, item);
+      await addSelectionToChat(page);
+    }
+    await selectFromTextToNextBlockStart(
+      page,
+      finalSource,
+      "现在必须由你做的",
+      orderedItems[0]!,
+    );
+    await addSelectionToChat(page);
+    await expect(draftAnnotationChip(page, 6)).toBeVisible();
+
+    const streamRequest = page.waitForRequest((request) => (
+      request.method() === "POST"
+      && request.url().includes(`/api/chats/${seeded.conversationId}/messages/stream`)
+    ));
+    await page.getByRole("button", { name: "Send" }).click();
+    await streamRequest;
+    await expect(page.getByText("Failed to send message")).toHaveCount(0);
+
+    const sentTurn = page.getByTestId("chat-user-message-turn").last();
+    await expect(sentTurn.getByRole("button", { name: "Show 6 annotations" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.screenshot({
+      path: `/tmp/rudder-response-annotations-${testInfo.workerIndex}-ordered-list.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+
+    const messagesRes = await page.request.get(
+      `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+    );
+    expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
+    const messages = await messagesRes.json() as Array<{
+      role: string;
+      body: string;
+      structuredPayload: { inlineAnnotations?: Array<{ selectedText: string }> } | null;
+    }>;
+    const sentUserMessage = [...messages].reverse().find((message) => (
+      message.role === "user" && message.structuredPayload?.inlineAnnotations?.length === 6
+    ));
+    expect(sentUserMessage).toBeTruthy();
+    expect(sentUserMessage!.body).toBe("");
+    expect(sentUserMessage!.structuredPayload!.inlineAnnotations!.map((annotation) => annotation.selectedText))
+      .toEqual([...orderedItems, "现在必须由你做的"]);
   });
 
   test("maps a rich CJK selection across a Markdown link and inline code", async ({ page }) => {

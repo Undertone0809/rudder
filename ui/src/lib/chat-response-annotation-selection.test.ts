@@ -286,6 +286,78 @@ describe("chat response annotation selection", () => {
     root.remove();
   });
 
+  it("drops an unselected block separator when a range ends at the next block", () => {
+    const source = "## Heading\n\nBody";
+    const root = sourceRoot("assistant:message-boundary", "message-boundary");
+    const heading = document.createElement("h2");
+    heading.dataset.markdownSourceStart = "0";
+    heading.dataset.markdownSourceEnd = "10";
+    heading.textContent = "Heading";
+    const paragraph = document.createElement("p");
+    paragraph.dataset.markdownSourceStart = "12";
+    paragraph.dataset.markdownSourceEnd = String(source.length);
+    paragraph.textContent = "Body";
+    root.append(heading, paragraph);
+    document.body.appendChild(root);
+
+    const range = document.createRange();
+    range.setStart(heading.firstChild!, 0);
+    range.setEnd(paragraph.firstChild!, 0);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "Heading",
+      start: 3,
+      end: 10,
+    });
+
+    root.remove();
+  });
+
+  it("drops the list separator when a range ends at the next ordered item", () => {
+    const source = "1. 第一项\n2. 第二项";
+    const root = sourceRoot("assistant:message-ordered-boundary", "ordered-boundary");
+    const list = document.createElement("ol");
+    const first = document.createElement("li");
+    first.dataset.markdownSourceStart = "0";
+    first.dataset.markdownSourceEnd = "6";
+    first.textContent = "第一项";
+    const second = document.createElement("li");
+    second.dataset.markdownSourceStart = "7";
+    second.dataset.markdownSourceEnd = String(source.length);
+    second.textContent = "第二项";
+    list.append(first, second);
+    root.append(list);
+    document.body.appendChild(root);
+
+    const range = document.createRange();
+    range.setStart(first.firstChild!, 0);
+    range.setEnd(second.firstChild!, 0);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "第一项",
+      start: 3,
+      end: 6,
+    });
+
+    root.remove();
+  });
+
   it("rejects collapsed and cross-source ranges", () => {
     const first = sourceRoot("assistant:message-1", "block-1");
     const second = sourceRoot("assistant:message-2", "block-2");

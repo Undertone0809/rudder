@@ -665,6 +665,15 @@ export function resolveChatAnnotationRange(
   ) {
     start += 1;
   }
+  // A DOM range ending at the next block starts after the visual block break,
+  // while the semantic selection text intentionally omits that trailing break.
+  while (
+    end > start
+    && /\p{White_Space}/u.test(input.source[end - 1] ?? "")
+    && !selectedText.endsWith(input.source[end - 1] ?? "")
+  ) {
+    end -= 1;
+  }
   const contextLength = Math.min(160, Math.max(0, input.contextLength ?? 160));
   const common = {
     selectedText,
