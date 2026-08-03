@@ -52,7 +52,12 @@ const CONFIDENCE_SET = new Set<ProductAnalyticsConfidence>(["exact", "derived", 
 const ACTOR_TYPE_SET = new Set<ProductAnalyticsActorType>(["human", "agent", "system", "automation"]);
 const SENSITIVE_PROPERTY_KEY = /(prompt|transcript|title|description|body|content|path|url|token|secret|password|credential|email|hostname|username)/i;
 const EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalyticsEventName, ReadonlySet<string>> = {
-  organization_created: new Set(["creation_source"]),
+  organization_created: new Set([
+    "creation_path",
+    "template_kind",
+    "is_first_organization",
+    "is_user_initiated",
+  ]),
   human_work_started: new Set(["work_surface", "origin"]),
   run_started: new Set(["run_kind", "runtime", "attempt_kind"]),
   run_succeeded: new Set(["run_kind", "runtime", "attempt_kind"]),

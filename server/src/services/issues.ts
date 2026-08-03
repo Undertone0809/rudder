@@ -1172,6 +1172,27 @@ export function issueService(db: Db) {
           }
           return null;
         }
+        const humanWorkStarted = !authorization
+          && updated.createdByUserId
+          && (
+            (existing.status !== "in_progress" && updated.status === "in_progress")
+            || (existing.executionRunId === null && updated.executionRunId !== null)
+          );
+        if (humanWorkStarted) {
+          await recordProductAnalyticsEvent(tx as unknown as Db, {
+            orgId: updated.orgId,
+            eventName: "human_work_started",
+            occurredAt: updated.updatedAt,
+            sourceTransition: "issue.update",
+            confidence: "exact",
+            actorType: "human",
+            actorId: updated.createdByUserId,
+            entityType: "issue",
+            entityId: updated.id,
+            dedupeKey: `human_work_started:issue:${updated.id}`,
+            properties: { work_surface: "issue", origin: "human" },
+          });
+        }
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.orgId, nextLabelIds, tx);
         }
