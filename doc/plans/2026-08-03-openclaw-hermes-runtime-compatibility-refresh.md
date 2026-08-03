@@ -20,8 +20,11 @@ related_code:
   - ui/src/components/AgentConfigForm.advanced.tsx
   - ui/src/components/NewAgentDialog.tsx
   - ui/src/pages/NewAgent.tsx
-commit_refs: []
-updated_at: 2026-08-03
+  - ui/src/components/OnboardingWizard.tsx
+  - scripts/smoke/openclaw-docker-ui.sh
+commit_refs:
+  - 5fb9c771c
+updated_at: 2026-08-04
 ---
 
 # OpenClaw and Hermes Runtime Compatibility Refresh
@@ -35,25 +38,28 @@ than treating both products as local command-line tools.
 | Runtime | Product decision | Compatibility decision |
 | --- | --- | --- |
 | OpenClaw | Keep `openclaw_gateway` and upgrade the first-party adapter. | Support the current Gateway protocol, including protocol v4 handshake semantics, capability validation, device pairing, and run-scoped native cancellation. |
-| Hermes | Add `hermes_gateway` as the primary Hermes integration. It connects to a user-started Hermes API Server and launches as `Beta` for `0.19.1`. | Use capability discovery, Runs, SSE events, approvals, Stop, and Sessions APIs. Keep the Beta label until tool-bearing multi-turn continuity has a versioned, proven contract. Do not make ACP or CLI output parsing the primary integration. |
+| Hermes | Add `hermes_gateway` as the primary Hermes integration for the locked `0.19.1` API Server. | Use capability discovery, Runs, SSE events, approvals, Stop, and Sessions APIs. Rudder owns the canonical transcript and projects bounded tool/approval context into the text-only Runs surface; this is explicitly synthetic, not native or lossless. Do not make ACP or CLI output parsing the primary integration. |
 | Legacy Hermes | Keep `hermes_local` temporarily and label it `Legacy`. | Freeze its current configuration semantics. Do not silently reinterpret a CLI-backed Agent as an API Server connection. |
 
 The V1 user promise is deliberately narrow: a user who already has a
-compatible, authenticated OpenClaw Gateway or Hermes API Server can connect it
-to Rudder, complete Issue and Chat work, continue a provider-supported
+compatible, authenticated OpenClaw Gateway or Hermes API Server, or explicitly
+chooses Rudder's managed local lifecycle, can connect it to Rudder, complete
+Issue and Chat work, continue a provider-supported
 workstream session, stop an in-flight run, respond to supported approvals, and
-inspect normalized run evidence. Hermes V1 continuity is limited to text-only
-user/assistant history that the locked Runs API can represent without loss. A
-tool-bearing or structured Hermes turn completes with full evidence but
-requires an explicit new-session/reset before later work. The UI and
-compatibility matrix label this Hermes path `Beta`, not generally lossless
-multi-turn support.
+inspect normalized run evidence. Hermes V1 uses a Rudder-owned canonical
+workstream transcript and a bounded `RUDDER_TOOL_CONTEXT_V1` projection for
+the text-only Runs surface. Within the declared bounds, ordinary tool calls,
+tool results, structured content, and approvals continue without a forced
+reset. The continuity mode is recorded as `synthetic_tool_continuity`, never
+`native` or `lossless`.
 
-Rudder does not install, start, upgrade, or rewrite either upstream runtime in
-V1. It also does not import provider credentials, skills, memory databases, or
-bulk/synchronize historical conversations. With explicit operator consent, it
-may read one selected Hermes session per workstream/import operation into a
-bounded continuation baseline.
+Rudder does not install, upgrade, or rewrite either upstream runtime in V1.
+An explicit `rudder_managed_local` connection may start and supervise the
+locked local server command; attach mode never starts or controls it. Rudder
+also does not import provider credentials, skills, memory databases, or
+bulk/synchronize historical conversations. Provider sessions are correlation
+targets only; Rudder-originated history is canonical and any migration or
+reset is explicit and auditable.
 Upstream runtimes execute tools on their own hosts; Rudder remains the
 orchestration, policy, review, and evidence system.
 
@@ -139,8 +145,8 @@ complete, and whether Stop reached a real terminal state."
 - Detect compatibility through an authenticated protocol handshake, not only
   executable, port, or version-string checks.
 - Support Issue Runs and Chat turns with provider-proven per-workstream
-  continuity: full mapped-session continuity for OpenClaw and the explicit
-  text-only Beta boundary for Hermes `0.19.1`.
+  continuity: full mapped-session continuity for OpenClaw and bounded
+  `synthetic_tool_continuity` for Hermes `0.19.1`.
 - Map provider-native approvals and Stop into Rudder's durable control model.
 - Normalize runtime identity, lifecycle, transcript, usage, and error evidence.
 - Preserve organization boundaries and prevent credential leakage or unsafe
@@ -149,13 +155,12 @@ complete, and whether Stop reached a real terminal state."
 
 ## Non-Goals
 
-- Automatic OpenClaw or Hermes installation, startup, upgrade, or config edits.
+- Automatic OpenClaw or Hermes installation, upgrade, or config edits. Starting
+  a locked local command is allowed only through an explicit managed lifecycle
+  choice; attach mode never starts or controls an existing process.
 - Managing model-provider subscriptions or importing provider credentials.
 - Mirroring upstream skills, memory stores, jobs, cron, channels, plugins,
-  subagents, or bulk/synchronized historical conversations into Rudder. The
-  bounded, operator-selected Hermes continuation baseline per
-  workstream/import operation defined in H4 is the only V1 history-import
-  exception.
+  subagents, or bulk/synchronized historical conversations into Rudder.
 - ACP-based Hermes hosting, CLI stdout scraping, or a new generic arbitrary
   process adapter as the primary Hermes path.
 - Rudder-hosted execution of tools that the external runtime advertises as
@@ -175,12 +180,11 @@ The feature is ready when all of the following are true:
   version, and unverified version states.
 - Stock OpenClaw `v2026.7.1` and stock Hermes Agent `0.19.1` each complete one
   Issue workflow and one Chat turn through the real UI and backend.
-- A second text-only turn in the same Issue workstream or Chat conversation
-  proves prior context was supplied. OpenClaw reuses its mapped provider
-  session; Hermes reuses its mapped Sessions API record and explicitly sends
-  its representable user/assistant text history to each Runs request. Missing,
-  unreadable, structured, tool-call, or tool-result history becomes a visible
-  reset or failure, never a lossy or silent empty-context continuation.
+- A second turn in the same Issue workstream or Chat conversation proves prior
+  context was supplied. OpenClaw reuses its mapped provider session; Hermes
+  reuses its mapped Sessions API record and sends the bounded, hash-linked
+  `RUDDER_TOOL_CONTEXT_V1` projection from the canonical Rudder transcript.
+  Projection is atomic and never silently drops causal events.
 - Stop freezes Rudder-visible output, calls the exact upstream run/session
   cancellation endpoint, and records the verified terminal outcome.
 - Hermes approval requests can be resolved through Rudder without using
@@ -192,8 +196,8 @@ The feature is ready when all of the following are true:
   upgrade/pairing state. Existing `hermes_local` Agents remain explicitly
   Legacy until an operator migrates them.
 - `hermes_gateway` creation, Agent Detail, Run evidence, and the compatibility
-  matrix display `Beta` plus the text-only continuation boundary; no surface
-  implies tool-bearing multi-turn continuity for stock `0.19.1`.
+  matrix display the `synthetic_tool_continuity` boundary and never imply that
+  the provider itself offers native or lossless replay.
 - Latest and previous-supported upstream releases run in a scheduled
   compatibility matrix; an untested new release is labeled `Unverified`, not
   automatically `Supported`.
@@ -205,7 +209,7 @@ Initial operational targets after release are:
 - at least 95% of accepted Stop requests reach a verified upstream terminal
   state within 3 seconds on a healthy local connection;
 - at least 95% of eligible second-turn acceptance runs retain the expected
-  provider session and, for Hermes, the complete bounded text history;
+  provider session and, for Hermes, a complete bounded canonical projection;
 - zero runtime secrets in API responses, transcripts, activity payloads, or
   persisted diagnostic logs.
 
@@ -216,6 +220,7 @@ Initial operational targets after release are:
 Both integrations use a normalized, organization-scoped connection model:
 
 - runtime type and adapter version;
+- connection mode: `rudder_managed_local` or `attach_existing_local`;
 - endpoint and deployment classification;
 - secret reference, never a plaintext secret in general config JSON;
 - last capability snapshot, upstream version, protocol version, and test time;
@@ -224,6 +229,20 @@ Both integrations use a normalized, organization-scoped connection model:
   explicit `Not exposed` value), operator-supplied host label,
   verified instance identity when available, and the workspace claim plus its
   verification status.
+
+Managed mode records the exact provider process identity and start epoch that
+Rudder owns, plus the resolved workspace binding. Attach mode records the
+observed process identity/CWD or provider selector used to prove the binding.
+One managed process identity/start epoch has one lifecycle owner; an attached
+Agent may observe and use it but cannot stop, restart, or rebind that owner.
+
+A managed launch is a versioned launch contract, not an arbitrary shell
+command: it names the locked executable/package, immutable argument template,
+expected upstream version, resolved workspace, and an explicit child-environment
+allowlist. Secret references are resolved only for the child process, never
+serialized into the Agent config or inherited wholesale from the Rudder
+server. Rudder records the launch contract digest, PID/start epoch, and
+redacted stdout/stderr diagnostics before advertising the process as managed.
 
 Provider run IDs and session IDs belong to Run/workstream mappings, not static
 Agent config. Multiple Agents in one organization may point to one server, but
@@ -263,25 +282,23 @@ stores only an opaque binding/fingerprint in general logs.
 
 Stock Hermes `0.19.1` does not expose a workspace selector, stable workspace
 identity, or deterministic filesystem probe through its capabilities, Runs, or
-Sessions APIs. For Hermes V1, the operator must start the API Server in a
-dedicated, preconfigured workspace and explicitly attest that the displayed
-endpoint and host label refer to that workspace. Rudder records this as
-`Operator declared / unverified`; it must not run a model prompt and present the
-result as a control-plane probe. This state may be ready with a persistent
-warning in `local_trusted`, but authenticated deployments require an explicit
-administrator acknowledgement before tool-enabled work. If the operator does
-not attest, preflight fails with `runtime_workspace_unverified`.
+Sessions APIs. The operator may record a host/workspace claim for orientation,
+but that claim is never launch proof. In `attach_existing_local`, Rudder must
+independently bind the observed process/CWD (or a locked provider selector) to
+the intended workspace; otherwise the connection is `unknown` and execution
+is blocked. In `rudder_managed_local`, Rudder verifies the binding from its own
+launch record before marking the connection ready.
 
 The locked OpenClaw stable operator protocol likewise does not expose a
 deterministic workspace identity plus bounded filesystem probe that Rudder can
-use to establish the execution checkout. OpenClaw V1 therefore applies the same
-`Operator declared / unverified` workspace state, persistent warning, and
-attestation rule. Gateway device authentication, version negotiation, and
-session continuity prove control-plane identity, not filesystem identity.
+use to establish the execution checkout. OpenClaw follows the same managed
+versus attached binding rule. Gateway device authentication, version
+negotiation, and session continuity prove control-plane identity, not filesystem
+identity.
 
-Cross-host E2E proves that Rudder never substitutes its local checkout path,
-and that both OpenClaw and Hermes UI/evidence continue to call workspace
-identity unverified.
+Same-host, different-path E2E proves that Rudder never substitutes its local
+checkout path, and that UI/evidence distinguish managed binding, attached proof,
+and an unverified workspace claim.
 Filesystem isolation remains the trusted upstream operator's responsibility.
 
 ### C4. Authenticated, capability-aware preflight
@@ -302,11 +319,12 @@ checks use stable codes and sanitized detected facts. Required common codes are:
 - `runtime_workspace_identity_unverified`
 - `runtime_trust_domain_conflict`
 
-For OpenClaw and Hermes, missing operator attestation is the failing
-`runtime_workspace_unverified` state. A completed attestation that still lacks
-provider-verifiable identity is the ready-with-warning
-`runtime_workspace_identity_unverified` state. Neither code may render a
-`Verified` workspace badge.
+For OpenClaw and Hermes, an attached connection without independent process/CWD
+or provider-selector proof fails with `runtime_workspace_unverified`. A
+provider-reported or operator-declared workspace claim without Rudder launch
+binding is `runtime_workspace_identity_unverified` and cannot authorize
+workspace-dependent execution. Neither code may render a `Verified` workspace
+badge.
 
 Preflight must perform the cheapest authenticated handshake that proves the
 same path used for execution. A present executable, open port, unauthenticated
@@ -339,6 +357,11 @@ Rudder maintains separate provider session mappings for:
 Mappings are organization- and Agent-scoped. If an upstream session is absent,
 Rudder records `runtime_session_missing`. It may create a replacement only when
 policy allows and must emit a visible `session_reset` evidence marker.
+
+For Hermes, the mapped Sessions API record is correlation and memory scope; the
+Rudder canonical transcript remains authoritative for Issue, reviewer, and
+direct Chat workstreams. All three surfaces use the same bounded
+`synthetic_tool_continuity` projection and evidence rules.
 
 ### C7. Stop ordering and terminal reconciliation
 
@@ -400,6 +423,16 @@ All provider frames, tool arguments/results, approval payloads, errors, and
 diagnostics pass through redaction before persistence. Raw unredacted SSE or
 WebSocket frames may exist only in bounded in-memory processing and must not be
 written to Run logs, transcripts, activity records, or failure artifacts.
+
+### C9. Workstream parity and provider-native skills boundary
+
+Issue, reviewer, and direct Chat Runs use the same external-runtime readiness,
+workspace binding, session mapping, Stop reconciliation, transcript, and
+evidence contracts. A provider-specific capability may narrow a surface, but
+it cannot silently switch to a different continuity or cancellation policy.
+Provider-native skills, tools, memories, and plugins may remain active on the
+upstream host, but they remain unmanaged and separately identified; a connected
+runtime never imports or reports them as Rudder-enabled skills or usage.
 
 ## OpenClaw Requirements
 
@@ -500,6 +533,20 @@ authentication enabled. Pairing reuse, protocol v4, session continuation, and
 native Stop are release gates. A separate previous-supported job may exercise a
 bounded older release; it cannot weaken the current secure defaults.
 
+### O6. Local lifecycle and workspace binding
+
+OpenClaw uses the same V1 lifecycle modes as Hermes. In
+`rudder_managed_local`, Rudder starts and supervises only the recorded Gateway
+process identity/start epoch and binds it to the resolved workspace. In
+`attach_existing_local`, Rudder may use an already-running loopback Gateway
+only after independent process/CWD or provider-selector proof; it never
+restarts, terminates, or rebinds an unrelated process. A shared Gateway may be
+attached by additional Agents, but only its single managed lifecycle owner may
+control it. Managed Start-and-connect uses the same versioned executable,
+immutable argument, upstream-version, workspace, and child-environment
+allowlist contract; arbitrary shell fragments and inherited environment dumps
+are not accepted.
+
 ## Hermes Requirements
 
 ### H1. Add a first-party `hermes_gateway` adapter
@@ -512,28 +559,33 @@ configuration semantics in place and do not make new Agents depend on
 `hermes-paperclip-adapter`. The external package may be removed only after the
 legacy retirement policy and rollback window are complete.
 
-### H2. Connect to a user-started API Server
+### H2. Local lifecycle and workspace binding
 
-V1 connects to a Hermes API Server that the user explicitly started and
-secured. Rudder does not spawn or supervise the server. Required config is:
+V1 supports only loopback Hermes API Servers and makes lifecycle ownership
+explicit. An Agent chooses one of:
 
-- API Server URL;
-- secret reference for the Hermes bearer key;
-- operator-supplied execution-host label for operator orientation;
-- explicit acknowledgement that the user started this server in the intended
-  dedicated workspace and that Rudder cannot verify that workspace identity;
-- optional model route override validated by discovery.
+- `rudder_managed_local`: Rudder starts and supervises the locked server
+  command, records process identity/start epoch, and binds the process to the
+  resolved workspace before execution;
+- `attach_existing_local`: the operator points Rudder at an already-running
+  loopback server, and Rudder independently proves process identity/CWD (or a
+  locked provider selector) before allowing workspace-dependent work.
 
-The setup UI must state that tools and workspace access occur on the Hermes
-server host. A remote Rudder deployment must not imply that `localhost` refers
-to the user's laptop. The UI displays the operator label and workspace as
-unverified operator claims, separate from endpoint host and server-reported
-`tool_execution=server`. Stock Hermes `0.19.1` must never display a verified
-workspace badge.
+An attach record never upgrades, restarts, terminates, or rebinds a process
+owned by another managed Agent. A managed process identity and start epoch have
+one lifecycle owner; additional Agents attach read-only to that ownership
+record. Required config is the loopback API Server URL, a secret reference for
+the Hermes bearer key, the connection mode, and an optional model route
+override validated by discovery. An operator-supplied execution-host or
+workspace label is orientation metadata only and never substitutes for the
+binding proof. The managed UI action is `Start and connect`; it selects only a
+stored launch contract and never accepts free-form executable paths, shell
+fragments, or unrestricted environment overrides.
 
-An opt-in Rudder-managed local Hermes lifecycle is a possible later phase. It
-requires a separate install/update/process-ownership design and is not hidden
-inside this PRD.
+The setup UI states that tools and workspace access occur on the Hermes server
+host, displays endpoint host separately from provider-reported execution mode,
+and shows `unknown`/blocked when an attached workspace cannot be proven. V1
+does not install, upgrade, or silently mutate an existing Hermes installation.
 
 ### H3. Capability discovery is authoritative
 
@@ -560,94 +612,49 @@ Feature-name parsing must recognize the upstream
 `run_approval_response` capability. The endpoint map is the final authority
 when a feature label and route naming differ.
 
-### H4. Runs and explicit history continuity
+### H4. Runs and synthetic tool continuity
 
-Rudder creates or validates one Hermes Sessions API record per Rudder
-workstream and persists the mapping. Passing that ID as `/v1/runs.session_id`
-does not hydrate the model with SessionDB history in stock Hermes `0.19.1`.
-Stock `0.19.1` reduces Runs `conversation_history` to `role` and string
-`content`; it does not preserve native `tool_calls`, `tool_call_id`, structured
-tool results, or other message metadata. V1 therefore supports continuation
-only for ordered `user` and `assistant` messages whose content is scalar text.
+Rudder creates one opaque Hermes Sessions API mapping per Agent/workstream and
+persists only provider IDs returned by the authenticated adapter. Passing that
+ID as `/v1/runs.session_id` is correlation, not proof that the provider
+hydrated history. Rudder's canonical transcript is the authority for every
+Rudder-originated Issue, reviewer, and Chat workstream.
 
-On initial mapping, and only after the operator explicitly selects and consents
-to import that one session, Rudder reads its ordered messages, validates that
-the entire bounded history is representable under the text-only contract, and
-stores the baseline plus its source fingerprint in a Rudder-owned workstream
-history. Before every Run, Rudder supplies the complete validated text history
-through `conversation_history` together with the new input. Reusing `session_id`
-alone is never counted as continuity.
+Before each Run, Rudder builds the versioned `RUDDER_TOOL_CONTEXT_V1`
+projection from the canonical transcript. The projection is quoted, escaped,
+redacted, hash-linked, and carries the ordered causal relationship between
+assistant/tool calls, tool results, structured content, approvals, and their
+decisions. It is supplied through the text-only Runs history surface together
+with the new input. The run records `continuityMode:
+synthetic_tool_continuity`; it must never be labeled native or lossless.
 
-The V1 import hard limits are 200 messages, 64 KiB UTF-8 per message, 512 KiB
-UTF-8 aggregate, and a conservative 32,000-token estimated history budget.
-Implementations may lower these limits per model route but cannot raise them
-without compatibility-matrix evidence. Import follows pagination until it
-proves exhaustion and reads every page up to the limit; it does not accept a
-partial page set. Crossing any limit fails atomically with
-`runtime_session_history_too_large` and offers a new empty session. Rudder never
-persists or sends a truncated prefix.
+The projection is atomic and bounded at 200 events, 64 KiB UTF-8 per event,
+512 KiB UTF-8 aggregate, and a conservative 32,000-token estimate. It records
+the source transcript hash, projection version, redaction/compaction metadata,
+ordered inclusion and omission ranges, and final projection digest. It must
+retain causally required tool/approval pairs. Unsafe, corrupt, unredactable,
+or over-budget history fails before provider submission with an actionable
+projection error; Rudder never truncates, silently drops, stringifies raw
+objects, or starts an empty replacement session to make the turn pass.
 
-If imported history or a completed Rudder turn contains a tool-call,
-tool-result, structured content block, non-text content, or unsupported role,
-Rudder must not stringify, summarize, discard, or synthesize it. The workstream
-becomes non-continuable with `runtime_session_history_unsupported`; the UI
-offers an explicit new-session/reset action and explains that prior tool context
-will not carry forward. A tool-using Run may complete and retain its full
-normalized evidence in Rudder, but V1 does not claim that a later Hermes turn
-can continue it losslessly.
+Within those bounds, ordinary tool calls, tool results, structured content, and
+approval events do not force a session reset. A later turn is blocked only when
+the projection cannot be safely constructed or the mapped provider session is
+missing/conflicted. Any reset or migration is an explicit, visible evidence
+marker, never an implicit consequence of a tool-bearing turn.
 
-The adapter persists that non-continuable marker before completing any Run that
-emits a tool or approval event. A later turn checks the marker before building
-`conversation_history`; it cannot infer continuity merely because tool and
-approval records were intentionally stored outside the text history.
-
-Stock `0.19.1` exposes session-message reads but no direct message-append route
-for Runs clients. Rudder therefore appends each accepted user turn and
-reconciled assistant text turn to its own durable workstream history; tool and
-approval records remain Run evidence outside the continuation payload. Rudder
-does not claim that Hermes SessionDB was updated by the Run. After terminal
-reconciliation it reads the mapped session again. A fingerprint delta that
-exactly matches the deterministic projection of this Rudder Run advances the
-source fingerprint; no upstream delta is also valid. Any other delta is
-concurrent external history and cannot be merged safely. Rudder blocks with
-`runtime_session_history_conflict` and offers an explicit re-import with renewed
-consent or a new session. A missing session, failed read, or truncated history
-blocks with `runtime_session_history_unavailable`; an unrepresentable message
-shape blocks with `runtime_session_history_unsupported`. An operator-started
-empty session records `session_reset`; Rudder never silently omits history to
-make the Run proceed.
-
-Rudder also passes the mapped provider session through the Runs request's
-`session_id` for correlation and uses `X-Hermes-Session-Key` only as a stable,
-unguessable long-term memory scope. The session key must not expose raw
-organization, user, Agent, Chat, or Issue identifiers. It is derived through a
-keyed, versioned mapping. The Runs API response's provider run ID is persisted
-on the Rudder attempt.
-
-The Runs API does not provide a proven idempotency key. Rudder therefore never
-automatically retries a submission when the HTTP outcome is unknown. If it
-receives a provider run ID, it reconciles that Run. If the connection fails
-after the request may have been accepted but before the ID is known, the Rudder
-attempt becomes `submission_indeterminate`; no second upstream Run is created
-without an explicit operator recovery action or a future upstream idempotency
-contract.
-
-Rudder accepts session IDs only through this opaque mapping. Stock `0.19.1`
-Runs terminal status retains the submitted `session_id`, and its Runs executor
-does not expose an effective replacement after agent compression/rotation.
-Provider-side session rotation is therefore unsupported in V1. Rudder neither
-guesses nor atomically adopts a replacement. If events, message readback, or a
-future response reveal a session mismatch or rotation that cannot be proven,
-Rudder records `runtime_session_rotation_unverifiable`, blocks the next
-continuation, and offers an explicit visible reset. Rotation continuity remains
-deferred until upstream supplies a versioned effective-session contract.
+The Runs API does not provide a proven idempotency key. Rudder never retries a
+submission whose outcome is unknown. If no provider run ID is recoverable, the
+attempt is `submission_indeterminate` and requires explicit operator recovery.
+Provider session rotation is unsupported without a versioned effective-session
+contract; Rudder records `runtime_session_rotation_unverifiable` and blocks
+continuation rather than guessing or adopting a replacement.
 
 Rudder does not inject a short-lived Rudder JWT into a prompt or transcript.
-Because an external Hermes API Server cannot receive per-Run process
-environment injection, V1 keeps Issue checkout, context delivery, result
-persistence, and review orchestration on the Rudder server side. A future
-Hermes-initiated Rudder MCP/API mode requires a separately configured,
-least-privilege credential and explicit product contract.
+Issue checkout, context delivery, result persistence, and review orchestration
+remain on the Rudder server side. A future Hermes-initiated Rudder MCP/API mode
+requires a separately configured least-privilege credential and explicit
+product contract.
 
 ### H5. SSE persistence and reconciliation
 
@@ -671,14 +678,19 @@ and terminal run status is retained for a limited period. Therefore Rudder must:
 
 ### H6. Approvals
 
-Hermes approval events become durable Rudder approval actions. Rudder maps only
-the choices supported by the discovered API, correlates them to the exact run,
-and calls the run approval endpoint after authorization.
+Hermes approval events become durable Rudder approval actions. V1 exposes only
+the `once` and `deny` choices, correlates every decision to the exact run and
+approval request, and calls the run approval endpoint only after authorization
+and capability validation. `session`, `always`, `all`, `resolve_all`, bulk
+grant flags, and unknown choice/expansion fields are rejected fail-closed as
+ordinary approval responses; expanding authority requires a separately named,
+auditable runtime-policy change with explicit authorization.
 
 The old `--yolo` behavior is not carried forward. Auto-approval is allowed only
-when an explicit Rudder/runtime policy already permits the action. Unknown,
-expired, malformed, or unrenderable requests fail closed. Approval waits have a
-bounded deadline and survive a Rudder UI refresh.
+when an explicit Rudder/runtime policy already permits the `once` action and
+the outbound payload contains no broadening field.
+Unknown, expired, malformed, or unrenderable requests fail closed. Approval
+waits have a bounded deadline and survive a Rudder UI refresh.
 
 ### H7. Native Stop and honest Steer
 
@@ -721,11 +733,11 @@ testing and execution use the same endpoint policy.
 
 - Secrets are stored by reference, redacted from logs, omitted from read APIs,
   and never copied into transcripts or activity payloads.
-- OpenClaw remote endpoints require `wss://`; Hermes remote endpoints require
-  `https://`. Plaintext is allowed only for loopback under `local_trusted`.
-- `local_trusted` may connect to explicitly configured loopback/private
-  endpoints. Authenticated or cloud deployments apply deployment-aware egress
-  allowlists.
+- V1 accepts loopback-only OpenClaw and Hermes endpoints. OpenClaw uses
+  `wss://` and Hermes uses `https://` for loopback TLS; plaintext is allowed
+  only for explicitly configured loopback under `local_trusted`.
+- Remote connectors, relays, and deployment-aware egress allowlists are future
+  extension points, not V1 authorization to reach arbitrary private hosts.
 - URL validation blocks metadata and link-local addresses, unsafe redirects,
   userinfo credentials, protocol downgrades, and DNS rebinding. Redirects are
   disabled by default for authenticated requests.
@@ -742,6 +754,10 @@ testing and execution use the same endpoint policy.
   Rudder Agent identity-token namespace.
 - Rudder never imports provider keys, upstream credential files, skills,
   memories, or unrestricted environment dumps.
+- Managed child processes receive only the versioned launch-contract
+  environment allowlist and ephemeral secret-reference values. Secrets and
+  launch arguments are redacted before diagnostics, and inherited server
+  environment variables are excluded by default.
 - Tool execution host, workspace semantics, endpoint host, and last tested time
   remain visible to the operator.
 
@@ -750,18 +766,18 @@ testing and execution use the same endpoint policy.
 ### Create or reconnect OpenClaw
 
 1. The user chooses `OpenClaw` in any New Agent surface.
-2. Rudder asks for the Gateway URL, protected connection credential,
-   operator-supplied execution-host label, and explicit intended-workspace
-   attestation. It states that the host/workspace claims are not
-   control-plane-verified.
+2. Rudder asks for loopback Gateway URL, protected connection credential,
+   lifecycle mode, and an optional operator-supplied execution-host/workspace
+   label. It explains that labels are orientation metadata, not binding proof.
 3. `Test connection` performs v4 negotiation and authenticated capability
    validation.
 4. If pairing is required, the UI shows the pending-device action and retest
    state; the user never edits key JSON.
 5. Agent Detail displays upstream version, protocol, scopes, last tested time,
    connection status, endpoint host, execution mode as `Not exposed` when the
-   Gateway does not report one, and a persistent
-   `Operator declared / unverified` workspace state.
+   Gateway does not report one, lifecycle owner, and the managed/attached
+   workspace binding state. An attached connection without independent proof is
+   visibly blocked.
 6. Issue and Chat work stream into the normal Rudder Run view. Later turns
    continue the mapped session.
 7. Stop freezes visible output and aborts only the active upstream run.
@@ -769,23 +785,21 @@ testing and execution use the same endpoint policy.
 ### Create or reconnect Hermes
 
 1. The user chooses `Hermes` in any New Agent surface.
-2. The form asks for the user-started API Server URL, bearer secret, upstream
-   workspace attestation, and an operator-supplied execution-host label. It
-   states that the host/workspace claims are not server-verified and separately
-   shows endpoint host and server-reported execution mode.
+2. The form asks for a loopback API Server URL, bearer secret, lifecycle mode,
+   and an optional execution-host/workspace label. It separately shows endpoint
+   host and server-reported execution mode.
 3. `Test connection` authenticates, reads capabilities/endpoints, and verifies
    Runs, events, approvals, Stop, and Sessions support.
 4. Missing auth, unsupported versions, unsafe endpoints, or missing features
    produce one actionable remediation state.
-5. Agent Detail displays `Beta` and the text-only continuation boundary for
-   stock `0.19.1` before the first Run.
+5. Agent Detail displays the `synthetic_tool_continuity` boundary for stock
+   `0.19.1` before the first Run.
 6. Issue and Chat work create or continue an isolated Hermes workstream. Each
-   eligible Run explicitly hydrates text-only `conversation_history` from
-   Rudder's durable history anchored to the mapped Hermes session and streams
-   events into the normal Rudder Run view. Selecting an existing session
-   requires explicit consent to import its bounded continuation baseline.
-   Tool-call, tool-result, or structured history blocks continuation until the
-   user explicitly starts a new session.
+   eligible Run projects the canonical Rudder transcript through bounded
+   `RUDDER_TOOL_CONTEXT_V1` into the text-only Runs surface, records the source
+   hash/digest, and streams events into the normal Rudder Run view. Tool-call,
+   tool-result, structured, and approval events continue within bounds; unsafe
+   or over-budget projection is visibly blocked rather than reset silently.
 7. Approval requests appear as Rudder actions. Stop remains `Stopping` until
    the provider reports a terminal state.
 8. Any SSE gap is visible as partial evidence; final output/status are
@@ -796,12 +810,12 @@ testing and execution use the same endpoint policy.
 1. Agent Detail labels `hermes_local` as `Legacy` and offers `Migrate to Hermes
    API`, without blocking existing history access.
 2. The user supplies the new endpoint and secret reference.
-3. Rudder validates capabilities and, when requested, tests whether a selected
-   Hermes session is accessible.
+3. Rudder validates capabilities and the selected lifecycle/workspace binding.
 4. Only after a successful test may the user atomically switch the Agent to
    `hermes_gateway`. Historical Rudder Runs remain attached to the same Agent.
 5. If no provider session can be mapped, the migration records a visible
-   continuity reset. It never claims an old CLI session was resumed.
+   continuity reset. It never claims an old CLI session was resumed or imports
+   provider history as Rudder continuity.
 
 No automatic migration runs in the background. A failed test leaves the Agent
 unchanged.
@@ -815,7 +829,14 @@ unchanged.
 - Add the runtime-kernel cancellation-intent/control-handle lifecycle needed to
   reconcile provider terminal state before marking an active Run cancelled.
 - Add deployment-aware endpoint validation and secret references.
-- Create locked current/previous upstream fixtures and black-box harnesses.
+- Create locked current/previous upstream fixtures and black-box harnesses under
+  `tests/fixtures/external-runtimes/` and
+  `tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`.
+- Add `scripts/compatibility/openclaw-hermes-matrix.mjs` as the scheduled
+  current/previous-stable and prerelease-filtered drift job. Update
+  `scripts/smoke/openclaw-docker-ui.sh` to default to OpenClaw `v2026.7.1`
+  with device authentication enabled; a `v2026.3.2` default is not release
+  evidence.
 - Capture failing baselines for OpenClaw v4 and legacy Hermes CLI behavior.
 
 ### Slice 2: OpenClaw recovery
@@ -830,7 +851,7 @@ unchanged.
 
 - Add the first-party `hermes_gateway` adapter.
 - Implement capability discovery, Runs, SSE persistence/reconciliation,
-  Sessions baseline import plus durable history hydration, approvals, Stop, and
+  Sessions mapping, canonical transcript projection, approvals, Stop, and
   normalized results.
 - Add the standard creation/detail UI and execution-host disclosure.
 - Add stock `0.19.1` black-box E2E.
@@ -853,21 +874,22 @@ unchanged.
   run-scoped abort.
 - Hermes capability and endpoint discovery, auth failure, missing feature,
   version missing/mismatch, unsafe endpoint, Runs start/status/indeterminate
-  submission, Sessions create/consented-import/text-only continuation/missing,
-  explicit history hydration, rejection of structured/tool-call/tool-result
-  history without stringification or omission, import pagination and
-  message/per-message/aggregate size-limit refusal, external-history conflict,
-  unprovable rotation refusal, duplicate SSE delta, disconnect/404 gap,
-  terminal reconciliation, approval choices, duplicate and post-complete Stop,
-  Stop acknowledgement versus terminal cancellation, and expired upstream
-  state.
+  submission, Sessions mapping/missing, `RUDDER_TOOL_CONTEXT_V1` projection,
+  canonical transcript hashing, tool/result/structured/approval continuity,
+  projection redaction and size-bound refusal, unprovable rotation refusal,
+  duplicate SSE delta, disconnect/404 gap, terminal reconciliation, `once` /
+  `deny` approval allowlist, rejection of `session` / `always` / `all` /
+  `resolve_all` and broadening flags, duplicate and
+  post-complete Stop, Stop acknowledgement versus terminal cancellation, and
+  expired upstream state.
 - Secret redaction, endpoint SSRF/redirect/DNS-rebinding defense, organization
   isolation, same endpoint/secret cross-organization rejection, Agent session
   isolation, opaque Hermes session-key derivation, and secret-shaped provider
   events redacted before persistence.
-- Cross-host workspace identity/probe where a provider exposes deterministic
-  metadata, OpenClaw and Hermes operator attestation with a persistent
-  unverified label, and no Rudder-local path reuse.
+- Loopback managed-process binding, attach-process/CWD proof, lifecycle-owner
+  fencing, versioned launch contract, child-environment allowlist, redacted
+  launch diagnostics, blocked unproven attachments, and no Rudder-local path
+  reuse.
 - Legacy Hermes migration success, failure rollback, and visible session reset.
 - Shared Chat cutoff, late-output fencing, Issue result normalization, and
   evidence completeness for both adapters.
@@ -879,84 +901,118 @@ unchanged.
 
 Run against clean stock upstream releases, not only mocks.
 
+Before runtime-specific execution, run the creation-surface matrix separately
+for OpenClaw and Hermes through every standard surface: `NewAgentDialog`,
+`NewAgent`, and `OnboardingWizard`. Each surface must list the runtime as an
+ordinary selectable option, expose the same connection-mode/configuration and
+Test connection flow, persist the same normalized record, and render the same
+readiness remediation. Hermes must not be absent or marked `Coming soon` on
+any one of the surfaces.
+
 OpenClaw current stable:
 
-1. Start the locked stock release with device authentication enabled.
-2. Create and pair an Agent through the visible Rudder UI.
+1. Prepare the locked stock release with device authentication enabled, then
+   create an Agent in `rudder_managed_local` mode and use the visible
+   `Start and connect` action. Assert the versioned launch-contract digest,
+   child-environment allowlist, process identity/start epoch, and redacted
+   diagnostics are persisted. Repeat with a pre-started Gateway in
+   `attach_existing_local` mode and prove independent CWD/selector binding is
+   required while an unproven attachment is blocked.
+2. Complete device pairing through the visible Rudder UI.
 3. Assert through a WS frame proxy that Issue uses `agent`/`agent.wait`, while
    Chat uses `chat.history`/`chat.send` with the expected session ID and
    idempotency key.
-4. Complete an assigned Issue and one Chat turn in a workspace on a different
-   host/path from the Rudder checkout; continue each workstream and assert the
-   same upstream session. Assert that workspace identity remains visibly
-   `Operator declared / unverified` before, during, and after execution, and
-   that endpoint host plus `Not exposed` execution mode are shown separately.
-5. Drop the WS connection after upstream acceptance, assert no duplicate
+4. Complete an assigned Issue and one Chat turn in a loopback-bound workspace
+   path different from the Rudder checkout; continue each workstream and assert
+   the same upstream session. For managed mode, assert the recorded process
+   identity/start epoch owns the binding. For attach mode, assert independent
+   CWD/selector proof is required and an unproven attachment is blocked.
+5. Route the same Agent through a reviewer workflow. Exercise reviewer
+   assignment, `approve`, `request_changes`, and blocked/unauthorized decisions
+   through the visible UI, and assert each decision plus linked Run/result
+   evidence is persisted under the same external attempt and organization.
+6. Drop the WS connection after upstream acceptance, assert no duplicate
    submission, and reconcile the exact run with partial evidence when needed.
-6. Exercise OpenClaw approval requested/resolved, deny, and timeout with
+7. Exercise OpenClaw approval requested/resolved, deny, and timeout with
    explicit approval scope and without steady-state administrator scope.
-7. Start a long Chat run, press Stop, and assert the frame is exactly
+8. Start a long Chat run, press Stop, and assert the frame is exactly
    `chat.abort {sessionKey, runId}`, never a global session close; separately
    prove the selected Issue cancellation method.
-8. Assert immutable visible output and terminal evidence, then restart/reconnect
+9. Assert immutable visible output and terminal evidence, then restart/reconnect
    and prove the paired device identity remains usable.
-9. Restart Rudder while Stop is `requested` or `acknowledged`; prove the leased
+10. Restart Rudder while Stop is `requested` or `acknowledged`; prove the leased
    action re-registers control for the same attempt/run, never targets a newer
    attempt, and ends in the provider terminal state or honest `control_lost` /
    `cancel_unverified` evidence.
 
 Hermes Agent `0.19.1`:
 
-1. Start a clean, authenticated API Server with a strong test bearer key.
-2. Start it in a dedicated workspace on a different host/path from Rudder,
-   create an Agent through the visible UI, and verify the distinction between
-   operator host/workspace claims, endpoint host, and server execution mode.
-   Assert that workspace identity remains visibly unverified. In an
-   authenticated deployment, prove tool-enabled work stays blocked until the
-   administrator acknowledges `runtime_workspace_identity_unverified`.
+1. Prepare a clean, authenticated API Server with a strong test bearer key, then
+   create an Agent in `rudder_managed_local` mode and use the visible `Start
+   and connect` action. Assert the versioned launch-contract digest,
+   child-environment allowlist, process identity/start epoch, and redacted
+   diagnostics are persisted. Repeat with a pre-started loopback server in
+   `attach_existing_local` mode and prove an unproven attachment is blocked.
+2. Use a dedicated loopback workspace path different from the Rudder checkout,
+   and verify the distinction
+   between operator labels, endpoint host, and server execution mode. Assert
+   that managed mode is ready only after Rudder's launch binding, while attach
+   mode is blocked without independent process/CWD or selector proof.
 3. Complete an assigned Issue and one Chat turn through the Runs API.
-4. Continue each workstream and inspect the outbound Runs request to prove it
-   contains the complete representable user/assistant text
-   `conversation_history`; assert that reusing only `session_id` fails the test.
-   For an existing session, first decline the visible baseline-import consent
-   and prove no messages are read or persisted, then consent and prove only the
-   selected bounded session is imported.
-5. Exercise one permitted tool and one governed approval request.
-6. Submit a Run whose `202` response is lost; assert Rudder does not retry and
+4. Route the same Agent through a reviewer workflow and exercise reviewer
+   assignment, `approve`, `request_changes`, and blocked/unauthorized decisions
+   through the visible UI with persisted Run/result evidence.
+5. Continue each workstream and inspect the outbound Runs request to prove it
+   contains the bounded `RUDDER_TOOL_CONTEXT_V1` projection derived from the
+   canonical Rudder transcript; assert that reusing only `session_id` fails the
+   continuity assertion. Verify the source hash, projection digest, redaction,
+   and causal pairing metadata.
+6. Exercise a permitted tool, structured result, and governed approval
+   request; prove the continuation mode remains `synthetic_tool_continuity`
+   without a session reset. The visible approval UI exposes only `once` and
+   `deny`; payloads containing `session`, `always`, `all`, or `resolve_all` are
+   rejected and never sent upstream.
+7. Submit a Run whose `202` response is lost; assert Rudder does not retry and
    records `submission_indeterminate` when no provider run ID is recoverable.
-7. Send two identical SSE deltas and preserve both; then disconnect, handle the
+8. Send two identical SSE deltas and preserve both; then disconnect, handle the
    expected resubscribe `404`, reconcile terminal status, and mark the gap
    `partial`.
-8. Press Stop, assert `stopping` is not terminal, then test duplicate Stop,
+9. Press Stop, assert `stopping` is not terminal, then test duplicate Stop,
    stop-after-complete, provider `404`, status expiry, final `cancelled`, and
    honest `cancel_unverified` paths. Restart Rudder after the upstream
    `stopping` acknowledgement and prove the leased action resumes against the
    same provider run without duplicate execution or premature cancellation.
-9. Simulate a compression/rotation mismatch that exposes no effective session
+10. Simulate a compression/rotation mismatch that exposes no effective session
    ID; prove Rudder refuses to guess or replace the mapping, records
    `runtime_session_rotation_unverifiable`, and requires an explicit reset.
-10. Emit secret-shaped tool, approval, error, and SSE payloads and prove only
+11. Emit secret-shaped tool, approval, error, and SSE payloads and prove only
     redacted forms persist.
-11. Restart the Hermes server and prove the stored session can be validated or
-    visibly reset.
-12. Import a session containing tool-call/tool-result records and finish a Run
-    that produces tool history. In both cases, assert that a subsequent turn is
-    blocked with `runtime_session_history_unsupported` until an explicit new
-    session/reset; prove Rudder neither stringifies nor omits those records and
-    never labels the path as continued.
-13. Import paginated histories at and above each configured bound. Prove Rudder
-    consumes every page at the limit and fails the over-limit case with
-    `runtime_session_history_too_large`, without persisting or sending a
-    truncated prefix.
+12. Restart the Hermes server and prove the mapped session remains correlation
+    evidence while the Rudder canonical transcript remains authoritative.
+13. Build projections at each configured event/byte/token bound and above it.
+    Prove the at-limit projection is accepted atomically and the over-limit,
+    unsafe, or unredactable projection fails before submission without
+    persisting or sending a truncated prefix.
+
+Legacy Hermes migration:
+
+1. Open an existing `hermes_local` Agent and assert the visible `Legacy` label,
+   unchanged CLI configuration, and intact historical Runs.
+2. Start the migration flow, validate a new `hermes_gateway` connection, and
+   atomically switch only after the test succeeds; assert historical Runs stay
+   attached to the Agent and any continuity reset is explicit.
+3. Repeat with an unreachable or incompatible API Server and assert the Agent
+   remains `hermes_local`, its configuration is unchanged, and no provider
+   session is claimed as resumed.
 
 Failure-shaped UI coverage includes incompatible OpenClaw protocol, pairing
 required, missing OpenClaw scope, unsafe remote plaintext, unreachable
 endpoint, Hermes auth failure, missing Hermes capability, unsafe endpoint,
-missing session, denied/expired approval, SSE expiry, and Stop timeout. For both
-providers it also covers missing workspace attestation as a failing
-`runtime_workspace_unverified` state, completed attestation as a warning
-`runtime_workspace_identity_unverified` state, and the authenticated-deployment
-administrator acknowledgement gate before tool-enabled work.
+missing session, denied/expired approval, unsupported `session` / `always` /
+`all` / `resolve_all` approval expansion, SSE expiry, projection overflow,
+unproven attached workspace, and
+Stop timeout. Both managed and attached lifecycle modes are covered, including
+the single-owner rule and the blocked `runtime_workspace_unverified` state.
 An organization-boundary E2E creates a second organization and proves the same
 OpenClaw or Hermes endpoint/credential tuple cannot be attached, queried,
 approved, stopped, or session-addressed across that boundary.
@@ -972,7 +1028,9 @@ protocol tests do not satisfy acceptance.
 - `pnpm -r typecheck`;
 - `pnpm test:run`;
 - `pnpm build`;
-- relevant `pnpm test:e2e` targets and stock runtime jobs;
+- `pnpm test:e2e -- tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`;
+- `node scripts/compatibility/openclaw-hermes-matrix.mjs --channel=stable`;
+- scheduled `--channel=drift` and `--channel=prerelease-filter` jobs;
 - rendered browser verification and screenshots for all changed setup, status,
   approval, migration, and Stop states.
 
@@ -996,31 +1054,36 @@ continuation success, session reset, approval duration, Stop acknowledgement
 and terminal latency, fallback rate, and evidence completeness. Metrics exclude
 prompt content, transcript text, credentials, and local paths.
 
-## Proposed Product Logic Delta
+## Product Logic Alignment
 
-Implementation affects the guarded Product Logic Registry, but this PRD does
-not edit `doc/product/**`.
+The user-authorized Product Logic update is already synchronized in
+`5fb9c771c` and this PRD is constrained by those contracts:
 
-- `AGENT.RUNTIME.ADAPTERS.001`: define external runtime connection readiness,
-  capability snapshots, honest Stop/Steer projection, `openclaw_gateway`, new
+- `AGENT.RUNTIME.ADAPTERS.001`: loopback-only external readiness,
+  `rudder_managed_local` / `attach_existing_local` lifecycle ownership,
+  capability snapshots, honest Stop/Steer projection, `openclaw_gateway`,
   `hermes_gateway`, and Legacy `hermes_local` semantics.
-- `AGENT.IDENTITY.CONFIG.001`: define secret-reference storage, endpoint and
-  honest execution-host/workspace disclosure, single-organization upstream
-  trust domains, and organization/Agent-scoped provider session mapping.
-- `RUN.EXECUTION.001`: require supported upstream version/capability evidence,
-  provider attempt identity, idempotency or explicit indeterminate submission,
-  provider-specific workspace verification status, explicit Hermes history
-  hydration, and visible session reset/migration or unprovable-rotation
-  evidence.
-- `RUN.RESULT.001`: normalize upstream runtime/version, transport, session,
-  approval, cancellation, and evidence-completeness fields.
-- `RUN.CHAT.AGENT.001`: require provider-native run-scoped cancellation when
-  advertised while preserving Rudder's immutable visible-output cutoff.
-- `AGENT.SKILLS.001`: clarify that V1 does not import or synchronize OpenClaw
-  or Hermes skills merely because a runtime connection exists.
+- `AGENT.IDENTITY.CONFIG.001`: secret-reference storage, organization trust
+  domains, process/start-epoch ownership, workspace binding, and
+  organization/Agent/workstream provider mappings.
+- `RUN.EXECUTION.001`: supported version/capability evidence, provider attempt
+  identity, idempotency or explicit indeterminate submission, workspace binding,
+  canonical Hermes transcript, and bounded `RUDDER_TOOL_CONTEXT_V1`
+  `synthetic_tool_continuity` projection. The projection is atomic and records
+  its version, source transcript hash, final sanitized digest, causal tool /
+  approval pairs, ordered inclusion/omission ranges, redaction/compaction
+  metadata, and the 200-event, 64 KiB/event, 512 KiB aggregate, and 32,000-token
+  bounds.
+- `RUN.RESULT.001`: normalized upstream runtime/version, transport, session,
+  approval, cancellation, continuity metadata, and evidence completeness.
+- `RUN.CHAT.AGENT.001`: provider-native run-scoped cancellation when advertised,
+  V1 Hermes `once` / `deny` approval handling, and immutable visible-output
+  cutoff with terminal reconciliation.
+- `AGENT.SKILLS.001`: provider-native skills/tools/memory remain active on the
+  upstream host but unmanaged and separate from Rudder's skill projection.
 
-Concrete contract text requires separate explicit authorization before
-implementation is declared complete.
+Implementation must remain aligned with these synchronized contracts; any
+future semantic change requires a new explicit Product Logic authorization.
 
 ## Risks And Mitigations
 
@@ -1029,24 +1092,26 @@ implementation is declared complete.
 | Fast upstream release cadence breaks an adapter between Rudder releases. | Locked compatibility matrix, capability discovery, scheduled stock-runtime E2E, and `Unverified` state for unknown versions. |
 | A Hermes API endpoint grants remote tool execution. | Strong bearer secret, TLS/loopback rules, SSRF and DNS-rebinding controls, no redirects by default, and visible execution host/workspace. |
 | One full-control upstream credential is reused across Rudder organizations. | Bind each endpoint/credential tuple to one organization trust domain and reject cross-organization reuse. |
-| The upstream workspace differs from Rudder's assumed checkout. | Require a pre-provisioned workspace, never send Rudder-local paths, verify only through deterministic provider controls, and keep stock OpenClaw and Hermes visibly operator-declared/unverified. |
+| The upstream workspace differs from Rudder's assumed checkout. | Never send Rudder-local paths; require managed launch binding or independent attached process/CWD or provider-selector proof, and block unproven attachments. |
 | A lost Hermes Run-creation response causes duplicate side effects. | Do not auto-retry an unknown submission; record `submission_indeterminate` until upstream adds proven idempotency. |
 | SSE disconnect loses intermediate Hermes events. | Persist accepted events, reconcile terminal status/output, mark gaps `partial`, and do not claim lossless replay. |
 | Stop acknowledgement is confused with terminal cancellation. | Separate `stopping`, `cancelled`, timeout, and fallback evidence; freeze visible output first. |
 | Existing Hermes Agents are silently broken by transport replacement. | New `hermes_gateway` ID, Legacy label, explicit tested migration, atomic switch, and no automatic conversion. |
 | Provider sessions leak across Agents or organizations. | Workstream-scoped mappings, organization/Agent keys, opaque session-key derivation, and isolation E2E. |
-| Hermes Runs flatten prior structured tool messages. | Limit V1 continuation to representable user/assistant text, preserve tool activity as Run evidence, and block with an explicit reset instead of stringifying or dropping structured records. |
+| Hermes Runs flatten prior structured tool messages. | Preserve the canonical Rudder transcript and use bounded, redacted `RUDDER_TOOL_CONTEXT_V1` synthetic projection with causal pairing; fail closed on unsafe or over-budget projection without labeling it native or lossless. |
 | OpenClaw schema distribution remains unstable. | Lock schemas to an exact stable tag/SHA and license; avoid floating prerelease packages. |
 
 ## Decisions Deferred Beyond V1
 
-- Rudder-managed install/start/upgrade lifecycle for a local Hermes API Server.
+- Cross-host or remote Hermes/OpenClaw connectors, relays, and deployment-aware
+  egress beyond V1 loopback-only connections.
 - Verified Hermes workspace selection/identity/probing when upstream publishes a
   deterministic control-plane contract.
 - Hermes Runs session-rotation continuity when upstream returns a versioned,
   effective replacement session ID.
-- Lossless Hermes continuation for tool-call, tool-result, or structured
-  histories when upstream publishes a versioned representation contract.
+- Native or lossless Hermes history replay when upstream publishes a versioned
+  representation contract; V1 synthetic projection remains the only supported
+  continuity mode.
 - Native Hermes mid-turn Steer if a versioned API contract emerges.
 - First-class remote Agent-initiated Rudder API/MCP credentials.
 - OpenClaw or Hermes skill synchronization and memory import.
