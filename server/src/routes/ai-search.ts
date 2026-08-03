@@ -16,7 +16,7 @@ export function aiSearchRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       assertBoard(req);
-      res.json(await search.search(orgId, req.body.query, req.body.scope));
+      res.json(await search.search(orgId, req.body.query));
     },
   );
 

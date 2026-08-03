@@ -277,17 +277,14 @@ export function CommandPalette() {
     setAiSearchLoading(true);
     setAiSearchError(null);
     setAiSearchResult(null);
-    void organizationsApi.aiSearch(selectedOrganizationId, {
-      query: searchQuery,
-      scope: scope ?? undefined,
-    })
+    void organizationsApi.aiSearch(selectedOrganizationId, { query: searchQuery })
       .then((result) => {
         if (aiSearchRequestId.current !== requestId) return;
         setAiSearchResult(result);
       })
       .catch((error: unknown) => {
         if (aiSearchRequestId.current !== requestId) return;
-        setAiSearchError(error instanceof Error ? error.message : "AI Search failed");
+        setAiSearchError(error instanceof Error ? error.message : "Smart Search failed");
       })
       .finally(() => {
         if (aiSearchRequestId.current === requestId) setAiSearchLoading(false);
@@ -404,6 +401,7 @@ export function CommandPalette() {
     ? true
     : searchQuery.length < GLOBAL_REMOTE_SEARCH_MIN_LENGTH || remoteSearchQuery === searchQuery;
   const showAiSearchOption = smartSearchEnabled
+    && scope === null
     && searchQuery.length >= GLOBAL_REMOTE_SEARCH_MIN_LENGTH
     && remoteSearchSettled
     && !isRegularSearchFetching
@@ -453,30 +451,37 @@ export function CommandPalette() {
             ) : aiSearchLoading ? (
               <span className="inline-flex items-center justify-center gap-2 text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Searching...
+                Searching with Smart Model...
               </span>
             ) : aiSearchError ? (
               <span className="text-destructive">{aiSearchError}</span>
             ) : aiSearchRequested && aiSearchResult?.results.length === 0 ? (
-              "AI Search found no matching records."
+              "Smart Search found no matching records."
             ) : scopedEmptyLabel}
           </CommandEmpty>
         )}
 
         {showAiSearchOption && (
-          <CommandItem
-            value={`ai search ${searchQuery}`}
-            onSelect={runAiSearch}
-          >
-            <Sparkles className="mr-2 h-4 w-4 text-amber-500" />
-            <span>AI Search</span>
-          </CommandItem>
+          <CommandGroup heading="Smart Search">
+            <CommandItem
+              value={`ask smart model ${searchQuery}`}
+              onSelect={runAiSearch}
+            >
+              <Sparkles className="mr-2 h-4 w-4 text-amber-500" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span>Ask Smart Model</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  Search organization content for “{searchQuery}”
+                </span>
+              </span>
+            </CommandItem>
+          </CommandGroup>
         )}
 
         {aiSearchRequested && (aiSearchResult || aiSearchError) && (
           <>
             <CommandSeparator />
-            <CommandGroup heading="AI Search">
+            <CommandGroup heading="Smart Search">
               {aiSearchResult?.answer && (
                 <div className="px-2 py-2 text-sm text-muted-foreground">
                   {aiSearchResult.answer}
@@ -503,9 +508,9 @@ export function CommandPalette() {
                 </CommandItem>
               ))}
               {aiSearchError && (
-                <CommandItem value={`retry ai search ${searchQuery}`} onSelect={runAiSearch}>
+                <CommandItem value={`retry smart search ${searchQuery}`} onSelect={runAiSearch}>
                   <Sparkles className="mr-2 h-4 w-4" />
-                  Try AI Search again
+                  Try Smart Search again
                 </CommandItem>
               )}
             </CommandGroup>

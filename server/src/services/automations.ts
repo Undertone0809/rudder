@@ -22,6 +22,7 @@ import {
   projects,
 } from "@rudderhq/db";
 import type {
+  AgentRuntimeType,
   Automation,
   AutomationDetail,
   AutomationListItem,
@@ -53,9 +54,10 @@ import {
   nextCronTickInTimeZone,
   nextResultText,
   normalizeWebhookTimestampMs,
-  OPEN_ISSUE_STATUSES
+  OPEN_ISSUE_STATUSES,
 } from "./automations.scheduler.js";
 import { chatAssistantService, ChatAssistantStreamError, userVisiblePartialBodyFromError, type ChatAssistantResult, type ChatGeneratedAttachment } from "./chat-assistant.js";
+import { chatEffortFromConfig } from "./chat-assistant.runtime-overrides.js";
 import { claimChatGeneration, hasActiveChatGeneration } from "./chat-generation-locks.js";
 import { chatService } from "./chats.js";
 import { validateCron } from "./cron.js";
@@ -83,6 +85,20 @@ function toAutomation(row: AutomationRow): Automation {
     ...row,
     outputMode: row.outputMode as Automation["outputMode"],
   };
+}
+
+function automationRuntimeConfig(automation: AutomationRow): Record<string, unknown> {
+  const overrides = automation.assigneeAgentRuntimeOverrides;
+  const value = overrides && typeof overrides === "object" && !Array.isArray(overrides)
+    ? (overrides as Record<string, unknown>).agentRuntimeConfig
+    : null;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
@@ -253,10 +269,19 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     if (existingRun?.linkedChatConversationId) return existingRun.linkedChatConversationId;
     if (!existingRun) return null;
     const source = existingRun.source as "schedule" | "manual" | "api" | "webhook";
+    const assignee = await input.executor
+      .select({ agentRuntimeType: agents.agentRuntimeType })
+      .from(agents)
+      .where(eq(agents.id, input.automation.assigneeAgentId))
+      .then((rows) => rows[0] ?? null);
+    const runtimeConfig = automationRuntimeConfig(input.automation);
+    const runtimeType = assignee?.agentRuntimeType as AgentRuntimeType | undefined;
     const created = await chatSvc.createWithInitialMessage(input.automation.orgId, {
         title: input.automation.title || "New chat",
         summary: null,
         preferredAgentId: input.automation.assigneeAgentId,
+        modelOverride: nonEmptyString(runtimeConfig.model),
+        effortOverride: runtimeType ? chatEffortFromConfig(runtimeType, runtimeConfig) : null,
         issueCreationMode: "manual_approval",
         planMode: false,
         createdByUserId: null,
@@ -1387,6 +1412,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             status: "todo",
             priority: input.automation.priority,
             assigneeAgentId: input.automation.assigneeAgentId,
+            assigneeAgentRuntimeOverrides: input.automation.assigneeAgentRuntimeOverrides ?? null,
             originKind: "automation_execution",
             originId: input.automation.id,
             originRunId: createdRun.id,
@@ -1687,6 +1713,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           title: input.title,
           description: input.description ?? null,
           assigneeAgentId: input.assigneeAgentId,
+          assigneeAgentRuntimeOverrides: input.assigneeAgentRuntimeOverrides ?? null,
           outputMode: input.outputMode,
           chatConversationId: null,
           notifyOnIssueCreated: notification.enabled,
@@ -1708,7 +1735,13 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       const existing = await getAutomationById(id);
       if (!existing) return null;
       const nextProjectId = patch.projectId === undefined ? existing.projectId : patch.projectId;
+      const assigneeChanged = patch.assigneeAgentId !== undefined && patch.assigneeAgentId !== existing.assigneeAgentId;
       const nextAssigneeAgentId = patch.assigneeAgentId ?? existing.assigneeAgentId;
+      const nextAssigneeAgentRuntimeOverrides = assigneeChanged
+        ? patch.assigneeAgentRuntimeOverrides ?? null
+        : patch.assigneeAgentRuntimeOverrides === undefined
+          ? existing.assigneeAgentRuntimeOverrides ?? null
+          : patch.assigneeAgentRuntimeOverrides;
       const nextOutputMode = patch.outputMode ?? existing.outputMode;
       const requestedChatConversationId = patch.chatConversationId === undefined ? existing.chatConversationId : patch.chatConversationId;
       if (nextProjectId) await assertProject(existing.orgId, nextProjectId);
@@ -1736,6 +1769,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           title: patch.title ?? existing.title,
           description: patch.description === undefined ? existing.description : patch.description,
           assigneeAgentId: nextAssigneeAgentId,
+          assigneeAgentRuntimeOverrides: nextAssigneeAgentRuntimeOverrides,
           outputMode: nextOutputMode,
           chatConversationId: nextChatConversationId,
           notifyOnIssueCreated: notification.enabled,

@@ -224,7 +224,7 @@ export type {
   AgentAccessState, AgentBrowserToolSummary, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationSettings, AgentIntegrationSetupSession, AgentIntegrationSetupSessionStatus, AgentIntegrationSetupUrl, AgentIntegrationSummary, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRudderToolSummary, AgentRun, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts, AgentTaskSession,
-  AgentWakeupRequest, AiSearchResponse, AiSearchResult, AiSearchResultKind, AiSearchScope, Approval,
+  AgentWakeupRequest, AiSearchResponse, AiSearchResult, AiSearchResultKind, Approval,
   ApprovalComment, AssetImage, Automation, AutomationDetail, AutomationExecutionIssueOrigin,
   AutomationListItem, AutomationRun, AutomationRunSummary, AutomationTrigger, AutomationTriggerSecretMaterial, BudgetIncident, BudgetIncidentResolutionInput, BudgetOverview, BudgetPolicy,
   BudgetPolicySummary, BudgetPolicyUpsertInput, CalendarEvent,

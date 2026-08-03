@@ -911,6 +911,13 @@
       "when": 1785766800000,
       "tag": "0129_product_analytics_local_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1785765178388,
+      "tag": "0130_special_mister_fear",
+      "breakpoints": true
     }
   ]
 }
