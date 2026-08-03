@@ -7,7 +7,7 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Global search results", () => {
-  test("offers Smart Search for an empty result and opens the model-selected chat", async ({ page }) => {
+  test("offers AI Search for an empty result and opens the model-selected chat", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `AI Search ${Date.now()}` },
     });
@@ -84,9 +84,10 @@ test.describe("Global search results", () => {
     await expect(searchInput).toBeVisible();
     await searchInput.fill("unindexed semantic concept");
 
-    const askSmartModel = page.getByRole("option", { name: /Ask Smart Model/i });
-    await expect(askSmartModel).toBeVisible({ timeout: 15_000 });
-    await askSmartModel.click();
+    const aiSearch = page.getByRole("option", { name: /^AI Search$/i });
+    await expect(aiSearch).toBeVisible({ timeout: 15_000 });
+    await expect(aiSearch).not.toContainText("Search organization content");
+    await aiSearch.click();
 
     await expect.poll(() => requestedQuery).toBe("unindexed semantic concept");
     await expect(page.getByText("The architecture discussion is in the selected chat.")).toBeVisible();
@@ -96,7 +97,7 @@ test.describe("Global search results", () => {
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
   });
 
-  test("does not offer Smart Search when Smart Model is disabled", async ({ page }) => {
+  test("does not offer AI Search when Smart Model is disabled", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `AI Search Disabled ${Date.now()}` },
     });
@@ -131,7 +132,91 @@ test.describe("Global search results", () => {
     await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await searchInput.fill("disabled model search token");
-    await expect(page.getByRole("option", { name: /Ask Smart Model/i })).toHaveCount(0);
+    await expect(page.getByRole("option", { name: /^AI Search$/i })).toHaveCount(0);
+  });
+
+  test("offers AI Search inside an Issues search scope", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Scoped AI Search ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Scoped AI Search issue match",
+        description: "Returned by the scoped AI Search result.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+
+    await page.route(`**/api/orgs/${organization.id}/intelligence-profiles`, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([null, {
+          id: "profile-reasoning",
+          orgId: organization.id,
+          purpose: "reasoning",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.4-mini" },
+          status: "configured",
+        }]),
+      });
+    });
+
+    let requestedScope: string | null = null;
+    await page.route(`**/api/orgs/${organization.id}/ai-search`, async (route) => {
+      const body = route.request().postDataJSON() as { scope?: string };
+      requestedScope = body.scope ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "scope-only semantic token",
+          answer: "The issue is the scoped AI Search match.",
+          results: [{
+            key: `issue:${issue.id}`,
+            kind: "issue",
+            id: issue.id,
+            title: issue.title,
+            preview: issue.description,
+            reason: "The issue is in the selected scope.",
+            href: `/issues/${issue.identifier ?? issue.id}`,
+          }],
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
+    let searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
+    await searchInput.fill("issues ");
+    searchInput = page.getByPlaceholder("Search Issues...");
+    await expect(searchInput).toBeVisible();
+    await searchInput.fill("scope-only semantic token");
+
+    const aiSearch = page.getByRole("option", { name: /^AI Search$/i });
+    await expect(aiSearch).toBeVisible({ timeout: 15_000 });
+    await aiSearch.click();
+    await expect.poll(() => requestedScope).toBe("issue");
+    await expect(page.getByText("The issue is the scoped AI Search match.")).toBeVisible();
+
+    const issueResult = page.getByRole("option", { name: /Scoped AI Search issue match/i });
+    await expect(issueResult).toBeVisible();
+    await issueResult.click();
+    await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier ?? issue.id}$`));
   });
 
   test("shows an animated panel boundary while command palette search is loading", async ({ page }) => {

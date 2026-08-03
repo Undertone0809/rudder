@@ -37,7 +37,8 @@ export type {
 export type {
   AiSearchResponse,
   AiSearchResult,
-  AiSearchResultKind
+  AiSearchResultKind,
+  AiSearchScope
 } from "./ai-search.js";
 export type {
   AppBuilderApp,

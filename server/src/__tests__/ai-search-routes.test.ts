@@ -45,12 +45,23 @@ describe("AI Search routes", () => {
       .send({ query: "  architecture  " });
 
     expect(response.status).toBe(200);
-    expect(mockSearch).toHaveBeenCalledWith("org-1", "architecture");
+    expect(mockSearch).toHaveBeenCalledWith("org-1", "architecture", undefined);
     expect(response.body).toEqual({
       query: "architecture",
       answer: "Found one project.",
       results: [],
     });
+  });
+
+  it("passes an explicit search scope to the organization Smart Model search service", async () => {
+    const app = await createApp();
+
+    const response = await request(app)
+      .post("/api/orgs/org-1/ai-search")
+      .send({ query: "architecture", scope: "issue" });
+
+    expect(response.status).toBe(200);
+    expect(mockSearch).toHaveBeenCalledWith("org-1", "architecture", "issue");
   });
 
   it("rejects short queries before invoking the model", async () => {

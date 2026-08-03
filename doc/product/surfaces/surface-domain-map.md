@@ -155,6 +155,11 @@ owning domain contract.
 - Dashboard-derived run summaries: `RUN.INTELLIGENCE.001`.
 - Dashboard aggregation: `DASHBOARD.SUMMARY.001`.
 
+## Command Palette Search
+
+- Deterministic organization search and explicit organization-scoped AI Search
+  fallback, including category scopes: `SEARCH.AI.001`.
+
 ## Calendar And Inbox
 
 - Calendar event source identity and navigation: `CALENDAR.SOURCE.001`.
