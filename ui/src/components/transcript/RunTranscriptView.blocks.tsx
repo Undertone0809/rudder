@@ -12,6 +12,7 @@ import {
   FileDiff,
   Images,
   Loader2,
+  MessageSquare,
   TerminalSquare,
   User
 } from "lucide-react";
@@ -40,6 +41,8 @@ import {
   TranscriptDensity,
   TranscriptMarkdownLinkClickHandler,
   TranscriptPresentation,
+  TranscriptRunAnnotationContext,
+  TranscriptRunAnnotationInput,
   TranscriptSentAnnotationContext,
   TranscriptToolCardEntry,
   truncate,
@@ -140,6 +143,135 @@ function TranscriptAnnotationSource({
         annotations={annotations}
         onActivate={context.onActivateAnnotation}
       />
+    </div>
+  );
+}
+
+function transcriptBlockIdentity(block: TranscriptBlock): string {
+  switch (block.type) {
+    case "message":
+      return [
+        block.type,
+        block.messageId ?? block.segmentId ?? block.generationId ?? "block",
+        block.generationSeqStart ?? block.ts,
+        block.generationSeqEnd ?? block.ts,
+      ].join(":");
+    case "thinking":
+      return [
+        block.type,
+        block.segmentId ?? block.generationId ?? "block",
+        block.generationSeqStart ?? block.ts,
+        block.generationSeqEnd ?? block.ts,
+      ].join(":");
+    case "tool":
+      return [block.type, block.toolUseId ?? block.name, block.ts].join(":");
+    case "command_group":
+      return [
+        block.type,
+        block.items[0]?.toolUseId ?? block.items[0]?.name ?? "group",
+        block.ts,
+      ].join(":");
+    case "activity":
+      return [block.type, block.activityId ?? block.name, block.ts].join(":");
+    case "todo_list":
+      return [block.type, block.todoListId ?? block.ts].join(":");
+    case "stdout":
+    case "memory_update":
+    case "event":
+      return [block.type, block.ts].join(":");
+  }
+}
+
+function isStableTranscriptBlock(block: TranscriptBlock): boolean {
+  if (block.type === "message" && block.role !== "assistant") return false;
+  if ((block.type === "message" || block.type === "thinking") && block.streaming) return false;
+  if (block.type === "tool" || block.type === "activity") return block.status !== "running";
+  if (block.type === "command_group") return block.items.every((item) => item.status !== "running");
+  return true;
+}
+
+function transcriptBlockAnnotationText(block: TranscriptBlock): string {
+  switch (block.type) {
+    case "message":
+    case "thinking":
+    case "stdout":
+      return block.text;
+    case "tool": {
+      const request = formatNiceToolRequest(block.name, block.input);
+      const response = block.result ? formatNiceToolResponse(block.name, block.input, block.result) : "";
+      return [request, response].filter(Boolean).join("\n\n");
+    }
+    case "command_group":
+      return block.items.map((item) => {
+        const request = formatNiceToolRequest(item.name, item.input);
+        return [request, item.result].filter(Boolean).join("\n\n");
+      }).filter(Boolean).join("\n\n");
+    case "activity":
+      return block.name;
+    case "todo_list":
+      return block.items.map((item) => item.text).join("\n");
+    case "memory_update":
+      return [block.summary, block.effect].filter(Boolean).join("\n\n");
+    case "event":
+      return [block.label, block.text, block.detail].filter(Boolean).join("\n\n");
+  }
+}
+
+export function TranscriptRunAnnotationBlock({
+  block,
+  presentation,
+  context,
+  streaming = false,
+  children,
+}: {
+  block: TranscriptBlock;
+  presentation: TranscriptPresentation;
+  context?: TranscriptRunAnnotationContext;
+  streaming?: boolean;
+  children: ReactNode;
+}) {
+  const stable = isStableTranscriptBlock(block);
+  const blockId = transcriptBlockIdentity(block);
+  const canAnnotate = presentation === "detail" && !streaming && stable && Boolean(context);
+  if (!context) return children;
+  const handleAnnotate = (anchor: HTMLButtonElement) => {
+    if (!context) return;
+    const input: TranscriptRunAnnotationInput = {
+      sourceRunId: context.sourceRunId,
+      sourceAgentId: context.sourceAgentId,
+      blockId,
+      blockType: block.type,
+      text: transcriptBlockAnnotationText(block),
+      ts: block.ts,
+      anchor,
+      block,
+    };
+    context.onAnnotate(input);
+  };
+
+  return (
+    <div
+      data-run-transcript-block="true"
+      data-run-transcript-block-id={blockId}
+      data-run-transcript-block-type={block.type}
+      data-run-transcript-block-ts={block.ts}
+      data-run-transcript-block-stable={stable ? "true" : undefined}
+      className={cn("group/run-transcript-block relative", canAnnotate && "pr-8")}
+    >
+      {children}
+      {canAnnotate ? (
+        <button
+          type="button"
+          data-testid="run-transcript-annotation-trigger"
+          data-run-transcript-annotation-trigger="true"
+          className="absolute right-0 top-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover/run-transcript-block:opacity-100 motion-reduce:transition-none"
+          aria-label="Annotate transcript block"
+          title="Annotate transcript block"
+          onClick={(event) => handleAnnotate(event.currentTarget)}
+        >
+          <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -449,6 +581,8 @@ export function renderTranscriptBlock({
   onMarkdownLinkClick,
   annotationSource,
   sentAnnotationContext,
+  runAnnotationContext,
+  streaming = false,
 }: {
   block: TranscriptBlock;
   index: number;
@@ -459,48 +593,49 @@ export function renderTranscriptBlock({
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   annotationSource?: TranscriptAnnotationSourceContext;
   sentAnnotationContext?: TranscriptSentAnnotationContext;
+  runAnnotationContext?: TranscriptRunAnnotationContext;
+  streaming?: boolean;
 }) {
   return (
-    <div
-      key={`${block.type}-${block.ts}-${index}`}
-      className={cn(index === -1 && "hidden")}
-    >
-      {block.type === "message" && (
-        <TranscriptMessageBlock
-          block={block}
-          density={density}
-          presentation={presentation}
-          collapsibleSummary={presentation === "chat"}
-          onMarkdownLinkClick={onMarkdownLinkClick}
-          annotationSource={annotationSource}
-          sentAnnotationContext={sentAnnotationContext}
-        />
-      )}
-      {block.type === "thinking" && (
-        <TranscriptThinkingBlock
-          block={block}
-          density={density}
-          className={thinkingClassName}
-          onMarkdownLinkClick={onMarkdownLinkClick}
-          annotationSource={annotationSource}
-        />
-      )}
-      {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}
-      {block.type === "command_group" && <TranscriptCommandGroup block={block} density={density} />}
-      {block.type === "todo_list" && <TranscriptTodoListRow block={block} density={density} presentation={presentation} />}
-      {block.type === "stdout" && (
-        <TranscriptStdoutRow
-          block={block}
-          density={density}
-          collapseByDefault={collapseStdout}
-          presentation={presentation}
-        />
-      )}
-      {block.type === "memory_update" && <TranscriptMemoryUpdateRow block={block} density={density} />}
-      {block.type === "activity" && <TranscriptActivityRow block={block} density={density} />}
-      {block.type === "event" && (
-        <TranscriptEventRow block={block} density={density} presentation={presentation} />
-      )}
+    <div key={`${block.type}-${block.ts}-${index}`} className={cn(index === -1 && "hidden")}>
+      <TranscriptRunAnnotationBlock block={block} presentation={presentation} context={runAnnotationContext} streaming={streaming}>
+        {block.type === "message" && (
+          <TranscriptMessageBlock
+            block={block}
+            density={density}
+            presentation={presentation}
+            collapsibleSummary={presentation === "chat"}
+            onMarkdownLinkClick={onMarkdownLinkClick}
+            annotationSource={annotationSource}
+            sentAnnotationContext={sentAnnotationContext}
+          />
+        )}
+        {block.type === "thinking" && (
+          <TranscriptThinkingBlock
+            block={block}
+            density={density}
+            className={thinkingClassName}
+            onMarkdownLinkClick={onMarkdownLinkClick}
+            annotationSource={annotationSource}
+          />
+        )}
+        {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}
+        {block.type === "command_group" && <TranscriptCommandGroup block={block} density={density} />}
+        {block.type === "todo_list" && <TranscriptTodoListRow block={block} density={density} presentation={presentation} />}
+        {block.type === "stdout" && (
+          <TranscriptStdoutRow
+            block={block}
+            density={density}
+            collapseByDefault={collapseStdout}
+            presentation={presentation}
+          />
+        )}
+        {block.type === "memory_update" && <TranscriptMemoryUpdateRow block={block} density={density} />}
+        {block.type === "activity" && <TranscriptActivityRow block={block} density={density} />}
+        {block.type === "event" && (
+          <TranscriptEventRow block={block} density={density} presentation={presentation} />
+        )}
+      </TranscriptRunAnnotationBlock>
     </div>
   );
 }

@@ -2021,6 +2021,71 @@ async function runAccountGateScenario(mode) {
   const screenshotPath = browserSmokeScreenshotPath
     ? path.resolve(browserSmokeScreenshotPath)
     : path.join(os.tmpdir(), "rudder-desktop-account-gate-packaged.png");
+  const emailCodeScreenshotPath = screenshotPath.replace(/(\.png)?$/, "-email-code.png");
+  const { createBootScreenHtml } = await import(
+    pathToFileURL(path.join(desktopDir, "dist", "boot-screen.js")).href
+  );
+  const brandIconDataUrl = `data:image/png;base64,${(
+    await readFile(path.join(repoRoot, "ui", "public", "rudder-logo.png"))
+  ).toString("base64")}`;
+  const interactionFixturePath = path.join(scenarioRoot, "account-gate-interaction.html");
+  await mkdir(scenarioRoot, { recursive: true });
+  await writeFile(interactionFixturePath, createBootScreenHtml("Rudder", brandIconDataUrl, {
+    view: "account_required",
+    stage: "account_required",
+    identityProviders: { google: true, github: true },
+  }));
+  const interactionBrowser = await chromium.launch({ headless: true });
+  try {
+    const context = await interactionBrowser.newContext({ viewport: { width: 1440, height: 1000 } });
+    await context.addInitScript(() => {
+      let resolveEmailOtp;
+      window.rudderBoot = {
+        sendEmailOtp: () => new Promise((resolve) => {
+          resolveEmailOtp = resolve;
+        }),
+        onState: () => undefined,
+        onIdentityState: () => undefined,
+      };
+      window.resolveEmailOtp = () => resolveEmailOtp?.();
+    });
+    const interactionPage = await context.newPage();
+    await interactionPage.goto(pathToFileURL(interactionFixturePath).href);
+    await interactionPage.getByRole("button", { name: "Continue with Google" }).waitFor();
+    await interactionPage.locator("#account-email").fill("smoke@example.com");
+    await interactionPage.getByRole("button", { name: "Continue with email" }).click();
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Use password instead" }).isDisabled(),
+      true,
+      "auth navigation must stay disabled while an email-code request is pending",
+    );
+    assert.equal(
+      await interactionPage.locator("#account-email").isDisabled(),
+      true,
+      "the requested email must stay immutable while an email-code request is pending",
+    );
+    await interactionPage.evaluate(() => window.resolveEmailOtp());
+    await interactionPage.getByRole("heading", { name: "Enter verification code" }).waitFor();
+    await interactionPage.getByText("Enter the code sent to smoke@example.com.").waitFor();
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Continue with Google" }).isVisible(),
+      false,
+      "verification-code mode must hide Google sign in",
+    );
+    assert.equal(
+      await interactionPage.getByRole("button", { name: "Continue with GitHub" }).isVisible(),
+      false,
+      "verification-code mode must hide GitHub sign in",
+    );
+    assert.equal(
+      await interactionPage.locator("#password-panel").isVisible(),
+      false,
+      "verification-code mode must not show the password page",
+    );
+    await interactionPage.screenshot({ path: emailCodeScreenshotPath, fullPage: true });
+  } finally {
+    await interactionBrowser.close();
+  }
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
     // Electron safeStorage must use the active macOS login keychain. A synthetic
     // HOME can leave the synchronous keychain probe waiting for a keychain that
@@ -2039,10 +2104,18 @@ async function runAccountGateScenario(mode) {
       { timeout: 30_000 },
     );
     await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
-    await page.getByRole("button", { name: "Continue with Google" }).waitFor();
-    await page.getByRole("button", { name: "Continue with GitHub" }).waitFor();
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
-    await page.getByRole("button", { name: "Continue with email code" }).waitFor();
+    await page.getByRole("button", { name: "Continue with email" }).waitFor();
+    assert.equal(
+      await page.getByText(/Sign in or create an account/i).count(),
+      0,
+      "the account gate must not show redundant introductory copy",
+    );
+    assert.equal(
+      await page.getByText(/Signing in connects your identity and devices/i).count(),
+      0,
+      "the account gate must not show the removed footer explanation",
+    );
     const passwordToggle = page.getByRole("button", { name: /Use password instead/ });
     await passwordToggle.click();
     assert.equal(
@@ -2050,6 +2123,18 @@ async function runAccountGateScenario(mode) {
       false,
       "password mode must replace the email-code primary action instead of showing both",
     );
+    assert.equal(
+      await page.getByRole("button", { name: "Continue with Google" }).isVisible(),
+      false,
+      "password mode must hide Google sign in",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Continue with GitHub" }).isVisible(),
+      false,
+      "password mode must hide GitHub sign in",
+    );
+    await page.getByRole("heading", { name: "Sign in with password" }).waitFor();
+    await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.locator("#account-password").waitFor();
     await page.getByRole("button", { name: "Sign in with password" }).waitFor();
     await page.getByRole("button", { name: "Forgot or need to set a password?" }).waitFor();
@@ -2068,9 +2153,6 @@ async function runAccountGateScenario(mode) {
       1,
       "packaged Desktop must include its native password-reset input",
     );
-    await page.getByText(
-      "Signing in connects your identity and devices. It does not upload Local Workspace content.",
-    ).waitFor();
     assert.equal(
       await page.locator("body").getAttribute("data-stage"),
       "account_required",
@@ -2108,6 +2190,7 @@ async function runAccountGateScenario(mode) {
     }
     await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`[desktop-smoke] packaged account gate screenshot: ${screenshotPath}`);
+    console.log(`[desktop-smoke] email-code interaction screenshot: ${emailCodeScreenshotPath}`);
   } finally {
     await closeDesktop(electronApp);
   }

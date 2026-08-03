@@ -10,7 +10,7 @@ import { normalizeTranscript } from "./RunTranscriptView.normalize";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptSkillTarget } from "./RunTranscriptView.common";
+export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -49,6 +49,7 @@ export function RunTranscriptView({
   onOpenAgent,
   annotationSource,
   sentAnnotationContext,
+  runAnnotationContext,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -154,6 +155,7 @@ export function RunTranscriptView({
           thinkingClassName={thinkingClassName}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
+          runAnnotationContext={runAnnotationContext}
         />
       </div>
     );

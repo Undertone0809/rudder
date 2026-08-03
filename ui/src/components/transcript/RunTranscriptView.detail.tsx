@@ -1,9 +1,9 @@
 import { Fragment, useMemo } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn, formatTokens } from "../../lib/utils";
-import { formatTranscriptLabel, TranscriptActivityRow, TranscriptEventRow, TranscriptMessageBlock, TranscriptStdoutRow, TranscriptThinkingBlock, TranscriptTodoListRow, TranscriptToolCard } from "./RunTranscriptView.blocks";
+import { formatTranscriptLabel, TranscriptActivityRow, TranscriptEventRow, TranscriptMessageBlock, TranscriptRunAnnotationBlock, TranscriptStdoutRow, TranscriptThinkingBlock, TranscriptTodoListRow, TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatTurn } from "./RunTranscriptView.chat";
-import { isInternalAgentInstructionText, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
+import { isInternalAgentInstructionText, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext } from "./RunTranscriptView.common";
 import { formatTodoListRaw, normalizeChatTranscriptTurns, parseClaudeSkillContext } from "./RunTranscriptView.normalize";
 import { formatToolPayload } from "./RunTranscriptView.semantic";
 
@@ -107,6 +107,7 @@ export function TranscriptDetailTimeline({
   thinkingClassName,
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
+  runAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -114,6 +115,7 @@ export function TranscriptDetailTimeline({
   thinkingClassName?: string;
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  runAnnotationContext?: TranscriptRunAnnotationContext;
 }) {
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(entries, streaming, { showDeveloperDiagnostics }),
@@ -126,43 +128,50 @@ export function TranscriptDetailTimeline({
       {rows.map((row) => {
         return (
           <Fragment key={row.key}>
-            {row.block.type === "message" && (
-              <TranscriptMessageBlock
-                block={row.block}
-                density={density}
-                presentation="detail"
-                className="text-sm leading-7"
-                collapsibleSummary={row.block.role === "user"}
-                onMarkdownLinkClick={onMarkdownLinkClick}
-              />
-            )}
-            {row.block.type === "thinking" && (
-              <TranscriptThinkingBlock
-                block={row.block}
-                density={density}
-                className={thinkingClassName}
-                collapsibleSummary
-                onMarkdownLinkClick={onMarkdownLinkClick}
-              />
-            )}
-            {row.block.type === "tool" && (
-              <TranscriptToolCard block={row.block} density={density} presentation="detail" />
-            )}
-            {row.block.type === "todo_list" && (
-              <TranscriptTodoListRow block={row.block} density={density} presentation="detail" />
-            )}
-            {row.block.type === "activity" && <TranscriptActivityRow block={row.block} density={density} />}
-            {row.block.type === "event" && (
-              <TranscriptEventRow block={row.block} density={density} presentation="detail" />
-            )}
-            {row.block.type === "stdout" && (
-              <TranscriptStdoutRow
-                block={row.block}
-                density={density}
-                collapseByDefault
-                presentation="detail"
-              />
-            )}
+            <TranscriptRunAnnotationBlock
+              block={row.block}
+              presentation="detail"
+              context={runAnnotationContext}
+              streaming={streaming}
+            >
+              {row.block.type === "message" && (
+                <TranscriptMessageBlock
+                  block={row.block}
+                  density={density}
+                  presentation="detail"
+                  className="text-sm leading-7"
+                  collapsibleSummary={row.block.role === "user"}
+                  onMarkdownLinkClick={onMarkdownLinkClick}
+                />
+              )}
+              {row.block.type === "thinking" && (
+                <TranscriptThinkingBlock
+                  block={row.block}
+                  density={density}
+                  className={thinkingClassName}
+                  collapsibleSummary
+                  onMarkdownLinkClick={onMarkdownLinkClick}
+                />
+              )}
+              {row.block.type === "tool" && (
+                <TranscriptToolCard block={row.block} density={density} presentation="detail" />
+              )}
+              {row.block.type === "todo_list" && (
+                <TranscriptTodoListRow block={row.block} density={density} presentation="detail" />
+              )}
+              {row.block.type === "activity" && <TranscriptActivityRow block={row.block} density={density} />}
+              {row.block.type === "event" && (
+                <TranscriptEventRow block={row.block} density={density} presentation="detail" />
+              )}
+              {row.block.type === "stdout" && (
+                <TranscriptStdoutRow
+                  block={row.block}
+                  density={density}
+                  collapseByDefault
+                  presentation="detail"
+                />
+              )}
+            </TranscriptRunAnnotationBlock>
           </Fragment>
         );
       })}
@@ -178,6 +187,8 @@ export function TranscriptDetailTimeline({
               thinkingClassName={thinkingClassName}
               variant="detail"
               onMarkdownLinkClick={onMarkdownLinkClick}
+              runAnnotationContext={runAnnotationContext}
+              streaming={streaming}
             />
           </div>
         );

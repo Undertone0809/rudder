@@ -141,6 +141,25 @@ export interface RunTranscriptViewProps {
   annotationSource?: TranscriptAnnotationSourceContext;
   /** Read-only annotations attached to user Steer messages embedded in Process. */
   sentAnnotationContext?: TranscriptSentAnnotationContext;
+  /** Stage an annotation for a completed Nice transcript block in Run Detail. */
+  runAnnotationContext?: TranscriptRunAnnotationContext;
+}
+
+export interface TranscriptRunAnnotationInput {
+  sourceRunId: string;
+  sourceAgentId: string;
+  blockId: string;
+  blockType: TranscriptBlock["type"];
+  text: string;
+  ts: string;
+  anchor: HTMLButtonElement;
+  block?: TranscriptBlock;
+}
+
+export interface TranscriptRunAnnotationContext {
+  sourceRunId: string;
+  sourceAgentId: string;
+  onAnnotate: (input: TranscriptRunAnnotationInput) => void;
 }
 
 export interface TranscriptAnnotationSourceContext {

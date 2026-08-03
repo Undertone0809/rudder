@@ -72,6 +72,74 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it("exposes completed Nice detail blocks with a run annotation trigger", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="detail"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-07-23T00:00:00.000Z",
+              text: "The completed answer.",
+            },
+          ] as unknown as TranscriptEntry[]}
+          runAnnotationContext={{
+            sourceRunId: "run-1",
+            sourceAgentId: "agent-1",
+            onAnnotate: () => undefined,
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-run-transcript-block="true"');
+    expect(html).toContain('data-run-transcript-block-type="message"');
+    expect(html).toContain('data-run-transcript-block-stable="true"');
+    expect(html).toContain('data-testid="run-transcript-annotation-trigger"');
+    expect(html).toContain('aria-label="Annotate transcript block"');
+  });
+
+  it("does not expose run annotation triggers for Raw or incomplete live transcripts", () => {
+    const context = {
+      sourceRunId: "run-1",
+      sourceAgentId: "agent-1",
+      onAnnotate: () => undefined,
+    };
+    const rawHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          mode="raw"
+          presentation="detail"
+          entries={[{
+            kind: "assistant",
+            ts: "2026-07-23T00:00:00.000Z",
+            text: "Raw answer.",
+          }] as unknown as TranscriptEntry[]}
+          runAnnotationContext={context}
+        />
+      </ThemeProvider>,
+    );
+    const liveHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="detail"
+          streaming
+          entries={[{
+            kind: "assistant",
+            ts: "2026-07-23T00:00:00.000Z",
+            text: "Still writing.",
+            delta: true,
+          }] as unknown as TranscriptEntry[]}
+          runAnnotationContext={context}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(rawHtml).not.toContain("run-transcript-annotation-trigger");
+    expect(liveHtml).not.toContain("run-transcript-annotation-trigger");
+  });
+
   it("exposes each persisted process prose projection as one provenance-backed annotation source", () => {
     const entries = [
       {
