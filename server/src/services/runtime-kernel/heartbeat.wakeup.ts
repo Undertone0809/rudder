@@ -691,11 +691,18 @@ export function createHeartbeatWakeupHandlers(context: any) {
       .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])))
       .orderBy(desc(heartbeatRuns.createdAt));
 
+    const isSameWakeScope = (candidate: typeof heartbeatRuns.$inferSelect) => {
+      const candidateTaskKey = runTaskKey(candidate);
+      if (effectiveTaskKey === null && candidateTaskKey === null) {
+        return candidate.invocationSource === source;
+      }
+      return isSameTaskScope(candidateTaskKey, effectiveTaskKey);
+    };
     const sameScopeQueuedRun = activeRuns.find(
-      (candidate) => candidate.status === "queued" && isSameTaskScope(runTaskKey(candidate), taskKey),
+      (candidate) => candidate.status === "queued" && isSameWakeScope(candidate),
     );
     const sameScopeRunningRun = activeRuns.find(
-      (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
+      (candidate) => candidate.status === "running" && isSameWakeScope(candidate),
     );
     const shouldQueueFollowupForCommentWake =
       Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;

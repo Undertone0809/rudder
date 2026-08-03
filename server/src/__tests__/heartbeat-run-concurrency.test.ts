@@ -609,6 +609,75 @@ describe("heartbeat run concurrency", () => {
     expect(persisted?.sessionReuseScope).toBe("none");
   });
 
+  it("does not coalesce a taskless manual wake into an active chat run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const chatRunId = randomUUID();
+    const startedAt = new Date("2026-04-27T06:00:00.000Z");
+    await db.insert(heartbeatRuns).values({
+      id: chatRunId,
+      orgId,
+      agentId,
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply",
+      status: "running",
+      startedAt,
+      contextSnapshot: { scene: "chat" },
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+
+    const heartbeat = heartbeatService(db);
+    const manualRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "manual_heartbeat_during_chat",
+      contextSnapshot: {},
+      startImmediately: false,
+    });
+
+    expect(manualRun).toMatchObject({
+      invocationSource: "on_demand",
+      status: "queued",
+    });
+    expect(manualRun?.id).not.toBe(chatRunId);
+  });
+
+  it("uses the resolved task scope before coalescing an explicit resume", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "task:explicit-resume-scope";
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const chatRunId = randomUUID();
+    const startedAt = new Date("2026-04-27T06:00:00.000Z");
+    await db.insert(heartbeatRuns).values({
+      id: chatRunId,
+      orgId,
+      agentId,
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply",
+      status: "running",
+      startedAt,
+      contextSnapshot: { scene: "chat" },
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+
+    const heartbeat = heartbeatService(db);
+    const resumedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "explicit_resume_during_chat",
+      payload: { resumeFromRunId: sourceRunId },
+      contextSnapshot: {},
+      startImmediately: false,
+    });
+
+    expect(resumedRun).toMatchObject({
+      invocationSource: "on_demand",
+      status: "queued",
+    });
+    expect(resumedRun?.id).not.toBe(chatRunId);
+  });
+
   it("reuses the saved session for the same task scope", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     await db.insert(agentTaskSessions).values({
