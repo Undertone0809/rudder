@@ -796,7 +796,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     for (const imagePath of imagePaths) {
       args.push("--image", imagePath);
     }
-    if (runtimeScene === "chat" && !hasCliArg(extraArgs, "--skip-git-repo-check")) {
+    if (["chat", "product_intelligence"].includes(runtimeScene) && !hasCliArg(extraArgs, "--skip-git-repo-check")) {
       args.push("--skip-git-repo-check");
     }
     if (extraArgs.length > 0) args.push(...extraArgs);

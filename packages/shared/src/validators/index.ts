@@ -27,6 +27,10 @@ export {
   agentSkillEnableSchema, agentSkillEntrySchema, agentSkillOriginSchema, agentSkillSnapshotSchema, agentSkillSourceClassSchema, agentSkillStateSchema, agentSkillSyncModeSchema, agentSkillSyncSchema, type AgentSkillEnable, type AgentSkillSync
 } from "./adapter-skills.js";
 export {
+  aiSearchRequestSchema,
+  type AiSearchRequest
+} from "./ai-search.js";
+export {
   MAX_CHAT_INLINE_ANNOTATIONS,
   MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS,
   MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH,

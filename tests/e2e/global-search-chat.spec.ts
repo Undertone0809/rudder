@@ -7,6 +7,133 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Global search results", () => {
+  test("offers Smart Search for an empty result and opens the model-selected chat", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `AI Search ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "AI Search Agent" });
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "AI Search architecture chat",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: {
+          body: "Architecture decision notes for the runtime search flow.",
+        },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await page.route(`**/api/orgs/${organization.id}/intelligence-profiles`, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([null, {
+          id: "profile-reasoning",
+          orgId: organization.id,
+          purpose: "reasoning",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.4-mini" },
+          status: "configured",
+          lastError: null,
+          lastVerifiedAt: "2026-06-18T00:00:00.000Z",
+          createdAt: "2026-06-18T00:00:00.000Z",
+          updatedAt: "2026-06-18T00:00:00.000Z",
+        }]),
+      });
+    });
+
+    let requestedQuery: string | null = null;
+    await page.route(`**/api/orgs/${organization.id}/ai-search`, async (route) => {
+      requestedQuery = (route.request().postDataJSON() as { query?: string }).query ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: requestedQuery,
+          answer: "The architecture discussion is in the selected chat.",
+          results: [{
+            key: `chat:${chat.id}`,
+            kind: "chat",
+            id: chat.id,
+            title: chat.title,
+            preview: "Architecture decision notes",
+            reason: "The chat contains the architecture discussion.",
+            href: `/messenger/chat/${chat.id}`,
+          }],
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
+    const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
+    await expect(searchInput).toBeVisible();
+    await searchInput.fill("unindexed semantic concept");
+
+    const askSmartModel = page.getByRole("option", { name: /Ask Smart Model/i });
+    await expect(askSmartModel).toBeVisible({ timeout: 15_000 });
+    await askSmartModel.click();
+
+    await expect.poll(() => requestedQuery).toBe("unindexed semantic concept");
+    await expect(page.getByText("The architecture discussion is in the selected chat.")).toBeVisible();
+    const chatResult = page.getByRole("option", { name: /AI Search architecture chat/i });
+    await expect(chatResult).toBeVisible();
+    await chatResult.click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+  });
+
+  test("does not offer Smart Search when Smart Model is disabled", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `AI Search Disabled ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    await page.route(`**/api/orgs/${organization.id}/intelligence-profiles`, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([null, {
+          id: "profile-reasoning",
+          orgId: organization.id,
+          purpose: "reasoning",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.4-mini" },
+          status: "disabled",
+        }]),
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
+    const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
+    await searchInput.fill("disabled model search token");
+    await expect(page.getByRole("option", { name: /Ask Smart Model/i })).toHaveCount(0);
+  });
+
   test("shows an animated panel boundary while command palette search is loading", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Search Loading Ring ${Date.now()}` },
@@ -41,7 +168,7 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("rare-loading-ring-token");
@@ -101,7 +228,7 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("rare-chat-search-token");
@@ -218,7 +345,7 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("lifecycle-router");
@@ -283,7 +410,7 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     let searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("iss");
@@ -325,7 +452,7 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     let searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("library ");

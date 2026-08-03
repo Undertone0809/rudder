@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const navigateMock = vi.fn();
+const aiSearchMock = vi.hoisted(() => vi.fn());
 const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
 const queryDataByKey = vi.hoisted(() => new Map<string, unknown>());
 const queryStateByKey = vi.hoisted(() => new Map<string, {
@@ -134,6 +135,9 @@ vi.mock("@tanstack/react-query", () => ({
         ],
       };
     }
+    if (queryKey[0] === "organizations" && queryKey[2] === "intelligence-profiles") {
+      return { data: [] };
+    }
     if (queryKey[0] === "issues" && queryKey[2] === "command-palette" && queryKey[3] === "list") return { data: [] };
     if (queryKey[0] === "issues") return { data: [] };
     if (queryKey[0] === "instance" && queryKey[1] === "shortcut-settings") {
@@ -142,6 +146,17 @@ vi.mock("@tanstack/react-query", () => ({
     return { data: [] };
   },
 }));
+
+vi.mock("../api/orgs", async () => {
+  const actual = await vi.importActual<typeof import("../api/orgs")>("../api/orgs");
+  return {
+    ...actual,
+    organizationsApi: {
+      ...actual.organizationsApi,
+      aiSearch: aiSearchMock,
+    },
+  };
+});
 
 vi.mock("../context/OrganizationContext", () => ({
   useOrganization: () => ({
@@ -240,6 +255,7 @@ afterEach(() => {
   observedQueryKeys.length = 0;
   queryDataByKey.clear();
   queryStateByKey.clear();
+  aiSearchMock.mockReset();
   shortcutSettingsMock.value = null;
   navigateMock.mockClear();
   document.body.innerHTML = "";
@@ -307,6 +323,142 @@ function flushRemoteSearchDebounce() {
 }
 
 describe("CommandPalette", () => {
+  it("offers Smart Search only after regular search has no results and navigates its match", async () => {
+    queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
+      { purpose: "reasoning", status: "configured" },
+    ]);
+    aiSearchMock.mockResolvedValue({
+      query: "architecture note",
+      answer: "The architecture note is in the project record.",
+      results: [{
+        key: "project:project-1",
+        kind: "project",
+        id: "project-1",
+        title: "Architecture project",
+        preview: "Runtime architecture notes",
+        reason: "The project description covers the requested architecture.",
+        href: "/projects/project-1",
+      }],
+    });
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "architecture note");
+    flushRemoteSearchDebounce();
+
+    const askButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Ask Smart Model"));
+    expect(askButton).not.toBeUndefined();
+
+    await act(async () => {
+      askButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(aiSearchMock).toHaveBeenCalledWith("org-1", { query: "architecture note" });
+    expect(container.textContent).toContain("Architecture project");
+
+    const resultButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Architecture project"));
+    act(() => {
+      resultButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(navigateMock).toHaveBeenCalledWith("/projects/project-1");
+  });
+
+  it("does not offer Smart Search when the organization reasoning profile is disabled", () => {
+    queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
+      { purpose: "reasoning", status: "disabled" },
+    ]);
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "disabled smart search");
+    flushRemoteSearchDebounce();
+
+    expect(container.textContent).not.toContain("Ask Smart Model");
+  });
+
+  it("does not offer Smart Search inside an explicit search scope", () => {
+    queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
+      { purpose: "reasoning", status: "configured" },
+    ]);
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "issue ");
+    const scopedInput = container.querySelector<HTMLInputElement>("input");
+    expect(scopedInput).not.toBeNull();
+    changeInput(scopedInput!, "missing issue concept");
+    flushRemoteSearchDebounce();
+
+    expect(container.textContent).not.toContain("Ask Smart Model");
+  });
+
+  it("keeps Smart Search hidden while regular search is fetching cached data", () => {
+    queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
+      { purpose: "reasoning", status: "configured" },
+    ]);
+    const query = "cached semantic query";
+    queryStateByKey.set(JSON.stringify([
+      "issues",
+      "org-1",
+      "command-palette",
+      "search",
+      query,
+      "title,description,comment",
+      20,
+    ]), { data: [], isFetching: true });
+    queryStateByKey.set(JSON.stringify([
+      "chats",
+      "org-1",
+      "command-palette",
+      "search",
+      "all",
+      query,
+      20,
+    ]), { data: [], isFetching: true });
+    queryStateByKey.set(JSON.stringify(["agents", "org-1"]), { data: [], isFetching: true });
+    queryStateByKey.set(JSON.stringify(["projects", "org-1"]), { data: [], isFetching: true });
+    queryStateByKey.set(JSON.stringify(["organization-skills", "org-1"]), { data: [], isFetching: true });
+
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+    changeInput(input, query);
+    flushRemoteSearchDebounce();
+
+    expect(container.textContent).not.toContain("Ask Smart Model");
+  });
+
+  it("offers a retry action when Smart Search fails before returning results", async () => {
+    queryDataByKey.set(JSON.stringify(["organizations", "org-1", "intelligence-profiles"]), [
+      { purpose: "reasoning", status: "configured" },
+    ]);
+    aiSearchMock.mockRejectedValue(new Error("Smart Search failed"));
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "retryable architecture query");
+    flushRemoteSearchDebounce();
+    const askButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Ask Smart Model"));
+    expect(askButton).not.toBeUndefined();
+
+    await act(async () => {
+      askButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Try Smart Search again");
+
+    const retryButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Try Smart Search again"));
+    await act(async () => {
+      retryButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(aiSearchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("opens from the primary rail search event", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

@@ -35,6 +35,11 @@ export type {
   AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
 } from "./agent.js";
 export type {
+  AiSearchResponse,
+  AiSearchResult,
+  AiSearchResultKind
+} from "./ai-search.js";
+export type {
   AppBuilderApp,
   AppBuilderBuildStatus,
   AppBuilderOpaqueBinding

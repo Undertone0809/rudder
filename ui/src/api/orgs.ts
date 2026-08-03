@@ -1,4 +1,5 @@
 import type {
+  AiSearchResponse,
   CreateLibraryDocument,
   CreateOrganizationResourceRequest,
   LibraryDocument,
@@ -53,6 +54,8 @@ export const organizationsApi = {
   stats: () => api.get<OrganizationStats>("/orgs/stats"),
   listIntelligenceProfiles: (orgId: string) =>
     api.get<Array<OrganizationIntelligenceProfile | null>>(`/orgs/${orgId}/intelligence-profiles`),
+  aiSearch: (orgId: string, data: { query: string }) =>
+    api.post<AiSearchResponse>(`/orgs/${orgId}/ai-search`, data),
   updateIntelligenceProfile: (
     orgId: string,
     purpose: OrganizationIntelligenceProfilePurpose,

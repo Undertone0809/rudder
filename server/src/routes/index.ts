@@ -1,6 +1,7 @@
 export { accessRoutes } from "./access.js";
 export { activityRoutes } from "./activity.js";
 export { agentRoutes } from "./agents.js";
+export { aiSearchRoutes } from "./ai-search.js";
 export { appBuilderRoutes } from "./app-builder.js";
 export { approvalRoutes } from "./approvals.js";
 export { automationRoutes } from "./automations.js";

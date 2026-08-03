@@ -2740,7 +2740,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("adds --skip-git-repo-check for chat-scene Codex runs", async () => {
+  it.each(["chat", "product_intelligence"])("adds --skip-git-repo-check for %s Codex runs", async (rudderScene) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-chat-scene-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -2776,7 +2776,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
           promptTemplate: "Reply in chat.",
         },
         context: {
-          rudderScene: "chat",
+          rudderScene,
         },
         authToken: "run-jwt-token",
         onLog: async () => {},

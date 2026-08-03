@@ -8,7 +8,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { useNavigate } from "@/lib/router";
-import type { Agent, IssueSearchField, OrganizationSkillListItem, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
+import type { Agent, AiSearchResponse, IssueSearchField, OrganizationSkillListItem, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
@@ -24,10 +24,11 @@ import {
   Loader2,
   MessageSquare,
   MessagesSquare,
+  Sparkles,
   Target,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { agentsApi } from "../api/agents";
 import { chatsApi } from "../api/chats";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -74,6 +75,11 @@ export function CommandPalette() {
   const [scope, setScope] = useState<GlobalSearchScope | null>(null);
   const [query, setQuery] = useState("");
   const [launchSource, setLaunchSource] = useState<"shortcut" | "primary-rail">("shortcut");
+  const [aiSearchRequested, setAiSearchRequested] = useState(false);
+  const [aiSearchLoading, setAiSearchLoading] = useState(false);
+  const [aiSearchError, setAiSearchError] = useState<string | null>(null);
+  const [aiSearchResult, setAiSearchResult] = useState<AiSearchResponse | null>(null);
+  const aiSearchRequestId = useRef(0);
   const navigate = useNavigate();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
@@ -87,6 +93,14 @@ export function CommandPalette() {
   const shortcutSettings = shortcutSettingsQuery.data === undefined
     ? (shortcutSettingsQuery.isError ? null : undefined)
     : shortcutSettingsQuery.data;
+  const intelligenceProfilesQuery = useQuery({
+    queryKey: queryKeys.organizations.intelligenceProfiles(selectedOrganizationId ?? "__none__"),
+    queryFn: () => organizationsApi.listIntelligenceProfiles(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId && open,
+  });
+  const smartSearchEnabled = (intelligenceProfilesQuery.data ?? []).some(
+    (profile) => profile?.purpose === "reasoning" && profile.status === "configured",
+  );
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -121,8 +135,20 @@ export function CommandPalette() {
       setScope(null);
       setQuery("");
       setDebouncedSearchQuery("");
+      setAiSearchRequested(false);
+      setAiSearchLoading(false);
+      setAiSearchError(null);
+      setAiSearchResult(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    aiSearchRequestId.current += 1;
+    setAiSearchRequested(false);
+    setAiSearchLoading(false);
+    setAiSearchError(null);
+    setAiSearchResult(null);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!open || searchQuery.length < GLOBAL_REMOTE_SEARCH_MIN_LENGTH) {
@@ -243,6 +269,28 @@ export function CommandPalette() {
     setQuery("");
   }
 
+  function runAiSearch() {
+    if (!selectedOrganizationId || searchQuery.length < GLOBAL_REMOTE_SEARCH_MIN_LENGTH) return;
+    const requestId = aiSearchRequestId.current + 1;
+    aiSearchRequestId.current = requestId;
+    setAiSearchRequested(true);
+    setAiSearchLoading(true);
+    setAiSearchError(null);
+    setAiSearchResult(null);
+    void organizationsApi.aiSearch(selectedOrganizationId, { query: searchQuery })
+      .then((result) => {
+        if (aiSearchRequestId.current !== requestId) return;
+        setAiSearchResult(result);
+      })
+      .catch((error: unknown) => {
+        if (aiSearchRequestId.current !== requestId) return;
+        setAiSearchError(error instanceof Error ? error.message : "Smart Search failed");
+      })
+      .finally(() => {
+        if (aiSearchRequestId.current === requestId) setAiSearchLoading(false);
+      });
+  }
+
   function handleInputValueChange(value: string) {
     if (!scope) {
       const confirmedScope = shouldConfirmGlobalSearchScopeFromValue(value);
@@ -335,6 +383,30 @@ export function CommandPalette() {
     || ((scope === null || scope === "project") && projectsQuery.isFetching && projectsQuery.data === undefined)
     || ((scope === null || scope === "skill") && skillsQuery.isFetching && skillsQuery.data === undefined)
   );
+  const isRegularSearchFetching = Boolean(selectedOrganizationId && open) && (
+    ((scope === null || scope === "issue") && relevantIssueQuery.isFetching)
+    || ((scope === null || scope === "chat") && searchQuery.length > 0 && searchedChatsQuery.isFetching)
+    || (scope === "library" && searchQuery.length > 0 && librarySearchQuery.isFetching)
+    || ((scope === null || scope === "agent") && agentsQuery.isFetching)
+    || ((scope === null || scope === "project") && projectsQuery.isFetching)
+    || ((scope === null || scope === "skill") && skillsQuery.isFetching)
+  );
+  const hasVisibleSearchResults = visibleIssues.length > 0
+    || visibleChats.length > 0
+    || libraryEntries.length > 0
+    || visibleAgents.length > 0
+    || visibleProjects.length > 0
+    || visibleSkills.length > 0;
+  const remoteSearchSettled = scope !== null && scope !== "issue" && scope !== "chat"
+    ? true
+    : searchQuery.length < GLOBAL_REMOTE_SEARCH_MIN_LENGTH || remoteSearchQuery === searchQuery;
+  const showAiSearchOption = smartSearchEnabled
+    && scope === null
+    && searchQuery.length >= GLOBAL_REMOTE_SEARCH_MIN_LENGTH
+    && remoteSearchSettled
+    && !isRegularSearchFetching
+    && !hasVisibleSearchResults
+    && !aiSearchRequested;
 
   return (
     <CommandDialog open={open} onOpenChange={(v) => {
@@ -376,8 +448,73 @@ export function CommandPalette() {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Searching...
               </span>
+            ) : aiSearchLoading ? (
+              <span className="inline-flex items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Searching with Smart Model...
+              </span>
+            ) : aiSearchError ? (
+              <span className="text-destructive">{aiSearchError}</span>
+            ) : aiSearchRequested && aiSearchResult?.results.length === 0 ? (
+              "Smart Search found no matching records."
             ) : scopedEmptyLabel}
           </CommandEmpty>
+        )}
+
+        {showAiSearchOption && (
+          <CommandGroup heading="Smart Search">
+            <CommandItem
+              value={`ask smart model ${searchQuery}`}
+              onSelect={runAiSearch}
+            >
+              <Sparkles className="mr-2 h-4 w-4 text-amber-500" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span>Ask Smart Model</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  Search organization content for “{searchQuery}”
+                </span>
+              </span>
+            </CommandItem>
+          </CommandGroup>
+        )}
+
+        {aiSearchRequested && (aiSearchResult || aiSearchError) && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Smart Search">
+              {aiSearchResult?.answer && (
+                <div className="px-2 py-2 text-sm text-muted-foreground">
+                  {aiSearchResult.answer}
+                </div>
+              )}
+              {(aiSearchResult?.results ?? []).map((result) => (
+                <CommandItem
+                  key={result.key}
+                  value={`${searchQuery} ${result.title} ${result.preview ?? ""} ${result.reason ?? ""}`}
+                  onSelect={() => go(result.href)}
+                >
+                  <Sparkles className="mr-2 h-4 w-4 text-amber-500" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{result.title}</span>
+                    {(result.reason ?? result.preview) && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {result.reason ?? result.preview}
+                      </span>
+                    )}
+                  </span>
+                  <span className="ml-2 hidden text-xs capitalize text-muted-foreground sm:inline">
+                    {result.kind.replace("_", " ")}
+                  </span>
+                </CommandItem>
+              ))}
+              {aiSearchError && (
+                <CommandItem value={`retry smart search ${searchQuery}`} onSelect={runAiSearch}>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Try Smart Search again
+                </CommandItem>
+              )}
+            </CommandGroup>
+          </>
         )}
 
         {pendingScopeDefinition && (
