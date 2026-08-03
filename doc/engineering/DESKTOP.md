@@ -489,6 +489,15 @@ launchers, and reopens Rudder. Running Agent Runs across every organization in
 the local instance delay replacement; queued or terminal close-out records do
 not require a destructive Stop Runs decision.
 
+The main process performs the initial and final running-work checks through
+Electron's session-backed `defaultSession.fetch`, including credentials. The
+Node global `fetch` has no cookie jar, so using it for `/api/orgs` or live-run
+inspection makes an authenticated Desktop appear anonymous and strands the
+update with a `401 Unauthorized`. `createDesktopQuitFlow` requires the
+session-backed fetch at every call site, and the Electron smoke test must prove
+that an anonymous request is rejected while the session-backed request reaches
+both protected paths.
+
 During an in-app update, Desktop shows a compact bottom-right update status card
 with structured progress from the bundled CLI. Byte-backed downloads may show a
 determinate percentage; release resolution, checksum verification, active-run

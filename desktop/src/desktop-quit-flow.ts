@@ -24,7 +24,10 @@ export function createDesktopQuitFlow(context: {
   getMainWindow: () => BrowserWindow | null;
   setMainWindow: (value: BrowserWindow | null) => void;
   getServerHandle: () => { apiUrl: string; runtime: { mode: "owned" | "attached" } } | null;
-  fetchApi?: DesktopApiFetch;
+  // Protected local API calls must use Electron's session-backed fetch. The
+  // Node global fetch has no cookie jar and would turn a signed-in desktop
+  // session into an anonymous request.
+  fetchApi: DesktopApiFetch;
   prepareForQuit?: () => Promise<void>;
   prepareLocalAppsForQuit?: () => Promise<void>;
   stopLocalRudder: () => Promise<void>;
@@ -49,7 +52,7 @@ export function createDesktopQuitFlow(context: {
       headers.set("Accept", "application/json");
     }
 
-    const response = await (context.fetchApi ?? fetch)(buildDesktopApiRequestUrl(apiBase, apiPath), {
+    const response = await context.fetchApi(buildDesktopApiRequestUrl(apiBase, apiPath), {
       ...init,
       headers,
       credentials: "include",
