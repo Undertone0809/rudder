@@ -441,9 +441,66 @@ test.describe("Run transcript detail", () => {
         payload: {
           kind: "assistant",
           text: "Run one completed the deployment review.",
+          sourceEntryId: "run-one-assistant",
           ts: new Date(runOneStartedAt.getTime() + 30_000).toISOString(),
         },
         createdAt: new Date(runOneStartedAt.getTime() + 30_000),
+      },
+      {
+        orgId: organization.id,
+        runId: runOneId,
+        agentId: agent.id,
+        seq: 2,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript thinking entry",
+        payload: {
+          kind: "thinking",
+          text: "Reasoning checked the deployment diff.",
+          sourceEntryId: "run-one-thinking",
+          ts: new Date(runOneStartedAt.getTime() + 31_000).toISOString(),
+        },
+        createdAt: new Date(runOneStartedAt.getTime() + 31_000),
+      },
+      {
+        orgId: organization.id,
+        runId: runOneId,
+        agentId: agent.id,
+        seq: 3,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript tool call entry",
+        payload: {
+          kind: "tool_call",
+          name: "shell",
+          input: { command: "pnpm test:run" },
+          toolUseId: "run-one-tool",
+          sourceEntryId: "run-one-tool-call",
+          ts: new Date(runOneStartedAt.getTime() + 32_000).toISOString(),
+        },
+        createdAt: new Date(runOneStartedAt.getTime() + 32_000),
+      },
+      {
+        orgId: organization.id,
+        runId: runOneId,
+        agentId: agent.id,
+        seq: 4,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript tool result entry",
+        payload: {
+          kind: "tool_result",
+          toolUseId: "run-one-tool",
+          toolName: "shell",
+          content: "123 tests passed",
+          isError: false,
+          sourceEntryId: "run-one-tool-result",
+          ts: new Date(runOneStartedAt.getTime() + 33_000).toISOString(),
+        },
+        createdAt: new Date(runOneStartedAt.getTime() + 33_000),
       },
       {
         orgId: organization.id,
@@ -457,6 +514,7 @@ test.describe("Run transcript detail", () => {
         payload: {
           kind: "assistant",
           text: "Run two found a follow-up regression.",
+          sourceEntryId: "run-two-assistant",
           ts: new Date(runTwoStartedAt.getTime() + 30_000).toISOString(),
         },
         createdAt: new Date(runTwoStartedAt.getTime() + 30_000),
@@ -486,8 +544,36 @@ test.describe("Run transcript detail", () => {
     ))).toBe(0);
 
     const projectSelector = feedbackPanel.getByRole("combobox", { name: "Project" });
+
+    const thinkingBlock = detailPane.locator('[data-run-transcript-block-type="thinking"]');
+    await expect(thinkingBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
+    const toolBlock = detailPane.locator('[data-run-transcript-block-type="tool"], [data-run-transcript-block-type="command_group"]');
+    await expect(toolBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
+
+    const selectableText = detailPane.getByText("Run one completed the deployment review.", { exact: false }).first();
+    await selectableText.selectText();
+    await page.evaluate(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    const selectionToolbar = page.getByRole("toolbar", { name: "Response annotation actions" });
+    await expect(selectionToolbar).toBeVisible();
+    await selectionToolbar.getByRole("button", { name: "Add to chat" }).click();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 2 annotations?/ })).toBeVisible();
+
     await projectSelector.selectOption(project.id);
     await expect(projectSelector).toHaveValue(project.id);
+
+    const secondRunRow = page.locator('[role="link"][aria-label^="Open run"]').filter({ hasText: runTwoId.slice(0, 8) });
+    await expect(secondRunRow).toBeVisible();
+    await secondRunRow.click();
+    // Agent detail routes canonicalize UUIDs to the stable agent ref slug.
+    await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${runTwoId}$`));
+    await expect(detailPane.getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toBeVisible();
+    await expect(projectSelector).toHaveValue(project.id);
+    await expect(projectSelector).toBeEnabled();
+
+    await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 3 annotations?/ })).toBeVisible();
+    await expect(feedbackPanel.getByText("Run two found a follow-up regression.", { exact: false })).toHaveCount(0);
 
     const sendFeedback = feedbackPanel.getByRole("button", { name: "Send feedback" });
     await expect(sendFeedback).toBeEnabled();
@@ -526,23 +612,17 @@ test.describe("Run transcript detail", () => {
     }>;
     const firstUserMessage = messages.find((message) => message.role === "user");
     expect(firstUserMessage?.body).toBe("");
-    expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toEqual([
-      expect.objectContaining({ sourceRunId: runOneId }),
-    ]);
+    expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toHaveLength(3);
+    expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRunId: runOneId, anchorKind: "transition" }),
+      expect.objectContaining({ sourceRunId: runOneId, anchorKind: "text" }),
+      expect.objectContaining({ sourceRunId: runTwoId, anchorKind: "transition" }),
+    ]));
 
-    const secondRunRow = page.locator('[role="link"][aria-label^="Open run"]').filter({ hasText: runTwoId.slice(0, 8) });
-    await expect(secondRunRow).toBeVisible();
-    await secondRunRow.click();
-    // Agent detail routes canonicalize UUIDs to the stable agent ref slug.
-    await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${runTwoId}$`));
-    await expect(detailPane.getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel).toBeVisible();
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible();
     await expect(projectSelector).toBeDisabled();
-
     await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
-    await expect(feedbackPanel.getByText("Run two found a follow-up regression.", { exact: false })).toHaveCount(0);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(sidePanel).toBeVisible();

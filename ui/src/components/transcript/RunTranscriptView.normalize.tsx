@@ -367,6 +367,7 @@ export function collapseNetworkDisconnectBlocks(blocks: TranscriptBlock[]): Tran
     if (pending.length === 0) return;
     const first = pending[0];
     const last = pending[pending.length - 1];
+    const sourceEntryIds = pending.flatMap((block) => block.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     collapsed.push({
       type: "event",
       ts: first?.ts ?? last?.ts ?? new Date(0).toISOString(),
@@ -375,6 +376,7 @@ export function collapseNetworkDisconnectBlocks(blocks: TranscriptBlock[]): Tran
       text: summarizeNetworkDisconnectTexts(pendingTexts),
       detail: pendingTexts.join("\n\n"),
       collapseByDefault: true,
+      sourceEntryIds,
     });
     pending = [];
     pendingTexts = [];
@@ -410,11 +412,13 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
 
   const flush = () => {
     if (pending.length === 0 || !groupTs) return;
+    const sourceEntryIds = pending.flatMap((item) => item.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     grouped.push({
       type: "command_group",
       ts: groupTs,
       endTs: groupEndTs,
       items: pending,
+      sourceEntryIds,
     });
     pending = [];
     groupTs = null;
@@ -431,10 +435,12 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
         ts: block.ts,
         endTs: block.endTs,
         name: block.name,
+        toolUseId: block.toolUseId,
         input: block.input,
         result: block.result,
         isError: block.isError,
         status: block.status,
+        sourceEntryIds: block.sourceEntryIds,
       });
       continue;
     }
@@ -753,12 +759,14 @@ export function normalizeTranscript(
       if (existing) {
         existing.ts = entry.ts;
         existing.items = entry.items;
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
       } else {
         const block: Extract<TranscriptBlock, { type: "todo_list" }> = {
           type: "todo_list",
           ts: entry.ts,
           todoListId: entry.todoListId,
           items: entry.items,
+          sourceEntryIds: transcriptEntrySourceIds(entry),
         };
         blocks.push(block);
         pendingTodoListBlocks.set(todoListKey, block);
@@ -773,6 +781,7 @@ export function normalizeTranscript(
         label: "init",
         tone: "info",
         text: `model ${entry.model}${entry.sessionId ? ` • session ${entry.sessionId}` : ""}`,
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -784,6 +793,7 @@ export function normalizeTranscript(
         label: "result",
         tone: entry.isError ? "error" : "info",
         text: entry.text.trim() || entry.errors[0] || (entry.isError ? "Run failed" : "Completed"),
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -799,6 +809,7 @@ export function normalizeTranscript(
         tone: "error",
         text: entry.text,
         collapseByDefault: shouldCollapseEventText(entry.text),
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -809,11 +820,13 @@ export function normalizeTranscript(
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);
       if (memoryUpdate) {
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(memoryUpdate, sourceEntryId);
         replacePendingFileChangeActivity(memoryUpdate);
         continue;
       }
       const fileChange = parseFileChangeSystemText(entry.text, entry.ts);
       if (fileChange) {
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(fileChange, sourceEntryId);
         replacePendingFileChangeActivity(fileChange);
         continue;
       }
@@ -823,6 +836,7 @@ export function normalizeTranscript(
         if (existing) {
           existing.status = activity.status;
           existing.ts = entry.ts;
+          for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
           if (activity.status === "completed" && activity.activityId) {
             pendingActivityBlocks.delete(activity.activityId);
           }
@@ -833,6 +847,7 @@ export function normalizeTranscript(
             activityId: activity.activityId,
             name: activity.name,
             status: activity.status,
+            sourceEntryIds: transcriptEntrySourceIds(entry),
           };
           blocks.push(block);
           if (activity.status === "running" && activity.activityId) {
@@ -847,6 +862,7 @@ export function normalizeTranscript(
         label: "system",
         tone: getSystemEventTone(entry.text),
         text: entry.text,
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -864,17 +880,20 @@ export function normalizeTranscript(
       activeCommandBlock.result = activeCommandBlock.result
         ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`}`
         : filteredStdout;
+      for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(activeCommandBlock, sourceEntryId);
       continue;
     }
 
     if (previous?.type === "stdout") {
       previous.text += previous.text.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`;
       previous.ts = entry.ts;
+      for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
     } else {
       blocks.push({
         type: "stdout",
         ts: entry.ts,
         text: filteredStdout,
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
     }
   }

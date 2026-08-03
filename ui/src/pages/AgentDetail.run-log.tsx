@@ -104,6 +104,10 @@ export function LogViewer({
   });
   const isLive = run.status === "running" || run.status === "queued";
   const activityCoordinator = useActivityCoordinator();
+  const handleAnnotate = useCallback((input: TranscriptRunAnnotationInput) => {
+    setTranscriptModalOpen(false);
+    onAnnotate?.(input);
+  }, [onAnnotate]);
   const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => {
     if (!isLive) return [];
     return [{
@@ -628,7 +632,7 @@ export function LogViewer({
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,
-                onAnnotate,
+                onAnnotate: handleAnnotate,
               } : undefined}
             />
             {logError && (
@@ -768,7 +772,7 @@ export function LogViewer({
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,
-                onAnnotate,
+                onAnnotate: handleAnnotate,
               } : undefined}
             />
             {logError && (

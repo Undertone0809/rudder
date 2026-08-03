@@ -14,6 +14,10 @@ type AssistantAnnotationInput = Extract<
   ChatInlineAnnotationInput,
   { surface: "assistant_body" }
 >;
+type RunAnnotationInput = Extract<
+  ChatInlineAnnotationInput,
+  { surface: "agent_run_transcript" }
+>;
 
 function annotation(
   id: string,
@@ -33,6 +37,22 @@ function annotation(
     suffix: "",
     attachmentIds: [],
     ...overrides,
+  };
+}
+
+function runAnnotation(id: string, sourceRunId: string): RunAnnotationInput {
+  return {
+    id,
+    selectedText: "Same selected text",
+    comment: null,
+    surface: "agent_run_transcript",
+    sourceHash: "b".repeat(64),
+    sourceRunId,
+    sourceAgentId: "40000000-0000-4000-8000-000000000001",
+    anchorKind: "transition",
+    sourceEntryId: "entry-1",
+    sourceMemberIds: ["entry-1"],
+    attachmentIds: [],
   };
 }
 
@@ -77,6 +97,20 @@ describe("chat response annotation state", () => {
       [first.id, 1],
       [second.id, 2],
     ]);
+  });
+
+  it("keeps identical selected text from different agent runs", () => {
+    let state = createChatResponseAnnotationState();
+    state = responseAnnotationReducer(state, {
+      type: "add",
+      annotation: runAnnotation("30000000-0000-4000-8000-000000000010", "run-one"),
+    });
+    state = responseAnnotationReducer(state, {
+      type: "add",
+      annotation: runAnnotation("30000000-0000-4000-8000-000000000011", "run-two"),
+    });
+
+    expect(state.annotations).toHaveLength(2);
   });
 
   it("edits comments, deletes one annotation, renumbers, and clears all", () => {

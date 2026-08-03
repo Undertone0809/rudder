@@ -189,33 +189,35 @@ function isStableTranscriptBlock(block: TranscriptBlock): boolean {
   if (block.type === "message") return block.role === "assistant" && !block.streaming;
   if (block.type === "thinking") return !block.streaming;
   if (block.type === "tool") return block.status !== "running";
+  if (block.type === "command_group") return block.items.every((item) => item.status !== "running");
   return false;
 }
 
 function transcriptBlockAnnotationText(block: TranscriptBlock): string {
+  const limit = (value: string) => value.length > 4000 ? `${value.slice(0, 3997)}...` : value;
   switch (block.type) {
     case "message":
     case "thinking":
     case "stdout":
-      return block.text;
+      return limit(block.text);
     case "tool": {
       const request = formatNiceToolRequest(block.name, block.input);
       const response = block.result ? formatNiceToolResponse(block.name, block.input, block.result) : "";
-      return [request, response].filter(Boolean).join("\n\n");
+      return limit([request, response].filter(Boolean).join("\n\n"));
     }
     case "command_group":
-      return block.items.map((item) => {
+      return limit(block.items.map((item) => {
         const request = formatNiceToolRequest(item.name, item.input);
         return [request, item.result].filter(Boolean).join("\n\n");
-      }).filter(Boolean).join("\n\n");
+      }).filter(Boolean).join("\n\n"));
     case "activity":
-      return block.name;
+      return limit(block.name);
     case "todo_list":
-      return block.items.map((item) => item.text).join("\n");
+      return limit(block.items.map((item) => item.text).join("\n"));
     case "memory_update":
-      return [block.summary, block.effect].filter(Boolean).join("\n\n");
+      return limit([block.summary, block.effect].filter(Boolean).join("\n\n"));
     case "event":
-      return [block.label, block.text, block.detail].filter(Boolean).join("\n\n");
+      return limit([block.label, block.text, block.detail].filter(Boolean).join("\n\n"));
   }
 }
 
@@ -271,7 +273,7 @@ export function TranscriptRunAnnotationBlock({
   };
   useEffect(() => {
     if (!canAnnotate) return undefined;
-    const updateSelection = (event: MouseEvent | TouchEvent | KeyboardEvent) => {
+    const updateSelection = (event: Event) => {
       const eventTarget = event.target instanceof Element ? event.target : null;
       if (eventTarget?.closest('[role="toolbar"][aria-label="Response annotation actions"]')) return;
       const root = blockRootRef.current;
@@ -301,10 +303,12 @@ export function TranscriptRunAnnotationBlock({
     document.addEventListener("mouseup", updateSelection);
     document.addEventListener("touchend", updateSelection);
     document.addEventListener("keyup", updateSelection);
+    document.addEventListener("selectionchange", updateSelection);
     return () => {
       document.removeEventListener("mouseup", updateSelection);
       document.removeEventListener("touchend", updateSelection);
       document.removeEventListener("keyup", updateSelection);
+      document.removeEventListener("selectionchange", updateSelection);
     };
   }, [canAnnotate]);
 
@@ -334,7 +338,7 @@ export function TranscriptRunAnnotationBlock({
           type="button"
           data-testid="run-transcript-annotation-trigger"
           data-run-transcript-annotation-trigger="true"
-          className="absolute right-0 top-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover/run-transcript-block:opacity-100 motion-reduce:transition-none"
+          className="absolute right-0 top-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover/run-transcript-block:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100 motion-reduce:transition-none"
           aria-label="Annotate transcript block"
           title="Annotate transcript block"
           onClick={(event) => handleAnnotate(event.currentTarget)}
@@ -356,6 +360,7 @@ export function TranscriptRunAnnotationBlock({
           anchorObservationRoot={blockRootRef.current}
           onAddToChat={commitPendingSelection}
           onAskInSideChat={commitPendingSelection}
+          showAskInSideChat={false}
           onDismiss={() => setPendingSelection(null)}
           onAnchorUnavailable={() => setPendingSelection(null)}
           autoFocus={pendingSelection.autoFocus}

@@ -62,12 +62,22 @@ export function chatResponseAnnotationRangeKey(annotation: ChatInlineAnnotationI
   const generationKey = annotation.surface === "process_transcript"
     ? `${annotation.generationId}:${annotation.generationSeqStart}:${annotation.generationSeqEnd}`
     : "";
+  const runKey = annotation.surface === "agent_run_transcript"
+    ? [
+      annotation.sourceRunId,
+      annotation.sourceAgentId,
+      annotation.anchorKind,
+      annotation.sourceEntryId,
+      annotation.sourceMemberIds.join(","),
+    ].join(":")
+    : "";
   return [
     annotation.sourceConversationId,
     annotation.sourceMessageId,
     annotation.sourceFilePath,
     annotation.surface,
     generationKey,
+    runKey,
     annotation.sourceHash,
     annotation.start,
     annotation.end,

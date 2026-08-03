@@ -19,6 +19,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
@@ -41,6 +42,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
+import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -66,6 +68,8 @@ import {
   writeRunFilterState,
 } from "./AgentDetail.run-filters";
 import { LogViewer } from "./AgentDetail.run-log";
+
+type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
 
 export function getRunListSummary(run: HeartbeatRun): string {
   const failureDisplay = getRunFailureDisplay(run);
@@ -443,17 +447,23 @@ export function RunsTab({
 }) {
   const { isMobile, setSidebarOpen } = useSidebar();
   const sidePanel = useSidePanel();
+  const { pushToast } = useToast();
+  const feedbackTargetRef = useRef<RunFeedbackTarget | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const contextKey = `agent-runs:${agentRouteId}`;
   useEffect(() => {
     sidePanel.setContextKey(contextKey);
   }, [contextKey, sidePanel]);
   useEffect(() => {
-    if (sidePanel.tabs.some((candidate) => (
+    const existing = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
       candidate.kind === "run_feedback_chat"
       && candidate.agentId === agentId
       && candidate.organizationId === orgId
-    ))) return;
+    ));
+    if (existing) {
+      feedbackTargetRef.current = existing;
+      return;
+    }
     if (typeof window === "undefined") return;
     try {
       const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
@@ -461,7 +471,7 @@ export function RunsTab({
       const parsed = JSON.parse(raw) as Partial<Extract<SidePanelTarget, { kind: "run_feedback_chat" }>>;
       if (parsed.agentId !== agentId || parsed.organizationId !== orgId) return;
       if (!Array.isArray(parsed.inlineAnnotations)) return;
-      sidePanel.openTargetForContext(contextKey, {
+      const restoredTarget: RunFeedbackTarget = {
         kind: "run_feedback_chat",
         agentId,
         organizationId: orgId,
@@ -472,21 +482,35 @@ export function RunsTab({
         body: typeof parsed.body === "string" ? parsed.body : "",
         inlineAnnotations: parsed.inlineAnnotations,
         label: "Run feedback",
-      });
+      };
+      feedbackTargetRef.current = restoredTarget;
+      sidePanel.openTargetForContext(contextKey, restoredTarget);
     } catch {
       // Ignore malformed or unavailable local draft storage.
     }
   }, [agentId, contextKey, orgId, sidePanel]);
+  useEffect(() => {
+    const current = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
+      candidate.kind === "run_feedback_chat"
+      && candidate.agentId === agentId
+      && candidate.organizationId === orgId
+    ));
+    if (current) feedbackTargetRef.current = current;
+  }, [agentId, orgId, sidePanel.tabs]);
 
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.text));
-    const sourceHash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    const annotation: ChatInlineAnnotationInput = {
-      id: crypto.randomUUID(),
+    const annotationId = crypto.randomUUID();
+    const existing = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
+      candidate.kind === "run_feedback_chat"
+      && candidate.agentId === agentId
+      && candidate.organizationId === orgId
+    )) ?? feedbackTargetRef.current;
+    const pendingAnnotation: ChatInlineAnnotationInput = {
+      id: annotationId,
       selectedText: input.text,
       comment: null,
-      sourceHash,
+      sourceHash: "pending",
       surface: "agent_run_transcript",
       sourceRunId: input.sourceRunId,
       sourceAgentId: input.sourceAgentId,
@@ -495,13 +519,20 @@ export function RunsTab({
       sourceMemberIds: input.sourceMemberIds?.length ? input.sourceMemberIds : [input.blockId],
       attachmentFileIndexes: [],
     };
-    const existing = sidePanel.tabs.find((candidate): candidate is Extract<SidePanelTarget, { kind: "run_feedback_chat" }> => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
-    const target: Extract<SidePanelTarget, { kind: "run_feedback_chat" }> = existing
-      ? { ...existing, inlineAnnotations: [...existing.inlineAnnotations, annotation] }
+    const validationError = validateChatResponseAnnotationAdd(
+      createChatResponseAnnotationState(existing?.inlineAnnotations ?? []),
+      pendingAnnotation,
+    );
+    if (validationError) {
+      pushToast({
+        title: "Could not add annotation",
+        body: validationError,
+        tone: "warn",
+      });
+      return;
+    }
+    const pendingTarget: RunFeedbackTarget = existing
+      ? { ...existing, inlineAnnotations: [...existing.inlineAnnotations, pendingAnnotation] }
       : {
         kind: "run_feedback_chat",
         agentId,
@@ -511,12 +542,23 @@ export function RunsTab({
         clientMutationId: crypto.randomUUID(),
         projectId: null,
         body: "",
-        inlineAnnotations: [annotation],
+        inlineAnnotations: [pendingAnnotation],
         label: "Run feedback",
       };
+    feedbackTargetRef.current = pendingTarget;
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.text));
+    const sourceHash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const current = feedbackTargetRef.current ?? pendingTarget;
+    const target: RunFeedbackTarget = {
+      ...current,
+      inlineAnnotations: current.inlineAnnotations.map((annotation) => (
+        annotation.id === annotationId ? { ...annotation, sourceHash } : annotation
+      )),
+    };
+    feedbackTargetRef.current = target;
     sidePanel.openTargetForContext(contextKey, target);
     setSidebarOpen(false);
-  }, [agentId, contextKey, orgId, setSidebarOpen, sidePanel]);
+  }, [agentId, contextKey, orgId, pushToast, setSidebarOpen, sidePanel]);
   const filterState = useMemo(() => parseRunFilterState(searchParams), [searchParams]);
 
   if (runs.length === 0) {

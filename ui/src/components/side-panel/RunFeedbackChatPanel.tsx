@@ -1,5 +1,7 @@
+import type { TranscriptEntry } from "@/agent-runtimes";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { healthApi } from "@/api/health";
 import { projectsApi } from "@/api/projects";
 import {
   ChatComposerEditor,
@@ -11,7 +13,9 @@ import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import { useToast } from "@/context/ToastContext";
+import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
 import {
   canSubmitChatResponseAnnotations,
   chatResponseAnnotationsForDraft,
@@ -19,9 +23,12 @@ import {
   responseAnnotationReducer,
   serializeChatResponseAnnotations,
   validateChatResponseAnnotationReplacement,
+  validateChatResponseAnnotationState,
 } from "@/lib/chat-response-annotations";
 import { queryKeys } from "@/lib/queryKeys";
+import { useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import type {
   ChatConversation,
   ChatInlineAnnotationInput,
@@ -29,7 +36,7 @@ import type {
   Project,
 } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Paperclip } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -45,15 +52,15 @@ function makeId() {
   return globalThis.crypto?.randomUUID?.() ?? `annotation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function sha256(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function messageBody(message: ChatMessage) {
   return message.body?.trim() || (message.role === "user" ? "Annotation-only feedback" : "");
 }
+
+function transcriptEntries(message: ChatMessage) {
+  return (message.transcript ?? []) as TranscriptEntry[];
+}
+
+function noop() {}
 
 export function RunFeedbackChatPanel({
   organizationId,
@@ -66,6 +73,7 @@ export function RunFeedbackChatPanel({
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const navigate = useNavigate();
   const [draft, setDraft] = useState(target.body ?? "");
   const [projectId, setProjectId] = useState<string | null>(target.projectId ?? null);
   const [sending, setSending] = useState(false);
@@ -102,6 +110,10 @@ export function RunFeedbackChatPanel({
   const projectsQuery = useQuery({
     queryKey: queryKeys.projects.list(organizationId),
     queryFn: () => projectsApi.list(organizationId),
+  });
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
   });
   const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.conversationId ?? "__run-feedback-draft__"),
@@ -153,7 +165,12 @@ export function RunFeedbackChatPanel({
     || messages.some((message) => message.role === "user"),
   );
   const annotationCount = annotationState.annotations.length;
-  const canSend = canSubmitChatResponseAnnotations(draft, annotationState);
+  const annotationValidationError = validateChatResponseAnnotationState(
+    annotationState.annotations,
+    Object.values(annotationState.pendingFilesByAnnotationId).reduce((total, files) => total + files.length, 0),
+  );
+  const hasPendingAnnotation = annotationState.annotations.some((annotation) => annotation.sourceHash === "pending");
+  const canSend = !hasPendingAnnotation && !annotationValidationError && canSubmitChatResponseAnnotations(draft, annotationState);
 
   const updateTarget = useCallback((patch: Partial<RunFeedbackTarget>) => {
     onReplaceTarget(sidePanelTargetKey(target), { ...target, ...patch });
@@ -166,40 +183,16 @@ export function RunFeedbackChatPanel({
     updateTarget({ projectId: next });
   };
 
-  const handleAnnotate = useCallback(async (input: {
-    sourceRunId: string;
-    sourceAgentId: string;
-    blockId: string;
-    blockType: string;
-    text: string;
-  }) => {
-    if (!input.text.trim()) return;
-    const hash = await sha256(input.text);
-    const annotation: ChatInlineAnnotationInput = {
-      id: makeId(),
-      selectedText: input.text,
-      comment: null,
-      sourceHash: hash,
-      surface: "agent_run_transcript",
-      sourceRunId: input.sourceRunId,
-      sourceAgentId: input.sourceAgentId,
-      anchorKind: "transition",
-      sourceEntryId: input.blockId,
-      sourceMemberIds: [input.blockId],
-      attachmentFileIndexes: [],
-    };
-    dispatchAnnotation({ type: "add", annotation });
-    updateTarget({
-      body: draft,
-      inlineAnnotations: [...annotationState.annotations, annotation],
-    });
-    setAnnotationsExpanded(true);
-  }, [annotationState.annotations, draft, updateTarget]);
-
   const handleSend = async () => {
     if (sending || !canSend) return;
     const body = draft.trim();
     const serialized = serializeChatResponseAnnotations(annotationState);
+    if (blockStaleAnnotationSubmission({
+      annotations: serialized.inlineAnnotations,
+      devServer: healthQuery.data?.devServer,
+      draftPersistence: "durable",
+      pushToast,
+    })) return;
     setSending(true);
     setError(null);
     setStreamBody("");
@@ -215,7 +208,10 @@ export function RunFeedbackChatPanel({
               updateTarget({ body: "", inlineAnnotations: [] });
             }
             if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
-            if (event.type === "final") setMessages((current) => [...current, ...event.messages]);
+            if (event.type === "final") {
+              setStreamBody("");
+              setMessages((current) => [...current, ...event.messages]);
+            }
             if (event.type === "error") throw new Error(event.error);
           },
         });
@@ -254,7 +250,10 @@ export function RunFeedbackChatPanel({
               }
             }
             if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
-            if (event.type === "final") setMessages((current) => [...current, ...event.messages]);
+            if (event.type === "final") {
+              setStreamBody("");
+              setMessages((current) => [...current, ...event.messages]);
+            }
             if (event.type === "error") throw new Error(event.error);
           },
         });
@@ -273,7 +272,7 @@ export function RunFeedbackChatPanel({
   };
 
   const conversation = conversationQuery.data as ChatConversation | undefined;
-  const visibleMessages = [...messages, ...(streamBody ? [{ id: "stream", role: "assistant", body: streamBody } as ChatMessage] : [])];
+  const visibleMessages = messages;
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="run-feedback-chat-panel">
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -286,15 +285,66 @@ export function RunFeedbackChatPanel({
             </div>
           </div>
           {conversation ? <div className="text-xs text-muted-foreground">{conversation.title}</div> : null}
-          {visibleMessages.map((message) => (
+          {conversation ? visibleMessages.map((message) => {
+            const transcript = transcriptEntries(message);
+            return (
+              <div key={message.id} data-testid="run-feedback-chat-message">
+                {message.role === "assistant" && transcript.length > 0 ? (
+                  <StreamTranscriptItem
+                    entries={transcript}
+                    state={message.status}
+                    generationTerminalReason={message.generationTerminalReason}
+                    streamStartedAt={new Date(message.createdAt)}
+                    streamEndedAt={new Date(message.updatedAt)}
+                    assistantMessageBody={message.body}
+                    showDeveloperDiagnostics={false}
+                  />
+                ) : null}
+                {message.role === "user" && !message.body.trim() ? (
+                  <div className="mb-2 text-xs text-muted-foreground">Annotation-only feedback</div>
+                ) : null}
+                <ChatMessageItem
+                  conversation={conversation}
+                  message={message}
+                  agents={agentsQuery.data}
+                  decisionNote=""
+                  onDecisionNoteChange={noop}
+                  decisionNoteMentions={[]}
+                  onDecisionNoteMentionQueryChange={noop}
+                  onDecisionNoteInlineTokenClick={noop}
+                  onApprovalAction={noop}
+                  onIssueProposalChange={noop}
+                  onResolveOperationProposal={noop}
+                  onConvertToIssue={noop}
+                  actionPending={false}
+                  onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
+                  onOpenFile={noop}
+                  onSelectResponseAnnotation={(annotation) => {
+                    if (annotation.surface !== "agent_run_transcript") return;
+                    navigate(`/agents/${target.agentId}/runs/${annotation.sourceRunId}`);
+                  }}
+                  skillReferences={[]}
+                />
+              </div>
+            );
+          }) : visibleMessages.map((message) => (
             <div key={message.id} className={`rounded-lg border px-3 py-2 text-sm ${message.role === "user" ? "ml-6 bg-muted/30" : "mr-6"}`}>
               <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">{message.role}</div>
               <div className="whitespace-pre-wrap break-words">{messageBody(message)}</div>
             </div>
           ))}
+          {conversation && streamBody ? (
+            <div data-testid="run-feedback-chat-streaming">
+              <div className="max-w-3xl whitespace-pre-wrap break-words text-sm text-foreground">{streamBody}</div>
+            </div>
+          ) : null}
         </div>
       </div>
-      {error ? <div role="alert" className="px-4 pb-2 text-sm text-destructive">{error}</div> : null}
+      {error || annotationValidationError ? (
+        <div role="alert" className="px-4 pb-2 text-sm text-destructive">
+          {error ?? annotationValidationError}
+        </div>
+      ) : null}
       <div className="shrink-0 px-4 pb-4">
         <ChatComposerSurface className="mx-auto max-w-3xl" testId="run-feedback-composer">
           {annotationCount > 0 ? (
@@ -375,14 +425,15 @@ export function RunFeedbackChatPanel({
           <ChatComposerToolbar
             actions={<ChatComposerSendButton mode={sending ? "sending" : "send"} ariaLabel={sending ? "Sending feedback" : "Send feedback"} disabled={!canSend || sending} onClick={() => void handleSend()} />}
           >
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title={selectedProject?.name ?? "No project"}>
-              <Paperclip className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+            <span className="inline-flex min-w-0 max-w-[min(100%,14rem)] items-center gap-1.5 text-xs text-muted-foreground" title={projectLocked ? "Project context is locked after conversation starts." : (selectedProject?.name ?? "No project")}>
+              {selectedProject ? <ProjectIcon color={selectedProject.color} icon={selectedProject.icon} size="xs" label={selectedProject.name} /> : <span className="h-3.5 w-3.5 shrink-0 rounded border border-dashed border-muted-foreground/50" aria-hidden="true" />}
               <select
                 aria-label="Project"
                 value={projectId ?? ""}
                 disabled={projectLocked || projectsQuery.isPending}
+                aria-disabled={projectLocked || projectsQuery.isPending}
                 onChange={(event) => handleProjectChange(event.currentTarget.value)}
-                className="max-w-[10rem] bg-transparent text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                className="min-w-0 max-w-[10rem] truncate bg-transparent text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">No project</option>
                 {(projectsQuery.data ?? []).map((project: Project) => <option key={project.id} value={project.id}>{project.name}</option>)}

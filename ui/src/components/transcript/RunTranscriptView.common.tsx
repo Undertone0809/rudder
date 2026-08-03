@@ -99,6 +99,7 @@ export interface TranscriptToolCardEntry {
   result?: string;
   isError?: boolean;
   status: "running" | "completed" | "error";
+  sourceEntryIds?: string[];
 }
 
 export type TranscriptMemoryScope = "stable_instructions" | "daily_note" | "knowledge_graph";

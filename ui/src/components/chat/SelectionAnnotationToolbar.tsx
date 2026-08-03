@@ -108,6 +108,7 @@ export function SelectionAnnotationToolbar({
   onAddToChat,
   onAskInSideChat,
   askInSideChatDisabled = false,
+  showAskInSideChat = true,
   onDismiss,
   onAnchorUnavailable,
   labels = DEFAULT_LABELS,
@@ -127,6 +128,7 @@ export function SelectionAnnotationToolbar({
   onAddToChat: () => void;
   onAskInSideChat: () => void;
   askInSideChatDisabled?: boolean;
+  showAskInSideChat?: boolean;
   onDismiss: () => void;
   onAnchorUnavailable?: () => void;
   labels?: SelectionAnnotationToolbarLabels;
@@ -146,8 +148,10 @@ export function SelectionAnnotationToolbar({
   }));
   const actions = useMemo(() => [
     { label: labels.addToChat, run: onAddToChat, disabled: false },
-    { label: labels.askInSideChat, run: onAskInSideChat, disabled: askInSideChatDisabled },
-  ], [askInSideChatDisabled, labels, onAddToChat, onAskInSideChat]);
+    ...(showAskInSideChat
+      ? [{ label: labels.askInSideChat, run: onAskInSideChat, disabled: askInSideChatDisabled }]
+      : []),
+  ], [askInSideChatDisabled, labels, onAddToChat, onAskInSideChat, showAskInSideChat]);
   const placement = placeSelectionAnnotationToolbar(
     liveAnchorRect,
     toolbarSize,

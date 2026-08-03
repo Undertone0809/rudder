@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
-import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
+import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
@@ -99,6 +99,7 @@ export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTra
           result: block.result,
           isError: block.isError,
           status: block.status,
+          sourceEntryIds: block.sourceEntryIds,
         },
       });
       continue;
@@ -735,6 +736,7 @@ export function TranscriptChatActionGroup({
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   annotationSource,
+  runAnnotationContext,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
@@ -747,6 +749,7 @@ export function TranscriptChatActionGroup({
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
+  runAnnotationContext?: TranscriptRunAnnotationContext;
 }) {
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -764,6 +767,40 @@ export function TranscriptChatActionGroup({
   const summaryAgentAvatar = actions[0]?.type === "tool"
     ? getTranscriptAgentAvatarInfo(actions[0].entry.name, actions[0].entry.input)
     : null;
+  const annotationBlock = useMemo<TranscriptBlock | null>(() => {
+    if (actions.length === 1) {
+      const action = actions[0];
+      if (action?.type === "stdout") return action.entry;
+      if (action?.type === "tool") {
+        return {
+          type: "tool",
+          ts: action.entry.ts,
+          endTs: action.entry.endTs,
+          name: action.entry.name,
+          toolUseId: action.entry.toolUseId,
+          input: action.entry.input,
+          result: action.entry.result,
+          isError: action.entry.isError,
+          status: action.entry.status,
+          sourceEntryIds: action.entry.sourceEntryIds,
+        };
+      }
+    }
+    const toolActions = actions.filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool");
+    if (toolActions.length === 0) return null;
+    return {
+      type: "command_group",
+      ts: toolActions[0]?.entry.ts ?? new Date(0).toISOString(),
+      endTs: toolActions.at(-1)?.entry.endTs,
+      items: toolActions.map((action) => action.entry),
+      sourceEntryIds: toolActions.flatMap((action) => action.entry.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index),
+    };
+  }, [actions]);
+  const wrapAnnotation = (content: ReactNode) => annotationBlock && detailVariant && runAnnotationContext ? (
+    <TranscriptRunAnnotationBlock block={annotationBlock} presentation="detail" context={runAnnotationContext}>
+      {content}
+    </TranscriptRunAnnotationBlock>
+  ) : content;
 
   useEffect(() => {
     if (!detailVariant && allToolsErrored) {
@@ -772,7 +809,7 @@ export function TranscriptChatActionGroup({
   }, [detailVariant, allToolsErrored]);
 
   if (shouldInlineSingleStdoutAction) {
-    return (
+    return wrapAnnotation(
       <div className="divide-y divide-border/30">
         <TranscriptChatActionRow
           action={singleAction}
@@ -782,11 +819,12 @@ export function TranscriptChatActionGroup({
           onOpenAgent={onOpenAgent}
         />
       </div>
+      ,
     );
   }
 
   if (shouldRenderSingleToolAction) {
-    return (
+    return wrapAnnotation(
       <div className="divide-y divide-border/30">
         <TranscriptChatActionRow
           action={singleAction}
@@ -801,6 +839,7 @@ export function TranscriptChatActionGroup({
           quiet={!detailVariant}
         />
       </div>
+      ,
     );
   }
 
@@ -809,7 +848,7 @@ export function TranscriptChatActionGroup({
     ? `Collapse tool activity${labelSuffix}`
     : `Expand tool activity${labelSuffix}`;
 
-  return (
+  return wrapAnnotation(
     <div>
       <button
         type="button"
@@ -871,7 +910,7 @@ export function TranscriptChatActionGroup({
           ))}
         </div>
       ) : null}
-    </div>
+    </div>,
   );
 }
 
@@ -942,6 +981,7 @@ export function TranscriptChatTurn({
               canOpenSkill={canOpenSkill}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
+              runAnnotationContext={runAnnotationContext}
             />
           );
         }
@@ -992,6 +1032,7 @@ export function TranscriptChatTurn({
                 canOpenSkill={canOpenSkill}
                 agentInspections={agentInspections}
                 onOpenAgent={onOpenAgent}
+                runAnnotationContext={runAnnotationContext}
               />
             </div>
           );

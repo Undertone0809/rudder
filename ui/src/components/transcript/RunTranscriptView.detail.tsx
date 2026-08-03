@@ -25,10 +25,12 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
             ts: item.ts,
             endTs: item.endTs,
             name: item.name,
+            toolUseId: item.toolUseId,
             input: item.input,
             result: item.result,
             isError: item.isError,
             status: item.status,
+            sourceEntryIds: item.sourceEntryIds,
           },
         });
       });
