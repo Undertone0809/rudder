@@ -39,6 +39,7 @@ describe("run-detail-events", () => {
 
     expect(entry).toEqual({
       kind: "stderr",
+      sourceEntryId: "1",
       ts: "2026-04-12T10:00:00.000Z",
       text: "Process lost -- child pid 123 is no longer running",
     });
@@ -72,6 +73,7 @@ describe("run-detail-events", () => {
 
     expect(entry).toEqual({
       kind: "assistant",
+      sourceEntryId: "1",
       ts: "2026-06-17T09:00:01.000Z",
       text: "web search completed",
     });
@@ -117,11 +119,13 @@ describe("run-detail-events", () => {
     expect(entries).toEqual([
       {
         kind: "assistant",
+        sourceEntryId: "1",
         ts: "2026-06-17T09:00:01.000Z",
         text: "Loaded agent instructions file",
       },
       {
         kind: "tool_result",
+        sourceEntryId: "1",
         ts: "2026-06-17T09:00:02.000Z",
         toolUseId: "tool-1",
         toolName: "exec_command",
@@ -149,6 +153,32 @@ describe("run-detail-events", () => {
 
     expect(entries).toEqual([
       expect.objectContaining({ text: "Visible terminal lifecycle evidence" }),
+    ]);
+  });
+
+  it("does not project hidden or internal adapter events into annotatable fallback transcript blocks", () => {
+    const entries = heartbeatRunEventsToTranscriptEntries([
+      makeEvent({
+        seq: 1,
+        eventType: "adapter.skill_usage",
+        message: "internal skill usage",
+        payload: { hidden: true },
+      }),
+      makeEvent({
+        seq: 2,
+        eventType: "adapter.invoke",
+        message: "reasoning boundary",
+        payload: { kind: "system", text: "reasoning started" },
+      }),
+      makeEvent({
+        seq: 3,
+        eventType: "run.output",
+        message: "Visible terminal output",
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      expect.objectContaining({ text: "Visible terminal output" }),
     ]);
   });
 

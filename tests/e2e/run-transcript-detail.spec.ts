@@ -372,6 +372,196 @@ test.describe("Run transcript detail", () => {
     });
   });
 
+  test("adds annotation-only feedback across runs while preserving the side panel and project lock", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    const organization = await createOrganization(page, `Run-Annotation-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Annotation Run Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Annotation Review Project",
+        description: "Project context for run feedback.",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+
+    const runOneId = randomUUID();
+    const runTwoId = randomUUID();
+    const runOneStartedAt = new Date("2026-07-30T08:00:00.000Z");
+    const runTwoStartedAt = new Date("2026-07-30T09:00:00.000Z");
+    await e2eDb.insert(heartbeatRuns).values([
+      {
+        id: runOneId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "scheduled",
+        triggerDetail: "Annotation run one",
+        status: "succeeded",
+        startedAt: runOneStartedAt,
+        finishedAt: new Date(runOneStartedAt.getTime() + 60_000),
+        createdAt: runOneStartedAt,
+        updatedAt: new Date(runOneStartedAt.getTime() + 60_000),
+      },
+      {
+        id: runTwoId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "scheduled",
+        triggerDetail: "Annotation run two",
+        status: "succeeded",
+        startedAt: runTwoStartedAt,
+        finishedAt: new Date(runTwoStartedAt.getTime() + 60_000),
+        createdAt: runTwoStartedAt,
+        updatedAt: new Date(runTwoStartedAt.getTime() + 60_000),
+      },
+    ]);
+    await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId: runOneId,
+        agentId: agent.id,
+        seq: 1,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript entry",
+        payload: {
+          kind: "assistant",
+          text: "Run one completed the deployment review.",
+          ts: new Date(runOneStartedAt.getTime() + 30_000).toISOString(),
+        },
+        createdAt: new Date(runOneStartedAt.getTime() + 30_000),
+      },
+      {
+        orgId: organization.id,
+        runId: runTwoId,
+        agentId: agent.id,
+        seq: 1,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript entry",
+        payload: {
+          kind: "assistant",
+          text: "Run two found a follow-up regression.",
+          ts: new Date(runTwoStartedAt.getTime() + 30_000).toISOString(),
+        },
+        createdAt: new Date(runTwoStartedAt.getTime() + 30_000),
+      },
+    ]);
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runOneId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Run one completed the deployment review.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    const firstTrigger = detailPane.getByTestId("run-transcript-annotation-trigger").first();
+    await firstTrigger.hover();
+    await expect(firstTrigger).toHaveCSS("opacity", "1");
+    await firstTrigger.click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const feedbackPanel = page.getByTestId("run-feedback-chat-panel");
+    await expect(sidePanel).toBeVisible();
+    await expect(feedbackPanel).toBeVisible();
+    await expect(feedbackPanel.getByText("Run feedback", { exact: true })).toBeVisible();
+    await expect.poll(() => page.locator("[data-testid='workspace-context-card']").evaluate((element) => (
+      element.getBoundingClientRect().width
+    ))).toBe(0);
+
+    const projectSelector = feedbackPanel.getByRole("combobox", { name: "Project" });
+    await projectSelector.selectOption(project.id);
+    await expect(projectSelector).toHaveValue(project.id);
+
+    const sendFeedback = feedbackPanel.getByRole("button", { name: "Send feedback" });
+    await expect(sendFeedback).toBeEnabled();
+    await sendFeedback.click();
+    await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(projectSelector).toBeDisabled();
+
+    let conversationId: string | null = null;
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=100`);
+      if (!response.ok()) return null;
+      const candidates = await response.json() as Array<{ id: string; preferredAgentId?: string | null }>;
+      conversationId = candidates.find((chat) => chat.preferredAgentId === agent.id)?.id ?? null;
+      return conversationId;
+    }, { timeout: 30_000 }).toBeTruthy();
+    expect(conversationId).toBeTruthy();
+    const persistedFeedbackTarget = await page.evaluate(({ orgId, agentId }) => {
+      const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
+      return raw ? JSON.parse(raw) as {
+        conversationId?: string | null;
+        projectId?: string | null;
+        projectLocked?: boolean;
+      } : null;
+    }, { orgId: organization.id, agentId: agent.id });
+    expect(persistedFeedbackTarget).toEqual(expect.objectContaining({
+      conversationId,
+      projectId: project.id,
+      projectLocked: true,
+    }));
+    const messagesResponse = await page.request.get(`/api/chats/${conversationId}/messages?orgId=${organization.id}`);
+    expect(messagesResponse.ok()).toBe(true);
+    const messages = await messagesResponse.json() as Array<{
+      role: string;
+      body: string;
+      structuredPayload?: { inlineAnnotations?: Array<{ sourceRunId?: string }> } | null;
+    }>;
+    const firstUserMessage = messages.find((message) => message.role === "user");
+    expect(firstUserMessage?.body).toBe("");
+    expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toEqual([
+      expect.objectContaining({ sourceRunId: runOneId }),
+    ]);
+
+    const secondRunRow = page.locator('[role="link"][aria-label^="Open run"]').filter({ hasText: runTwoId.slice(0, 8) });
+    await expect(secondRunRow).toBeVisible();
+    await secondRunRow.click();
+    // Agent detail routes canonicalize UUIDs to the stable agent ref slug.
+    await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${runTwoId}$`));
+    await expect(detailPane.getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toBeVisible();
+    await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible();
+    await expect(projectSelector).toBeDisabled();
+
+    await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
+    await expect(feedbackPanel.getByText("Run two found a follow-up regression.", { exact: false })).toHaveCount(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidePanel).toBeVisible();
+    await expect.poll(async () => {
+      const box = await sidePanel.boundingBox();
+      return Boolean(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 390 && box.y + box.height <= 844);
+    }, { timeout: 3_000 }).toBe(true);
+    const mobilePanelBox = await sidePanel.boundingBox();
+    expect(mobilePanelBox).not.toBeNull();
+    expect(mobilePanelBox!.x).toBeGreaterThanOrEqual(0);
+    expect(mobilePanelBox!.y).toBeGreaterThanOrEqual(0);
+    expect(mobilePanelBox!.x + mobilePanelBox!.width).toBeLessThanOrEqual(390);
+    expect(mobilePanelBox!.y + mobilePanelBox!.height).toBeLessThanOrEqual(844);
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-feedback-mobile.png",
+      fullPage: true,
+    });
+  });
+
   test("loads a complete conversation transcript across multiple event pages", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Long-Conversation-${Date.now()}`);
 

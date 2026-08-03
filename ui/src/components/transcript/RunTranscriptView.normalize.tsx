@@ -29,6 +29,18 @@ function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
     : null;
 }
 
+function transcriptEntrySourceIds(entry: TranscriptEntry): string[] {
+  return typeof entry.sourceEntryId === "string" && entry.sourceEntryId.trim()
+    ? [entry.sourceEntryId]
+    : [];
+}
+
+function appendTranscriptSourceId(block: TranscriptBlock, sourceEntryId: string | undefined) {
+  if (!sourceEntryId || !sourceEntryId.trim()) return;
+  const sourceEntryIds = block.sourceEntryIds ?? [];
+  if (!sourceEntryIds.includes(sourceEntryId)) block.sourceEntryIds = [...sourceEntryIds, sourceEntryId];
+}
+
 function blockHasTranscriptProvenance(
   block: TranscriptBlock,
 ): block is Extract<TranscriptBlock, { type: "message" | "thinking" }> & {
@@ -596,6 +608,7 @@ export function normalizeTranscript(
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
         if (provenance && blockHasTranscriptProvenance(previous)) {
           if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
             previous.generationSeqEnd = provenance.generationSeqEnd;
@@ -623,6 +636,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          sourceEntryIds: transcriptEntrySourceIds(entry),
           ...(entry.kind === "assistant" && entry.segmentId ? { segmentId: entry.segmentId } : {}),
           ...provenance,
         });
@@ -648,6 +662,7 @@ export function normalizeTranscript(
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
         if (provenance && blockHasTranscriptProvenance(previous)) {
           if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
             previous.generationSeqEnd = provenance.generationSeqEnd;
@@ -668,6 +683,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          sourceEntryIds: transcriptEntrySourceIds(entry),
           ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
           ...provenance,
         });
@@ -688,6 +704,7 @@ export function normalizeTranscript(
         toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
         input: entry.input,
         status: "running",
+        sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
       if (toolBlock.toolUseId) {
@@ -709,6 +726,7 @@ export function normalizeTranscript(
         matched.isError = entry.isError;
         matched.status = entry.isError ? "error" : "completed";
         matched.endTs = entry.ts;
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(matched, sourceEntryId);
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
         const imageInput = trustedImageResultInput(entry.toolName, entry.content);
@@ -722,6 +740,7 @@ export function normalizeTranscript(
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",
+          sourceEntryIds: transcriptEntrySourceIds(entry),
         });
       }
       continue;

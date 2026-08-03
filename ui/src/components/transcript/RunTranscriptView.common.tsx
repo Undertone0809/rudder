@@ -149,8 +149,10 @@ export interface TranscriptRunAnnotationInput {
   sourceRunId: string;
   sourceAgentId: string;
   blockId: string;
+  sourceMemberIds?: string[];
   blockType: TranscriptBlock["type"];
   text: string;
+  anchorKind: "text" | "transition";
   ts: string;
   anchor: HTMLButtonElement;
   block?: TranscriptBlock;
@@ -211,6 +213,7 @@ export type TranscriptBlock =
       text: string;
       streaming: boolean;
       segmentId?: string;
+      sourceEntryIds?: string[];
     } & Partial<TranscriptGenerationProvenance>
   | {
       type: "thinking";
@@ -218,6 +221,7 @@ export type TranscriptBlock =
       text: string;
       streaming: boolean;
       segmentId?: string;
+      sourceEntryIds?: string[];
     } & Partial<TranscriptGenerationProvenance>
   | {
       type: "tool";
@@ -229,6 +233,7 @@ export type TranscriptBlock =
       result?: string;
       isError?: boolean;
       status: "running" | "completed" | "error";
+      sourceEntryIds?: string[];
     }
   | {
       type: "activity";
@@ -236,23 +241,27 @@ export type TranscriptBlock =
       activityId?: string;
       name: string;
       status: "running" | "completed";
+      sourceEntryIds?: string[];
     }
   | {
       type: "todo_list";
       ts: string;
       todoListId?: string;
       items: TranscriptTodoListItem[];
+      sourceEntryIds?: string[];
     }
   | {
       type: "command_group";
       ts: string;
       endTs?: string;
       items: Array<TranscriptToolCardEntry>;
+      sourceEntryIds?: string[];
     }
   | {
       type: "stdout";
       ts: string;
       text: string;
+      sourceEntryIds?: string[];
     }
   | {
       type: "memory_update";
@@ -265,6 +274,7 @@ export type TranscriptBlock =
       effect: string;
       rawText: string;
       failureReason?: string;
+      sourceEntryIds?: string[];
     }
   | {
       type: "event";
@@ -274,6 +284,7 @@ export type TranscriptBlock =
       text: string;
       detail?: string;
       collapseByDefault?: boolean;
+      sourceEntryIds?: string[];
     };
 
 export interface ChatTranscriptTurn {

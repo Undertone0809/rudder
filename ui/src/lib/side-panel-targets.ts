@@ -60,6 +60,18 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "run_feedback_chat";
+      agentId: string;
+      organizationId: string;
+      conversationId: string | null;
+      projectLocked?: boolean;
+      clientMutationId: string;
+      projectId: string | null;
+      body: string;
+      inlineAnnotations: ChatInlineAnnotationInput[];
+      label: string;
+    }
+  | {
       kind: "library_document";
       documentId: string;
       label: string;
@@ -174,6 +186,9 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "side_chat") return target.conversationId
     ? `side-chat:${target.conversationId}`
     : `side-chat:draft:${target.clientMutationId}`;
+  if (target.kind === "run_feedback_chat") {
+    return `run-feedback-chat:${target.organizationId}:${target.agentId}`;
+  }
   if (target.kind === "library_document") return `library-document:${target.documentId}`;
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
@@ -252,8 +267,8 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     return `/library?${search.toString()}`;
   }
   if (target.kind === "browser") return target.url;
-  if (target.targetKind === "issue") return "/issues";
-  if (target.targetKind === "automation") return "/automations";
+  if (target.kind === "placeholder" && target.targetKind === "issue") return "/issues";
+  if (target.kind === "placeholder" && target.targetKind === "automation") return "/automations";
   return "/messenger/chat";
 }
 

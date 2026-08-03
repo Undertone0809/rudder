@@ -134,7 +134,20 @@ export function createChatAnnotationRouteHelpers(input: {
         editUserMessageId: editUserMessageId ?? null,
         annotationCount: persistedAnnotations.length,
         annotationSourceMessageIds: [
-          ...new Set(persistedAnnotations.map((annotation) => annotation.sourceMessageId)),
+          ...new Set(
+            persistedAnnotations
+              .filter((annotation) => annotation.surface !== "agent_run_transcript")
+              .map((annotation) => annotation.sourceMessageId)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ],
+        annotationSourceRunIds: [
+          ...new Set(
+            persistedAnnotations
+              .filter((annotation) => annotation.surface === "agent_run_transcript")
+              .map((annotation) => annotation.sourceRunId)
+              .filter((value): value is string => Boolean(value)),
+          ),
         ],
       },
     });

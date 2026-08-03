@@ -21,6 +21,7 @@ import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelVie
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
 import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
+import { RunFeedbackChatPanel } from "@/components/side-panel/RunFeedbackChatPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
 import { SubagentsPanelView } from "@/components/side-panel/SubagentsPanelView";
@@ -306,8 +307,8 @@ function ChatSidePanelTabIcon({
     );
   }
   if (tab.kind === "browser") return <ChatSidePanelBrowserTabIcon favicon={tab.favicon} url={tab.url} />;
-  if (tab.targetKind === "issue") return <Circle aria-hidden className={iconClassName} />;
-  if (tab.targetKind === "automation") return <Workflow aria-hidden className={iconClassName} />;
+  if (tab.kind === "placeholder" && tab.targetKind === "issue") return <Circle aria-hidden className={iconClassName} />;
+  if (tab.kind === "placeholder" && tab.targetKind === "automation") return <Workflow aria-hidden className={iconClassName} />;
   return <MessageSquare aria-hidden className={iconClassName} />;
 }
 
@@ -1739,6 +1740,11 @@ export function ChatSidePanel({
     annotation: ChatInlineAnnotation,
     ordinal: number,
   ) => {
+    if (annotation.surface === "agent_run_transcript") {
+      sidePanel.hidePanel();
+      navigate(`/agents/${encodeURIComponent(annotation.sourceAgentId)}/runs/${encodeURIComponent(annotation.sourceRunId)}`);
+      return;
+    }
     if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
       void (async () => {
         try {
@@ -1926,6 +1932,7 @@ export function ChatSidePanel({
   const issueProposalTarget = activeTarget?.kind === "issue_proposal" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
+  const runFeedbackTarget = activeTarget?.kind === "run_feedback_chat" ? activeTarget : null;
   const subagentsTarget = activeTarget?.kind === "subagents" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
@@ -2483,7 +2490,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentsTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || subagentsTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
@@ -2619,6 +2626,12 @@ export function ChatSidePanel({
               onRegisterCloseHandler={registerSideChatCloseHandler}
               onReplaceTarget={replaceSidePanelTarget}
               onSelectResponseAnnotation={selectSideChatResponseAnnotation}
+            />
+          ) : runFeedbackTarget && selectedOrganizationId ? (
+            <RunFeedbackChatPanel
+              organizationId={selectedOrganizationId}
+              target={runFeedbackTarget}
+              onReplaceTarget={replaceSidePanelTarget}
             />
           ) : subagentsTarget && selectedOrganizationId ? (
             <SubagentsPanelView organizationId={selectedOrganizationId} target={subagentsTarget} />

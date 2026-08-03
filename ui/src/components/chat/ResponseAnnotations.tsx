@@ -478,6 +478,7 @@ export function AnchoredResponseAnnotationMarkers({
           direction: -1 | 1;
         }> = [];
         for (const annotation of annotations) {
+          if (annotation.surface === "agent_run_transcript") continue;
           const range = restoreChatAnnotationRange({
             sourceRoot,
             source,

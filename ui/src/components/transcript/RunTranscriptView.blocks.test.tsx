@@ -14,6 +14,7 @@ import {
   TranscriptActivityRow,
   TranscriptEventRow,
   TranscriptMessageBlock,
+  TranscriptRunAnnotationBlock,
 } from "./RunTranscriptView.blocks";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
@@ -125,6 +126,58 @@ describe("ExpandableTranscriptResponsePre", () => {
         Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
       }
     }
+  });
+});
+
+describe("TranscriptRunAnnotationBlock", () => {
+  it("waits for the selection toolbar action before creating a text annotation", () => {
+    const onAnnotate = vi.fn();
+    const container = render(
+      <TranscriptRunAnnotationBlock
+        block={{
+          type: "message",
+          role: "assistant",
+          ts: "2026-07-23T12:00:00.000Z",
+          text: "Selectable transcript text",
+          streaming: false,
+          sourceEntryIds: ["event-1"],
+        }}
+        presentation="detail"
+        context={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+      >
+        <span>Selectable transcript text</span>
+      </TranscriptRunAnnotationBlock>,
+    );
+    const textNode = container.querySelector("span")?.firstChild;
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(textNode!);
+    Object.defineProperty(range, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(20, 20, 120, 20),
+    });
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    act(() => {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(onAnnotate).not.toHaveBeenCalled();
+    const addButton = document.querySelector<HTMLButtonElement>("[role='toolbar'] button");
+    expect(addButton?.textContent).toContain("Add to chat");
+
+    act(() => {
+      addButton?.click();
+    });
+
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
+      anchorKind: "text",
+      text: "Selectable transcript text",
+      sourceRunId: "run-1",
+      sourceMemberIds: ["event-1"],
+    }));
   });
 });
 

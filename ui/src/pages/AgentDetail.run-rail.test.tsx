@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SidePanelProvider } from "../context/SidePanelContext";
 import { RunConversationListItem, RunRailList, RunsTab, type RunRailEntry } from "./AgentDetail.runs";
 
 const testState = vi.hoisted(() => ({
@@ -255,14 +256,18 @@ describe("RunsTab shared rail branches", () => {
     testState.isMobile = true;
 
     act(() => {
-      root.render(<RunsTab
-        runs={groupedRuns}
-        orgId="org-1"
-        agentId="agent-1"
-        agentRouteId="agent-route"
-        selectedRunId={null}
-        agentRuntimeType="codex_local"
-      />);
+      root.render(
+        <SidePanelProvider>
+          <RunsTab
+            runs={groupedRuns}
+            orgId="org-1"
+            agentId="agent-1"
+            agentRouteId="agent-route"
+            selectedRunId={null}
+            agentRuntimeType="codex_local"
+          />
+        </SidePanelProvider>,
+      );
     });
 
     expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
@@ -285,14 +290,18 @@ describe("RunsTab shared rail branches", () => {
     });
 
     act(() => {
-      root.render(<RunsTab
-        runs={[newest, oldest]}
-        orgId="org-1"
-        agentId="agent-1"
-        agentRouteId="agent-route"
-        selectedRunId={null}
-        agentRuntimeType="codex_local"
-      />);
+      root.render(
+        <SidePanelProvider>
+          <RunsTab
+            runs={[newest, oldest]}
+            orgId="org-1"
+            agentId="agent-1"
+            agentRouteId="agent-route"
+            selectedRunId={null}
+            agentRuntimeType="codex_local"
+          />
+        </SidePanelProvider>,
+      );
     });
 
     const row = container.querySelector<HTMLElement>("[data-testid='agent-run-conversation-group-row']");
@@ -302,14 +311,18 @@ describe("RunsTab shared rail branches", () => {
 
   it("renders grouped rows through the desktop no-selection branch", () => {
     act(() => {
-      root.render(<RunsTab
-        runs={groupedRuns}
-        orgId="org-1"
-        agentId="agent-1"
-        agentRouteId="agent-route"
-        selectedRunId="missing-run"
-        agentRuntimeType="codex_local"
-      />);
+      root.render(
+        <SidePanelProvider>
+          <RunsTab
+            runs={groupedRuns}
+            orgId="org-1"
+            agentId="agent-1"
+            agentRouteId="agent-route"
+            selectedRunId="missing-run"
+            agentRuntimeType="codex_local"
+          />
+        </SidePanelProvider>,
+      );
     });
 
     expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
@@ -324,14 +337,16 @@ describe("RunsTab shared rail branches", () => {
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <RunsTab
-            runs={groupedRuns}
-            orgId="org-1"
-            agentId="agent-1"
-            agentRouteId="agent-route"
-            selectedRunId={groupedRuns[0].id}
-            agentRuntimeType="codex_local"
-          />
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={groupedRuns[0].id}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
         </QueryClientProvider>,
       );
     });

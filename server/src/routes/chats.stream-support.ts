@@ -19,6 +19,7 @@ export type ChatStreamRouteContext = {
 export type AtomicChatFirstTurn = {
   conversation: ChatConversation;
   userMessage: ChatMessage;
+  annotationFileIndexesByAnnotationId: Map<string, number[]>;
   uploadPrepared: boolean;
   expectedTitleForAutomaticGeneration: string | null;
   runtimeSnapshot: {
@@ -74,6 +75,13 @@ export function normalizeMultipartFirstTurnBody(
 ) {
   if (!body) return {};
   const normalized = { ...body };
+  if (typeof normalized.inlineAnnotations === "string") {
+    try {
+      normalized.inlineAnnotations = JSON.parse(normalized.inlineAnnotations);
+    } catch {
+      // Leave invalid JSON in place so the shared schema returns a normal 400.
+    }
+  }
   if (typeof normalized.planMode === "string") {
     if (normalized.planMode === "true") normalized.planMode = true;
     else if (normalized.planMode === "false") normalized.planMode = false;

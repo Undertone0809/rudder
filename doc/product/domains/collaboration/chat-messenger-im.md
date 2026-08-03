@@ -784,6 +784,11 @@ copying context into the composer or losing the relationship to its source.
   `transcriptKind`, `generationId`, and inclusive
   `generationSeqStart`/`generationSeqEnd`. Generation event sequence is source
   identity; transcript-array index and wall-clock timestamp are not.
+- Agent Run transcript source: one stable assistant reasoning, message, or
+  completed tool transition from the terminal Nice Transcript of an Agent Run.
+  It stores the owning `sourceRunId`, fixed `sourceAgentId`, `anchorKind`, a
+  stable source entry id/member set, and a source hash. Raw, Invocation,
+  hidden/internal, user/Steer, and incomplete live blocks are not annotatable.
 - Workspace-file source: one saved, non-truncated Markdown, plain-text, or
   code/source file visible in the current Chat's Library Side Panel. It stores
   the normalized Library-relative path, optional stable Library entry id,
@@ -816,6 +821,11 @@ copying context into the composer or losing the relationship to its source.
   actions.
 - Existing Chat JSON, stream, multipart, Queue, and Steer message admission
   paths.
+- Agent Run Detail and Agent Detail Runs surfaces may stage these sources into
+  one Messenger-visible Chat draft. The draft is keyed by organization and
+  Agent, survives Run navigation, defaults to `No project`, and locks its
+  project after the first accepted message. The first accepted message may be
+  annotation-only.
 - Historical user-message edit/retry, conversation Fork, and Side Chat first
   Send.
 
@@ -2734,6 +2744,13 @@ Product model:
 
 - The Side Panel is a global board workbench mounted in the shared organization
   layout, not a Chat-only drawer.
+- Agent Run annotation opens a normal Messenger-visible Chat target in the
+  Side Panel, keyed as `agent-runs:<agent-id>`. It preserves one draft across
+  Agent Detail Run navigation, keeps the current Agent fixed, and opens with
+  staged Run annotations already attached. On desktop opening it releases the
+  Agent Sidebar while retaining the compact Run rail; on mobile it uses the
+  full-screen Chat overlay. Project selection is available only before the
+  first accepted message and then remains locked.
 - Supported internal references can open or focus tabs in the Side Panel without
   replacing the current route on ordinary clicks. Modifier-click and unsupported
   links preserve normal navigation behavior.

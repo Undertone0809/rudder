@@ -1,10 +1,13 @@
 import type { Db } from "@rudderhq/db";
 import {
+  agents,
   chatAttachments,
   chatConversations,
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  heartbeatRunEvents,
+  heartbeatRuns,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -25,18 +28,24 @@ import { organizationWorkspaceBrowserService } from "./organization-workspace-br
 
 const STABLE_ANNOTATION_MESSAGE_STATUSES = new Set(["completed", "stopped", "failed"]);
 const STABLE_ANNOTATION_GENERATION_STATUSES = new Set(["completed", "stopped", "failed"]);
+const STABLE_AGENT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 const MAX_PROCESS_ANNOTATION_EVENT_SPAN = 1_000;
+const MAX_AGENT_RUN_ANNOTATION_MEMBER_IDS = 100;
 const INTERNAL_RESULT_MARKER_PATTERN =
   /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
 
 export type ValidationQuery = Pick<ChatGenerationProtocolTransaction, "select">;
+type RangeBasedChatInlineAnnotation = Extract<
+  ChatInlineAnnotation,
+  { surface: "assistant_body" | "process_transcript" | "workspace_file" | "local_file" }
+>;
 
 export function hashChatAnnotationSource(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function assertSourceAnchor(
-  annotation: ChatInlineAnnotation,
+  annotation: RangeBasedChatInlineAnnotation,
   source: string,
 ) {
   if (annotation.sourceHash !== hashChatAnnotationSource(source)) {
@@ -105,7 +114,7 @@ function isExplicitlyHiddenTranscriptEvidence(
 async function assertSelectedTextExactlyMatchesRange(
   query: ValidationQuery,
   orgId: string,
-  annotation: ChatInlineAnnotation,
+  annotation: RangeBasedChatInlineAnnotation,
   source: string,
 ) {
   const resolvedLabelProjection =
@@ -272,6 +281,26 @@ function annotationSnapshotsAreSemanticallyIdentical(
   return incoming.every((annotation, index) => {
     const expected = persisted[index];
     if (!expected) return false;
+    if (annotation.surface === "agent_run_transcript") {
+      return expected.surface === "agent_run_transcript"
+        && annotation.id === expected.id
+        && annotation.selectedText === expected.selectedText
+        && (annotation.comment ?? null) === (expected.comment ?? null)
+        && annotation.sourceHash === expected.sourceHash
+        && annotation.sourceRunId === expected.sourceRunId
+        && annotation.sourceAgentId === expected.sourceAgentId
+        && annotation.anchorKind === expected.anchorKind
+        && String(annotation.sourceEntryId) === String(expected.sourceEntryId)
+        && annotation.sourceMemberIds.length === expected.sourceMemberIds.length
+        && annotation.sourceMemberIds.every(
+          (memberId, memberIndex) => String(memberId) === String(expected.sourceMemberIds[memberIndex]),
+        )
+        && annotation.attachmentIds.length === expected.attachmentIds.length
+        && annotation.attachmentIds.every(
+          (attachmentId, attachmentIndex) => attachmentId === expected.attachmentIds[attachmentIndex],
+        );
+    }
+    if (expected.surface === "agent_run_transcript") return false;
     if (
       annotation.id !== expected.id
       || annotation.surface !== expected.surface
@@ -500,6 +529,228 @@ function validateFileAnnotationConversation(
   }
 }
 
+type AgentRunTranscriptAnnotation = Extract<ChatInlineAnnotation, { surface: "agent_run_transcript" }>;
+
+function runTranscriptEventPayload(event: typeof heartbeatRunEvents.$inferSelect) {
+  if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return null;
+  return event.payload as Record<string, unknown>;
+}
+
+function runTranscriptEventText(event: typeof heartbeatRunEvents.$inferSelect) {
+  const payload = runTranscriptEventPayload(event);
+  if (!payload) return null;
+  if (typeof payload.text === "string") return payload.text;
+  const nestedEntry = payload.entry;
+  if (
+    nestedEntry
+    && typeof nestedEntry === "object"
+    && !Array.isArray(nestedEntry)
+    && typeof (nestedEntry as Record<string, unknown>).text === "string"
+  ) {
+    return (nestedEntry as Record<string, unknown>).text as string;
+  }
+  return typeof event.message === "string" ? event.message : null;
+}
+
+function runTranscriptEventIds(event: typeof heartbeatRunEvents.$inferSelect) {
+  const payload = runTranscriptEventPayload(event);
+  const ids = [String(event.id)];
+  for (const key of ["id", "entryId", "sourceEntryId", "memberId"]) {
+    const value = payload?.[key];
+    if (typeof value === "string" || typeof value === "number") ids.push(String(value));
+  }
+  const timestamp = typeof payload?.ts === "string"
+    ? payload.ts
+    : event.createdAt.toISOString();
+  const name = typeof payload?.name === "string"
+    ? payload.name
+    : typeof payload?.toolName === "string"
+      ? payload.toolName
+      : event.eventType;
+  const toolUseId = payload?.toolUseId;
+  if (typeof toolUseId === "string") ids.push(`tool:${toolUseId}:${timestamp}`);
+  const messageId = payload?.messageId ?? payload?.segmentId ?? payload?.entryId;
+  if (typeof messageId === "string" || typeof messageId === "number") {
+    ids.push(`message:${String(messageId)}:${timestamp}`);
+    ids.push(`thinking:${String(messageId)}:${timestamp}:${timestamp}`);
+  }
+  ids.push(`message:block:${timestamp}:${timestamp}`);
+  ids.push(`activity:${typeof payload?.activityId === "string" ? payload.activityId : name}:${timestamp}`);
+  ids.push(`todo_list:${typeof payload?.todoListId === "string" ? payload.todoListId : timestamp}`);
+  ids.push(`command_group:${typeof toolUseId === "string" ? toolUseId : name}:${timestamp}`);
+  ids.push(`memory_update:${timestamp}`);
+  ids.push(`event:${timestamp}`);
+  ids.push(`stdout:${timestamp}`);
+  ids.push(`stderr:${timestamp}`);
+  return ids;
+}
+
+function runTranscriptEventIsDelta(event: typeof heartbeatRunEvents.$inferSelect) {
+  const payload = runTranscriptEventPayload(event);
+  return Boolean(payload?.delta === true
+    || (
+      payload?.entry
+      && typeof payload.entry === "object"
+      && !Array.isArray(payload.entry)
+      && (payload.entry as Record<string, unknown>).delta === true
+    ));
+}
+
+function joinRunTranscriptEventText(events: readonly (typeof heartbeatRunEvents.$inferSelect)[]) {
+  let source = "";
+  let previousWasDelta = false;
+  for (const event of events) {
+    const text = runTranscriptEventText(event);
+    if (!text) continue;
+    source += source.length === 0 || (previousWasDelta && runTranscriptEventIsDelta(event))
+      ? text
+      : `\n${text}`;
+    previousWasDelta = runTranscriptEventIsDelta(event);
+  }
+  return source;
+}
+
+function isNiceTranscriptEvent(event: typeof heartbeatRunEvents.$inferSelect) {
+  const payload = runTranscriptEventPayload(event);
+  if (payload?.internal === true || payload?.hidden === true || payload?.private === true) return false;
+  if (payload?.visibility === "internal" || payload?.visibility === "hidden") return false;
+  const nestedEntry = payload?.entry;
+  const lifecycleCandidate = payload?.kind === "system" && typeof payload.text === "string"
+    ? { kind: payload.kind, text: payload.text }
+    : nestedEntry
+      && typeof nestedEntry === "object"
+      && !Array.isArray(nestedEntry)
+      && (nestedEntry as Record<string, unknown>).kind === "system"
+      && typeof (nestedEntry as Record<string, unknown>).text === "string"
+      ? {
+        kind: (nestedEntry as Record<string, unknown>).kind as string,
+        text: (nestedEntry as Record<string, unknown>).text as string,
+      }
+      : null;
+  if (lifecycleCandidate && isInternalChatTranscriptLifecycleEntry(lifecycleCandidate)) return false;
+  return !/(?:lifecycle|invocation|diagnostic|session)/iu.test(event.eventType);
+}
+
+async function validateAgentRunTranscriptAnnotation(
+  query: ValidationQuery,
+  input: {
+    orgId: string;
+    annotation: AgentRunTranscriptAnnotation;
+  },
+) {
+  if (input.annotation.sourceMemberIds.length > MAX_AGENT_RUN_ANNOTATION_MEMBER_IDS) {
+    throw unprocessable("Agent Run annotation transcript evidence is too large");
+  }
+  const run = await query
+    .select()
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.id, input.annotation.sourceRunId),
+      eq(heartbeatRuns.orgId, input.orgId),
+    ))
+    .limit(1)
+    .for("share")
+    .then((rows) => rows[0] ?? null);
+  if (!run || run.agentId !== input.annotation.sourceAgentId) {
+    throw unprocessable("Agent Run annotation source run must belong to the declared Agent and organization");
+  }
+  if (!STABLE_AGENT_RUN_STATUSES.has(run.status)) {
+    throw unprocessable("Agent Run annotation source must be a terminal run");
+  }
+  const sourceAgent = await query
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(
+      eq(agents.id, input.annotation.sourceAgentId),
+      eq(agents.orgId, input.orgId),
+    ))
+    .limit(1)
+    .for("share")
+    .then((rows) => rows[0] ?? null);
+  if (!sourceAgent) {
+    throw unprocessable("Agent Run annotation source Agent must belong to the organization");
+  }
+
+  const events = await query
+    .select()
+    .from(heartbeatRunEvents)
+    .where(and(
+      eq(heartbeatRunEvents.orgId, input.orgId),
+      eq(heartbeatRunEvents.runId, input.annotation.sourceRunId),
+      eq(heartbeatRunEvents.agentId, input.annotation.sourceAgentId),
+    ))
+    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
+    .limit(5_000)
+    .for("share");
+  const requestedMemberIds = input.annotation.sourceMemberIds.map((memberId) => String(memberId));
+  const requestedEvidenceIds = new Set([...requestedMemberIds, String(input.annotation.sourceEntryId)]);
+  const eventByRequestedId = new Map<string, typeof heartbeatRunEvents.$inferSelect>();
+  const ambiguousIds = new Set<string>();
+  for (const event of events) {
+    for (const eventId of runTranscriptEventIds(event)) {
+      if (!requestedEvidenceIds.has(eventId)) continue;
+      if (ambiguousIds.has(eventId)) continue;
+      const existing = eventByRequestedId.get(eventId);
+      if (existing && existing.id !== event.id) {
+        eventByRequestedId.delete(eventId);
+        ambiguousIds.add(eventId);
+      } else {
+        eventByRequestedId.set(eventId, event);
+      }
+    }
+  }
+  const memberEvents = requestedMemberIds.map((memberId) => eventByRequestedId.get(memberId));
+  if (memberEvents.some((event) => !event)) {
+    throw unprocessable("Agent Run annotation transcript members are missing from the source run");
+  }
+  const resolvedMemberEvents = memberEvents as Array<typeof heartbeatRunEvents.$inferSelect>;
+  if (resolvedMemberEvents.some((event) => !isNiceTranscriptEvent(event))) {
+    throw unprocessable("Agent Run annotation source must be visible Nice Transcript evidence");
+  }
+  const sourceEntryId = String(input.annotation.sourceEntryId);
+  const sourceEntry = eventByRequestedId.get(sourceEntryId);
+  if (!sourceEntry) {
+    throw unprocessable("Agent Run annotation source entry is missing from the source run");
+  }
+  if (!isNiceTranscriptEvent(sourceEntry)) {
+    throw unprocessable("Agent Run annotation source entry must be visible Nice Transcript evidence");
+  }
+  if (input.annotation.anchorKind === "text") {
+    if (resolvedMemberEvents.some((event) => event.eventType !== "transcript.entry")) {
+      throw unprocessable("Text Agent Run annotations must reference transcript entries");
+    }
+    const source = joinRunTranscriptEventText(resolvedMemberEvents);
+    if (!source || !source.includes(input.annotation.selectedText)) {
+      throw unprocessable("Agent Run annotation selected text does not match transcript evidence");
+    }
+    if (
+      input.annotation.sourceHash !== hashChatAnnotationSource(source)
+      && input.annotation.sourceHash !== hashChatAnnotationSource(input.annotation.selectedText)
+    ) {
+      throw unprocessable("Agent Run annotation source hash does not match transcript evidence");
+    }
+    return;
+  }
+
+  const transitionSnapshot = JSON.stringify({
+    sourceEntryId,
+    sourceMemberIds: requestedMemberIds,
+    members: resolvedMemberEvents.map((event) => ({
+      id: String(event.id),
+      seq: event.seq,
+      eventType: event.eventType,
+      text: runTranscriptEventText(event),
+    })),
+  });
+  if (
+    input.annotation.sourceHash !== hashChatAnnotationSource(transitionSnapshot)
+    && input.annotation.sourceHash !== hashChatAnnotationSource(joinRunTranscriptEventText(resolvedMemberEvents))
+    && input.annotation.sourceHash !== hashChatAnnotationSource(input.annotation.selectedText)
+  ) {
+    throw unprocessable("Agent Run annotation source hash does not match transition evidence");
+  }
+}
+
 async function validateProcessAnnotation(
   query: ValidationQuery,
   input: {
@@ -613,7 +864,7 @@ async function validateProcessAnnotation(
 }
 
 function annotationRangeFallsOutsideVisibleProjection(
-  annotation: ChatInlineAnnotation,
+  annotation: RangeBasedChatInlineAnnotation,
   source: string,
 ) {
   return annotation.start < 0
@@ -657,6 +908,13 @@ export async function validateCanonicalChatInlineAnnotations(
   await validateExistingAttachmentOwnership(query, input, editTarget);
   if (editTarget) return;
   for (const annotation of input.annotations) {
+    if (annotation.surface === "agent_run_transcript") {
+      await validateAgentRunTranscriptAnnotation(query, {
+        orgId: input.orgId,
+        annotation,
+      });
+      continue;
+    }
     if (annotation.surface === "local_file") {
       validateFileAnnotationConversation(
         targetConversation,

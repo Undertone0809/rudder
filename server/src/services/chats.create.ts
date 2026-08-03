@@ -1,10 +1,12 @@
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages } from "@rudderhq/db";
-import { sanitizeChatStructuredPayload, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
+import { normalizeChatInlineAnnotations, sanitizeChatStructuredPayload, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage } from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 
@@ -61,6 +63,7 @@ export async function createChatConversation(db: Db, orgId: string, data: Create
 }
 
 export type CreateChatWithInitialMessageInput = {
+  initialClientMutationId?: string | null;
   title?: string;
   summary?: string | null;
   preferredAgentId?: string | null;
@@ -100,8 +103,40 @@ export async function createChatWithInitialMessage(
   const persist = async (client: Db) => {
     const now = new Date();
     const normalizedBody = data.initialMessage.body.trim();
-    if (!normalizedBody) throw unprocessable("Initial chat message body is required");
-    const deterministicTitle = normalizedBody.replace(/\s+/g, " ").slice(0, 200);
+    const initialPayload = data.initialMessage.structuredPayload ?? null;
+    const initialAnnotations = Array.isArray(initialPayload?.inlineAnnotations)
+      ? normalizeChatInlineAnnotations(initialPayload.inlineAnnotations as ChatInlineAnnotationInput[])
+      : [];
+    const canonicalInitialPayload = initialAnnotations.length > 0
+      ? { ...(initialPayload ?? {}), inlineAnnotations: initialAnnotations }
+      : initialPayload;
+    const hasInlineAnnotations = initialAnnotations.length > 0;
+    if (!normalizedBody && !hasInlineAnnotations) throw unprocessable("Initial chat message body is required");
+    const deterministicTitle = normalizedBody.replace(/\s+/g, " ").slice(0, 200) || "Run feedback";
+    if (data.initialClientMutationId && data.createdByUserId) {
+      const existing = await client
+        .select()
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, orgId),
+          eq(chatConversations.createdByUserId, data.createdByUserId),
+          eq(chatConversations.initialClientMutationId, data.initialClientMutationId),
+        ))
+        .then((rows) => rows[0] ?? null);
+      if (existing) {
+        const existingMessage = await client
+          .select()
+          .from(chatMessages)
+          .where(eq(chatMessages.conversationId, existing.id))
+          .then((rows) => rows[0] ?? null);
+        if (existingMessage) {
+          return {
+            conversation: existing as unknown as ChatConversation,
+            message: existingMessage as unknown as ChatMessage,
+          };
+        }
+      }
+    }
     const [conversationRow] = await client
       .insert(chatConversations)
       .values({
@@ -114,6 +149,7 @@ export async function createChatWithInitialMessage(
         issueCreationMode: data.issueCreationMode,
         planMode: data.planMode,
         createdByUserId: data.createdByUserId,
+        initialClientMutationId: data.initialClientMutationId ?? null,
         lastMessageAt: now,
         updatedAt: now,
       })
@@ -136,7 +172,19 @@ export async function createChatWithInitialMessage(
         .returning();
     }
 
-    const structuredPayload = sanitizeChatStructuredPayload(data.initialMessage.structuredPayload ?? null);
+    if (initialAnnotations.length > 0) {
+      await validateCanonicalChatInlineAnnotations(
+        asChatInlineAnnotationValidationQuery(client),
+        {
+          orgId,
+          conversationId: conversationRow.id,
+          annotations: initialAnnotations,
+          uploadedFileCount: 0,
+        },
+      );
+    }
+
+    const structuredPayload = sanitizeChatStructuredPayload(canonicalInitialPayload);
     const [messageRow] = await client
       .insert(chatMessages)
       .values({

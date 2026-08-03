@@ -3245,6 +3245,43 @@ button[draggable="false"] {
   }
 }
 
+.run-detail-container {
+  container-type: inline-size;
+  container-name: run-detail;
+}
+
+.agent-runs-layout-container {
+  container-type: inline-size;
+  container-name: agent-runs-layout;
+}
+
+@container agent-runs-layout (max-width: 60rem) {
+  .agent-runs-layout {
+    flex-direction: column;
+  }
+
+  .agent-runs-layout > [data-testid="agent-runs-detail-pane"],
+  .agent-runs-layout > [data-testid="agent-runs-list-pane"] {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@container run-detail (max-width: 36rem) {
+  .run-detail-summary-layout {
+    flex-direction: column;
+  }
+
+  .run-detail-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .run-detail-metrics {
+    border-left-width: 0;
+    border-top-width: 1px;
+  }
+}
+
 .rudder-doc-editor-surface {
   --rudder-doc-editor-tab-strip-height: 42px;
   --rudder-doc-editor-breadcrumb-height: 32px;

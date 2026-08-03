@@ -30,7 +30,7 @@ import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
-import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -63,7 +63,15 @@ export function runDateToIso(value: Date | string | null | undefined): string | 
   return typeof value === "string" ? value : value.toISOString();
 }
 
-export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
+export function LogViewer({
+  run,
+  agentRuntimeType,
+  onAnnotate,
+}: {
+  run: HeartbeatRun;
+  agentRuntimeType: string;
+  onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
+}) {
   type RunDetailTab = "transcript" | "invocation";
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
   const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
@@ -617,6 +625,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
+              runAnnotationContext={onAnnotate ? {
+                sourceRunId: run.id,
+                sourceAgentId: run.agentId,
+                onAnnotate,
+              } : undefined}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -752,6 +765,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
+              runAnnotationContext={onAnnotate ? {
+                sourceRunId: run.id,
+                sourceAgentId: run.agentId,
+                onAnnotate,
+              } : undefined}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">

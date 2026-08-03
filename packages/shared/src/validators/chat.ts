@@ -123,6 +123,8 @@ export const MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH = 2_000;
 export const MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH = 16_000;
 export const MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH = 160;
 export const MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS = 10;
+export const MAX_CHAT_INLINE_ANNOTATION_RUN_MEMBER_IDS = 100;
+export const MAX_CHAT_INLINE_ANNOTATION_RUN_ENTRY_ID_LENGTH = 200;
 
 const chatInlineAnnotationCommentSchema = z.preprocess(
   (value) => {
@@ -138,6 +140,10 @@ const chatInlineAnnotationSelectedTextSchema = z.string()
   .refine((value) => value.trim().length > 0, "Selected text must not be blank");
 const chatInlineAnnotationSourceHashSchema = z.string()
   .regex(/^[a-f0-9]{64}$/, "Expected a lowercase SHA-256 source hash");
+const chatInlineAnnotationRunEntryIdSchema = z.union([
+  z.number().int().positive(),
+  z.string().trim().min(1).max(MAX_CHAT_INLINE_ANNOTATION_RUN_ENTRY_ID_LENGTH),
+]);
 
 const chatInlineAnnotationShape = {
   id: z.string().uuid(),
@@ -154,19 +160,25 @@ const chatInlineAnnotationShape = {
 
 function refineChatInlineAnnotation(
   annotation: {
-    surface: "assistant_body" | "process_transcript" | "workspace_file" | "local_file";
+    surface: "assistant_body" | "process_transcript" | "agent_run_transcript" | "workspace_file" | "local_file";
     transcriptKind?: "thinking" | "assistant";
     generationId?: string;
     generationSeqStart?: number;
     generationSeqEnd?: number;
-    start: number;
-    end: number;
+    sourceEntryId?: string | number;
+    sourceMemberIds?: Array<string | number>;
+    start?: number;
+    end?: number;
     attachmentIds: string[];
     attachmentFileIndexes?: number[];
   },
   ctx: z.RefinementCtx,
 ) {
-  if (annotation.end <= annotation.start) {
+  if (
+    annotation.start !== undefined
+    && annotation.end !== undefined
+    && annotation.end <= annotation.start
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Annotation end must be greater than start",
@@ -197,6 +209,22 @@ function refineChatInlineAnnotation(
     attachmentFileIndexes.add(fileIndex);
   });
 
+  if (annotation.surface === "agent_run_transcript") {
+    const memberIds = annotation.sourceMemberIds ?? [];
+    const sourceMemberIds = new Set<string>();
+    memberIds.forEach((memberId, index) => {
+      const key = String(memberId);
+      if (sourceMemberIds.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Agent run annotation source member ids must be unique",
+          path: ["sourceMemberIds", index],
+        });
+      }
+      sourceMemberIds.add(key);
+    });
+  }
+
   if (
     annotation.surface === "process_transcript"
     && annotation.generationSeqStart !== undefined
@@ -225,6 +253,21 @@ const chatProcessInlineAnnotationSchema = z.object({
   generationSeqStart: z.number().int().nonnegative(),
   generationSeqEnd: z.number().int().nonnegative(),
 }).strict();
+const chatAgentRunInlineAnnotationSchema = z.object({
+  id: z.string().uuid(),
+  selectedText: chatInlineAnnotationSelectedTextSchema,
+  comment: chatInlineAnnotationCommentSchema,
+  sourceHash: chatInlineAnnotationSourceHashSchema,
+  surface: z.literal("agent_run_transcript"),
+  sourceRunId: z.string().uuid(),
+  sourceAgentId: z.string().uuid(),
+  anchorKind: z.enum(["text", "transition"]),
+  sourceEntryId: chatInlineAnnotationRunEntryIdSchema,
+  sourceMemberIds: z.array(chatInlineAnnotationRunEntryIdSchema)
+    .min(1)
+    .max(MAX_CHAT_INLINE_ANNOTATION_RUN_MEMBER_IDS),
+  attachmentIds: z.array(z.string().uuid()).default([]),
+}).strict();
 const chatWorkspaceFileInlineAnnotationSchema = z.object({
   ...chatInlineAnnotationShape,
   surface: z.literal("workspace_file"),
@@ -242,6 +285,7 @@ const chatLocalFileInlineAnnotationSchema = z.object({
 export const chatInlineAnnotationSchema = z.discriminatedUnion("surface", [
   chatAssistantInlineAnnotationSchema,
   chatProcessInlineAnnotationSchema,
+  chatAgentRunInlineAnnotationSchema,
   chatWorkspaceFileInlineAnnotationSchema,
   chatLocalFileInlineAnnotationSchema,
 ])
@@ -251,6 +295,9 @@ const chatAssistantInlineAnnotationInputSchema = chatAssistantInlineAnnotationSc
   attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
 }).strict();
 const chatProcessInlineAnnotationInputSchema = chatProcessInlineAnnotationSchema.extend({
+  attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
+}).strict();
+const chatAgentRunInlineAnnotationInputSchema = chatAgentRunInlineAnnotationSchema.extend({
   attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
 }).strict();
 const chatWorkspaceFileInlineAnnotationInputSchema = chatWorkspaceFileInlineAnnotationSchema.extend({
@@ -263,6 +310,7 @@ const chatLocalFileInlineAnnotationInputSchema = chatLocalFileInlineAnnotationSc
 export const chatInlineAnnotationInputSchema = z.discriminatedUnion("surface", [
   chatAssistantInlineAnnotationInputSchema,
   chatProcessInlineAnnotationInputSchema,
+  chatAgentRunInlineAnnotationInputSchema,
   chatWorkspaceFileInlineAnnotationInputSchema,
   chatLocalFileInlineAnnotationInputSchema,
 ])
@@ -291,23 +339,32 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
           });
         }
         annotationIds.add(annotation.id);
-        const sourceRangeKey = JSON.stringify([
-          annotation.sourceConversationId,
-          annotation.sourceMessageId,
-          annotation.sourceFilePath,
-          annotation.surface,
-          annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
-          annotation.surface === "process_transcript" ? annotation.generationId : null,
-          annotation.surface === "process_transcript" ? annotation.generationSeqStart : null,
-          annotation.surface === "process_transcript" ? annotation.generationSeqEnd : null,
-          annotation.start,
-          annotation.end,
-        ]);
+        const sourceRangeKey = annotation.surface === "agent_run_transcript"
+          ? JSON.stringify([
+            annotation.surface,
+            annotation.sourceRunId,
+            annotation.sourceAgentId,
+            annotation.anchorKind,
+            annotation.sourceEntryId,
+            annotation.sourceMemberIds,
+          ])
+          : JSON.stringify([
+            annotation.sourceConversationId,
+            annotation.sourceMessageId,
+            annotation.sourceFilePath,
+            annotation.surface,
+            annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
+            annotation.surface === "process_transcript" ? annotation.generationId : null,
+            annotation.surface === "process_transcript" ? annotation.generationSeqStart : null,
+            annotation.surface === "process_transcript" ? annotation.generationSeqEnd : null,
+            annotation.start,
+            annotation.end,
+          ]);
         if (sourceRanges.has(sourceRangeKey)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: "Annotation source ranges must be unique across the message",
-            path: [annotationIndex, "start"],
+            path: [annotationIndex, annotation.surface === "agent_run_transcript" ? "sourceEntryId" : "start"],
           });
         }
         sourceRanges.add(sourceRangeKey);
@@ -386,7 +443,17 @@ export const createChatConversationSchema = chatDraftSchema.extend({
 });
 
 export const createChatFirstTurnSchema = chatDraftSchema.extend({
-  body: z.string().trim().min(1).max(20000),
+  body: z.string().trim().max(20000).default(""),
+  clientMutationId: z.string().trim().min(1).max(120).optional(),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional().default([]),
+}).superRefine((value, ctx) => {
+  if (value.body.length === 0 && value.inlineAnnotations.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Chat message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
 });
 
 export const setChatProjectContextSchema = z.object({

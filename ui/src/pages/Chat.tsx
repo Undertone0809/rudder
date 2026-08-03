@@ -1882,6 +1882,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     annotation: ChatInlineAnnotation,
     ordinal: number,
   ) => {
+    if (annotation.surface === "agent_run_transcript") {
+      navigate(`/agents/${encodeURIComponent(annotation.sourceAgentId)}/runs/${encodeURIComponent(annotation.sourceRunId)}`);
+      return;
+    }
     if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
       setUnlocatableResponseAnnotationId(null);
       void (async () => {

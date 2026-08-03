@@ -48,9 +48,12 @@ export interface ChatAttachment {
 export type ChatInlineAnnotationSurface =
   | "assistant_body"
   | "process_transcript"
+  | "agent_run_transcript"
   | "workspace_file"
   | "local_file";
 export type ChatInlineAnnotationTranscriptKind = "thinking" | "assistant";
+export type ChatInlineAnnotationAgentRunAnchorKind = "text" | "transition";
+export type ChatInlineAnnotationSourceEntryId = string | number;
 
 interface ChatInlineAnnotationBase {
   id: string;
@@ -62,6 +65,13 @@ interface ChatInlineAnnotationBase {
   end: number;
   prefix: string;
   suffix: string;
+}
+
+interface ChatInlineAnnotationAgentRunBase {
+  id: string;
+  selectedText: string;
+  comment?: string | null;
+  sourceHash: string;
 }
 
 type ChatInlineAnnotationProvenance =
@@ -86,6 +96,27 @@ type ChatInlineAnnotationProvenance =
     generationSeqEnd: number;
   }
   | {
+    surface: "agent_run_transcript";
+    sourceRunId: string;
+    sourceAgentId: string;
+    anchorKind: ChatInlineAnnotationAgentRunAnchorKind;
+    sourceEntryId: ChatInlineAnnotationSourceEntryId;
+    sourceMemberIds: ChatInlineAnnotationSourceEntryId[];
+    sourceConversationId?: never;
+    sourceMessageId?: never;
+    sourceFilePath?: never;
+    sourceLibraryEntryId?: never;
+    sourceRenderMode?: never;
+    transcriptKind?: never;
+    generationId?: never;
+    generationSeqStart?: never;
+    generationSeqEnd?: never;
+    start?: never;
+    end?: never;
+    prefix?: never;
+    suffix?: never;
+  }
+  | {
     surface: "workspace_file";
     sourceMessageId?: never;
     sourceFilePath: string;
@@ -108,14 +139,22 @@ type ChatInlineAnnotationProvenance =
     generationSeqEnd?: never;
   };
 
-export type ChatInlineAnnotation = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+type ChatInlineAnnotationAttachment = {
   attachmentIds: string[];
 };
 
-export type ChatInlineAnnotationInput = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+type ChatInlineAnnotationInputAttachment = {
   attachmentIds?: string[];
   attachmentFileIndexes?: number[];
 };
+
+export type ChatInlineAnnotation =
+  | (ChatInlineAnnotationBase & Exclude<ChatInlineAnnotationProvenance, { surface: "agent_run_transcript" }> & ChatInlineAnnotationAttachment)
+  | (ChatInlineAnnotationAgentRunBase & Extract<ChatInlineAnnotationProvenance, { surface: "agent_run_transcript" }> & ChatInlineAnnotationAttachment);
+
+export type ChatInlineAnnotationInput =
+  | (ChatInlineAnnotationBase & Exclude<ChatInlineAnnotationProvenance, { surface: "agent_run_transcript" }> & ChatInlineAnnotationInputAttachment)
+  | (ChatInlineAnnotationAgentRunBase & Extract<ChatInlineAnnotationProvenance, { surface: "agent_run_transcript" }> & ChatInlineAnnotationInputAttachment);
 
 export interface ChatPrimaryIssueSummary {
   id: string;
@@ -443,6 +482,7 @@ export interface ChatConversation {
   sideChatCompletedAt?: Date | null;
   sideChatKeptAt?: Date | null;
   sideChatClientMutationId?: string | null;
+  initialClientMutationId?: string | null;
   mutability: ChatConversationMutability;
   title: string;
   summary: string | null;

@@ -2,6 +2,7 @@ import {
   AnchoredResponseAnnotationMarkers,
   SentResponseAnnotationsCard,
 } from "@/components/chat/ResponseAnnotations";
+import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
 import {
@@ -22,6 +23,7 @@ import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
   registerChatAnnotationSourceText,
+  shouldAutoFocusChatAnnotationToolbar,
 } from "../../lib/chat-response-annotation-selection";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
@@ -42,10 +44,9 @@ import {
   TranscriptMarkdownLinkClickHandler,
   TranscriptPresentation,
   TranscriptRunAnnotationContext,
-  TranscriptRunAnnotationInput,
   TranscriptSentAnnotationContext,
   TranscriptToolCardEntry,
-  truncate,
+  truncate
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
@@ -148,6 +149,8 @@ function TranscriptAnnotationSource({
 }
 
 function transcriptBlockIdentity(block: TranscriptBlock): string {
+  const primarySourceEntryId = block.sourceEntryIds?.[0];
+  if (primarySourceEntryId) return primarySourceEntryId;
   switch (block.type) {
     case "message":
       return [
@@ -183,11 +186,10 @@ function transcriptBlockIdentity(block: TranscriptBlock): string {
 }
 
 function isStableTranscriptBlock(block: TranscriptBlock): boolean {
-  if (block.type === "message" && block.role !== "assistant") return false;
-  if ((block.type === "message" || block.type === "thinking") && block.streaming) return false;
-  if (block.type === "tool" || block.type === "activity") return block.status !== "running";
-  if (block.type === "command_group") return block.items.every((item) => item.status !== "running");
-  return true;
+  if (block.type === "message") return block.role === "assistant" && !block.streaming;
+  if (block.type === "thinking") return !block.streaming;
+  if (block.type === "tool") return block.status !== "running";
+  return false;
 }
 
 function transcriptBlockAnnotationText(block: TranscriptBlock): string {
@@ -232,25 +234,92 @@ export function TranscriptRunAnnotationBlock({
 }) {
   const stable = isStableTranscriptBlock(block);
   const blockId = transcriptBlockIdentity(block);
-  const canAnnotate = presentation === "detail" && !streaming && stable && Boolean(context);
-  if (!context) return children;
-  const handleAnnotate = (anchor: HTMLButtonElement) => {
+  const canAnnotate = presentation === "detail"
+    && !streaming
+    && stable
+    && Boolean(context)
+    && (block.sourceEntryIds?.length ?? 0) > 0;
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const blockRootRef = useRef<HTMLDivElement | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<{
+    text: string;
+    range: Range;
+    anchorRect: DOMRect;
+    autoFocus: boolean;
+  } | null>(null);
+  const dispatchAnnotation = (
+    text: string,
+    anchor: HTMLButtonElement,
+    anchorKind: "text" | "transition",
+  ) => {
     if (!context) return;
-    const input: TranscriptRunAnnotationInput = {
+    context.onAnnotate({
       sourceRunId: context.sourceRunId,
       sourceAgentId: context.sourceAgentId,
       blockId,
+      sourceMemberIds: block.sourceEntryIds,
       blockType: block.type,
-      text: transcriptBlockAnnotationText(block),
+      text,
+      anchorKind,
       ts: block.ts,
       anchor,
       block,
+    });
+  };
+  const handleAnnotate = (anchor: HTMLButtonElement) => {
+    dispatchAnnotation(transcriptBlockAnnotationText(block), anchor, "transition");
+  };
+  useEffect(() => {
+    if (!canAnnotate) return undefined;
+    const updateSelection = (event: MouseEvent | TouchEvent | KeyboardEvent) => {
+      const eventTarget = event.target instanceof Element ? event.target : null;
+      if (eventTarget?.closest('[role="toolbar"][aria-label="Response annotation actions"]')) return;
+      const root = blockRootRef.current;
+      const selection = window.getSelection();
+      if (!root || !selection || selection.rangeCount !== 1 || selection.isCollapsed) {
+        setPendingSelection(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      if (!root.contains(range.commonAncestorContainer)) {
+        setPendingSelection(null);
+        return;
+      }
+      const text = selection.toString().trim();
+      const anchorRect = range.getBoundingClientRect();
+      if (!text || anchorRect.width <= 0 || anchorRect.height <= 0) {
+        setPendingSelection(null);
+        return;
+      }
+      setPendingSelection({
+        text,
+        range: range.cloneRange(),
+        anchorRect,
+        autoFocus: shouldAutoFocusChatAnnotationToolbar(event),
+      });
     };
-    context.onAnnotate(input);
+    document.addEventListener("mouseup", updateSelection);
+    document.addEventListener("touchend", updateSelection);
+    document.addEventListener("keyup", updateSelection);
+    return () => {
+      document.removeEventListener("mouseup", updateSelection);
+      document.removeEventListener("touchend", updateSelection);
+      document.removeEventListener("keyup", updateSelection);
+    };
+  }, [canAnnotate]);
+
+  if (!context) return children;
+
+  const commitPendingSelection = () => {
+    if (!pendingSelection || !triggerRef.current) return;
+    dispatchAnnotation(pendingSelection.text, triggerRef.current, "text");
+    setPendingSelection(null);
+    window.getSelection()?.removeAllRanges();
   };
 
   return (
     <div
+      ref={blockRootRef}
       data-run-transcript-block="true"
       data-run-transcript-block-id={blockId}
       data-run-transcript-block-type={block.type}
@@ -261,6 +330,7 @@ export function TranscriptRunAnnotationBlock({
       {children}
       {canAnnotate ? (
         <button
+          ref={triggerRef}
           type="button"
           data-testid="run-transcript-annotation-trigger"
           data-run-transcript-annotation-trigger="true"
@@ -271,6 +341,25 @@ export function TranscriptRunAnnotationBlock({
         >
           <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
+      ) : null}
+      {canAnnotate && pendingSelection ? (
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={pendingSelection.anchorRect}
+          getAnchorRect={() => (
+            typeof pendingSelection.range.getBoundingClientRect === "function"
+              ? pendingSelection.range.getBoundingClientRect()
+              : pendingSelection.anchorRect
+          )}
+          boundaryRect={blockRootRef.current?.getBoundingClientRect() ?? null}
+          getBoundaryRect={() => blockRootRef.current?.getBoundingClientRect() ?? null}
+          anchorObservationRoot={blockRootRef.current}
+          onAddToChat={commitPendingSelection}
+          onAskInSideChat={commitPendingSelection}
+          onDismiss={() => setPendingSelection(null)}
+          onAnchorUnavailable={() => setPendingSelection(null)}
+          autoFocus={pendingSelection.autoFocus}
+        />
       ) : null}
     </div>
   );

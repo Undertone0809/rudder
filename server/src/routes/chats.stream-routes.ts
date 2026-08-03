@@ -2,6 +2,7 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
   addChatMessageSchema,
   chatClientCheckpointSchema,
+  chatInlineAnnotationsFromStructuredPayload,
   convertChatToIssueSchema,
   createChatAttachmentMetadataSchema,
   createChatContextLinkSchema,
@@ -10,6 +11,7 @@ import {
   setChatProjectContextSchema,
   stopChatGenerationSchema,
   type ChatConversation,
+  type ChatInlineAnnotation,
   type ChatMessage,
   type ChatStreamTranscriptEntry,
 } from "@rudderhq/shared";
@@ -145,7 +147,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(422).json({ error: attachmentValidationError });
       return;
     }
-
     const conversation = atomicFirstTurn?.conversation
       ?? await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
@@ -254,6 +255,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         queuedResult.cleanupAttachments,
       );
       const item = queuedResult.item;
+      const queuedAnnotations = (item.payload.inlineAnnotations ?? []) as ChatInlineAnnotation[];
       await logActivity(db, {
         orgId: conversation.orgId,
         actorType: actor.actorType,
@@ -269,9 +271,18 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           annotationCount: item.annotationCount ?? 0,
           annotationSourceMessageIds: [
             ...new Set(
-              (item.payload.inlineAnnotations ?? []).map(
-                (annotation: { sourceMessageId: string }) => annotation.sourceMessageId,
-              ),
+              queuedAnnotations
+                .filter((annotation) => annotation.surface !== "agent_run_transcript")
+                .map((annotation) => annotation.sourceMessageId)
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ],
+          annotationSourceRunIds: [
+            ...new Set(
+              queuedAnnotations
+                .filter((annotation) => annotation.surface === "agent_run_transcript")
+                .map((annotation) => annotation.sourceRunId)
+                .filter((value): value is string => Boolean(value)),
             ),
           ],
         },
@@ -486,7 +497,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     res.flushHeaders();
 
     try {
-      const userMessage = atomicFirstTurn?.userMessage ?? await addUserMessage(
+      let userMessage = atomicFirstTurn?.userMessage ?? await addUserMessage(
         conversation as ChatConversation,
         parsedBody.data.body,
         actor,
@@ -530,6 +541,27 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           actor,
         )
         : [];
+      if (atomicFirstTurn && atomicFirstTurn.annotationFileIndexesByAnnotationId.size > 0) {
+        const currentPayload = userMessage.structuredPayload ?? {};
+        const annotations = chatInlineAnnotationsFromStructuredPayload(currentPayload);
+        const boundAnnotations = annotations.map((annotation) => ({
+          ...annotation,
+          attachmentIds: [
+            ...annotation.attachmentIds,
+            ...(atomicFirstTurn.annotationFileIndexesByAnnotationId.get(annotation.id) ?? []).map((fileIndex) => {
+              const attachmentId = userAttachments[fileIndex]?.id;
+              if (!attachmentId) throw new Error("Annotation file attachment could not be rebound to the first user message");
+              return attachmentId;
+            }),
+          ],
+        }));
+        const updatedUserMessage = await svc.updateMessageStructuredPayload(
+          conversation.id,
+          userMessage.id,
+          { ...currentPayload, inlineAnnotations: boundAnnotations },
+        );
+        if (updatedUserMessage) userMessage = updatedUserMessage;
+      }
       const hydratedUserMessage = withMergedChatMessageAttachments(
         userMessage,
         userAttachments,
@@ -999,6 +1031,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(422).json({ error: attachmentValidationError });
       return;
     }
+    for (const annotation of parsed.data.inlineAnnotations) {
+      for (const fileIndex of annotation.attachmentFileIndexes ?? []) {
+        if (fileIndex < 0 || fileIndex >= messageFiles.length) {
+          res.status(422).json({ error: "Annotation file index does not match an uploaded file" });
+          return;
+        }
+      }
+    }
     const actor = getActorInfo(req);
     if (actor.actorType === "agent") {
       res.status(422).json({ error: "Agent-authored chat messages must use the non-stream message endpoint" });
@@ -1020,11 +1060,15 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       planMode: parsed.data.planMode ?? false,
       createdByUserId: actor.actorId,
       contextLinks: draft.contextLinks,
+      initialClientMutationId: parsed.data.clientMutationId ?? null,
       initialMessage: {
         role: "user",
         kind: "message",
         status: "completed",
         body: parsed.data.body,
+        structuredPayload: parsed.data.inlineAnnotations.length > 0
+          ? { inlineAnnotations: parsed.data.inlineAnnotations }
+          : null,
       },
       activity: actor,
     });
@@ -1033,6 +1077,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     (req as any).atomicFirstTurn = {
       conversation,
       userMessage: accepted.message,
+      annotationFileIndexesByAnnotationId: new Map(
+        parsed.data.inlineAnnotations.map((annotation) => [
+          annotation.id,
+          [...(annotation.attachmentFileIndexes ?? [])],
+        ]),
+      ),
       uploadPrepared,
       expectedTitleForAutomaticGeneration: parsed.data.title
         ? null

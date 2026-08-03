@@ -82,6 +82,7 @@ describe("RunTranscriptView", () => {
               kind: "assistant",
               ts: "2026-07-23T00:00:00.000Z",
               text: "The completed answer.",
+              sourceEntryId: "run-event-1",
             },
           ] as unknown as TranscriptEntry[]}
           runAnnotationContext={{

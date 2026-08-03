@@ -1,4 +1,4 @@
-import type { HeartbeatRunEvent } from "@rudderhq/shared";
+import { isInternalChatTranscriptLifecycleEntry, type HeartbeatRunEvent } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../agent-runtimes";
 
 interface RunDetailEventOptions {
@@ -14,6 +14,22 @@ const INVOCATION_HIDDEN_RUN_EVENT_TYPES = new Set([
   ...OPERATOR_HIDDEN_RUN_EVENT_TYPES,
   "transcript.entry",
 ]);
+
+function operatorHiddenRunEvent(event: HeartbeatRunEvent) {
+  if (OPERATOR_HIDDEN_RUN_EVENT_TYPES.has(event.eventType)) return true;
+  if (/(?:invocation|diagnostic|session)/iu.test(event.eventType)) return true;
+  const payload = objectValue(event.payload);
+  if (!payload) return false;
+  if (payload.internal === true || payload.hidden === true || payload.private === true) return true;
+  if (payload.visibility === "internal" || payload.visibility === "hidden") return true;
+  const nestedEntry = objectValue(payload.entry);
+  const candidate = payload.kind === "system" && typeof payload.text === "string"
+    ? { kind: payload.kind, text: payload.text }
+    : nestedEntry?.kind === "system" && typeof nestedEntry.text === "string"
+      ? { kind: nestedEntry.kind, text: nestedEntry.text }
+      : null;
+  return candidate ? isInternalChatTranscriptLifecycleEntry(candidate) : false;
+}
 
 export function operatorVisibleInvocationRunEvents(
   events: HeartbeatRunEvent[],
@@ -149,7 +165,8 @@ export function heartbeatRunEventTranscriptEntry(
 ): TranscriptEntry | null {
   if (event.eventType !== "transcript.entry") return null;
   const redactValue = options.redactValue ?? (<T,>(value: T) => value);
-  return transcriptEntryFromPayload(redactValue(event.payload), eventTimestamp(event));
+  const entry = transcriptEntryFromPayload(redactValue(event.payload), eventTimestamp(event));
+  return entry ? { ...entry, sourceEntryId: String(event.id) } : null;
 }
 
 export function heartbeatRunEventText(
@@ -187,21 +204,21 @@ export function heartbeatRunEventToTranscriptEntry(
   const text = heartbeatRunEventText(event, options);
 
   if (event.stream === "stdout") {
-    return { kind: "stdout", ts, text };
+    return { kind: "stdout", ts, text, sourceEntryId: String(event.id) };
   }
 
   if (event.stream === "stderr" || event.level === "error" || event.eventType === "error") {
-    return { kind: "stderr", ts, text };
+    return { kind: "stderr", ts, text, sourceEntryId: String(event.id) };
   }
 
-  return { kind: "system", ts, text };
+  return { kind: "system", ts, text, sourceEntryId: String(event.id) };
 }
 
 export function heartbeatRunEventsToTranscriptEntries(
   events: HeartbeatRunEvent[],
   options: RunDetailEventOptions = {},
 ): TranscriptEntry[] {
-  const visibleEvents = events.filter((event) => !OPERATOR_HIDDEN_RUN_EVENT_TYPES.has(event.eventType));
+  const visibleEvents = events.filter((event) => !operatorHiddenRunEvent(event));
   const embeddedTranscriptEntries = visibleEvents.flatMap((event) => {
     const entry = heartbeatRunEventTranscriptEntry(event, options);
     return entry ? [entry] : [];

@@ -9,6 +9,8 @@ import {
   chatMessages,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunEvents,
+  heartbeatRuns,
   issues,
   organizationSkills,
   organizations,
@@ -123,6 +125,8 @@ describe("chatInlineAnnotationService", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await db.delete(heartbeatRunEvents);
+    await db.delete(heartbeatRuns);
     await db.delete(chatGenerationEvents);
     await db.delete(chatGenerations);
     await db.delete(chatAttachments);
@@ -188,7 +192,7 @@ describe("chatInlineAnnotationService", () => {
   function assistantAnnotation(
     source: Awaited<ReturnType<typeof seedSource>>,
     body: string,
-    overrides: Partial<ChatInlineAnnotationInput> = {},
+    overrides: Partial<Extract<ChatInlineAnnotationInput, { surface: "assistant_body" }>> = {},
   ): ChatInlineAnnotationInput {
     const start = body.indexOf("the docs");
     const end = body.indexOf("run tests") + "run tests".length;
@@ -363,6 +367,145 @@ describe("chatInlineAnnotationService", () => {
     }
     return { generationId, text };
   }
+
+  async function seedAgentRunEvidence(source: Awaited<ReturnType<typeof seedSource>>) {
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Transcript annotation agent",
+      role: "engineer",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: source.orgId,
+      agentId,
+      status: "succeeded",
+      finishedAt: new Date(),
+    });
+    const eventRows = await db.insert(heartbeatRunEvents).values([
+      {
+        orgId: source.orgId,
+        runId,
+        agentId,
+        seq: 1,
+        eventType: "transcript.entry",
+        payload: {
+          kind: "assistant",
+          ts: "2026-08-03T08:00:00.000Z",
+          text: "Review ",
+          delta: true,
+        },
+      },
+      {
+        orgId: source.orgId,
+        runId,
+        agentId,
+        seq: 2,
+        eventType: "transcript.entry",
+        payload: {
+          kind: "assistant",
+          ts: "2026-08-03T08:00:01.000Z",
+          text: "the docs before shipping.",
+          delta: true,
+        },
+      },
+    ]).returning();
+    return { agentId, runId, events: eventRows };
+  }
+
+  it("validates terminal Agent Run transcript text provenance and source identity", async () => {
+    const source = await seedSource();
+    const run = await seedAgentRunEvidence(source);
+    const [firstEvent, secondEvent] = run.events;
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "agent_run_transcript",
+      selectedText: "the docs before shipping.",
+      comment: "Keep the evidence attached.",
+      sourceRunId: run.runId,
+      sourceAgentId: run.agentId,
+      anchorKind: "text",
+      sourceEntryId: firstEvent!.id,
+      sourceMemberIds: [firstEvent!.id, secondEvent!.id],
+      sourceHash: sha256("Review the docs before shipping."),
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [annotation],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        surface: "agent_run_transcript",
+        sourceRunId: run.runId,
+        sourceAgentId: run.agentId,
+      })],
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        ...annotation,
+        id: randomUUID(),
+        sourceAgentId: randomUUID(),
+      }] as ChatInlineAnnotationInput[],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("source run"),
+    });
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, run.runId));
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{ ...annotation, id: randomUUID() }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("terminal"),
+    });
+  });
+
+  it("rejects a transition whose source entry is hidden even when another member is visible", async () => {
+    const source = await seedSource();
+    const run = await seedAgentRunEvidence(source);
+    const hiddenEvent = (await db.insert(heartbeatRunEvents).values({
+      orgId: source.orgId,
+      runId: run.runId,
+      agentId: run.agentId,
+      seq: 3,
+      eventType: "adapter.invoke",
+      payload: { hidden: true, text: "private invocation" },
+    }).returning())[0]!;
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "agent_run_transcript",
+      selectedText: "private invocation",
+      comment: null,
+      sourceRunId: run.runId,
+      sourceAgentId: run.agentId,
+      anchorKind: "transition",
+      sourceEntryId: hiddenEvent.id,
+      sourceMemberIds: [run.events[0]!.id],
+      sourceHash: sha256("private invocation"),
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [annotation],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("source entry must be visible"),
+    });
+  });
 
   it("validates Markdown source anchors without equating rendered selected text to the raw slice", async () => {
     const body = "Read [the docs](https://example.test) and `run tests` before shipping.";
@@ -544,7 +687,7 @@ describe("chatInlineAnnotationService", () => {
         ...annotation,
         id: randomUUID(),
         selectedText: "stale issue with stale-skill",
-      }],
+      }] as ChatInlineAnnotationInput[],
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("selected text"),
@@ -585,7 +728,7 @@ describe("chatInlineAnnotationService", () => {
         end: partialEnd,
         prefix: body.slice(Math.max(0, partialStart - 160), partialStart),
         suffix: body.slice(partialEnd, partialEnd + 160),
-      }],
+      }] as ChatInlineAnnotationInput[],
     })).resolves.toMatchObject({
       annotations: [expect.objectContaining({
         selectedText: "Current issue title with current",
@@ -661,7 +804,7 @@ describe("chatInlineAnnotationService", () => {
         end: crossOrgBody.length,
         prefix: "",
         suffix: "",
-      }],
+      }] as ChatInlineAnnotationInput[],
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("selected text"),

@@ -10,6 +10,8 @@ import {
   MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS,
   MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH,
   MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_RUN_ENTRY_ID_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_RUN_MEMBER_IDS,
   MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH,
   MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH,
   MAX_CHAT_INLINE_ANNOTATIONS,
@@ -23,6 +25,8 @@ import { chatQueuedMessagePayloadSchema } from "./chat.js";
 
 const sourceConversationId = "11111111-1111-4111-8111-111111111111";
 const sourceMessageId = "22222222-2222-4222-8222-222222222222";
+const sourceRunId = "44444444-4444-4444-8444-444444444444";
+const sourceAgentId = "55555555-5555-4555-8555-555555555555";
 
 const annotationOnlyAddMessageInput: AddChatMessage = { inlineAnnotations: [] };
 const annotationOnlyQueuedMessageInput: ChatQueuedMessagePayloadInput = { inlineAnnotations: [] };
@@ -86,6 +90,23 @@ function fileAnnotation(
   };
 }
 
+function agentRunAnnotation(index = 12, overrides: Record<string, unknown> = {}) {
+  return {
+    id: uuid(index),
+    selectedText: "Selected run transcript text",
+    comment: null,
+    surface: "agent_run_transcript",
+    sourceRunId,
+    sourceAgentId,
+    anchorKind: "text",
+    sourceEntryId: 101,
+    sourceMemberIds: [101, 102],
+    sourceHash: "c".repeat(64),
+    attachmentIds: [],
+    ...overrides,
+  };
+}
+
 describe("chat inline annotation contracts", () => {
   it("exports the message limits", () => {
     expect({
@@ -95,6 +116,8 @@ describe("chat inline annotation contracts", () => {
       totalText: MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH,
       context: MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH,
       attachments: MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS,
+      runMemberIds: MAX_CHAT_INLINE_ANNOTATION_RUN_MEMBER_IDS,
+      runEntryIdLength: MAX_CHAT_INLINE_ANNOTATION_RUN_ENTRY_ID_LENGTH,
     }).toEqual({
       annotations: 10,
       selectedText: 4_000,
@@ -102,6 +125,8 @@ describe("chat inline annotation contracts", () => {
       totalText: 16_000,
       context: 160,
       attachments: 10,
+      runMemberIds: 100,
+      runEntryIdLength: 200,
     });
   });
 
@@ -126,7 +151,7 @@ describe("chat inline annotation contracts", () => {
     expect(createChatFirstTurnSchema.safeParse({
       body: "",
       inlineAnnotations: [assistantAnnotation()],
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it("keeps omitted queued-edit annotations distinct from an explicit replacement", () => {
@@ -274,6 +299,30 @@ describe("chat inline annotation contracts", () => {
       transcriptKind: "assistant",
       generationSeqStart: 1,
       generationSeqEnd: 1,
+    })).success).toBe(false);
+  });
+
+  it("accepts bounded Agent Run transcript provenance and rejects malformed member identity", () => {
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation()).success).toBe(true);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      anchorKind: "transition",
+      sourceEntryId: "entry-101",
+      sourceMemberIds: ["entry-101", "entry-102"],
+    })).success).toBe(true);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      sourceRunId: undefined,
+    })).success).toBe(false);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      sourceMemberIds: [101, 101],
+    })).success).toBe(false);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      sourceMemberIds: Array.from({ length: MAX_CHAT_INLINE_ANNOTATION_RUN_MEMBER_IDS + 1 }, (_, index) => index + 1),
+    })).success).toBe(false);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      sourceEntryId: "x".repeat(MAX_CHAT_INLINE_ANNOTATION_RUN_ENTRY_ID_LENGTH + 1),
+    })).success).toBe(false);
+    expect(chatInlineAnnotationInputSchema.safeParse(agentRunAnnotation(12, {
+      sourceConversationId,
     })).success).toBe(false);
   });
 
