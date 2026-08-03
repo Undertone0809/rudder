@@ -39,7 +39,13 @@ test.describe("Automation runtime model selector", () => {
     await expect(assigneeControl).toBeVisible();
     const runtimeSelector = assigneeControl.getByTestId("issue-runtime-selector");
     await expect(runtimeSelector).toBeVisible();
+    await runtimeSelector.press("ArrowRight");
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeHidden();
     await runtimeSelector.click();
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
+    await page.getByTestId("issue-runtime-model-trigger").click();
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
 
     const modelOption = page.locator('[data-testid^="issue-runtime-option-model-"]').first();
@@ -47,7 +53,6 @@ test.describe("Automation runtime model selector", () => {
     const selectedModelId = (await modelOption.getAttribute("data-testid"))?.replace("issue-runtime-option-model-", "");
     const selectedModelLabel = (await modelOption.textContent())?.trim();
     await modelOption.click();
-    await page.getByTestId("issue-runtime-apply").click();
 
     await expect.poll(async () => {
       const response = await page.request.get(`${E2E_BASE_URL}/api/automations/${automation.id}`);
@@ -100,9 +105,10 @@ test.describe("Automation runtime model selector", () => {
     const composer = page.getByTestId("automation-composer-shell");
     await expect(composer.getByTestId("issue-runtime-selector")).toBeVisible();
     await composer.getByTestId("issue-runtime-selector").click();
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
+    await page.getByTestId("issue-runtime-model-trigger").click();
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
     await page.locator('[data-testid^="issue-runtime-option-model-"]').first().click();
-    await page.getByTestId("issue-runtime-apply").click();
     await page.getByRole("button", { name: /^Create$/ }).click();
 
     await expect(page.getByText("Composer model selection", { exact: true })).toBeVisible();
