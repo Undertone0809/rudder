@@ -44,6 +44,7 @@ import { getDefaultCompanyGoal } from "./goals.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
+import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
@@ -1339,6 +1340,7 @@ export function issueService(db: Db) {
         }
 
         if (!removedIssue) return null;
+        await removeMessengerCustomGroupEntriesForItem(tx, removedIssue.orgId, `issue:${removedIssue.id}`);
         const [enriched] = await withIssueLabels(tx, [removedIssue]);
         return enriched;
       }),

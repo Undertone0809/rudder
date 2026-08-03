@@ -1047,27 +1047,18 @@ test.describe("Messenger unified threads contract", () => {
     const regularGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
       data: { name: "Project work queue", icon: "folder::slate" },
     });
-    const emptyGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
-      data: { name: "Empty project group", icon: "inbox::slate" },
-    });
     expect(pinnedGroupRes.ok()).toBe(true);
     expect(regularGroupRes.ok()).toBe(true);
-    expect(emptyGroupRes.ok()).toBe(true);
     const pinnedGroup = await pinnedGroupRes.json() as { id: string };
     const regularGroup = await regularGroupRes.json() as { id: string };
-    const emptyGroup = await emptyGroupRes.json() as { id: string };
     const pinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}`, {
       data: { pinned: true },
     });
     const unpinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`, {
       data: { pinned: false },
     });
-    const unpinEmptyRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${emptyGroup.id}`, {
-      data: { pinned: false },
-    });
     expect(pinRes.ok()).toBe(true);
     expect(unpinRes.ok()).toBe(true);
-    expect(unpinEmptyRes.ok()).toBe(true);
 
     const pinnedEntryRes = await page.request.post(
       `/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}/entries`,
@@ -1183,7 +1174,6 @@ test.describe("Messenger unified threads contract", () => {
     const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
     const pinnedGroupSectionId = `messenger-thread-section-custom-group-${pinnedGroup.id}`;
     const regularGroupSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
-    const emptyGroupSectionId = `messenger-thread-section-custom-group-${emptyGroup.id}`;
     const pinnedGroupSection = page.getByTestId(pinnedGroupSectionId);
     const regularGroupSection = page.getByTestId(regularGroupSectionId);
     const regularGroupContent = page.getByTestId(`${regularGroupSectionId}-content`);
@@ -1191,7 +1181,6 @@ test.describe("Messenger unified threads contract", () => {
     await expect(pinnedGroupSection).toContainText("Pinned atomic group", { timeout: 15_000 });
     await scrollMessengerUntilTestId(page, regularGroupSectionId);
     await expect(regularGroupSection).toContainText(groupedChats[1]!.title);
-    await expect(page.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
     await page.getByTestId("messenger-thread-organization-trigger").click();
     await page.getByRole("menuitemradio", { name: "Project" }).click();
 
@@ -1211,9 +1200,7 @@ test.describe("Messenger unified threads contract", () => {
     await scrollMessengerUntilTestId(page, regularGroupSectionId);
     await expect(noProjectSection).toBeVisible();
     await expect(noProjectSectionContent.getByTestId(regularGroupSectionId)).toContainText("Project work queue");
-    await expect(noProjectSectionContent.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
     await expectTestIdWithinSection(page, "messenger-thread-section-project-none", regularGroupSectionId);
-    await expectTestIdWithinSection(page, "messenger-thread-section-project-none", emptyGroupSectionId);
     await expectTestIdWithinSection(
       page,
       "messenger-thread-section-project-none",
@@ -1735,7 +1722,7 @@ test.describe("Messenger unified threads contract", () => {
     }).toBeGreaterThanOrEqual(2);
   });
 
-  test("moves one Chat, Issue, or Saved View out of a group without removing the group or siblings", async ({ page }) => {
+  test("keeps group siblings intact and dissolves the group after its final item moves out", async ({ page }, testInfo) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Move-Out-${Date.now()}`);
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1860,11 +1847,21 @@ test.describe("Messenger unified threads contract", () => {
     await savedViewRow.getByRole("button", { name: "Saved View actions for Grouped move-out reference" }).click();
     await moveOutFromOpenMenu();
     expect((await savedViewMoveResponse).ok()).toBe(true);
-    await expectMemberships([]);
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string }> };
+      return payload.groups.some((candidate) => candidate.id === group.id);
+    }).toBe(false);
+    await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
     await expect(groupedSavedViewRow).toHaveCount(0);
     await expect(savedViewRow).toBeVisible();
     await expect(page.getByTestId(chatRowId)).toBeVisible();
     await expect(page.getByTestId(issueRowId)).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("messenger-empty-group-after.png"),
+      fullPage: true,
+    });
   });
 
   test("groups aggregate issue and synthetic Messenger rows through the same group contract", async ({ page }) => {

@@ -88,6 +88,7 @@ import type { ChatServerQueueClaim, ConversationSourceMetadata, ConversationSumm
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
@@ -3957,6 +3958,7 @@ export function chatService(db: Db) {
         .where(eq(chatConversations.id, id))
         .returning();
       if (!deleted) return null;
+      await removeMessengerCustomGroupEntriesForItem(tx, deleted.orgId, `chat:${deleted.id}`);
       const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
       if (assetIds.length > 0) {
         await tx.delete(assets).where(and(

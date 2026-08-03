@@ -11,6 +11,7 @@ import {
   messengerCustomGroups,
   messengerSavedViewMutations,
   messengerSavedViews,
+  organizationMemberships,
 } from "@rudderhq/db";
 import {
   messengerSavedViewIdSchema,
@@ -46,18 +47,126 @@ function customGroupPlacementLockKey(orgId: string, userId: string, groupId: str
  * Serializes all Saved View identity and placement mutations for one owner.
  * Callers that also need a group lock must acquire this lock first.
  */
-export async function lockMessengerSavedViewPlacement(database: Db, orgId: string, userId: string) {
+export async function lockMessengerOwnerPlacement(
+  database: Pick<Db, "execute">,
+  orgId: string,
+  userId: string,
+) {
   await database.execute(sql`select pg_advisory_xact_lock(hashtext(${savedViewPlacementLockKey(orgId, userId)}))`);
+}
+
+/** Backward-compatible name for callers that only mutate Saved View state. */
+export async function lockMessengerSavedViewPlacement(
+  database: Pick<Db, "execute">,
+  orgId: string,
+  userId: string,
+) {
+  return lockMessengerOwnerPlacement(database, orgId, userId);
 }
 
 /** Serializes entry allocation and mutation within one custom group. */
 export async function lockMessengerCustomGroupPlacement(
-  database: Db,
+  database: Pick<Db, "execute">,
   orgId: string,
   userId: string,
   groupId: string,
 ) {
   await database.execute(sql`select pg_advisory_xact_lock(hashtext(${customGroupPlacementLockKey(orgId, userId, groupId)}))`);
+}
+
+/**
+ * Delete a custom group only after its final membership has been removed.
+ * Callers must hold the group's placement lock before invoking this helper.
+ */
+export async function deleteEmptyMessengerCustomGroup(
+  database: Pick<Db, "delete" | "select">,
+  orgId: string,
+  userId: string,
+  groupId: string,
+) {
+  const [remainingEntry] = await database
+    .select({ id: messengerCustomGroupEntries.id })
+    .from(messengerCustomGroupEntries)
+    .where(and(
+      eq(messengerCustomGroupEntries.orgId, orgId),
+      eq(messengerCustomGroupEntries.userId, userId),
+      eq(messengerCustomGroupEntries.groupId, groupId),
+    ))
+    .limit(1);
+  if (remainingEntry) return null;
+
+  const [deletedGroup] = await database
+    .delete(messengerCustomGroups)
+    .where(and(
+      eq(messengerCustomGroups.orgId, orgId),
+      eq(messengerCustomGroups.userId, userId),
+      eq(messengerCustomGroups.id, groupId),
+    ))
+    .returning();
+  return deletedGroup ?? null;
+}
+
+/**
+ * Remove a deleted Chat/Issue from every operator's custom groups. The owner
+ * locks are acquired before re-reading memberships so a concurrent assignment
+ * cannot survive the source deletion cleanup.
+ */
+export async function removeMessengerCustomGroupEntriesForItem(
+  database: Pick<Db, "delete" | "execute" | "select">,
+  orgId: string,
+  threadKey: string,
+) {
+  const [organizationUsers, existingMemberships] = await Promise.all([
+    database
+      .select({ userId: organizationMemberships.principalId })
+      .from(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.orgId, orgId),
+        eq(organizationMemberships.principalType, "user"),
+        eq(organizationMemberships.status, "active"),
+      )),
+    database
+      .select({ userId: messengerCustomGroupEntries.userId })
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.threadKey, threadKey),
+      )),
+  ]);
+  const userIds = [...new Set([
+    ...organizationUsers.map((row) => row.userId),
+    ...existingMemberships.map((row) => row.userId),
+  ])].sort();
+  for (const userId of userIds) {
+    await lockMessengerOwnerPlacement(database, orgId, userId);
+  }
+
+  const memberships = await database
+    .select({ userId: messengerCustomGroupEntries.userId, groupId: messengerCustomGroupEntries.groupId })
+    .from(messengerCustomGroupEntries)
+    .where(and(
+      eq(messengerCustomGroupEntries.orgId, orgId),
+      eq(messengerCustomGroupEntries.threadKey, threadKey),
+    ));
+  const affectedGroups = [...new Map(
+    memberships.map((membership) => [`${membership.userId}:${membership.groupId}`, membership]),
+  ).values()].sort((left, right) =>
+    `${left.userId}:${left.groupId}`.localeCompare(`${right.userId}:${right.groupId}`));
+  for (const membership of affectedGroups) {
+    await lockMessengerCustomGroupPlacement(database, orgId, membership.userId, membership.groupId);
+  }
+
+  const deleted = await database
+    .delete(messengerCustomGroupEntries)
+    .where(and(
+      eq(messengerCustomGroupEntries.orgId, orgId),
+      eq(messengerCustomGroupEntries.threadKey, threadKey),
+    ))
+    .returning({ id: messengerCustomGroupEntries.id });
+  for (const membership of affectedGroups) {
+    await deleteEmptyMessengerCustomGroup(database, orgId, membership.userId, membership.groupId);
+  }
+  return deleted.length;
 }
 
 function assertSavedViewId(id: string) {
@@ -339,6 +448,9 @@ export function messengerSavedViewsService(db: Db) {
           eq(messengerCustomGroupEntries.userId, userId),
           eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(validId)),
         ));
+      for (const groupId of [...new Set(memberships.map((membership) => membership.groupId))].sort()) {
+        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, groupId);
+      }
       await txDb
         .delete(messengerSavedViews)
         .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, validId)));
@@ -614,6 +726,7 @@ export function messengerSavedViewsService(db: Db) {
           groupId: existingMembership.groupId,
           source: "keep",
         });
+        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, existingMembership.groupId);
       }
       if (group && existingMembership?.groupId !== group.id) {
         const [lastEntry] = await txDb.select({ sortOrder: messengerCustomGroupEntries.sortOrder })

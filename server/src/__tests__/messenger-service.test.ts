@@ -4913,8 +4913,19 @@ describe("messengerService and issue follows", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
+    const groupableConversationIds = [randomUUID(), randomUUID()];
+    await db.insert(chatConversations).values(groupableConversationIds.map((id, index) => ({
+      id,
+      orgId,
+      title: `Pinned test chat ${index + 1}`,
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: userId,
+    })));
     const firstGroup = await messengerSvc.createCustomGroup(orgId, userId, "Later group");
     const pinnedGroup = await messengerSvc.createCustomGroup(orgId, userId, "Pinned group");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, firstGroup.id, `chat:${groupableConversationIds[0]}`);
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, pinnedGroup.id, `chat:${groupableConversationIds[1]}`);
 
     const updated = await messengerSvc.updateCustomGroup(orgId, userId, firstGroup!.id, { pinned: false });
     const customGroups = await messengerSvc.listCustomGroups(orgId, userId);
@@ -4925,6 +4936,109 @@ describe("messengerService and issue follows", () => {
     expect(customGroups.groups.map((group) => group.name)).toEqual(["Pinned group", "Later group"]);
     expect(customGroups.groups[0]?.pinnedAt).toBeInstanceOf(Date);
     expect(customGroups.groups[1]?.id).toBe(firstGroup!.id);
+  });
+
+  it("dissolves a custom group when its final Messenger item moves out", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-empty-after-move";
+    const conversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Empty Group Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Empty Group Org"),
+      issuePrefix: `EG${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Move this Messenger item",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const sourceGroup = await messengerSvc.createCustomGroup(orgId, userId, "Source group");
+    const targetGroup = await messengerSvc.createCustomGroup(orgId, userId, "Target group");
+    const itemKey = `chat:${conversationId}`;
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, sourceGroup.id, itemKey);
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, targetGroup.id, itemKey);
+
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, sourceGroup.id))).toEqual([]);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups.map((group) => group.id)).toEqual([targetGroup.id]);
+
+    await messengerSvc.removeThreadFromCustomGroups(orgId, userId, itemKey);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, targetGroup.id))).toEqual([]);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups).toEqual([]);
+  });
+
+  it("removes deleted Chat and Issue memberships and dissolves their empty groups", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-source-delete";
+    const conversationId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Deleted Source Group Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Deleted Source Group Org"),
+      issuePrefix: `DS${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Delete this Chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Delete this Issue",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: userId,
+    });
+
+    await messengerSvc.createCustomGroupWithEntries(
+      orgId,
+      userId,
+      "Deleted Chat group",
+      null,
+      [`chat:${conversationId}`],
+    );
+    await messengerSvc.createCustomGroupWithEntries(
+      orgId,
+      userId,
+      "Deleted Issue group",
+      null,
+      [`issue:${issueId}`],
+    );
+    await chatSvc.remove(conversationId);
+    await issueSvc.remove(issueId);
+
+    expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.orgId, orgId))).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.orgId, orgId))).toEqual([]);
+  });
+
+  it("does not retain a directly created empty group after hydration", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-empty-create";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Empty Create Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Empty Create Org"),
+      issuePrefix: `EC${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Never populated");
+
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
   });
 
   it("hydrates split issue custom group entries outside the current Messenger thread summary page", async () => {
@@ -5272,7 +5386,7 @@ describe("messengerService and issue follows", () => {
       .from(messengerCustomGroupEntries)
       .where(eq(messengerCustomGroupEntries.orgId, orgId));
 
-    expect(customGroups.groups[0]?.entries).toEqual([]);
+    expect(customGroups.groups).toEqual([]);
     expect(remainingEntries).toHaveLength(0);
   });
 
@@ -11378,7 +11492,7 @@ describe("messengerService and issue follows", () => {
     )).resolves.toEqual({ itemKey: `saved-view:${kept.savedView.id}` });
     expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, group.id))).toHaveLength(0);
     await expect(savedViewsSvc.get(orgId, userId, kept.savedView.id)).resolves.toMatchObject({ id: kept.savedView.id });
-    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
     await savedViewsSvc.remove(orgId, userId, kept.savedView.id);
   });
 
@@ -11469,7 +11583,7 @@ describe("messengerService and issue follows", () => {
     expect(new Set(savedViewActivity.map((event) => event.actorId))).toEqual(new Set([userId]));
 
     await savedViewsSvc.remove(orgId, userId, automation.id);
-    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
   });
 
   it("pins only owner-scoped Local App Saved Views to the Primary Rail", async () => {
@@ -11586,7 +11700,7 @@ describe("messengerService and issue follows", () => {
     expect(remainingPins.items.some((view) => view.id === localApp.id)).toBe(false);
   });
 
-  it("reorders Saved Views and transactionally removes their group membership", async () => {
+  it("reorders Saved Views and transactionally removes their group membership and empty group", async () => {
     const orgId = randomUUID();
     const userId = "saved-view-order-user";
     await db.insert(organizations).values({
@@ -11618,6 +11732,7 @@ describe("messengerService and issue follows", () => {
     const deleted = await savedViewsSvc.remove(orgId, userId, first.id);
     expect(deleted.id).toBe(first.id);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+    expect(await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, group.id))).toEqual([]);
     await expect(savedViewsSvc.get(orgId, userId, first.id)).rejects.toMatchObject({ status: 404 });
   });
 

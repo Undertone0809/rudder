@@ -13,6 +13,7 @@ import {
   approvalComments,
   approvals,
   authUsers,
+  chatConversations,
   heartbeatRuns,
   issueComments,
   issueFollows,
@@ -64,7 +65,9 @@ import {
 } from "./messenger-run-origin.js";
 import { failedRunUserSummary } from "./messenger-run-summary.js";
 import {
+  deleteEmptyMessengerCustomGroup,
   lockMessengerCustomGroupPlacement,
+  lockMessengerOwnerPlacement,
   lockMessengerSavedViewPlacement,
 } from "./messenger-saved-views.js";
 import {
@@ -1122,6 +1125,43 @@ export function messengerService(db: Db) {
     }
   }
 
+  async function ensureMessengerThreadCanBeGroupedWithDb(
+    database: Db,
+    orgId: string,
+    _userId: string,
+    threadKey: string,
+  ) {
+    const conversationId = chatConversationIdFromThreadKey(threadKey);
+    if (conversationId) {
+      const [conversation] = await database
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, orgId),
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.status, "active"),
+          eq(chatConversations.messengerVisible, true),
+        ))
+        .limit(1);
+      if (!conversation) throw notFound("Messenger thread not found");
+      return;
+    }
+
+    const issueId = issueIdFromThreadKey(threadKey);
+    if (issueId) {
+      const [issue] = await database
+        .select({ id: issues.id })
+        .from(issues)
+        .where(and(
+          eq(issues.orgId, orgId),
+          eq(issues.id, issueId),
+          isNull(issues.hiddenAt),
+        ))
+        .limit(1);
+      if (!issue) throw notFound("Messenger thread not found");
+    }
+  }
+
   async function findMessengerSavedViewWithDb(database: Db, orgId: string, userId: string, itemKey: string) {
     const savedViewId = savedViewIdFromItemKey(itemKey);
     if (!savedViewId) return null;
@@ -1170,7 +1210,7 @@ export function messengerService(db: Db) {
   }
 
   async function listCustomGroups(orgId: string, userId: string): Promise<MessengerCustomGroupsResponse> {
-    const [groups, entries] = await Promise.all([
+    let [groups, entries] = await Promise.all([
       db
         .select()
         .from(messengerCustomGroups)
@@ -1186,6 +1226,30 @@ export function messengerService(db: Db) {
         .where(and(eq(messengerCustomGroupEntries.orgId, orgId), eq(messengerCustomGroupEntries.userId, userId)))
         .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt)),
     ]);
+
+    const initiallyEmptyGroupIds = groups
+      .filter((group) => !entries.some((entry) => entry.groupId === group.id))
+      .map((group) => group.id)
+      .sort();
+    if (initiallyEmptyGroupIds.length > 0) {
+      const deletedGroupIds = new Set<string>();
+      await db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        await lockMessengerOwnerPlacement(txDb, orgId, userId);
+        for (const groupId of initiallyEmptyGroupIds) {
+          await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
+        }
+        for (const groupId of initiallyEmptyGroupIds) {
+          if (await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, groupId)) {
+            deletedGroupIds.add(groupId);
+          }
+        }
+      });
+      if (deletedGroupIds.size > 0) {
+        groups = groups.filter((group) => !deletedGroupIds.has(group.id));
+        entries = entries.filter((entry) => !deletedGroupIds.has(entry.groupId));
+      }
+    }
 
     const savedViewItemKeys = entries
       .map((entry) => entry.threadKey)
@@ -1240,6 +1304,7 @@ export function messengerService(db: Db) {
     }
 
     const staleEntryIds: string[] = [];
+    const deletedGroupIds = new Set<string>();
     const entriesByGroupId = new Map<string, MessengerCustomGroupHydratedEntry[]>();
     for (const entry of entries) {
       const savedViewId = savedViewIdFromItemKey(entry.threadKey);
@@ -1294,13 +1359,52 @@ export function messengerService(db: Db) {
     }
 
     if (staleEntryIds.length > 0) {
-      await db
-        .delete(messengerCustomGroupEntries)
-        .where(inArray(messengerCustomGroupEntries.id, staleEntryIds));
+      const staleSnapshots = entries
+        .filter((entry) => staleEntryIds.includes(entry.id))
+        .map((entry) => ({ id: entry.id, groupId: entry.groupId, threadKey: entry.threadKey }));
+      await db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        await lockMessengerOwnerPlacement(txDb, orgId, userId);
+        const currentEntries = await txDb
+          .select({ id: messengerCustomGroupEntries.id, groupId: messengerCustomGroupEntries.groupId, threadKey: messengerCustomGroupEntries.threadKey })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            inArray(messengerCustomGroupEntries.id, staleEntryIds),
+          ));
+        const affectedGroupIds = [...new Set([
+          ...staleSnapshots.map((entry) => entry.groupId),
+          ...currentEntries.map((entry) => entry.groupId),
+        ])].sort();
+        for (const groupId of affectedGroupIds) {
+          await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
+        }
+
+        const snapshotById = new Map(staleSnapshots.map((entry) => [entry.id, entry]));
+        for (const entry of currentEntries) {
+          const snapshot = snapshotById.get(entry.id);
+          if (!snapshot || snapshot.groupId !== entry.groupId || snapshot.threadKey !== entry.threadKey) continue;
+          await txDb
+            .delete(messengerCustomGroupEntries)
+            .where(and(
+              eq(messengerCustomGroupEntries.id, entry.id),
+              eq(messengerCustomGroupEntries.orgId, orgId),
+              eq(messengerCustomGroupEntries.userId, userId),
+              eq(messengerCustomGroupEntries.groupId, entry.groupId),
+              eq(messengerCustomGroupEntries.threadKey, entry.threadKey),
+            ));
+        }
+        for (const groupId of affectedGroupIds) {
+          if (await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, groupId)) {
+            deletedGroupIds.add(groupId);
+          }
+        }
+      });
     }
 
     return {
-      groups: groups.map((group) => ({
+      groups: groups.filter((group) => !deletedGroupIds.has(group.id)).map((group) => ({
         ...group,
         entries: entriesByGroupId.get(group.id) ?? [],
       })),
@@ -1331,7 +1435,11 @@ export function messengerService(db: Db) {
   }
 
   async function createCustomGroup(orgId: string, userId: string, name: string, icon: string | null = null) {
-    return createCustomGroupWithClient(db, orgId, userId, name, icon);
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockMessengerOwnerPlacement(txDb, orgId, userId);
+      return createCustomGroupWithClient(txDb, orgId, userId, name, icon);
+    });
   }
 
   async function updateCustomGroup(
@@ -1340,25 +1448,30 @@ export function messengerService(db: Db) {
     groupId: string,
     patch: { name?: string; icon?: string | null; collapsed?: boolean; pinned?: boolean; sortOrder?: number },
   ) {
-    await getCustomGroupOrThrow(orgId, userId, groupId);
-    const { pinned, ...groupPatch } = patch;
-    const updatePatch = {
-      ...groupPatch,
-      ...(typeof pinned === "boolean" ? { pinnedAt: pinned ? new Date() : null } : {}),
-    };
-    const [group] = await db
-      .update(messengerCustomGroups)
-      .set({
-        ...updatePatch,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(messengerCustomGroups.orgId, orgId),
-        eq(messengerCustomGroups.userId, userId),
-        eq(messengerCustomGroups.id, groupId),
-      ))
-      .returning();
-    return group;
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockMessengerOwnerPlacement(txDb, orgId, userId);
+      await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
+      await getCustomGroupOrThrowWithDb(txDb, orgId, userId, groupId);
+      const { pinned, ...groupPatch } = patch;
+      const updatePatch = {
+        ...groupPatch,
+        ...(typeof pinned === "boolean" ? { pinnedAt: pinned ? new Date() : null } : {}),
+      };
+      const [group] = await txDb
+        .update(messengerCustomGroups)
+        .set({
+          ...updatePatch,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(messengerCustomGroups.orgId, orgId),
+          eq(messengerCustomGroups.userId, userId),
+          eq(messengerCustomGroups.id, groupId),
+        ))
+        .returning();
+      return group;
+    });
   }
 
   async function removeCustomGroup(
@@ -1414,21 +1527,26 @@ export function messengerService(db: Db) {
   async function reorderCustomGroups(orgId: string, userId: string, groupIds: string[]) {
     const uniqueGroupIds = [...new Set(groupIds)];
     if (uniqueGroupIds.length === 0) return listCustomGroups(orgId, userId);
-    const ownedGroups = await db
-      .select({ id: messengerCustomGroups.id })
-      .from(messengerCustomGroups)
-      .where(and(
-        eq(messengerCustomGroups.orgId, orgId),
-        eq(messengerCustomGroups.userId, userId),
-        inArray(messengerCustomGroups.id, uniqueGroupIds),
-      ));
-    if (ownedGroups.length !== uniqueGroupIds.length) {
-      throw notFound("Messenger custom group not found");
-    }
-    const now = new Date();
     await db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockMessengerOwnerPlacement(txDb, orgId, userId);
+      const ownedGroups = await txDb
+        .select({ id: messengerCustomGroups.id })
+        .from(messengerCustomGroups)
+        .where(and(
+          eq(messengerCustomGroups.orgId, orgId),
+          eq(messengerCustomGroups.userId, userId),
+          inArray(messengerCustomGroups.id, uniqueGroupIds),
+        ));
+      if (ownedGroups.length !== uniqueGroupIds.length) {
+        throw notFound("Messenger custom group not found");
+      }
+      for (const groupId of [...uniqueGroupIds].sort()) {
+        await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
+      }
+      const now = new Date();
       for (const [index, groupId] of uniqueGroupIds.entries()) {
-        await tx
+        await txDb
           .update(messengerCustomGroups)
           .set({ sortOrder: index, updatedAt: now })
           .where(and(
@@ -1507,11 +1625,17 @@ export function messengerService(db: Db) {
       for (const affectedGroupId of affectedGroupIds) {
         await lockMessengerCustomGroupPlacement(txDb, orgId, userId, affectedGroupId);
       }
+      if (!savedViewId) {
+        await ensureMessengerThreadCanBeGroupedWithDb(txDb, orgId, userId, threadKey);
+      }
       await getCustomGroupOrThrowWithDb(txDb, orgId, userId, groupId);
       if (savedViewId && !await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
         throw notFound("Messenger Saved View not found");
       }
       const entry = await assignThreadToCustomGroupWithClient(txDb, orgId, userId, groupId, threadKey);
+      if (existingMembership && existingMembership.groupId !== groupId) {
+        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, existingMembership.groupId);
+      }
       if (savedViewId) {
         await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", { groupId });
       }
@@ -1548,17 +1672,17 @@ export function messengerService(db: Db) {
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
       await lockMessengerSavedViewPlacement(txDb, orgId, userId);
-      const [anchorMembership] = anchorItemKey
-        ? await txDb
-          .select({ groupId: messengerCustomGroupEntries.groupId })
-          .from(messengerCustomGroupEntries)
-          .where(and(
-            eq(messengerCustomGroupEntries.orgId, orgId),
-            eq(messengerCustomGroupEntries.userId, userId),
-            eq(messengerCustomGroupEntries.threadKey, anchorItemKey),
-          ))
-          .limit(1)
-        : [];
+      const existingMemberships = await txDb
+        .select({ threadKey: messengerCustomGroupEntries.threadKey, groupId: messengerCustomGroupEntries.groupId })
+        .from(messengerCustomGroupEntries)
+        .where(and(
+          eq(messengerCustomGroupEntries.orgId, orgId),
+          eq(messengerCustomGroupEntries.userId, userId),
+          inArray(messengerCustomGroupEntries.threadKey, uniqueThreadKeys),
+        ));
+      const anchorMembership = anchorItemKey
+        ? existingMemberships.find((membership) => membership.threadKey === anchorItemKey) ?? null
+        : null;
       const group = anchorMembership
         ? await getCustomGroupOrThrowWithDb(
           txDb,
@@ -1567,7 +1691,11 @@ export function messengerService(db: Db) {
           anchorMembership.groupId,
         )
         : await createCustomGroupWithClient(tx, orgId, userId, name, icon);
-      await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
+      const existingGroupIds = [...new Set(existingMemberships.map((membership) => membership.groupId))];
+      const affectedGroupIds = [...new Set([...existingGroupIds, group.id])].sort();
+      for (const affectedGroupId of affectedGroupIds) {
+        await lockMessengerCustomGroupPlacement(txDb, orgId, userId, affectedGroupId);
+      }
       for (const threadKey of uniqueThreadKeys) {
         if (savedViewItemKeys.has(threadKey) && !await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
           throw notFound("Messenger Saved View not found");
@@ -1577,6 +1705,11 @@ export function messengerService(db: Db) {
           groupId: group.id,
           source: anchorMembership ? "group_reuse" : "group_create",
         });
+      }
+      for (const existingGroupId of existingGroupIds) {
+        if (existingGroupId !== group.id) {
+          await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, existingGroupId);
+        }
       }
     });
     return listCustomGroups(orgId, userId);
@@ -1618,6 +1751,9 @@ export function messengerService(db: Db) {
           groupId: membership.groupId,
           source: "item_remove",
         });
+      }
+      if (deleted.length > 0) {
+        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, membership.groupId);
       }
     });
     return savedViewId ? { itemKey: threadKey } : { itemKey: threadKey, threadKey };

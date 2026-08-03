@@ -5,9 +5,14 @@ import {
   messengerCustomGroups,
 } from "@rudderhq/db";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  deleteEmptyMessengerCustomGroup,
+  lockMessengerCustomGroupPlacement,
+  lockMessengerOwnerPlacement,
+} from "./messenger-saved-views.js";
 
-type ChatFamilyGroupClient = Pick<Db, "execute" | "insert" | "select">;
+type ChatFamilyGroupClient = Pick<Db, "delete" | "execute" | "insert" | "select">;
 
 async function findChatFamilyGroup(
   client: Pick<Db, "select">,
@@ -118,6 +123,8 @@ export async function ensureChatFamilyGroup(
     groupName: string;
   },
 ) {
+  await lockMessengerOwnerPlacement(client, input.orgId, input.userId);
+
   // Family membership is user-scoped, but the root row is the stable lock shared
   // by concurrent Fork and Side Chat promotions in the same conversation family.
   await client.execute(sql`
@@ -128,6 +135,19 @@ export async function ensureChatFamilyGroup(
     FOR UPDATE
   `);
 
+  const familyThreadKeys = [...new Set([
+    input.rootConversationId,
+    input.sourceConversationId,
+    input.childConversationId,
+  ])].map((conversationId) => `chat:${conversationId}`);
+  const existingMemberships = await client
+    .select({ groupId: messengerCustomGroupEntries.groupId, threadKey: messengerCustomGroupEntries.threadKey })
+    .from(messengerCustomGroupEntries)
+    .where(and(
+      eq(messengerCustomGroupEntries.orgId, input.orgId),
+      eq(messengerCustomGroupEntries.userId, input.userId),
+      inArray(messengerCustomGroupEntries.threadKey, familyThreadKeys),
+    ));
   const existing = await findChatFamilyGroup(
     client,
     input.orgId,
@@ -140,6 +160,11 @@ export async function ensureChatFamilyGroup(
     input.userId,
     input.groupName,
   );
+  const existingGroupIds = [...new Set(existingMemberships.map((membership) => membership.groupId))];
+  const affectedGroupIds = [...new Set([...existingGroupIds, group.id])].sort();
+  for (const groupId of affectedGroupIds) {
+    await lockMessengerCustomGroupPlacement(client, input.orgId, input.userId, groupId);
+  }
   const familyConversationIds = new Set([
     input.rootConversationId,
     input.sourceConversationId,
@@ -147,6 +172,11 @@ export async function ensureChatFamilyGroup(
   ]);
   for (const conversationId of familyConversationIds) {
     await assignChatToFamilyGroup(client, input.orgId, input.userId, group.id, conversationId);
+  }
+  for (const groupId of existingGroupIds) {
+    if (groupId !== group.id) {
+      await deleteEmptyMessengerCustomGroup(client, input.orgId, input.userId, groupId);
+    }
   }
   return group;
 }
