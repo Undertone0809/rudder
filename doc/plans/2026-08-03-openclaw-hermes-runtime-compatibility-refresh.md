@@ -830,7 +830,7 @@ unchanged.
   reconcile provider terminal state before marking an active Run cancelled.
 - Add deployment-aware endpoint validation and secret references.
 - Create locked current/previous upstream fixtures and black-box harnesses under
-  `tests/fixtures/external-runtimes/` and
+  the planned `tests/fixtures/external-runtimes/` directory and planned
   `tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`.
 - Add `scripts/compatibility/openclaw-hermes-matrix.mjs` as the scheduled
   current/previous-stable and prerelease-filtered drift job. Update
@@ -1028,11 +1028,18 @@ protocol tests do not satisfy acceptance.
 - `pnpm -r typecheck`;
 - `pnpm test:run`;
 - `pnpm build`;
-- `pnpm test:e2e -- tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`;
-- `node scripts/compatibility/openclaw-hermes-matrix.mjs --channel=stable`;
-- scheduled `--channel=drift` and `--channel=prerelease-filter` jobs;
+- after the planned `tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`
+  and `scripts/compatibility/openclaw-hermes-matrix.mjs` artifacts are created:
+  `pnpm test:e2e -- tests/e2e/openclaw-hermes-runtime-compatibility.spec.ts`,
+  `node scripts/compatibility/openclaw-hermes-matrix.mjs --channel=stable`,
+  and scheduled `--channel=drift` / `--channel=prerelease-filter` jobs;
 - rendered browser verification and screenshots for all changed setup, status,
   approval, migration, and Stop states.
+
+These compatibility paths and fixtures are proposal deliverables, not claims
+that the current repository already contains runnable feature tests. The
+implementation is not Review Ready until Slice 1 creates them and the commands
+pass against the locked stock runtimes.
 
 ## Compatibility Policy And Operations
 
