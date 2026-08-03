@@ -1,6 +1,6 @@
-CREATE SCHEMA "rudder_analytics";
+CREATE SCHEMA IF NOT EXISTS "rudder_analytics";
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_daily_rollups" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_daily_rollups" (
 	"day" date NOT NULL,
 	"installation_id" text NOT NULL,
 	"event_name" text NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_daily_rollups" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_events" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_events" (
 	"event_id" uuid PRIMARY KEY NOT NULL,
 	"installation_id" text NOT NULL,
 	"analytics_subject" text,
@@ -46,7 +46,7 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_events" (
 	"payload_sha256" text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_installations" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_installations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"installation_id" text NOT NULL,
 	"mode" text DEFAULT 'anonymous' NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_installations" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_privacy_aggregates" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_privacy_aggregates" (
 	"day" date NOT NULL,
 	"metric_name" text NOT NULL,
 	"dimension_set_version" integer DEFAULT 1 NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_privacy_aggregates"
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_subjects" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_subjects" (
 	"installation_id" text NOT NULL,
 	"analytics_subject" text NOT NULL,
 	"consent_version" text NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_subjects" (
 	CONSTRAINT "product_analytics_collector_subjects_installation_id_analytics_subject_pk" PRIMARY KEY("installation_id","analytics_subject")
 );
 --> statement-breakpoint
-CREATE TABLE "rudder_analytics"."product_analytics_collector_work_loop_revisions" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_work_loop_revisions" (
 	"installation_id" text NOT NULL,
 	"analytics_subject" text,
 	"pseudonymous_org_id" text,
@@ -101,13 +101,13 @@ CREATE TABLE "rudder_analytics"."product_analytics_collector_work_loop_revisions
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "rudder_analytics_daily_rollup_uq" ON "rudder_analytics"."product_analytics_collector_daily_rollups" USING btree ("day","installation_id","event_name","origin","dimension_hash");--> statement-breakpoint
-CREATE INDEX "rudder_analytics_events_installation_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("installation_id","occurred_at");--> statement-breakpoint
-CREATE INDEX "rudder_analytics_events_event_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("event_name","occurred_at");--> statement-breakpoint
-CREATE INDEX "rudder_analytics_events_subject_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("analytics_subject","occurred_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "rudder_analytics_installation_uq" ON "rudder_analytics"."product_analytics_collector_installations" USING btree ("installation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "rudder_analytics_privacy_aggregate_uq" ON "rudder_analytics"."product_analytics_collector_privacy_aggregates" USING btree ("day","metric_name","dimension_set_version","dimension_hash");--> statement-breakpoint
-CREATE UNIQUE INDEX "rudder_analytics_work_loop_revision_uq" ON "rudder_analytics"."product_analytics_collector_work_loop_revisions" USING btree ("installation_id","pseudonymous_work_cycle_id","completion_revision");
+CREATE UNIQUE INDEX IF NOT EXISTS "rudder_analytics_daily_rollup_uq" ON "rudder_analytics"."product_analytics_collector_daily_rollups" USING btree ("day","installation_id","event_name","origin","dimension_hash");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rudder_analytics_events_installation_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("installation_id","occurred_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rudder_analytics_events_event_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("event_name","occurred_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rudder_analytics_events_subject_occurred_idx" ON "rudder_analytics"."product_analytics_collector_events" USING btree ("analytics_subject","occurred_at");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "rudder_analytics_installation_uq" ON "rudder_analytics"."product_analytics_collector_installations" USING btree ("installation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "rudder_analytics_privacy_aggregate_uq" ON "rudder_analytics"."product_analytics_collector_privacy_aggregates" USING btree ("day","metric_name","dimension_set_version","dimension_hash");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "rudder_analytics_work_loop_revision_uq" ON "rudder_analytics"."product_analytics_collector_work_loop_revisions" USING btree ("installation_id","pseudonymous_work_cycle_id","completion_revision");
 --> statement-breakpoint
 REVOKE ALL ON SCHEMA "rudder_analytics" FROM PUBLIC;
 --> statement-breakpoint

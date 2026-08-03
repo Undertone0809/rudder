@@ -1,4 +1,4 @@
-CREATE TABLE "rudder_analytics"."product_analytics_collector_quality_counters" (
+CREATE TABLE IF NOT EXISTS "rudder_analytics"."product_analytics_collector_quality_counters" (
   "day" date PRIMARY KEY NOT NULL,
   "received_batches" integer DEFAULT 0 NOT NULL,
   "accepted_events" integer DEFAULT 0 NOT NULL,
