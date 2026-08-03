@@ -34,7 +34,7 @@ export async function listMessengerCustomGroups(
   userId: string,
   deps: MessengerCustomGroupListingDeps,
 ): Promise<MessengerCustomGroupsResponse> {
-  let [groups, entries] = await Promise.all([
+  const [groups, entries] = await Promise.all([
     db
       .select()
       .from(messengerCustomGroups)
@@ -50,28 +50,6 @@ export async function listMessengerCustomGroups(
       .where(and(eq(messengerCustomGroupEntries.orgId, orgId), eq(messengerCustomGroupEntries.userId, userId)))
       .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt)),
   ]);
-
-  const initiallyEmptyGroupIds = groups
-    .filter((group) => !entries.some((entry) => entry.groupId === group.id))
-    .map((group) => group.id)
-    .sort();
-  if (initiallyEmptyGroupIds.length > 0) {
-    const deletedGroupIds = new Set<string>();
-    await db.transaction(async (tx) => {
-      const txDb = tx as unknown as Db;
-      await lockMessengerOwnerPlacement(txDb, orgId, userId);
-      for (const groupId of initiallyEmptyGroupIds) {
-        await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
-      }
-      for (const groupId of initiallyEmptyGroupIds) {
-        if (await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, groupId)) deletedGroupIds.add(groupId);
-      }
-    });
-    if (deletedGroupIds.size > 0) {
-      groups = groups.filter((group) => !deletedGroupIds.has(group.id));
-      entries = entries.filter((entry) => !deletedGroupIds.has(entry.groupId));
-    }
-  }
 
   const savedViewItemKeys = entries
     .map((entry) => entry.threadKey)

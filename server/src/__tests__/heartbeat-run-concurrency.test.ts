@@ -195,14 +195,19 @@ describe("heartbeat run concurrency", () => {
   }, 20_000);
 
   beforeEach(async () => {
+    const cleanupAt = new Date();
     await db
       .update(heartbeatRuns)
       .set({
         status: "cancelled",
-        finishedAt: new Date(),
-        updatedAt: new Date(),
+        finishedAt: cleanupAt,
+        processExitedAt: cleanupAt,
+        terminalEffectsPending: false,
+        executionOwnerToken: null,
+        executionLeaseExpiresAt: null,
+        updatedAt: cleanupAt,
       })
-      .where(eq(heartbeatRuns.status, "queued"));
+      .where(inArray(heartbeatRuns.status, ["queued", "running"]));
     vi.clearAllMocks();
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockRuntimeAdapter.reset();

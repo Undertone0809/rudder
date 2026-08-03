@@ -1443,9 +1443,6 @@ export function messengerService(db: Db) {
         throw notFound("Messenger Saved View not found");
       }
       const entry = await assignThreadToCustomGroupWithClient(txDb, orgId, userId, groupId, threadKey);
-      if (existingMembership && existingMembership.groupId !== groupId) {
-        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, existingMembership.groupId);
-      }
       if (savedViewId) {
         await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", { groupId });
       }
@@ -1561,9 +1558,6 @@ export function messengerService(db: Db) {
           groupId: membership.groupId,
           source: "item_remove",
         });
-      }
-      if (deleted.length > 0) {
-        await deleteEmptyMessengerCustomGroup(txDb, orgId, userId, membership.groupId);
       }
     });
     return savedViewId ? { itemKey: threadKey } : { itemKey: threadKey, threadKey };
