@@ -566,6 +566,9 @@ describe("applyPendingMigrations", () => {
           "0134_gorgeous_red_skull.sql",
           "0135_dashing_warstar.sql",
           "0136_lively_kree.sql",
+          "0137_shallow_quasimodo.sql",
+          "0138_wild_kinsey_walden.sql",
+          "0139_certain_selene.sql",
         ],
         reason: "pending-migrations",
       });
@@ -723,6 +726,9 @@ describe("applyPendingMigrations", () => {
           "0134_gorgeous_red_skull.sql",
           "0135_dashing_warstar.sql",
           "0136_lively_kree.sql",
+          "0137_shallow_quasimodo.sql",
+          "0138_wild_kinsey_walden.sql",
+          "0139_certain_selene.sql",
         ],
         reason: "pending-migrations",
       });

@@ -51,6 +51,8 @@ describe("instanceGeneralSettingsSchema", () => {
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: false,
       locale: "en",
+      productAnalyticsMode: "off",
+      productAnalyticsConsentEpoch: 1,
     });
   });
 });
