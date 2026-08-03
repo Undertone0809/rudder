@@ -13,8 +13,8 @@ import {
   extractIssueRouteRefFromPathname,
   resolveCurrentIssueCommentLink,
   resolveInternalMarkdownRoute,
-  shouldConfirmUnmentionedComment,
 } from "./CommentThread";
+import { shouldConfirmUnmentionedComment } from "./CommentThread.submit";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
