@@ -2005,7 +2005,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     moreOpen: boolean;
     onMoreOpenChange: (open: boolean) => void;
     grouped?: boolean;
-  }) => (
+  }) => {
+    // Keep the nullable lookup local so the guard also narrows the value inside this closure.
+    const assigneeAgent = currentAssigneeAgent;
+    return (
     <div
       className={cn(
         "flex items-center gap-1 shrink-0",
@@ -2075,6 +2078,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </Popover>
     </div>
   );
+  };
 
   return (
     <div ref={setIssueDetailRootRef} data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"} className="issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain">
