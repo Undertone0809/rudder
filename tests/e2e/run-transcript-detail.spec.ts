@@ -535,6 +535,11 @@ test.describe("Run transcript detail", () => {
     await firstTrigger.click();
 
     const sidePanel = page.getByTestId("chat-side-panel");
+    const annotationEditor = page.locator("[data-testid='chat-response-annotation-editor'][data-state='open']");
+    await expect(annotationEditor).toBeVisible();
+    await expect(sidePanel).toBeHidden();
+    await annotationEditor.getByRole("textbox", { name: "Comment" }).fill("Review the completed transition.");
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
     const feedbackPanel = page.getByTestId("run-feedback-chat-panel");
     await expect(sidePanel).toBeVisible();
     await expect(feedbackPanel).toBeVisible();
@@ -547,6 +552,10 @@ test.describe("Run transcript detail", () => {
 
     const thinkingBlock = detailPane.locator('[data-run-transcript-block-type="thinking"]');
     await expect(thinkingBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
+    await thinkingBlock.getByTestId("run-transcript-annotation-trigger").click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("button", { name: "Cancel" }).click();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
     const toolBlock = detailPane.locator('[data-run-transcript-block-type="tool"], [data-run-transcript-block-type="command_group"]');
     await expect(toolBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
 
@@ -556,6 +565,9 @@ test.describe("Run transcript detail", () => {
     const selectionToolbar = page.getByRole("toolbar", { name: "Response annotation actions" });
     await expect(selectionToolbar).toBeVisible();
     await selectionToolbar.getByRole("button", { name: "Add to chat" }).click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("textbox", { name: "Comment" }).fill("Keep this transcript excerpt.");
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 2 annotations?/ })).toBeVisible();
 
     await projectSelector.selectOption(project.id);
@@ -572,6 +584,8 @@ test.describe("Run transcript detail", () => {
     await expect(projectSelector).toBeEnabled();
 
     await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 3 annotations?/ })).toBeVisible();
     await expect(feedbackPanel.getByText("Run two found a follow-up regression.", { exact: false })).toHaveCount(0);
 
@@ -608,20 +622,43 @@ test.describe("Run transcript detail", () => {
     const messages = await messagesResponse.json() as Array<{
       role: string;
       body: string;
-      structuredPayload?: { inlineAnnotations?: Array<{ sourceRunId?: string }> } | null;
+      structuredPayload?: {
+        inlineAnnotations?: Array<{
+          sourceRunId?: string;
+          anchorKind?: string;
+          selectedText?: string;
+          comment?: string | null;
+        }>;
+      } | null;
     }>;
     const firstUserMessage = messages.find((message) => message.role === "user");
     expect(firstUserMessage?.body).toBe("");
     expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toHaveLength(3);
     expect(firstUserMessage?.structuredPayload?.inlineAnnotations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceRunId: runOneId, anchorKind: "transition" }),
-      expect.objectContaining({ sourceRunId: runOneId, anchorKind: "text" }),
-      expect.objectContaining({ sourceRunId: runTwoId, anchorKind: "transition" }),
+      expect.objectContaining({
+        sourceRunId: runOneId,
+        anchorKind: "transition",
+        selectedText: "Run one completed the deployment review.",
+        comment: "Review the completed transition.",
+      }),
+      expect.objectContaining({
+        sourceRunId: runOneId,
+        anchorKind: "text",
+        selectedText: "Run one completed the deployment review.",
+        comment: "Keep this transcript excerpt.",
+      }),
+      expect.objectContaining({
+        sourceRunId: runTwoId,
+        anchorKind: "transition",
+        selectedText: "Run two found a follow-up regression.",
+      }),
     ]));
 
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible();
     await expect(projectSelector).toBeDisabled();
     await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });

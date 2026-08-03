@@ -1177,14 +1177,23 @@ export function Layout() {
 
     let startX = 0;
     let startY = 0;
+    let gestureIgnored = false;
 
     const onTouchStart = (e: TouchEvent) => {
       const t = e.touches[0]!;
       startX = t.clientX;
       startY = t.clientY;
+      const target = e.target instanceof Element ? e.target : null;
+      gestureIgnored = Boolean(
+        target?.closest('[data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-testid="chat-side-panel"]'),
+      );
     };
 
     const onTouchEnd = (e: TouchEvent) => {
+      if (gestureIgnored) {
+        gestureIgnored = false;
+        return;
+      }
       const t = e.changedTouches[0]!;
       const dx = t.clientX - startX;
       const dy = Math.abs(t.clientY - startY);

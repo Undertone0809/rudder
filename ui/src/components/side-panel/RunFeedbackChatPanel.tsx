@@ -27,6 +27,7 @@ import {
 } from "@/lib/chat-response-annotations";
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
+import { consumeRunFeedbackPendingFiles } from "@/lib/run-feedback-pending-files";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import type {
@@ -90,6 +91,8 @@ export function RunFeedbackChatPanel({
   const annotationChipRef = useRef<HTMLButtonElement | null>(null);
   const editingAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mutationKeyRef = useRef(target.clientMutationId || makeId());
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -143,10 +146,24 @@ export function RunFeedbackChatPanel({
       } = annotation as ChatInlineAnnotationInput & { ordinal?: number };
       return persistable;
     });
-    if (JSON.stringify(persistedTargetAnnotations) === JSON.stringify(localAnnotations)) return;
-    dispatchAnnotation({ type: "reset", annotations: targetAnnotations });
+    const stagedFiles = consumeRunFeedbackPendingFiles(target.clientMutationId);
+    const targetAnnotationIds = new Set(targetAnnotations.map((annotation) => annotation.id));
+    const existingPendingFiles = Object.fromEntries(
+      Object.entries(annotationState.pendingFilesByAnnotationId)
+        .filter(([annotationId]) => targetAnnotationIds.has(annotationId)),
+    );
+    const pendingFilesByAnnotationId = { ...existingPendingFiles, ...stagedFiles };
+    if (
+      JSON.stringify(persistedTargetAnnotations) === JSON.stringify(localAnnotations)
+      && Object.keys(stagedFiles).length === 0
+    ) return;
+    dispatchAnnotation({
+      type: "reset",
+      annotations: targetAnnotations,
+      pendingFilesByAnnotationId,
+    });
     setAnnotationsExpanded(targetAnnotations.length > 0);
-  }, [annotationState, target.inlineAnnotations]);
+  }, [annotationState, target.clientMutationId, target.inlineAnnotations]);
   useEffect(() => {
     setProjectId(target.projectId ?? null);
   }, [target.projectId]);
@@ -160,6 +177,8 @@ export function RunFeedbackChatPanel({
     [projectId, projectsQuery.data],
   );
   const projectLocked = Boolean(
+    sending
+    ||
     target.projectLocked
     || target.conversationId
     || messages.some((message) => message.role === "user"),
@@ -173,8 +192,11 @@ export function RunFeedbackChatPanel({
   const canSend = !hasPendingAnnotation && !annotationValidationError && canSubmitChatResponseAnnotations(draft, annotationState);
 
   const updateTarget = useCallback((patch: Partial<RunFeedbackTarget>) => {
-    onReplaceTarget(sidePanelTargetKey(target), { ...target, ...patch });
-  }, [onReplaceTarget, target]);
+    const current = targetRef.current;
+    const next = { ...current, ...patch } satisfies RunFeedbackTarget;
+    targetRef.current = next;
+    onReplaceTarget(sidePanelTargetKey(current), next);
+  }, [onReplaceTarget]);
 
   const handleProjectChange = (value: string) => {
     if (projectLocked) return;
@@ -185,8 +207,10 @@ export function RunFeedbackChatPanel({
 
   const handleSend = async () => {
     if (sending || !canSend) return;
+    const sendTarget = targetRef.current;
     const body = draft.trim();
     const serialized = serializeChatResponseAnnotations(annotationState);
+    const sentAnnotationIds = new Set(serialized.inlineAnnotations.map((annotation) => annotation.id));
     if (blockStaleAnnotationSubmission({
       annotations: serialized.inlineAnnotations,
       devServer: healthQuery.data?.devServer,
@@ -197,15 +221,22 @@ export function RunFeedbackChatPanel({
     setError(null);
     setStreamBody("");
     try {
-      if (target.conversationId) {
-        await chatsApi.sendMessageStream(target.conversationId, body, {
+      if (sendTarget.conversationId) {
+        await chatsApi.sendMessageStream(sendTarget.conversationId, body, {
           files: serialized.files,
           inlineAnnotations: serialized.inlineAnnotations,
           onEvent: async (event) => {
             if (event.type === "ack") {
               setMessages((current) => [...current, event.userMessage]);
-              dispatchAnnotation({ type: "clear" });
-              updateTarget({ body: "", inlineAnnotations: [] });
+              for (const annotationId of sentAnnotationIds) {
+                dispatchAnnotation({ type: "delete", id: annotationId });
+              }
+              const current = targetRef.current;
+              updateTarget({
+                body: current.body === body ? "" : current.body,
+                inlineAnnotations: current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id)),
+              });
+              setAnnotationsExpanded(current.inlineAnnotations.some((annotation) => !sentAnnotationIds.has(annotation.id)));
             }
             if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
             if (event.type === "final") {
@@ -217,7 +248,7 @@ export function RunFeedbackChatPanel({
         });
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
-          preferredAgentId: target.agentId,
+          preferredAgentId: sendTarget.agentId,
           issueCreationMode: "manual_approval",
           planMode: false,
           modelOverride: null,
@@ -229,20 +260,24 @@ export function RunFeedbackChatPanel({
           onEvent: async (event) => {
             if (event.type === "ack") {
               setMessages((current) => [...current, event.userMessage]);
-              dispatchAnnotation({ type: "clear" });
-              setAnnotationsExpanded(false);
+              for (const annotationId of sentAnnotationIds) {
+                dispatchAnnotation({ type: "delete", id: annotationId });
+              }
+              const current = targetRef.current;
+              const remainingAnnotations = current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id));
               const nextTarget = {
-                ...target,
+                ...current,
                 conversationId: event.userMessage.conversationId,
                 projectLocked: true,
-                projectId,
-                body: "",
-                inlineAnnotations: [],
+                projectId: sendTarget.projectId,
+                body: current.body === body ? "" : current.body,
+                inlineAnnotations: remainingAnnotations,
               } satisfies RunFeedbackTarget;
               updateTarget(nextTarget);
+              setAnnotationsExpanded(remainingAnnotations.length > 0);
               try {
                 window.localStorage.setItem(
-                  `rudder.run-feedback-draft:${organizationId}:${target.agentId}`,
+                  `rudder.run-feedback-draft:${organizationId}:${sendTarget.agentId}`,
                   JSON.stringify(nextTarget),
                 );
               } catch {
@@ -258,10 +293,10 @@ export function RunFeedbackChatPanel({
           },
         });
       }
-      if (target.conversationId) {
+      if (sendTarget.conversationId) {
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, target.conversationId) }),
-          queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, target.conversationId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, sendTarget.conversationId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, sendTarget.conversationId) }),
         ]);
       }
     } catch (sendError) {
@@ -416,6 +451,7 @@ export function RunFeedbackChatPanel({
           <ChatComposerEditor
             value={draft}
             onChange={(value) => {
+              if (sending) return;
               setDraft(value);
               updateTarget({ body: value });
             }}
@@ -430,8 +466,8 @@ export function RunFeedbackChatPanel({
               <select
                 aria-label="Project"
                 value={projectId ?? ""}
-                disabled={projectLocked || projectsQuery.isPending}
-                aria-disabled={projectLocked || projectsQuery.isPending}
+                disabled={projectLocked || projectsQuery.isPending || sending}
+                aria-disabled={projectLocked || projectsQuery.isPending || sending}
                 onChange={(event) => handleProjectChange(event.currentTarget.value)}
                 className="min-w-0 max-w-[10rem] truncate bg-transparent text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >

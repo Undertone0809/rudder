@@ -1163,43 +1163,46 @@ function ChatSidePanelTextFileEditor({
       {sourceToolbar}
       {markdown ? (
         <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
-          {markdownParts.frontmatter !== null ? (
-            <details
-              className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
-              data-chat-annotation-ignore
-              data-testid="chat-side-panel-library-frontmatter-editor"
-            >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <span>Frontmatter</span>
-                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-              </summary>
-              <textarea
-                value={markdownParts.frontmatter}
-                onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-                  event.currentTarget.value,
-                  markdownParts.separator,
-                  markdownParts.body,
-                ))}
-                spellCheck={false}
-                className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
-                aria-label="Frontmatter"
-              />
-            </details>
-          ) : null}
-          <MarkdownEditor
-            ref={editorRef}
-            key={filePath}
-            engine="codemirror" documentIdentity={`library-file:${filePath}`}
-            value={markdownParts.body}
-            onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-              markdownParts.frontmatter,
-              markdownParts.separator,
-              body,
-            ))}
-            bordered={false}
-            placeholder="Write in Markdown..."
-            contentClassName="rudder-library-document-editor rudder-readable-document rudder-side-panel-library-document mx-auto min-h-[420px] w-full max-w-[880px] text-[15px] leading-7 text-foreground"
-          />
+          <div className="rudder-readable-document mx-auto w-full max-w-[880px]">
+            {markdownParts.frontmatter !== null ? (
+              <details
+                className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+                data-chat-annotation-ignore
+                data-testid="chat-side-panel-library-frontmatter-editor"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <span>Frontmatter</span>
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                </summary>
+                <textarea
+                  value={markdownParts.frontmatter}
+                  onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                    event.currentTarget.value,
+                    markdownParts.separator,
+                    markdownParts.body,
+                  ))}
+                  spellCheck={false}
+                  className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                  aria-label="Frontmatter"
+                />
+              </details>
+            ) : null}
+            <MarkdownEditor
+              ref={editorRef}
+              key={filePath}
+              engine="codemirror"
+              documentIdentity={`library-file:${filePath}`}
+              value={markdownParts.body}
+              onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                markdownParts.frontmatter,
+                markdownParts.separator,
+                body,
+              ))}
+              bordered={false}
+              placeholder="Write in Markdown..."
+              contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+            />
+          </div>
         </div>
       ) : (
         <div ref={annotationContainerRef} className="min-h-0 flex-1 pb-14">
@@ -1709,10 +1712,57 @@ export function ChatSidePanel({
   const closingSideChatKeysRef = useRef(new Set<string>());
   const movingSideChatKeyRef = useRef<string | null>(null);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
+  const mobileFocusRestoreRef = useRef<HTMLElement | null>(null);
+  const mobileFocusTrapActiveRef = useRef(false);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
   const isMobile = useChatSidePanelMobileLayout();
   const { openTarget } = sidePanel;
+  useEffect(() => {
+    if (!isMobile || !contextReady) return undefined;
+    const panel = panelRef.current;
+    if (!panel) return undefined;
+
+    if (!sidePanel.open) {
+      if (mobileFocusTrapActiveRef.current) {
+        mobileFocusTrapActiveRef.current = false;
+        const restoreTarget = mobileFocusRestoreRef.current;
+        mobileFocusRestoreRef.current = null;
+        if (restoreTarget?.isConnected) {
+          window.requestAnimationFrame(() => restoreTarget.focus());
+        }
+      }
+      return undefined;
+    }
+
+    if (mobileFocusTrapActiveRef.current) return undefined;
+    mobileFocusTrapActiveRef.current = true;
+    const activeElement = document.activeElement;
+    mobileFocusRestoreRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (document.querySelector('[data-slot="dialog-content"][data-state="open"]')) return;
+      panel.querySelector<HTMLElement>('[data-testid="chat-side-panel-collapse"]')?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !sidePanel.open) return;
+      if (document.querySelector('[data-slot="dialog-content"][data-state="open"]')) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (focusable.length === 0) return;
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+        : currentIndex === focusable.length - 1 ? 0 : currentIndex + 1;
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [contextReady, isMobile, sidePanel.open]);
   const registerBrowserShortcutController = useCallback((
     key: string,
     controller: ((action: BrowserShortcutAction) => void) | null,
@@ -2291,22 +2341,34 @@ export function ChatSidePanel({
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
   const panel = (
-    <aside
-      ref={panelRef}
-      onKeyDownCapture={handleSidePanelKeyDown}
-      data-testid="chat-side-panel"
-      className={cn(
-        "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
-        isMobile
-          ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-[60] w-auto"
-          : "h-full w-full",
-        isMobile && exiting && "translate-x-4 scale-[0.985] opacity-0",
-        !contextReady && "hidden",
-        isMobile && !sidePanel.open && !exiting && "hidden",
-      )}
-      aria-label="Side Panel"
-      aria-hidden={!contextReady || undefined}
-    >
+    <>
+      {isMobile && contextReady && (sidePanel.open || exiting) ? (
+        <button
+          type="button"
+          data-testid="chat-side-panel-backdrop"
+          aria-label="Close Side Panel"
+          className="fixed inset-0 z-40 bg-[rgb(23_17_11/0.18)] backdrop-blur-[1px]"
+          onClick={onClose ?? sidePanel.hidePanel}
+        />
+      ) : null}
+      <aside
+        ref={panelRef}
+        onKeyDownCapture={handleSidePanelKeyDown}
+        data-testid="chat-side-panel"
+        className={cn(
+          "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
+          isMobile
+            ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-[45] w-auto"
+            : "h-full w-full",
+          isMobile && exiting && "translate-x-4 scale-[0.985] opacity-0",
+          !contextReady && "hidden",
+          isMobile && !sidePanel.open && !exiting && "hidden",
+        )}
+        role={isMobile ? "dialog" : undefined}
+        aria-modal={isMobile ? true : undefined}
+        aria-label="Side Panel"
+        aria-hidden={!contextReady || undefined}
+      >
       <div className={cn(
         "workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
@@ -2712,7 +2774,8 @@ export function ChatSidePanel({
           )}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 
   if (isMobile) {

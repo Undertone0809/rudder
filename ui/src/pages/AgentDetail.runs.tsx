@@ -51,6 +51,7 @@ import {
   shouldShowRunStderrExcerpt,
 } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
+import { stageRunFeedbackPendingFiles } from "../lib/run-feedback-pending-files";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { type SidePanelTarget } from "../lib/side-panel-targets";
 import { resolveSourceBadge } from "../lib/source-badge";
@@ -506,10 +507,11 @@ export function RunsTab({
       && candidate.agentId === agentId
       && candidate.organizationId === orgId
     )) ?? feedbackTargetRef.current;
+    const clientMutationId = existing?.clientMutationId ?? crypto.randomUUID();
     const pendingAnnotation: ChatInlineAnnotationInput = {
       id: annotationId,
       selectedText: input.text,
-      comment: null,
+      comment: input.comment,
       sourceHash: "pending",
       surface: "agent_run_transcript",
       sourceRunId: input.sourceRunId,
@@ -517,6 +519,7 @@ export function RunsTab({
       anchorKind: input.anchorKind,
       sourceEntryId: input.blockId,
       sourceMemberIds: input.sourceMemberIds?.length ? input.sourceMemberIds : [input.blockId],
+      attachmentIds: input.attachmentIds,
       attachmentFileIndexes: [],
     };
     const validationError = validateChatResponseAnnotationAdd(
@@ -539,7 +542,7 @@ export function RunsTab({
         organizationId: orgId,
         conversationId: null,
         projectLocked: false,
-        clientMutationId: crypto.randomUUID(),
+        clientMutationId,
         projectId: null,
         body: "",
         inlineAnnotations: [pendingAnnotation],
@@ -555,6 +558,7 @@ export function RunsTab({
         annotation.id === annotationId ? { ...annotation, sourceHash } : annotation
       )),
     };
+    stageRunFeedbackPendingFiles(clientMutationId, annotationId, input.pendingFiles);
     feedbackTargetRef.current = target;
     sidePanel.openTargetForContext(contextKey, target);
     setSidebarOpen(false);

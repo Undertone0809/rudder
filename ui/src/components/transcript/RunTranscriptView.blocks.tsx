@@ -1,10 +1,15 @@
 import {
   AnchoredResponseAnnotationMarkers,
+  ResponseAnnotationEditor,
   SentResponseAnnotationsCard,
+  type ResponseAnnotationEditorChanges,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
+import {
+  chatInlineAnnotationsFromStructuredPayload,
+  type ChatInlineAnnotationInput,
+} from "@rudderhq/shared";
 import {
   Check,
   ChevronRight,
@@ -249,27 +254,46 @@ export function TranscriptRunAnnotationBlock({
     anchorRect: DOMRect;
     autoFocus: boolean;
   } | null>(null);
-  const dispatchAnnotation = (
+  const [pendingAnnotation, setPendingAnnotation] = useState<{
+    annotation: ChatInlineAnnotationInput;
+    anchorKind: "text" | "transition";
+    anchorRect: DOMRect;
+    autoFocus: boolean;
+  } | null>(null);
+  const beginAnnotation = (
     text: string,
     anchor: HTMLButtonElement,
     anchorKind: "text" | "transition",
+    anchorRect?: DOMRect,
+    autoFocus = true,
   ) => {
     if (!context) return;
-    context.onAnnotate({
-      sourceRunId: context.sourceRunId,
-      sourceAgentId: context.sourceAgentId,
-      blockId,
-      sourceMemberIds: block.sourceEntryIds,
-      blockType: block.type,
-      text,
+    const normalizedText = text.trim();
+    if (!normalizedText) return;
+    const rect = anchorRect ?? anchor.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    setPendingAnnotation({
+      annotation: {
+        id: globalThis.crypto?.randomUUID?.() ?? `run-annotation-${Date.now()}`,
+        selectedText: normalizedText,
+        comment: null,
+        sourceHash: "pending",
+        surface: "agent_run_transcript",
+        sourceRunId: context.sourceRunId,
+        sourceAgentId: context.sourceAgentId,
+        anchorKind,
+        sourceEntryId: blockId,
+        sourceMemberIds: block.sourceEntryIds?.length ? block.sourceEntryIds : [blockId],
+        attachmentFileIndexes: [],
+      },
       anchorKind,
-      ts: block.ts,
-      anchor,
-      block,
+      anchorRect: rect,
+      autoFocus,
     });
+    setPendingSelection(null);
   };
   const handleAnnotate = (anchor: HTMLButtonElement) => {
-    dispatchAnnotation(transcriptBlockAnnotationText(block), anchor, "transition");
+    beginAnnotation(transcriptBlockAnnotationText(block), anchor, "transition");
   };
   useEffect(() => {
     if (!canAnnotate) return undefined;
@@ -316,9 +340,39 @@ export function TranscriptRunAnnotationBlock({
 
   const commitPendingSelection = () => {
     if (!pendingSelection || !triggerRef.current) return;
-    dispatchAnnotation(pendingSelection.text, triggerRef.current, "text");
-    setPendingSelection(null);
+    beginAnnotation(
+      pendingSelection.text,
+      triggerRef.current,
+      "text",
+      pendingSelection.anchorRect,
+      pendingSelection.autoFocus,
+    );
     window.getSelection()?.removeAllRanges();
+  };
+
+  const finishAnnotation = ({
+    comment,
+    pendingFiles,
+    attachmentIds,
+  }: ResponseAnnotationEditorChanges) => {
+    if (!pendingAnnotation) return;
+    const annotation = pendingAnnotation.annotation;
+    context.onAnnotate({
+      sourceRunId: context.sourceRunId,
+      sourceAgentId: context.sourceAgentId,
+      blockId,
+      sourceMemberIds: block.sourceEntryIds,
+      blockType: block.type,
+      text: annotation.selectedText,
+      anchorKind: pendingAnnotation.anchorKind,
+      ts: block.ts,
+      anchor: triggerRef.current ?? document.createElement("button"),
+      comment,
+      pendingFiles,
+      attachmentIds,
+      block,
+    });
+    setPendingAnnotation(null);
   };
 
   return (
@@ -346,7 +400,7 @@ export function TranscriptRunAnnotationBlock({
           <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       ) : null}
-      {canAnnotate && pendingSelection ? (
+      {canAnnotate && pendingSelection && !pendingAnnotation ? (
         <SelectionAnnotationToolbar
           open
           anchorRect={pendingSelection.anchorRect}
@@ -364,6 +418,29 @@ export function TranscriptRunAnnotationBlock({
           onDismiss={() => setPendingSelection(null)}
           onAnchorUnavailable={() => setPendingSelection(null)}
           autoFocus={pendingSelection.autoFocus}
+        />
+      ) : null}
+      {canAnnotate && pendingAnnotation ? (
+        <ResponseAnnotationEditor
+          annotation={pendingAnnotation.annotation}
+          ordinal={1}
+          pendingFiles={[]}
+          anchorRect={pendingAnnotation.anchorRect}
+          getAnchorRect={() => (
+            pendingAnnotation.anchorKind === "text"
+              ? pendingAnnotation.anchorRect
+              : triggerRef.current?.isConnected
+                ? triggerRef.current.getBoundingClientRect()
+                : pendingAnnotation.anchorRect
+          )}
+          boundaryRect={blockRootRef.current?.getBoundingClientRect() ?? null}
+          getBoundaryRect={() => blockRootRef.current?.getBoundingClientRect() ?? null}
+          returnFocusRef={triggerRef}
+          autoFocus={pendingAnnotation.autoFocus}
+          showSelectedTextContext
+          onSave={finishAnnotation}
+          onCancel={() => setPendingAnnotation(null)}
+          onDelete={() => setPendingAnnotation(null)}
         />
       ) : null}
     </div>

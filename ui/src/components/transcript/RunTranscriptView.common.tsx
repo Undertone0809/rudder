@@ -156,6 +156,9 @@ export interface TranscriptRunAnnotationInput {
   anchorKind: "text" | "transition";
   ts: string;
   anchor: HTMLButtonElement;
+  comment: string | null;
+  pendingFiles: File[];
+  attachmentIds: string[];
   block?: TranscriptBlock;
 }
 
