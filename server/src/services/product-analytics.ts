@@ -23,6 +23,22 @@ export const PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES = [
 ] as const;
 
 export const PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES = ["review_decision_recorded"] as const;
+export const PRODUCT_ANALYTICS_DEFERRED_EVENT_NAMES = [
+  "account_created",
+  "desktop_authorized",
+  "local_server_connected",
+  "first_agent_ready",
+  "work_loop_completed",
+  "work_loop_invalidated",
+] as const;
+
+export type ProductAnalyticsRunTerminalStatus = "succeeded" | "failed" | "cancelled" | "timed_out";
+
+export function productAnalyticsRunTerminalEventName(status: string) {
+  if (status === "succeeded") return "run_succeeded" as const;
+  if (status === "failed" || status === "cancelled" || status === "timed_out") return "run_failed" as const;
+  return null;
+}
 
 export type ProductAnalyticsEventName = (typeof PRODUCT_ANALYTICS_EVENT_NAMES)[number];
 export type ProductAnalyticsConfidence = "exact" | "derived" | "unknown";
@@ -40,7 +56,7 @@ const EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalyticsEventName, ReadonlySet<st
   human_work_started: new Set(["work_surface", "origin"]),
   run_started: new Set(["run_kind", "runtime", "attempt_kind"]),
   run_succeeded: new Set(["run_kind", "runtime", "attempt_kind"]),
-  run_failed: new Set(["run_kind", "runtime", "attempt_kind"]),
+  run_failed: new Set(["run_kind", "runtime", "attempt_kind", "terminal_status"]),
   output_ready: new Set(["output_kind"]),
   review_decision_recorded: new Set(["decision", "review_surface"]),
 };
@@ -168,6 +184,16 @@ export function productAnalyticsService(db: Db) {
           .from(productAnalyticsEvents)
           .where(where),
       ]);
+      const [approvedReviewRows] = await Promise.all([
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(productAnalyticsEvents)
+          .where(and(
+            where,
+            eq(productAnalyticsEvents.eventName, "review_decision_recorded"),
+            sql`${productAnalyticsEvents.properties}->>'decision' = 'approve'`,
+          )),
+      ]);
       const counts = Object.fromEntries(eventCounts.map((row) => [row.eventName, Number(row.count)]));
       return {
         window: { from: window.from.toISOString(), to: window.to.toISOString() },
@@ -177,13 +203,15 @@ export function productAnalyticsService(db: Db) {
           failed_runs: counts.run_failed ?? 0,
           human_work_started: counts.human_work_started ?? 0,
           output_ready: counts.output_ready ?? 0,
-          reviewed_issue_completions: counts.review_decision_recorded ?? 0,
+          review_decisions_recorded: counts.review_decision_recorded ?? 0,
+          reviewed_issue_completions: Number(approvedReviewRows[0]?.count ?? 0),
           ledger_event_count: Number(totalRows[0]?.count ?? 0),
         },
         dataQuality: {
           source: "local_product_analytics_events",
           producedExactEventNames: PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES,
           producedDerivedEventNames: PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES,
+          deferredEventNames: PRODUCT_ANALYTICS_DEFERRED_EVENT_NAMES,
           completeDau: false,
           completeNorthStar: false,
         },

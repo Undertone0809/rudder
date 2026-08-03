@@ -85,7 +85,7 @@ export { organizationPortabilityFacade, organizationPortabilityService } from ".
 export { organizationSkillFacade, organizationSkillService } from "./organization-skills.js";
 export { organizationService } from "./orgs.js";
 export {
-  PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES, PRODUCT_ANALYTICS_EVENT_NAMES, PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES,
+  PRODUCT_ANALYTICS_DEFERRED_EVENT_NAMES, PRODUCT_ANALYTICS_DERIVED_EVENT_NAMES, PRODUCT_ANALYTICS_EVENT_NAMES, PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES,
   productAnalyticsService,
   recordProductAnalyticsEvent,
   type ProductAnalyticsActorType,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
-import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { productAnalyticsRunTerminalEventName, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 function createInsertDb(returnedRows: Array<{ id: string }>) {
   const returning = vi.fn().mockResolvedValue(returnedRows);
@@ -28,6 +28,15 @@ const baseEvent = {
 };
 
 describe("product analytics local ledger", () => {
+  it.each([
+    ["failed", "run_failed"],
+    ["cancelled", "run_failed"],
+    ["timed_out", "run_failed"],
+    ["succeeded", "run_succeeded"],
+  ] as const)("maps %s terminal runs to %s", (status, eventName) => {
+    expect(productAnalyticsRunTerminalEventName(status)).toBe(eventName);
+  });
+
   it("writes an allowlisted event with an organization-scoped dedupe target", async () => {
     const stub = createInsertDb([{ id: "event-1" }]);
 

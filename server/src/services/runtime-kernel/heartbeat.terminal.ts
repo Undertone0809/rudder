@@ -2,7 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { activityLog, agents, agentWakeupRequests, heartbeatRunEvents, heartbeatRuns, issues } from "@rudderhq/db";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { recordProductAnalyticsEvent } from "../product-analytics.js";
+import { productAnalyticsRunTerminalEventName, recordProductAnalyticsEvent } from "../product-analytics.js";
 
 const TERMINAL_WAKEUP_STATUSES = ["completed", "failed", "cancelled", "timed_out", "skipped", "coalesced"];
 export const RUN_EXECUTION_LEASE_MS = 5 * 60_000;
@@ -329,10 +329,11 @@ export async function transitionHeartbeatRunToTerminal(
       .then((rows) => rows[0] ?? null);
     if (!updated) return null;
 
-    if (updated.status === "succeeded" || updated.status === "failed") {
+    const terminalAnalyticsEvent = productAnalyticsRunTerminalEventName(updated.status);
+    if (terminalAnalyticsEvent) {
       await recordProductAnalyticsEvent(tx as unknown as Db, {
         orgId: updated.orgId,
-        eventName: updated.status === "succeeded" ? "run_succeeded" : "run_failed",
+        eventName: terminalAnalyticsEvent,
         occurredAt: updated.finishedAt ?? new Date(),
         sourceTransition: "heartbeat.run.terminal",
         confidence: "exact",
@@ -340,10 +341,13 @@ export async function transitionHeartbeatRunToTerminal(
         actorId: updated.agentId,
         entityType: "run",
         entityId: updated.id,
-        dedupeKey: `run_terminal:${updated.id}:${updated.status}`,
+        dedupeKey: terminalAnalyticsEvent === "run_succeeded"
+          ? `run_succeeded:${updated.id}`
+          : `run_failed:${updated.id}:${updated.status}`,
         properties: {
           run_kind: updated.invocationSource,
           attempt_kind: updated.retryOfRunId ? "retry" : "root",
+          ...(terminalAnalyticsEvent === "run_failed" ? { terminal_status: updated.status } : {}),
         },
       });
     }
