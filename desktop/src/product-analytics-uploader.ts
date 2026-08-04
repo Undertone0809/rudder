@@ -11,7 +11,7 @@ export type DesktopProductAnalyticsUploaderOptions = {
   deliveryMode: Exclude<DesktopTelemetryMode, "off">;
   statePath: string;
   collectorUrl: string;
-  collectorAuthorization?: string | (() => Promise<string>);
+  collectorAuthorization?: string | ((context: { consentedLocalUserId: string | null }) => Promise<string> | string);
   localHeaders?: HeadersInit;
   fetchImpl?: FetchLike;
   now?: () => Date;
@@ -64,6 +64,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
     return { status: "failed_actionable", eventCount: 0, errorCode };
   }
   const claimToken = typeof claimBody.claimToken === "string" ? claimBody.claimToken : null;
+  const consentedLocalUserId = typeof claimBody.consentedLocalUserId === "string" ? claimBody.consentedLocalUserId : null;
   const events = Array.isArray(claimBody.events) ? claimBody.events.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object") : [];
   await updateDesktopTelemetryState(options.statePath, {
     lastPayloadEventIds: events.map((event) => typeof event.eventId === "string" ? event.eventId : "").filter(Boolean),
@@ -78,7 +79,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   let collectorBody: Record<string, unknown> = {};
   try {
     const collectorAuthorization = typeof options.collectorAuthorization === "function"
-      ? await options.collectorAuthorization()
+      ? await options.collectorAuthorization({ consentedLocalUserId })
       : options.collectorAuthorization;
     if (!collectorAuthorization) {
       collectorResponse = new Response(null, { status: 503 });

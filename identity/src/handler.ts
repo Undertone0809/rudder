@@ -2050,10 +2050,12 @@ export async function identityHandler(
       const mode = body.mode;
       const consentVersion = stringField(body, "consent_version");
       const pseudonymousInstallationId = stringField(body, "pseudonymous_installation_id");
+      const consentedLocalUserId = body.consented_local_user_id;
       if (
         installationId !== access.installationId
         || (mode !== "anonymous" && mode !== "account_linked")
         || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+        || (consentedLocalUserId !== undefined && (typeof consentedLocalUserId !== "string" || consentedLocalUserId !== access.userId))
       ) throw new Error("invalid_request");
       const consent = await assertIdentityProductAnalyticsConsent(runtime.db, {
         userId: access.userId,

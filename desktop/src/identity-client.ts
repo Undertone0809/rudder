@@ -70,6 +70,7 @@ export type ProductAnalyticsAssertionRequest = {
   consentVersion: string;
   consentEpoch: number;
   pseudonymousInstallationId: string;
+  consentedLocalUserId?: string | null;
 };
 
 export type ProductAnalyticsConsentRequest = {
@@ -415,6 +416,7 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
           mode: input.mode,
           consent_version: input.consentVersion,
           pseudonymous_installation_id: input.pseudonymousInstallationId,
+          ...(input.mode === "account_linked" && input.consentedLocalUserId ? { consented_local_user_id: input.consentedLocalUserId } : {}),
         }),
       });
       if (!response.ok) {

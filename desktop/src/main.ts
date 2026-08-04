@@ -2007,6 +2007,7 @@ async function startLocalRudder(): Promise<void> {
         identityRuntime: requireDesktopIdentityRuntime(),
         scheduler: productAnalyticsScheduler,
         setScheduler: (scheduler) => { productAnalyticsScheduler = scheduler; },
+        fetchImpl: (input, init) => session.defaultSession.fetch(input instanceof URL ? input.toString() : input, init),
       }).catch((error) => {
         console.warn("[rudder-desktop] Product analytics scheduler unavailable; continuing without telemetry upload", error);
       });

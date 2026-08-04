@@ -24,6 +24,7 @@ type DesktopAnalyticsIdentityRuntime = {
     consentVersion: string;
     consentEpoch: number;
     pseudonymousInstallationId: string;
+    consentedLocalUserId?: string | null;
   }): Promise<string>;
 };
 
@@ -122,14 +123,16 @@ export async function startDesktopProductAnalyticsScheduler(
     collectorUrl: options.collectorUrl,
     fetchImpl,
     deliveryMode,
-    collectorAuthorization: async () => {
+    collectorAuthorization: async ({ consentedLocalUserId }: { consentedLocalUserId: string | null }) => {
       if (deliveryMode === "account_linked") {
+        if (!consentedLocalUserId) return "";
         const pseudonymousInstallationId = deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId);
         return options.identityRuntime.issueProductAnalyticsAssertion({
           mode: deliveryMode,
           consentVersion,
           consentEpoch,
           pseudonymousInstallationId,
+          consentedLocalUserId,
         });
       }
       if (identityConsentAuthorized) {

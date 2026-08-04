@@ -114,7 +114,7 @@ export function productAnalyticsRoutes(db: Db) {
     if (deliveryMode !== "anonymous" && deliveryMode !== "account_linked") {
       throw unprocessable("Product analytics delivery mode is invalid");
     }
-    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && typeof req.actor.userId === "string"
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
       ? req.actor.userId
       : null;
     if (deliveryMode === "account_linked" && !accountLinkedUserId) {
@@ -147,7 +147,7 @@ export function productAnalyticsRoutes(db: Db) {
       throw unprocessable("Product analytics event ids are invalid");
     }
     if (!claimToken) throw unprocessable("Product analytics claim token is required");
-    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && typeof req.actor.userId === "string"
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
       ? req.actor.userId
       : null;
     if (deliveryMode === "account_linked" && !accountLinkedUserId) {
@@ -176,7 +176,9 @@ export function productAnalyticsRoutes(db: Db) {
     const installationSecret = typeof req.body?.installationSecret === "string" ? req.body.installationSecret : "";
     await assertProductAnalyticsInstallationSecret(db, req.params.installationId as string, installationSecret);
     const actor = getActorInfo(req);
-    const localUserId = scope === "account_linked_user" ? (actor.actorType === "user" ? actor.actorId : null) : null;
+    const localUserId = scope === "account_linked_user" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
     if (scope === "account_linked_user" && !localUserId) throw unprocessable("Account-linked consent requires a human user");
     const consent = await recordProductAnalyticsConsent(db, {
       installationId: req.params.installationId as string,

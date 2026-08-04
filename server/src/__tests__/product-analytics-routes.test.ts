@@ -129,4 +129,19 @@ describe("product analytics routes", () => {
       consentedLocalUserId: "user-a",
     }));
   });
+
+  it("rejects account-linked claims from the synthetic local actor", async () => {
+    const response = await request(createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "local-board",
+      isInstanceAdmin: true,
+    })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/installation-1/outbox/claim`).send({
+      installationSecret: "secret-1",
+      deliveryMode: "account_linked",
+    });
+
+    expect(response.status).toBe(422);
+    expect(mockOutbox.claim).not.toHaveBeenCalled();
+  });
 });

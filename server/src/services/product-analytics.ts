@@ -627,6 +627,7 @@ export async function claimProductAnalyticsOutboxBatch(
     installationId: first.installationId,
     deliveryMode: first.deliveryMode,
     consentScope: first.consentScope,
+    consentedLocalUserId: first.consentedLocalUserId,
     consentEpoch: first.consentEpoch,
     events: payloads,
   };

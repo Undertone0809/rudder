@@ -87,7 +87,7 @@ export function instanceSettingsRoutes(
     }
     const actor = getActorInfo(req);
     const localUserId = mode === "account_linked" && actor.actorType === "user" ? actor.actorId : null;
-    if (mode === "account_linked" && !localUserId) throw forbidden("Account-linked telemetry requires a signed-in user");
+    if (mode === "account_linked" && (!localUserId || req.actor.source === "local_implicit")) throw forbidden("Account-linked telemetry requires a signed-in user");
     const scope = mode === "account_linked" ? "account_linked_user" : "anonymous_installation";
     await recordProductAnalyticsConsent(db, {
       installationId: telemetryInstallationId,
