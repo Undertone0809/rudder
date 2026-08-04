@@ -1026,6 +1026,21 @@ function translatePriority(priority: string) {
   return priority;
 }
 
+function translateThinkingEffort(value: string) {
+  const translations: Record<string, string> = {
+    auto: "自动",
+    minimal: "最低",
+    light: "轻量",
+    low: "低",
+    medium: "中",
+    high: "高",
+    "extra high": "超高",
+    max: "最大",
+    ultra: "极高",
+  };
+  return translations[value.trim().toLowerCase()] ?? value;
+}
+
 const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any[]) => string)]> = [
   [/\bboard UI\b/g, "控制台界面"],
   [/\bboard shell\b/g, "控制台外壳"],
@@ -1098,6 +1113,7 @@ const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any
   [/^\+(\d+)\s+more issues$/i, "+$1 个更多任务"],
   [/^Agent default\s+·\s+/i, "智能体默认 · "],
   [/^Custom profile\s+·\s+/i, "自定义配置 · "],
+  [/^((?:智能体默认|自定义配置)\s+·\s+.+?\s+·\s+)(Auto|Minimal|Light|Low|Medium|High|Extra High|Max|Ultra)$/i, (_match, prefix: string, effort: string) => `${prefix}${translateThinkingEffort(effort)}`],
   [/^Configure model and thinking for\s+(.+)$/i, "配置 $1 的模型和推理"],
   [/^Run profile for\s+(.+)$/i, "为 $1 配置运行档案"],
 ];
