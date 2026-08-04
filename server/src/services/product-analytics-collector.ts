@@ -233,7 +233,7 @@ function reject(code: ProductAnalyticsCollectorAck["errorCode"], eventId: string
   return { eventId, status: "rejected", errorCode: code, late };
 }
 
-export function validateProductAnalyticsCollectorEvent(value: unknown): { event: ProductAnalyticsCollectorEvent; serialized: string; late: boolean } | ProductAnalyticsCollectorAck {
+export function validateProductAnalyticsCollectorEvent(value: unknown, now = new Date()): { event: ProductAnalyticsCollectorEvent; serialized: string; late: boolean } | ProductAnalyticsCollectorAck {
   if (!value || typeof value !== "object" || Array.isArray(value)) return reject("invalid_schema", "unknown");
   const event = value as Record<string, unknown>;
   const requiredKeys = [
@@ -250,9 +250,9 @@ export function validateProductAnalyticsCollectorEvent(value: unknown): { event:
   if (typeof event.occurredAt !== "string") return reject("invalid_event", event.eventId);
   const occurredAt = new Date(event.occurredAt);
   if (Number.isNaN(occurredAt.getTime())) return reject("invalid_event", event.eventId);
-  const now = Date.now();
-  if (occurredAt.getTime() > now + MAX_FUTURE_SKEW_MS) return reject("future_event", event.eventId);
-  const late = now - occurredAt.getTime() > MAX_LATE_EVENT_MS;
+  const nowMs = now.getTime();
+  if (occurredAt.getTime() > nowMs + MAX_FUTURE_SKEW_MS) return reject("future_event", event.eventId);
+  const late = nowMs - occurredAt.getTime() > MAX_LATE_EVENT_MS;
   if (!(["production", "development", "test"] as string[]).includes(String(event.environment))) return reject("invalid_event", event.eventId, late);
   if (!(["development", "preview", "canary", "stable"] as string[]).includes(String(event.releaseChannel))) return reject("invalid_event", event.eventId, late);
   if (!(["desktop_local", "self_hosted", "remote_server"] as string[]).includes(String(event.deploymentMode))) return reject("invalid_event", event.eventId, late);
@@ -300,7 +300,7 @@ export function createProductAnalyticsCollector(store: ProductAnalyticsCollector
     }
     const acks: ProductAnalyticsCollectorAck[] = [];
     for (const value of events) {
-      const result = validateProductAnalyticsCollectorEvent(value);
+      const result = validateProductAnalyticsCollectorEvent(value, now);
       if ("status" in result) {
         acks.push(result);
         continue;
@@ -467,7 +467,7 @@ export function createProductAnalyticsPersistentCollector(db: Db): ProductAnalyt
     }
     const acknowledgements: ProductAnalyticsCollectorAck[] = [];
     for (const value of events) {
-      const result = validateProductAnalyticsCollectorEvent(value);
+      const result = validateProductAnalyticsCollectorEvent(value, now);
       if ("status" in result) {
         acknowledgements.push(result);
         continue;

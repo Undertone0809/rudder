@@ -21,8 +21,12 @@ related_code:
   - server/src/routes/product-analytics-collector.ts
   - server/src/routes/product-analytics-collector-report.ts
   - server/src/services/product-analytics-collector-maintenance.ts
+  - server/src/routes/instance-settings.ts
   - desktop/src/product-analytics-telemetry.ts
   - desktop/src/product-analytics-uploader.ts
+  - ui/src/pages/InstancePrivacyTelemetrySettings.tsx
+  - ui/src/api/instanceSettings.ts
+  - ui/src/lib/settings-prefetch.ts
 related_tests:
   - server/src/services/product-analytics.test.ts
   - server/src/services/product-analytics-collector.test.ts
@@ -30,7 +34,9 @@ related_tests:
   - server/src/__tests__/product-analytics-collector-routes.test.ts
   - desktop/src/product-analytics-telemetry.test.ts
   - desktop/src/product-analytics-uploader.test.ts
+  - ui/src/pages/InstancePrivacyTelemetrySettings.test.tsx
   - tests/e2e/product-analytics.spec.ts
+  - tests/e2e/settings-layout.spec.ts
 related_plans:
   - doc/plans/2026-08-03-product-analytics-telemetry-full-implementation.md
 edit_policy: user_confirmed_only

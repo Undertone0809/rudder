@@ -18,11 +18,14 @@ export type ProductAnalyticsSettings = {
   mode: "off" | "anonymous" | "account_linked";
   consentVersion: string;
   consentEpoch: number;
+  maskedInstallationId: string | null;
   pendingCount: number;
   lastAttemptedAt: string | null;
   lastSucceededAt: string | null;
   lastErrorCode: string | null;
   coverageGap: boolean;
+  lastPayloadAt: string | null;
+  lastPayload: Array<Record<string, unknown>> | null;
   disclosure: { collected: string[]; excluded: string[] };
 };
 

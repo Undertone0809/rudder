@@ -620,6 +620,23 @@ export async function claimProductAnalyticsOutboxBatch(
     });
     throw error;
   }
+  // Keep the most recent exporter output available to the local Privacy & Telemetry
+  // page. The payload is already pseudonymized and has passed the sensitive-field
+  // validator above; never persist the raw event rows as a user-visible preview.
+  const [installation] = await db.select({ state: productAnalyticsInstallations.state })
+    .from(productAnalyticsInstallations)
+    .where(eq(productAnalyticsInstallations.installationId, input.installationId))
+    .limit(1);
+  if (installation) {
+    await db.update(productAnalyticsInstallations).set({
+      state: {
+        ...(installation.state ?? {}),
+        lastPayloadAt: new Date().toISOString(),
+        lastPayload: payloads.slice(-20),
+      } as unknown as typeof installation.state,
+      updatedAt: new Date(),
+    }).where(eq(productAnalyticsInstallations.installationId, input.installationId));
+  }
   const first = rows[0];
   if (!first.claimToken) throw unprocessable("Product analytics outbox claim token is missing");
   return {

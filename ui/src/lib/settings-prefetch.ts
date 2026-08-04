@@ -102,6 +102,11 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
+  if (target.startsWith("/instance/settings/privacy")) {
+    keys.push([...queryKeys.instance.productAnalyticsSettings]);
+    return keys;
+  }
+
   if (target.startsWith("/instance/settings/about")) {
     keys.push([...queryKeys.health]);
     return keys;
@@ -214,6 +219,17 @@ export function prefetchSettingsQueries(
       queryClient.prefetchQuery({
         queryKey: queryKeys.instance.notificationSettings,
         queryFn: () => instanceSettingsApi.getNotifications(),
+        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+      }),
+    );
+    return Promise.allSettled(jobs);
+  }
+
+  if (target.startsWith("/instance/settings/privacy")) {
+    jobs.push(
+      queryClient.prefetchQuery({
+        queryKey: queryKeys.instance.productAnalyticsSettings,
+        queryFn: () => instanceSettingsApi.getProductAnalytics(),
         staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
       }),
     );

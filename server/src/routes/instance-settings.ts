@@ -58,15 +58,23 @@ export function instanceSettingsRoutes(
     assertCanManageInstanceSettings(req);
     const state = await getProductAnalyticsInstallationState(db, telemetryInstallationId);
     const general = await svc.getGeneral();
+    const installationState = state?.installation.state as Record<string, unknown> | undefined;
+    const installationId = state?.installation.installationId ?? telemetryInstallationId;
+    const maskedInstallationId = installationId.length > 6
+      ? `****${installationId.slice(-6)}`
+      : installationId.length > 0 ? `****${installationId}` : null;
     res.json({
       mode: general.productAnalyticsMode,
       consentVersion: "v1",
       consentEpoch: general.productAnalyticsConsentEpoch,
+      maskedInstallationId,
       pendingCount: state?.pendingCount ?? 0,
-      lastAttemptedAt: state?.installation.state?.lastAttemptedAt ?? null,
-      lastSucceededAt: state?.installation.state?.lastSucceededAt ?? null,
-      lastErrorCode: state?.installation.state?.lastErrorCode ?? null,
-      coverageGap: state?.installation.state?.coverageGap === true,
+      lastAttemptedAt: typeof installationState?.lastAttemptedAt === "string" ? installationState.lastAttemptedAt : null,
+      lastSucceededAt: typeof installationState?.lastSucceededAt === "string" ? installationState.lastSucceededAt : null,
+      lastErrorCode: typeof installationState?.lastErrorCode === "string" ? installationState.lastErrorCode : null,
+      coverageGap: installationState?.coverageGap === true,
+      lastPayloadAt: typeof installationState?.lastPayloadAt === "string" ? installationState.lastPayloadAt : null,
+      lastPayload: Array.isArray(installationState?.lastPayload) ? installationState.lastPayload : null,
       disclosure: {
         collected: ["event names", "coarse version/platform dimensions", "pseudonymous ids"],
         excluded: ["prompts", "transcripts", "file paths", "issue titles", "output content", "credentials"],
