@@ -887,7 +887,7 @@ function CollapsedWorkspaceSidebarReveal({ onOpen }: { onOpen: () => void }) {
   return (
     <div
       data-testid="workspace-sidebar-reopen-zone"
-      className="group absolute inset-y-0 left-0 z-30 flex w-8 items-center"
+      className="group absolute left-0 top-0 z-30 flex w-8 items-start"
     >
       <Tooltip>
         <TooltipTrigger asChild>
