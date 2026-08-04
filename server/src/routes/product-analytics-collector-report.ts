@@ -59,15 +59,16 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       lte(privateProductAnalyticsCollectorDailyRollups.day, retentionEventTo.toISOString().slice(0, 10)),
     ));
     const production = rollupRows.filter((event) => event.dimensions?.environment === "production");
+    const reportProduction = production.filter((event) => new Date(event.firstOccurredAt) <= range.to);
     const retentionProduction = production.filter((event) => new Date(event.lastOccurredAt) <= retentionEventTo);
     const meaningful = new Set(["human_work_started", "review_decision_recorded", "work_loop_completed"]);
     const productive = new Set(["output_ready", "work_loop_completed"]);
     const distinct = (rows: typeof production) => new Set(rows.map((row) => row.installationId)).size;
     const at = (days: number, names: Set<string>) => {
       const cutoff = new Date(range.to.getTime() - days * 24 * 60 * 60 * 1000);
-      return distinct(production.filter((event) => new Date(event.lastOccurredAt) >= cutoff && names.has(event.eventName)));
+      return distinct(reportProduction.filter((event) => new Date(event.lastOccurredAt) >= cutoff && names.has(event.eventName)));
     };
-    const loops = production
+    const loops = reportProduction
       .filter((event) => event.eventName === "work_loop_completed" && event.origin === "human")
       .reduce((sum, event) => sum + Number(event.eventCount), 0);
     const quality = await db.select({
@@ -136,8 +137,8 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       quality: { receivedBatchCount: Number(quality[0]?.receivedBatches ?? 0), acceptedEventCount: Number(quality[0]?.accepted ?? 0), lateEventCount: Number(quality[0]?.late ?? 0), duplicateEventCount: Number(quality[0]?.duplicate ?? 0), rejectedEventCount: Number(quality[0]?.rejected ?? 0), aggregateRows: aggregateRows.length },
       privacy: { aggregateRows: aggregateRows.map((row) => ({ metricName: row.metricName, metricValue: row.metricValue, contributingInstallations: row.contributingInstallations, privacyThreshold: row.privacyThreshold })) },
       coverage: {
-        accountLinkedEventCount: production.filter((event) => event.dimensions?.analytics_mode === "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
-        anonymousEventCount: production.filter((event) => event.dimensions?.analytics_mode !== "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
+        accountLinkedEventCount: reportProduction.filter((event) => event.dimensions?.analytics_mode === "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
+        anonymousEventCount: reportProduction.filter((event) => event.dimensions?.analytics_mode !== "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
       },
       retention: [...cohorts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([cohortDay, row]) => {
         const suppressed = row.eligibleInstallations < privacyThreshold;

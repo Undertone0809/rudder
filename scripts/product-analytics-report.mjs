@@ -36,6 +36,25 @@ function hasOnlyKeys(value, allowed) {
     && Object.keys(value).every((key) => allowed.has(key));
 }
 
+function matchesShape(value, schema) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).every((key) => typeof schema[key] === "function")
+    && Object.entries(value).every(([key, entry]) => schema[key](entry));
+}
+
+function isOptionalRecord(value, schema) {
+  return value === undefined || matchesShape(value, schema);
+}
+
+function isOptionalArray(value, schema) {
+  return value === undefined || (Array.isArray(value) && value.every((entry) => matchesShape(entry, schema)));
+}
+
+const isString = (value) => typeof value === "string";
+const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+const isBoolean = (value) => typeof value === "boolean";
+const isNullableNumber = (value) => value === null || isNumber(value);
+
 export async function fetchProductAnalyticsReport({ baseUrl, secret, from, to, fetchImpl = fetch }) {
   const endpoint = new URL(baseUrl);
   if (endpoint.protocol !== "https:" && !["127.0.0.1", "localhost", "::1"].includes(endpoint.hostname)) {
@@ -54,9 +73,39 @@ export async function fetchProductAnalyticsReport({ baseUrl, secret, from, to, f
   const allowedTopLevel = new Set(["window", "metrics", "quality", "privacy", "coverage", "retention"]);
   const validShape = body && typeof body === "object"
     && Object.keys(body).every((key) => allowedTopLevel.has(key))
-    && hasOnlyKeys(body.window, new Set(["from", "to", "timezone"]))
-    && hasOnlyKeys(body.metrics, new Set(["meaningfulActiveInstallations1d", "meaningfulActiveInstallations7d", "productiveInstallations7d", "weeklyCompletedWorkLoops", "meaningfulDau", "productiveWau"]))
-    && hasOnlyKeys(body.quality, new Set(["receivedBatchCount", "acceptedEventCount", "lateEventCount", "duplicateEventCount", "rejectedEventCount", "aggregateRows"]));
+    && matchesShape(body.window, { from: isString, to: isString, timezone: isString })
+    && matchesShape(body.metrics, {
+      meaningfulActiveInstallations1d: isNumber,
+      meaningfulActiveInstallations7d: isNumber,
+      productiveInstallations7d: isNumber,
+      weeklyCompletedWorkLoops: isNumber,
+      meaningfulDau: isNumber,
+      productiveWau: isNumber,
+    })
+    && matchesShape(body.quality, {
+      receivedBatchCount: isNumber,
+      acceptedEventCount: isNumber,
+      lateEventCount: isNumber,
+      duplicateEventCount: isNumber,
+      rejectedEventCount: isNumber,
+      aggregateRows: isNumber,
+    })
+    && isOptionalRecord(body.privacy, { aggregateRows: (value) => Array.isArray(value) })
+    && isOptionalArray(body.privacy?.aggregateRows, {
+      metricName: isString,
+      metricValue: isNumber,
+      contributingInstallations: isNumber,
+      privacyThreshold: isNumber,
+    })
+    && isOptionalRecord(body.coverage, { accountLinkedEventCount: isNumber, anonymousEventCount: isNumber })
+    && isOptionalArray(body.retention, {
+      cohortDay: isString,
+      eligibleInstallations: isNullableNumber,
+      meaningfulW1: isNullableNumber,
+      loopW1: isNullableNumber,
+      loopW4: isNullableNumber,
+      suppressed: isBoolean,
+    });
   if (!validShape) {
     throw new Error("Product analytics report returned an invalid aggregate contract");
   }

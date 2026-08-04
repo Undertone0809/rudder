@@ -38,7 +38,7 @@ describe("product analytics collector deployment", () => {
   });
 
   it("exposes a liveness endpoint without touching the database", async () => {
-    const app = createProductAnalyticsCollectorApp({ config: parseProductAnalyticsCollectorConfig(baseEnv), db: {} as Db, maintenance: false });
+    const app = createProductAnalyticsCollectorApp({ config: parseProductAnalyticsCollectorConfig(baseEnv), db: {} as Db, reportDb: {} as Db, maintenance: false });
     const response = await request(app).get("/healthz");
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, service: "product-analytics-collector", schema: "rudder_analytics" });

@@ -12,11 +12,43 @@ const migrations = [
   "0142_product_analytics_quality_counters.sql",
 ];
 
+const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
+function quoteIdentifier(value) {
+  if (!identifierPattern.test(value)) throw new Error("invalid_product_analytics_role_name");
+  return `"${value}"`;
+}
+
 export function splitStatements(content) {
   return content
     .split("--> statement-breakpoint")
     .map((statement) => statement.trim())
     .filter(Boolean);
+}
+
+export async function grantProductAnalyticsRolePrivileges(sql, roles = {}) {
+  const collector = quoteIdentifier(roles.collector ?? "rudder_analytics_collector");
+  const rollup = quoteIdentifier(roles.rollup ?? "rudder_analytics_rollup");
+  const reader = quoteIdentifier(roles.reader ?? "rudder_analytics_reader");
+  await sql.unsafe(`
+    GRANT USAGE ON SCHEMA "rudder_analytics" TO ${collector};
+    GRANT SELECT, INSERT ON "rudder_analytics"."product_analytics_collector_events" TO ${collector};
+    GRANT SELECT, INSERT, UPDATE ON "rudder_analytics"."product_analytics_collector_installations" TO ${collector};
+    GRANT SELECT, INSERT, UPDATE ON "rudder_analytics"."product_analytics_collector_subjects" TO ${collector};
+    GRANT SELECT, INSERT, UPDATE ON "rudder_analytics"."product_analytics_collector_quality_counters" TO ${collector};
+    GRANT USAGE ON SCHEMA "rudder_analytics" TO ${rollup};
+    GRANT SELECT ON "rudder_analytics"."product_analytics_collector_events" TO ${rollup};
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "rudder_analytics" TO ${rollup};
+    GRANT USAGE ON SCHEMA "rudder_analytics" TO ${reader};
+    GRANT SELECT ON "rudder_analytics"."product_analytics_collector_daily_rollups" TO ${reader};
+    GRANT SELECT ON "rudder_analytics"."product_analytics_collector_privacy_aggregates" TO ${reader};
+    GRANT SELECT ON "rudder_analytics"."product_analytics_collector_quality_counters" TO ${reader};
+    REVOKE ALL ON "rudder_analytics"."product_analytics_collector_events" FROM ${reader};
+    REVOKE ALL ON "rudder_analytics"."product_analytics_collector_installations" FROM ${reader};
+    REVOKE ALL ON "rudder_analytics"."product_analytics_collector_subjects" FROM ${reader};
+    REVOKE ALL ON "rudder_analytics"."product_analytics_collector_work_loop_revisions" FROM ${reader};
+    REVOKE ALL ON "rudder_analytics"."_product_analytics_migrations" FROM ${collector}, ${rollup}, ${reader};
+  `);
 }
 
 export async function applyProductAnalyticsMigrations({ databaseUrl, sqlImpl } = {}) {
@@ -46,6 +78,11 @@ export async function applyProductAnalyticsMigrations({ databaseUrl, sqlImpl } =
         );
       });
     }
+    await grantProductAnalyticsRolePrivileges(sql, {
+      collector: process.env.TELEMETRY_COLLECTOR_USER,
+      rollup: process.env.TELEMETRY_ROLLUP_USER,
+      reader: process.env.TELEMETRY_READER_USER,
+    });
   } finally {
     if (!sqlImpl) await sql.end();
   }

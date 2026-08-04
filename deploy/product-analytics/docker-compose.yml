@@ -33,6 +33,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://${TELEMETRY_MIGRATION_USER:?TELEMETRY_MIGRATION_USER is required}:${TELEMETRY_MIGRATION_PASSWORD:?TELEMETRY_MIGRATION_PASSWORD is required}@telemetry-db:5432/${TELEMETRY_POSTGRES_DB:-rudder_analytics}
+      TELEMETRY_COLLECTOR_USER: ${TELEMETRY_COLLECTOR_USER:?TELEMETRY_COLLECTOR_USER is required}
+      TELEMETRY_ROLLUP_USER: ${TELEMETRY_ROLLUP_USER:?TELEMETRY_ROLLUP_USER is required}
+      TELEMETRY_READER_USER: ${TELEMETRY_READER_USER:?TELEMETRY_READER_USER is required}
     command: ["node", "scripts/product-analytics-migrate.mjs"]
 
   telemetry-collector:

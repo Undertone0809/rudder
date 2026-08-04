@@ -14,7 +14,7 @@ export type ProductAnalyticsCollectorAppOptions = {
   config: ProductAnalyticsCollectorConfig;
   db: Db;
   maintenanceDb?: Db;
-  reportDb?: Db;
+  reportDb: Db;
   maintenance?: boolean;
 };
 
@@ -40,7 +40,7 @@ export function createProductAnalyticsCollectorApp(options: ProductAnalyticsColl
   // Reports use a distinct read-only connection. The reader role is granted
   // only report rollups/aggregates; it never serves the ingest or maintenance
   // connection to report callers.
-  app.use(productAnalyticsCollectorReportRoutes(options.reportDb ?? options.maintenanceDb ?? options.db, {
+  app.use(productAnalyticsCollectorReportRoutes(options.reportDb, {
     reportSecret: options.config.reportSecret,
     privacyThreshold: options.config.privacyThreshold,
   }));

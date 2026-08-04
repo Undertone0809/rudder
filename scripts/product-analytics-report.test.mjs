@@ -58,4 +58,12 @@ test("rejects non-aggregate or failed report responses", async () => {
     }),
     /invalid aggregate contract/,
   );
+  await assert.rejects(
+    fetchProductAnalyticsReport({
+      baseUrl: "https://telemetry.example.test/api/analytics/v1/report",
+      secret: "report-secret",
+      fetchImpl: async () => new Response(JSON.stringify({ window: {}, metrics: {}, quality: {}, privacy: { aggregateRows: [{ events: [{ installationId: "raw" }] }] } }), { status: 200 }),
+    }),
+    /invalid aggregate contract/,
+  );
 });
