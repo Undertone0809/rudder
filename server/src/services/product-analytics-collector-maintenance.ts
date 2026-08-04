@@ -8,7 +8,7 @@ import {
   privateProductAnalyticsCollectorSubjects,
   privateProductAnalyticsCollectorWorkLoopRevisions,
 } from "@rudderhq/db";
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 
 const PROJECTOR_LOOKBACK_DAYS = 30;
@@ -207,6 +207,17 @@ async function rebuildPrivacyAggregates(db: Db, options: ProductAnalyticsCollect
       privateProductAnalyticsCollectorEvents.eventName,
       privateProductAnalyticsCollectorEvents.origin,
     );
+  const completedLoopGroups = await db.select({
+    day: sql<string>`(${privateProductAnalyticsCollectorWorkLoopRevisions.completedAt} AT TIME ZONE 'UTC')::date`,
+    metricValue: sql<number>`count(*)::int`,
+    contributingInstallations: sql<number>`count(distinct ${privateProductAnalyticsCollectorWorkLoopRevisions.installationId})::int`,
+  }).from(privateProductAnalyticsCollectorWorkLoopRevisions).where(and(
+    gte(privateProductAnalyticsCollectorWorkLoopRevisions.completedAt, from),
+    isNull(privateProductAnalyticsCollectorWorkLoopRevisions.invalidatedAt),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.environment, "production"),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.origin, "human"),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.isInternal, false),
+  )).groupBy(sql`(${privateProductAnalyticsCollectorWorkLoopRevisions.completedAt} AT TIME ZONE 'UTC')::date`);
   await db.delete(privateProductAnalyticsCollectorPrivacyAggregates).where(gte(privateProductAnalyticsCollectorPrivacyAggregates.day, dayOf(from)));
   let written = 0;
   for (const group of groups) {
@@ -220,6 +231,23 @@ async function rebuildPrivacyAggregates(db: Db, options: ProductAnalyticsCollect
       dimensionHash: hashProductAnalyticsCollectorDimension(dimensionValues),
       dimensionValues,
       metricValue: Number(group.eventCount),
+      contributingInstallations,
+      privacyThreshold: options.privacyThreshold,
+      updatedAt: now,
+    });
+    written += 1;
+  }
+  for (const group of completedLoopGroups) {
+    const contributingInstallations = Number(group.contributingInstallations);
+    if (contributingInstallations < options.privacyThreshold) continue;
+    const dimensionValues = { source: "valid_work_loop_revisions" };
+    await db.insert(privateProductAnalyticsCollectorPrivacyAggregates).values({
+      day: group.day,
+      metricName: "weekly_completed_work_loops",
+      dimensionSetVersion: 1,
+      dimensionHash: hashProductAnalyticsCollectorDimension(dimensionValues),
+      dimensionValues,
+      metricValue: Number(group.metricValue),
       contributingInstallations,
       privacyThreshold: options.privacyThreshold,
       updatedAt: now,

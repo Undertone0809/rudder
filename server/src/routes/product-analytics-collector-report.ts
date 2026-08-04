@@ -19,8 +19,8 @@ function window(req: { query: Record<string, unknown> }) {
   const toRaw = typeof req.query.to === "string" ? req.query.to : undefined;
   const fromRaw = typeof req.query.from === "string" ? req.query.from : undefined;
   const toInput = toRaw ? new Date(toRaw) : new Date();
-  const fromInput = fromRaw ? new Date(fromRaw) : new Date(toInput.getTime() - 7 * 24 * 60 * 60 * 1000);
-  if (Number.isNaN(fromInput.getTime()) || Number.isNaN(toInput.getTime()) || fromInput >= toInput) throw new Error("invalid_window");
+  const fromInput = fromRaw ? new Date(fromRaw) : new Date(toInput.getTime() - 6 * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(fromInput.getTime()) || Number.isNaN(toInput.getTime()) || fromInput > toInput) throw new Error("invalid_window");
   // Reports are built from UTC daily rollups. Normalize arbitrary timestamps
   // to complete UTC days instead of implying sub-day precision we cannot
   // recover after the raw event has been projected.
@@ -74,9 +74,6 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       const cutoff = new Date(range.to.getTime() - days * 24 * 60 * 60 * 1000);
       return distinct(reportProduction.filter((event) => new Date(event.lastOccurredAt) >= cutoff && names.has(event.eventName)));
     };
-    const loops = reportProduction
-      .filter((event) => event.eventName === "work_loop_completed" && event.origin === "human")
-      .reduce((sum, event) => sum + Number(event.eventCount), 0);
     const quality = await db.select({
       receivedBatches: sql<number>`coalesce(sum(${privateProductAnalyticsCollectorQualityCounters.receivedBatches}), 0)::int`,
       accepted: sql<number>`coalesce(sum(${privateProductAnalyticsCollectorQualityCounters.acceptedEvents}), 0)::int`,
@@ -93,6 +90,9 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       contributingInstallations: privateProductAnalyticsCollectorPrivacyAggregates.contributingInstallations,
       privacyThreshold: privateProductAnalyticsCollectorPrivacyAggregates.privacyThreshold,
     }).from(privateProductAnalyticsCollectorPrivacyAggregates).where(and(gte(privateProductAnalyticsCollectorPrivacyAggregates.day, range.from.toISOString().slice(0, 10)), lte(privateProductAnalyticsCollectorPrivacyAggregates.day, range.to.toISOString().slice(0, 10))));
+    const loops = aggregateRows
+      .filter((row) => row.metricName === "weekly_completed_work_loops")
+      .reduce((sum, row) => sum + Number(row.metricValue), 0);
     const firstSeenByInstallation = new Map<string, Date>();
     for (const event of retentionProduction) {
       const firstSeen = firstSeenByInstallation.get(event.installationId);
