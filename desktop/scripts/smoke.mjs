@@ -2132,6 +2132,61 @@ async function runAccountGateScenario(mode) {
   } finally {
     await interactionBrowser.close();
   }
+
+  const verifyProviderHandoff = async (provider) => {
+    const providerKey = provider.toLowerCase();
+    const providerRoot = path.join(scenarioRoot, `provider-${providerKey}`);
+    const handoffPath = path.join(providerRoot, "identity-handoff.jsonl");
+    const providerPorts = await allocateSmokePorts();
+    await mkdir(providerRoot, { recursive: true });
+    const { electronApp, page: providerPage } = await launchDesktopWindow(
+      providerRoot,
+      mode,
+      providerPorts,
+      {
+        ...(process.platform === "darwin" && process.env.HOME
+          ? { HOME: process.env.HOME }
+          : {}),
+        RUDDER_DESKTOP_SMOKE_IDENTITY_HANDOFF_PATH: handoffPath,
+      },
+    );
+    try {
+      await providerPage.waitForFunction(
+        () => document.body.dataset.bootView === "account_required",
+        undefined,
+        { timeout: 30_000 },
+      );
+      await providerPage.getByRole("button", { name: `Continue with ${provider}` }).click();
+      const handoff = await waitForSmokeCondition(
+        `${provider} Identity browser handoff`,
+        async () => {
+          if (!(await pathExists(handoffPath))) return null;
+          const lines = (await readFile(handoffPath, "utf8")).trim().split("\n").filter(Boolean);
+          return lines.length > 0 ? JSON.parse(lines.at(-1)) : null;
+        },
+      );
+      assert.equal(handoff.origin, "https://accounts.rudderhq.dev");
+      assert.equal(handoff.pathname, "/");
+      assert.deepEqual(handoff.searchParamNames, ["next"]);
+      assert.equal(handoff.nextOrigin, "https://accounts.rudderhq.dev");
+      assert.equal(handoff.nextPathname, "/api/desktop/authorize");
+      assert.deepEqual(handoff.nextParamNames, [
+        "audience",
+        "client_id",
+        "code_challenge",
+        "code_challenge_method",
+        "login_intent",
+        "redirect_uri",
+        "state",
+      ]);
+    } finally {
+      await closeDesktop(electronApp);
+    }
+  };
+
+  await verifyProviderHandoff("Google");
+  await verifyProviderHandoff("GitHub");
+
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
     // Electron safeStorage must use the active macOS login keychain. A synthetic
     // HOME can leave the synchronous keychain probe waiting for a keychain that

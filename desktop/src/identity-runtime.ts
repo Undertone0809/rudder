@@ -1,5 +1,6 @@
 import { app, ipcMain, session, shell } from "electron";
 import { randomBytes } from "node:crypto";
+import { appendFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createDesktopIdentityClient, type DesktopIdentityAuthProviders } from "./identity-client.js";
@@ -58,6 +59,26 @@ type MainRenderer = {
 
 function booleanFlagEnabled(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
+}
+
+async function openDesktopIdentityExternal(url: string): Promise<void> {
+  const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_IDENTITY_HANDOFF_PATH?.trim();
+  if (!smokeRecordPath) {
+    await shell.openExternal(url);
+    return;
+  }
+
+  const loginUrl = new URL(url);
+  const nextValue = loginUrl.searchParams.get("next");
+  const nextUrl = nextValue ? new URL(nextValue, loginUrl.origin) : null;
+  await appendFile(smokeRecordPath, `${JSON.stringify({
+    origin: loginUrl.origin,
+    pathname: loginUrl.pathname,
+    searchParamNames: [...loginUrl.searchParams.keys()].sort(),
+    nextOrigin: nextUrl?.origin ?? null,
+    nextPathname: nextUrl?.pathname ?? null,
+    nextParamNames: nextUrl ? [...nextUrl.searchParams.keys()].sort() : [],
+  })}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
 function localAuthOptions(
@@ -135,7 +156,7 @@ export function createDesktopIdentityRuntime(options: {
     deviceName: `${options.appName} on ${os.hostname()}`.slice(0, 200),
     vault,
     offlineGrantStore,
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: openDesktopIdentityExternal,
     onDeviceAuthorizationPrompt: (prompt) => controller.showDeviceAuthorizationPrompt(prompt),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-controller");
