@@ -43,6 +43,15 @@ function parseEventName(req: Request): ProductAnalyticsEventName | undefined {
   return value as ProductAnalyticsEventName;
 }
 
+function sanitizeInstallationState(state: unknown) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+  const { lastPayload, lastPayloadAt, lastPayloadMode, ...safeState } = state as Record<string, unknown>;
+  void lastPayload;
+  void lastPayloadAt;
+  void lastPayloadMode;
+  return safeState;
+}
+
 export function productAnalyticsRoutes(db: Db) {
   const router = Router();
   const service = productAnalyticsService(db);
@@ -101,7 +110,15 @@ export function productAnalyticsRoutes(db: Db) {
       res.status(404).json({ error: "Product analytics installation not found" });
       return;
     }
-    res.json({ installation: { id: state.installation.installationId, mode: state.installation.mode, state: state.installation.state }, consent: state.consent, pendingCount: state.pendingCount });
+    res.json({
+      installation: {
+        id: state.installation.installationId,
+        mode: state.installation.mode,
+        state: sanitizeInstallationState(state.installation.state),
+      },
+      consent: state.consent,
+      pendingCount: state.pendingCount,
+    });
   });
 
   router.post("/orgs/:orgId/analytics/product/installation/:installationId/outbox/claim", async (req, res) => {
