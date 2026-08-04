@@ -358,10 +358,16 @@ contracts:
     related_code:
       - server/src/routes/issues.comments-attachments.ts
       - ui/src/components/CommentThread.tsx
+      - ui/src/components/CommentThread.submit.ts
+      - ui/src/i18n/locales/en.ts
+      - ui/src/i18n/locales/zh-CN.ts
     related_tests:
       - server/src/__tests__/issue-comment-reopen-routes.test.ts
       - tests/e2e/issue-comment-mentions.spec.ts
       - tests/e2e/issue-comment-mention-boundary.spec.ts
+      - tests/e2e/issue-comment-send-confirmation.spec.ts
+      - ui/src/components/CommentThread.test.tsx
+      - ui/src/context/I18nContext.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   ROUTING.COMMENT.WAKE.001:
@@ -372,10 +378,12 @@ contracts:
     related_code:
       - server/src/routes/issues.comments-attachments.ts
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
+      - ui/src/components/CommentThread.submit.ts
     related_tests:
       - server/src/__tests__/issue-lifecycle-routes.test.ts
       - tests/e2e/issue-comment-mentions.spec.ts
       - tests/e2e/issue-comment-mention-boundary.spec.ts
+      - tests/e2e/issue-comment-send-confirmation.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md

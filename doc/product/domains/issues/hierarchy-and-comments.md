@@ -14,11 +14,17 @@ related_code:
   - ui/src/pages/IssueDetail.tsx
   - ui/src/components/IssueProperties.tsx
   - ui/src/components/CommentThread.tsx
+  - ui/src/components/CommentThread.submit.ts
+  - ui/src/i18n/locales/en.ts
+  - ui/src/i18n/locales/zh-CN.ts
 related_tests:
   - tests/e2e/issue-detail-subissues.spec.ts
   - tests/e2e/issue-comment-mentions.spec.ts
   - tests/e2e/issue-comment-mention-boundary.spec.ts
+  - tests/e2e/issue-comment-send-confirmation.spec.ts
   - server/src/__tests__/issue-comment-reopen-routes.test.ts
+  - ui/src/components/CommentThread.test.tsx
+  - ui/src/context/I18nContext.test.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -105,15 +111,21 @@ Product model:
 Flow:
 
 1. Actor posts an issue comment through the issue route or UI thread.
-2. Rudder writes the comment and records `issue.comment_added` activity.
-3. Rudder parses directed agent mentions and explicit reopen intent.
-4. Routing decides which agents, if any, should wake and with what source.
-5. Issue Detail and Messenger issue-thread surfaces show the comment in the
+2. When a board/user actor submits a comment with no valid Agent wake mention,
+   the UI asks for explicit confirmation before posting. The confirmation copy
+   is localized; canceling keeps the draft and returns focus to the editor,
+   while confirming sends the unchanged comment body. A valid wake mention
+   bypasses this guard. A reopen comment that will wake an eligible Agent
+   assignee follows the explicit reopen path and is not blocked by this guard.
+3. Rudder writes the comment and records `issue.comment_added` activity.
+4. Rudder parses directed agent mentions and explicit reopen intent.
+5. Routing decides which agents, if any, should wake and with what source.
+6. Issue Detail and Messenger issue-thread surfaces show the comment in the
    work timeline.
-6. When the human author edits a comment, Rudder records
+7. When the human author edits a comment, Rudder records
    `issue.comment_updated`, compares directed wake mentions before and after
    the edit, and routes only agents newly mentioned by that edit.
-7. The comment row is locked while the old and new mention sets are compared.
+8. The comment row is locked while the old and new mention sets are compared.
    The updated body and mention delta are committed before runtime launch is
    requested through the existing comment-mention wake path.
 
@@ -121,6 +133,9 @@ Invariants:
 
 - Comment creation must leave durable issue evidence before any wake is relied
   on.
+- The unmentioned-comment confirmation is a user-facing submission guard, not
+  a routing decision: confirming a plain comment must not add a wake mention or
+  change its ordinary-comment semantics.
 - Mention parsing must not silently reassign the issue.
 - Keeping an existing mention during an edit must not wake the agent again;
   removing a mention does not wake the removed agent.
