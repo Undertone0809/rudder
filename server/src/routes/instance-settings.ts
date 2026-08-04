@@ -60,6 +60,7 @@ export function instanceSettingsRoutes(
     const general = await svc.getGeneral();
     const installationState = state?.installation.state as Record<string, unknown> | undefined;
     const installationId = state?.installation.installationId ?? telemetryInstallationId;
+    const hasAnonymousPayloadPreview = installationState?.lastPayloadMode === "anonymous";
     const maskedInstallationId = installationId.length > 6
       ? `****${installationId.slice(-6)}`
       : installationId.length > 0 ? `****${installationId}` : null;
@@ -73,8 +74,8 @@ export function instanceSettingsRoutes(
       lastSucceededAt: typeof installationState?.lastSucceededAt === "string" ? installationState.lastSucceededAt : null,
       lastErrorCode: typeof installationState?.lastErrorCode === "string" ? installationState.lastErrorCode : null,
       coverageGap: installationState?.coverageGap === true,
-      lastPayloadAt: typeof installationState?.lastPayloadAt === "string" ? installationState.lastPayloadAt : null,
-      lastPayload: Array.isArray(installationState?.lastPayload) ? installationState.lastPayload : null,
+      lastPayloadAt: hasAnonymousPayloadPreview && typeof installationState?.lastPayloadAt === "string" ? installationState.lastPayloadAt : null,
+      lastPayload: hasAnonymousPayloadPreview && Array.isArray(installationState?.lastPayload) ? installationState.lastPayload : null,
       disclosure: {
         collected: ["event names", "coarse version/platform dimensions", "pseudonymous ids"],
         excluded: ["prompts", "transcripts", "file paths", "issue titles", "output content", "credentials"],

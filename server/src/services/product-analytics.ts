@@ -620,20 +620,26 @@ export async function claimProductAnalyticsOutboxBatch(
     });
     throw error;
   }
-  // Keep the most recent exporter output available to the local Privacy & Telemetry
-  // page. The payload is already pseudonymized and has passed the sensitive-field
-  // validator above; never persist the raw event rows as a user-visible preview.
+  // Keep anonymous exporter output available to the local Privacy & Telemetry page.
+  // Account-linked payloads are deliberately never retained in installation-wide
+  // state because another signed-in user may later read the settings page.
   const [installation] = await db.select({ state: productAnalyticsInstallations.state })
     .from(productAnalyticsInstallations)
     .where(eq(productAnalyticsInstallations.installationId, input.installationId))
     .limit(1);
   if (installation) {
+    const nextState = { ...((installation.state ?? {}) as Record<string, unknown>) };
+    if (input.deliveryMode === "anonymous") {
+      nextState.lastPayloadAt = new Date().toISOString();
+      nextState.lastPayload = payloads.slice(-20);
+      nextState.lastPayloadMode = "anonymous";
+    } else {
+      delete nextState.lastPayloadAt;
+      delete nextState.lastPayload;
+      delete nextState.lastPayloadMode;
+    }
     await db.update(productAnalyticsInstallations).set({
-      state: {
-        ...(installation.state ?? {}),
-        lastPayloadAt: new Date().toISOString(),
-        lastPayload: payloads.slice(-20),
-      } as unknown as typeof installation.state,
+      state: nextState as typeof installation.state,
       updatedAt: new Date(),
     }).where(eq(productAnalyticsInstallations.installationId, input.installationId));
   }
