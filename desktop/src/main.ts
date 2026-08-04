@@ -23,10 +23,7 @@ import {
   createBrowserAgentTabController,
 } from "./browser-agent-tabs.js";
 import {
-  isDesktopBrowserRunActive,
-  readDesktopBrowserSettings,
-  registerDesktopBrowserBroker,
-  unregisterDesktopBrowserBroker,
+  createDesktopBrowserApiClient,
 } from "./browser-broker-registration.js";
 import { startBrowserBrokerServer } from "./browser-broker-server.js";
 import { runBrowserCookieImportWorker } from "./browser-cookie-import-worker.js";
@@ -1088,6 +1085,12 @@ async function closeAgentBrowserGuests(): Promise<void> {
 
 function replaceBrowserRuntimeLifecycle(): void {
   const controller = requireBrowserProfileController();
+  const browserApi = createDesktopBrowserApiClient(
+    (input, init) => session.defaultSession.fetch(
+      input instanceof URL ? input.toString() : input,
+      init,
+    ),
+  );
   const partition = controller.getPartition();
   const agentTabs = createBrowserAgentTabController({
     createTab: createElectronBrowserAgentTabFactory({
@@ -1124,16 +1127,16 @@ function replaceBrowserRuntimeLifecycle(): void {
       if (generation === undefined) {
         throw new Error("Rudder Browser Broker registration generation is missing.");
       }
-      return registerDesktopBrowserBroker(apiUrl, {
+      return browserApi.registerBroker(apiUrl, {
         ...broker,
         ownerId: desktopBrowserBrokerOwnerId,
         generation,
         ...(refresh ? { refresh: true } : {}),
       });
     },
-    unregisterBroker: unregisterDesktopBrowserBroker,
-    readSettings: readDesktopBrowserSettings,
-    isRunActive: isDesktopBrowserRunActive,
+    unregisterBroker: browserApi.unregisterBroker,
+    readSettings: browserApi.readSettings,
+    isRunActive: browserApi.isRunActive,
     sweepIntervalMs: 5_000,
     onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
   });
