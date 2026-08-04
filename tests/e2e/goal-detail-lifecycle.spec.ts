@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { calendarEvents, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 import { restartE2eServer, stopRestartedE2eServer } from "./support/restart-e2e-server";
 
@@ -85,6 +85,7 @@ function activationPayload(ownerAgentId: string, suffix: string, overrides: Reco
 
 test.describe("Goal contract lifecycle", () => {
   test("runs Draft to evaluated Proof through the user workflow", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 960 });
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -109,6 +110,11 @@ test.describe("Goal contract lifecycle", () => {
     const nonOwnerKeyResponse = await page.request.post(`/api/agents/${nonOwner.id}/keys`, { data: { name: "goal-non-owner-e2e" } });
     expect(nonOwnerKeyResponse.ok()).toBe(true);
     const nonOwnerKey = await nonOwnerKeyResponse.json() as { token: string };
+    const agentCreateResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+      headers: { Authorization: `Bearer ${key.token}` },
+      data: { title: "An Agent must not create an unowned Goal" },
+    });
+    expect(agentCreateResponse.status()).toBe(403);
     const foreignGoalResponse = await page.request.get(`/api/goals/${otherGoal.id}`, {
       headers: { Authorization: `Bearer ${key.token}` },
     });
@@ -136,9 +142,39 @@ test.describe("Goal contract lifecycle", () => {
     await page.getByLabel("Agent Owner").selectOption(owner.id);
     await page.getByLabel("Continuation").selectOption("verification");
     await page.getByLabel("Outcome statement").fill("The verified external outcome is available");
+    await page.getByRole("textbox", { name: "Criterion 1", exact: true }).fill("The desired external outcome is true");
+    await page.getByLabel("Allowed autonomy").fill("bounded_work, bounded_review");
+    await page.getByLabel("Human acceptance authority").fill("operator");
+    await page.getByLabel("Action deadline").fill("2026-08-10");
+    await page.getByLabel("Evaluation deadline").fill("2026-08-12");
+    await page.getByRole("button", { name: "Add criterion" }).click();
+    await page.getByRole("textbox", { name: "Criterion 2", exact: true }).fill("The safety boundary remains intact");
+    await page.getByRole("combobox", { name: "Evaluator for criterion 2", exact: true }).selectOption("policy");
     await page.getByLabel("First next step").fill("Verify the next bounded result");
     await page.getByLabel("Initial Plan").fill("Build and verify the first result");
+    const activationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/goals/${goal.id}/activate`)
+      && response.ok(),
+    );
     await page.getByRole("button", { name: "Confirm activation" }).click();
+    const activationRequest = (await activationResponse).request().postDataJSON() as {
+      autonomyEnvelope: { allowed: string[] };
+      humanAuthorities: { acceptance: string };
+      evaluationPolicy: { terminalEvidenceRequired: boolean };
+      actionDeadline: string;
+      evaluationDeadline: string;
+      criteria: Array<{ label: string; evaluator: string }>;
+    };
+    expect(activationRequest.autonomyEnvelope).toEqual({ allowed: ["bounded_work", "bounded_review"] });
+    expect(activationRequest.humanAuthorities).toEqual({ acceptance: "operator" });
+    expect(activationRequest.evaluationPolicy).toEqual({ terminalEvidenceRequired: true });
+    expect(activationRequest.actionDeadline).toContain("2026-08-10");
+    expect(activationRequest.evaluationDeadline).toContain("2026-08-12");
+    expect(activationRequest.criteria).toMatchObject([
+      { label: "The desired external outcome is true", evaluator: "artifact" },
+      { label: "The safety boundary remains intact", evaluator: "policy" },
+    ]);
     await expect(page.getByText("Contract activation", { exact: true })).toHaveCount(0);
     await expect(page.getByText("The verified external outcome is available", { exact: true })).toBeVisible();
     await expect(page.getByText("Verify the next bounded result", { exact: true })).toBeVisible();
@@ -154,6 +190,15 @@ test.describe("Goal contract lifecycle", () => {
       data: { summary: "A non-owner must not revise this Goal" },
     });
     expect(nonOwnerPlanResponse.status()).toBe(403);
+    const nonOwnerPatchResponse = await page.request.patch(`/api/goals/${goal.id}`, {
+      headers: { Authorization: `Bearer ${nonOwnerKey.token}` },
+      data: { title: "A non-owner must not rename this Goal" },
+    });
+    expect(nonOwnerPatchResponse.status()).toBe(403);
+    const nonOwnerDeleteResponse = await page.request.delete(`/api/goals/${goal.id}`, {
+      headers: { Authorization: `Bearer ${nonOwnerKey.token}` },
+    });
+    expect(nonOwnerDeleteResponse.status()).toBe(403);
     const nonOwnerActivityResponse = await page.request.post(`/api/goals/${goal.id}/activities`, {
       headers: { Authorization: `Bearer ${nonOwnerKey.token}` },
       data: { summary: "A non-owner must not add activity", evidenceRefs: ["artifact://non-owner"] },
@@ -257,8 +302,40 @@ test.describe("Goal contract lifecycle", () => {
     expect(firstAfterFocusSwitch.focus).toBe(false);
     expect(secondAfterFocusSwitch.focus).toBe(true);
 
-    await page.getByLabel("Evidence reference").fill("artifact://goal-contract-proof");
+    const calendarProtectedGoal = await createGoal(page, organization.id, "Calendar protected Goal");
+    await e2eDb.insert(calendarEvents).values({
+      orgId: organization.id,
+      eventKind: "goal_review",
+      eventStatus: "scheduled",
+      ownerType: "goal",
+      title: "Calendar review for protected Goal",
+      startAt: new Date("2026-08-04T01:00:00.000Z"),
+      endAt: new Date("2026-08-04T02:00:00.000Z"),
+      goalId: calendarProtectedGoal.id,
+      sourceMode: "manual",
+    });
+    const calendarDependencies = await (await page.request.get(`/api/goals/${calendarProtectedGoal.id}/dependencies`)).json() as {
+      canDelete: boolean;
+      blockers: string[];
+      counts: { calendarEvents: number };
+    };
+    expect(calendarDependencies.canDelete).toBe(false);
+    expect(calendarDependencies.blockers).toContain("calendar_events");
+    expect(calendarDependencies.counts.calendarEvents).toBe(1);
+    await page.goto(`/${organization.issuePrefix}/goals/${calendarProtectedGoal.id}`);
+    await expect(page.getByText("Deletion blockers", { exact: true })).toBeVisible();
+    await expect(page.getByText("Calendar events", { exact: true })).toBeVisible();
+    await expect(page.getByText("Calendar review for protected Goal", { exact: true })).toBeVisible();
+    const calendarProtectedDelete = await page.request.delete(`/api/goals/${calendarProtectedGoal.id}`);
+    expect(calendarProtectedDelete.status()).toBe(409);
+
+    const refocused = await page.request.post(`/api/goals/${goal.id}/focus`, { data: { focus: true } });
+    expect(refocused.ok()).toBe(true);
+    await page.goto(`/${organization.issuePrefix}/goals/${goal.id}`);
+
+    await page.getByLabel("Evidence references").fill("artifact://goal-contract-proof");
     await page.getByLabel("Criterion result: The desired external outcome is true").selectOption("met");
+    await page.getByLabel("Criterion result: The safety boundary remains intact").selectOption("met");
     await page.getByRole("button", { name: "Evaluate from evidence" }).click();
     await expect(page.getByText("Proof", { exact: true })).toBeVisible();
     await expect(page.getByText("achieved", { exact: true })).toBeVisible();
@@ -272,6 +349,7 @@ test.describe("Goal contract lifecycle", () => {
     expect(detail.lifecycle).toBe("closed");
     expect(detail.status).toBe("achieved");
     expect(detail.evaluationResult?.outcome).toBe("achieved");
+    expect(detail.focus).toBe(false);
     expect(detail.plan?.revision).toBe(2);
     expect(detail.activities?.filter((activity) => activity.idempotencyKey === "goal-contract-evidence-1")).toHaveLength(1);
 
@@ -300,7 +378,7 @@ test.describe("Goal contract lifecycle", () => {
     await expect(page.getByLabel("Criterion result: The secondary result stays safe")).toBeVisible();
     await page.getByLabel("Criterion result: The secondary outcome exists").selectOption("met");
     await page.getByLabel("Criterion result: The secondary result stays safe").selectOption("unmet");
-    await page.getByLabel("Evidence reference").fill("artifact://secondary-goal-proof");
+    await page.getByLabel("Evidence references").fill("artifact://secondary-goal-proof");
     await page.getByRole("button", { name: "Evaluate from evidence" }).click();
     await expect(page.getByText("not_achieved", { exact: true })).toBeVisible();
     const secondaryDetail = await (await page.request.get(`/api/goals/${secondGoal.id}?_=${Date.now()}`)).json() as Goal;
@@ -369,7 +447,7 @@ test.describe("Goal contract lifecycle", () => {
       await page.goto(`/${organization.issuePrefix}/goals/${goal.id}`);
       await page.getByLabel(`Criterion result: ${testCase.label}`).selectOption("met");
       await page.getByLabel(testCase.valueLabel).fill(testCase.value);
-      await page.getByLabel("Evidence reference").fill(`artifact://ui-${testCase.evaluator}`);
+      await page.getByLabel("Evidence references").fill(`artifact://ui-${testCase.evaluator}`);
       await page.getByRole("button", { name: "Evaluate from evidence" }).click();
       await expect(page.getByText("achieved", { exact: true })).toBeVisible();
     }

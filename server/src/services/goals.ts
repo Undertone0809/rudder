@@ -15,6 +15,7 @@ import type { Db } from "@rudderhq/db";
 import {
   agents,
   automations,
+  calendarEvents,
   costEvents,
   financeEvents,
   goalActivities,
@@ -76,14 +77,8 @@ async function assertOwnerBelongsToOrg(db: GoalReader, orgId: string, ownerAgent
   if (!owner) throw unprocessable("Goal owner must belong to the same organization");
 }
 
-export async function getDefaultCompanyGoal(_db: GoalReader, _orgId: string): Promise<GoalRow | null> {
-  // A Goal is a deliberate context reference now. New Issues must not inherit
-  // a root Goal merely because one happens to exist in the organization.
-  return null;
-}
-
 export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDependencies> {
-  const [childGoalRows, projectJoinRows, legacyProjectRows, issueRows, automationRows, costEventRows, financeEventRows] = await Promise.all([
+  const [childGoalRows, projectJoinRows, legacyProjectRows, issueRows, automationRows, calendarEventRows, costEventRows, financeEventRows] = await Promise.all([
     db.select({ id: goals.id, title: goals.title, status: goals.status }).from(goals)
       .where(and(eq(goals.orgId, goal.orgId), eq(goals.parentId, goal.id))).orderBy(asc(goals.createdAt)),
     db.select({ id: projects.id, name: projects.name, status: projects.status }).from(projectGoals)
@@ -95,6 +90,9 @@ export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDe
       .where(and(eq(issues.orgId, goal.orgId), eq(issues.goalId, goal.id))).orderBy(asc(issues.createdAt)),
     db.select({ id: automations.id, title: automations.title, status: automations.status }).from(automations)
       .where(and(eq(automations.orgId, goal.orgId), eq(automations.goalId, goal.id))).orderBy(asc(automations.createdAt)),
+    db.select({ id: calendarEvents.id, title: calendarEvents.title, status: calendarEvents.eventStatus }).from(calendarEvents)
+      .where(and(eq(calendarEvents.orgId, goal.orgId), eq(calendarEvents.goalId, goal.id), isNull(calendarEvents.deletedAt)))
+      .orderBy(asc(calendarEvents.createdAt)),
     db.select({ count: sql<number>`count(*)::int` }).from(costEvents)
       .where(and(eq(costEvents.orgId, goal.orgId), eq(costEvents.goalId, goal.id))),
     db.select({ count: sql<number>`count(*)::int` }).from(financeEvents)
@@ -109,6 +107,7 @@ export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDe
     linkedProjects: linkedProjects.length,
     linkedIssues: issueRows.length,
     automations: automationRows.length,
+    calendarEvents: calendarEventRows.length,
     costEvents: countRows(costEventRows),
     financeEvents: countRows(financeEventRows),
   };
@@ -117,6 +116,7 @@ export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDe
     ...(counts.linkedProjects > 0 ? ["linked_projects"] : []),
     ...(counts.linkedIssues > 0 ? ["linked_issues"] : []),
     ...(counts.automations > 0 ? ["automations"] : []),
+    ...(counts.calendarEvents > 0 ? ["calendar_events"] : []),
     ...(counts.costEvents > 0 ? ["cost_events"] : []),
     ...(counts.financeEvents > 0 ? ["finance_events"] : []),
   ];
@@ -132,6 +132,7 @@ export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDe
       linkedProjects: previewRows(linkedProjects, (row) => ({ id: row.id, title: row.name, subtitle: row.status })),
       linkedIssues: previewRows(issueRows, (row) => ({ id: row.id, title: row.title, subtitle: row.identifier ?? row.status })),
       automations: previewRows(automationRows, (row) => ({ id: row.id, title: row.title, subtitle: row.status })),
+      calendarEvents: previewRows(calendarEventRows, (row) => ({ id: row.id, title: row.title, subtitle: row.status })),
     },
   };
 }
@@ -170,7 +171,7 @@ export function reduceGoalEvaluation(goal: Pick<GoalRow, "objectiveMode" | "crit
     return {
       id: criterion.id,
       evaluator: criterion.evaluator ?? null,
-      status: submittedStatus === "met" && !evidenceSatisfied ? "unknown" : submittedStatus,
+      status: !evidenceSatisfied ? "unknown" : submittedStatus,
       evidenceSatisfied,
       missingEvidence,
     };
@@ -212,8 +213,6 @@ export function goalService(db: Db) {
 
     getById: (id: string) => db.select().from(goals).where(eq(goals.id, id)).then((rows) => rows[0] ?? null),
 
-    getDefaultCompanyGoal: (orgId: string) => getDefaultCompanyGoal(db, orgId),
-
     dependencies: (goal: GoalRow) => getGoalDependencies(db, goal),
 
     detail: async (id: string) => {
@@ -240,8 +239,9 @@ export function goalService(db: Db) {
       ownerAgentId: null,
     }).returning().then((rows) => rows[0]),
 
-    update: async (id: string, data: { title?: string; description?: string | null }) => {
-      await requireGoal(db, id);
+    update: async (id: string, data: { title?: string; description?: string | null }, actorAgentId: string | null = null) => {
+      const current = await requireGoal(db, id);
+      assertGoalOwner(current, actorAgentId);
       const { title, description } = data;
       return db.update(goals).set({ title, description, updatedAt: new Date() }).where(eq(goals.id, id)).returning().then((rows) => rows[0] ?? null);
     },
@@ -354,6 +354,13 @@ export function goalService(db: Db) {
         occurredAt: input.occurredAt ?? new Date(),
       }).onConflictDoNothing().returning();
       if (activity) return activity;
+      if (input.idempotencyKey) {
+        const existingIdempotent = await db.select().from(goalActivities).where(and(
+          eq(goalActivities.goalId, id),
+          eq(goalActivities.idempotencyKey, input.idempotencyKey),
+        )).then((rows) => rows[0] ?? null);
+        if (existingIdempotent) return existingIdempotent;
+      }
       if (input.activityKind === "closeout" && input.runRef) {
         const existingCloseout = await db.select().from(goalActivities).where(and(
           eq(goalActivities.goalId, id),
@@ -361,10 +368,6 @@ export function goalService(db: Db) {
           eq(goalActivities.activityKind, "closeout"),
         )).then((rows) => rows[0] ?? null);
         if (existingCloseout) throw conflict("A closeout Activity already exists for this Run");
-      }
-      if (input.idempotencyKey) {
-        return db.select().from(goalActivities).where(and(eq(goalActivities.goalId, id), eq(goalActivities.idempotencyKey, input.idempotencyKey)))
-          .then((rows) => rows[0] ?? null);
       }
       throw conflict("Goal Activity was already recorded");
     },
@@ -410,13 +413,16 @@ export function goalService(db: Db) {
       assertCanonicalActiveGoal(current);
       assertGoalOwner(current, actorAgentId);
       const evaluation = reduceGoalEvaluation(current, input);
-      const lifecycle = "closed" as const;
-      const status = positiveOutcome(current.objectiveMode, evaluation.outcome) ? "achieved" : "cancelled";
+      const isInconclusive = evaluation.outcome === "inconclusive";
+      const lifecycle = isInconclusive ? "active" as const : "closed" as const;
+      const status = isInconclusive
+        ? "active" as const
+        : positiveOutcome(current.objectiveMode, evaluation.outcome) ? "achieved" : "cancelled";
       return db.transaction(async (tx) => {
         const [goal] = await tx.update(goals).set({
           lifecycle,
           status,
-          closeReason: "evaluated",
+          ...(isInconclusive ? {} : { focus: false, closeReason: "evaluated" as const }),
           evaluationResult: evaluation,
           resultPayload: input.resultPayload,
           updatedAt: new Date(),

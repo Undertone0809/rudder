@@ -685,8 +685,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
         async list(input) {
           return callHost("goals.list", {
             orgId: input.orgId,
-            level: input.level,
-            status: input.status,
+            lifecycle: input.lifecycle,
+            objectiveMode: input.objectiveMode,
             limit: input.limit,
             offset: input.offset,
           });

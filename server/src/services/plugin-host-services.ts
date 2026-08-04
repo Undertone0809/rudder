@@ -851,8 +851,8 @@ export function buildHostServices(
         const rows = await goals.list(orgId);
         return applyWindow(
           rows.filter((goal) =>
-            (!params.level || goal.level === params.level) &&
-            (!params.status || goal.status === params.status),
+            (!params.lifecycle || goal.lifecycle === params.lifecycle) &&
+            (!params.objectiveMode || goal.objectiveMode === params.objectiveMode),
           ) as Goal[],
           params,
         );

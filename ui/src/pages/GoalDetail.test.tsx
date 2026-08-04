@@ -100,10 +100,11 @@ const dependencies = {
     financeEvents: 0,
   },
   previews: {
-    childGoals: [],
+    childGoals: [{ id: "goal-child", title: "Keep delete safety visible", subtitle: "active" }],
     linkedProjects: [],
-    linkedIssues: [],
+    linkedIssues: [{ id: "issue-1", title: "Verify linked work", subtitle: "GLC-1" }],
     automations: [],
+    calendarEvents: [{ id: "calendar-event-1", title: "Goal review", subtitle: "scheduled" }],
   },
 };
 
@@ -234,6 +235,9 @@ describe("GoalDetail", () => {
     expect(container.textContent).toContain("Evaluate");
     expect(container.textContent).toContain("Activity");
     expect(container.textContent).toContain("Linked work");
+    expect(container.textContent).not.toContain("Deletion blockers");
+    expect(container.textContent).not.toContain("Keep delete safety visible");
+    expect(container.textContent).not.toContain("Goal review");
     expect(container.textContent).toContain("Goal owner");
     expect(container.textContent).toContain("The linked work is verified");
     expect(container.querySelector('[aria-label="Criterion result: The linked work is verified"]')).not.toBeNull();

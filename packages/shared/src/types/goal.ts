@@ -117,6 +117,7 @@ export interface GoalDependencies {
     linkedProjects: number;
     linkedIssues: number;
     automations: number;
+    calendarEvents: number;
     costEvents: number;
     financeEvents: number;
   };
@@ -125,5 +126,6 @@ export interface GoalDependencies {
     linkedProjects: GoalDependencyPreview[];
     linkedIssues: GoalDependencyPreview[];
     automations: GoalDependencyPreview[];
+    calendarEvents: GoalDependencyPreview[];
   };
 }

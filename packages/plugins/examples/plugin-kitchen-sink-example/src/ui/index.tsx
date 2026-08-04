@@ -30,7 +30,7 @@ import { AsciiArtAnimation } from "./AsciiArtAnimation.js";
 type CompanyRecord = { id: string; name: string; issuePrefix?: string | null; status?: string | null };
 type ProjectRecord = { id: string; name: string; status?: string; path?: string | null };
 type IssueRecord = { id: string; title: string; status: string; projectId?: string | null };
-type GoalRecord = { id: string; title: string; status: string };
+type GoalRecord = { id: string; title: string; lifecycle: string };
 type AgentRecord = { id: string; name: string; status: string };
 type HostIssueRecord = {
   id: string;
@@ -1594,7 +1594,7 @@ function KitchenSinkConsole({ context }: { context: { orgId: string | null; comp
             onLoadMore={() => setGoalsLimit((current) => current + 20)}
             render={(item) => {
               const goal = item as GoalRecord;
-              return <div>{goal.title} <span style={{ opacity: 0.6 }}>({goal.status})</span></div>;
+              return <div>{goal.title} <span style={{ opacity: 0.6 }}>({goal.lifecycle})</span></div>;
             }}
           />
         </div>

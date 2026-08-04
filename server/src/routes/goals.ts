@@ -12,7 +12,7 @@ import {
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
 import { goalService, logActivity } from "../services/index.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function goalRoutes(db: Db) {
   const router = Router();
@@ -62,6 +62,7 @@ export function goalRoutes(db: Db) {
 
   router.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
+    assertBoard(req);
     assertCompanyAccess(req, orgId);
     const goal = await svc.create(orgId, req.body);
     const actor = getActorInfo(req);
@@ -86,8 +87,8 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    const goal = await svc.update(id, req.body);
     const actor = getActorInfo(req);
+    const goal = await svc.update(id, req.body, actor.agentId);
     await logActivity(db, {
       orgId: goal!.orgId,
       actorType: actor.actorType,
@@ -243,6 +244,7 @@ export function goalRoutes(db: Db) {
 
   router.delete("/goals/:id", async (req, res) => {
     const id = req.params.id as string;
+    assertBoard(req);
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
       res.status(404).json({ error: "Goal not found" });

@@ -890,8 +890,8 @@ export interface PluginAgentSessionsClient {
 export interface PluginGoalsClient {
   list(input: {
     orgId: string;
-    level?: Goal["level"];
-    status?: Goal["status"];
+    lifecycle?: NonNullable<Goal["lifecycle"]>;
+    objectiveMode?: NonNullable<Goal["objectiveMode"]>;
     limit?: number;
     offset?: number;
   }): Promise<Goal[]>;

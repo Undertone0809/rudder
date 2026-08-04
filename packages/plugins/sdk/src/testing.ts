@@ -531,8 +531,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const orgId = requireOrganizationId(input?.orgId);
         let out = [...goals.values()];
         out = out.filter((goal) => goal.orgId === orgId);
-        if (input?.level) out = out.filter((goal) => goal.level === input.level);
-        if (input?.status) out = out.filter((goal) => goal.status === input.status);
+        if (input?.lifecycle) out = out.filter((goal) => goal.lifecycle === input.lifecycle);
+        if (input?.objectiveMode) out = out.filter((goal) => goal.objectiveMode === input.objectiveMode);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
@@ -552,6 +552,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           description: input.description ?? null,
           level: "task",
           status: "planned",
+          lifecycle: "draft",
+          objectiveMode: "target",
           parentId: null,
           ownerAgentId: null,
           createdAt: now,

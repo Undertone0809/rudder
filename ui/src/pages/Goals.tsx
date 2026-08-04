@@ -15,7 +15,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { formatDate } from "../lib/utils";
 
 function lifecycleLabel(goal: Goal) {
-  return goal.lifecycle ?? (goal.status === "active" ? "active" : goal.status === "achieved" || goal.status === "cancelled" ? "closed" : "draft");
+  return goal.lifecycle ?? "draft";
 }
 
 export function Goals() {

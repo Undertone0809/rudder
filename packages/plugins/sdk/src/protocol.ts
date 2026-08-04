@@ -649,7 +649,13 @@ export interface WorkerToHostMethods {
 
   // Goals
   "goals.list": [
-    params: { orgId: string; level?: string; status?: string; limit?: number; offset?: number },
+    params: {
+      orgId: string;
+      lifecycle?: NonNullable<Goal["lifecycle"]>;
+      objectiveMode?: NonNullable<Goal["objectiveMode"]>;
+      limit?: number;
+      offset?: number;
+    },
     result: Goal[],
   ];
   "goals.get": [

@@ -1,4 +1,4 @@
-import { agents, goalActivities, goalOwnerAssignments, goalPlans, goals, heartbeatRuns } from "@rudderhq/db";
+import { agents, calendarEvents, goalActivities, goalOwnerAssignments, goalPlans, goals, heartbeatRuns } from "@rudderhq/db";
 import { activateGoalSchema, createGoalActivitySchema, evaluateGoalSchema, updateGoalSchema } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { goalService, reduceGoalEvaluation } from "../services/goals.js";
@@ -54,11 +54,14 @@ function createGoalDb(initialGoal = makeGoal()) {
       { id: OTHER_ORG_OWNER_ID, orgId: OTHER_ORG_ID },
     ],
     runs: [{ id: RUN_ID, orgId: ORG_ID, status: "running" }],
+    calendarEvents: [] as Array<Record<string, unknown>>,
     activities: [] as Array<Record<string, unknown>>,
     ownerAssignments: [] as Array<Record<string, unknown>>,
     plans: [] as Array<Record<string, unknown>>,
     selectedGoalId: initialGoal.id,
     rejectOwnerLookup: false,
+    pendingActivityInput: null as Record<string, unknown> | null,
+    activityLookupCalls: 0,
   };
 
   function selectBuilder() {
@@ -88,8 +91,24 @@ function createGoalDb(initialGoal = makeGoal()) {
           rows = state.rejectOwnerLookup ? [] : state.agents;
         } else if (table === heartbeatRuns) {
           rows = state.runs;
+        } else if (table === calendarEvents) {
+          rows = state.calendarEvents;
         } else if (table === goalActivities) {
-          rows = state.activities;
+          if (state.pendingActivityInput) {
+            const lookup = state.pendingActivityInput;
+            if (lookup.idempotencyKey && state.activityLookupCalls === 0) {
+              rows = state.activities.filter((activity) => activity.goalId === lookup.goalId && activity.idempotencyKey === lookup.idempotencyKey);
+            } else {
+              rows = state.activities.filter((activity) =>
+                activity.goalId === lookup.goalId
+                && activity.runRef === lookup.runRef
+                && activity.activityKind === "closeout",
+              );
+            }
+            state.activityLookupCalls += 1;
+          } else {
+            rows = state.activities;
+          }
         }
         return Promise.resolve(rows).then(resolve, reject);
       },
@@ -101,6 +120,8 @@ function createGoalDb(initialGoal = makeGoal()) {
     let values: Record<string, unknown>;
     const execute = () => {
       if (table === goalActivities) {
+        state.pendingActivityInput = values;
+        state.activityLookupCalls = 0;
         const duplicate = state.activities.find((activity) =>
           (values.idempotencyKey && activity.goalId === values.goalId && activity.idempotencyKey === values.idempotencyKey)
           || (values.activityKind === "closeout" && activity.goalId === values.goalId && activity.runRef === values.runRef && activity.activityKind === "closeout"),
@@ -108,6 +129,7 @@ function createGoalDb(initialGoal = makeGoal()) {
         if (duplicate) return [];
         const activity = { id: `activity-${state.activities.length + 1}`, ...values };
         state.activities.push(activity);
+        state.pendingActivityInput = null;
         return [activity];
       }
       if (table === goalOwnerAssignments) {
@@ -218,6 +240,27 @@ describe("Goal contract", () => {
       initialContinuation: { kind: "verification", summary: "Verify the next result" },
       initialPlan: { summary: "Build and verify the result" },
     })).toThrow();
+    expect(() => activateGoalSchema.parse({
+      confirmed: true,
+      ownerAgentId: OWNER_ID,
+      outcomeStatement: "   ",
+      objectiveMode: "target",
+      criteria: [{ id: "result", label: "   ", evaluator: "artifact" }],
+      initialContinuation: { kind: "verification", summary: "   " },
+      initialPlan: { summary: "   " },
+    })).toThrow();
+    expect(() => activateGoalSchema.parse({
+      confirmed: true,
+      ownerAgentId: OWNER_ID,
+      outcomeStatement: "The verified result is available",
+      objectiveMode: "target",
+      criteria: [
+        { id: "result", label: "Result exists", evaluator: "artifact" },
+        { id: " result ", label: "Result is still inspectable", evaluator: "policy" },
+      ],
+      initialContinuation: { kind: "verification", summary: "Verify the next result" },
+      initialPlan: { summary: "Build and verify the result" },
+    })).toThrow(/Criterion IDs must be unique/);
   });
 
   it.each([
@@ -244,6 +287,27 @@ describe("Goal contract", () => {
       { objectiveMode: "decide", criteria: [{ id: "result" }, { id: "safety" }] },
       evaluationInput({ decision: "Choose path B", criteria: [{ id: "result", status: "met" }, { id: "safety", status: "breached" }] }),
     ).outcome).toBe("inconclusive");
+  });
+
+  it("keeps inconclusive maximize and decide evaluations active for more evidence", async () => {
+    for (const objectiveMode of ["maximize", "decide"] as const) {
+      const { db, state } = createGoalDb(makeGoal({
+        objectiveMode,
+        lifecycle: "active",
+        status: "active",
+        ownerAgentId: OWNER_ID,
+        planRevision: 1,
+        focus: true,
+        criteria: [{ id: "result", label: "Result exists", evaluator: objectiveMode === "maximize" ? "metric" : "human" }],
+      }));
+      const result = await goalService(db).evaluate(GOAL_ID, evaluationInput({
+        criteria: [{ id: "result", status: "unknown" }],
+      }));
+      expect(result.evaluationResult).toMatchObject({ outcome: "inconclusive" });
+      expect(result.lifecycle).toBe("active");
+      expect(result.status).toBe("active");
+      expect(state.goals[0]!.focus).toBe(true);
+    }
   });
 
   it("keeps incomplete evidence inconclusive", () => {
@@ -282,6 +346,13 @@ describe("Goal contract", () => {
         criteria: [{ id: "human", evaluator: "human" }],
       },
       evaluationInput({ criteria: [{ id: "human", status: "met" }] }),
+    ).criteria[0]).toMatchObject({ status: "unknown", evidenceSatisfied: false });
+    expect(reduceGoalEvaluation(
+      {
+        objectiveMode: "maintain",
+        criteria: [{ id: "policy", evaluator: "policy", evidenceRequirements: ["artifact://boundary"] }],
+      },
+      evaluationInput({ evidenceRefs: ["artifact://unrelated"], criteria: [{ id: "policy", status: "breached" }] }),
     ).criteria[0]).toMatchObject({ status: "unknown", evidenceSatisfied: false });
   });
 
@@ -328,6 +399,7 @@ describe("Goal contract", () => {
   it("rejects non-owner Agent commands and incomplete legacy active Goals", async () => {
     const { db } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
     const svc = goalService(db);
+    await expect(svc.update(GOAL_ID, { title: "Unauthorized rename" }, OTHER_ORG_OWNER_ID)).rejects.toMatchObject({ status: 403 });
     await expect(svc.updatePlan(GOAL_ID, { summary: "Unauthorized revision" }, OTHER_ORG_OWNER_ID)).rejects.toMatchObject({ status: 403 });
 
     const incomplete = createGoalDb(makeGoal({
@@ -396,6 +468,53 @@ describe("Goal contract", () => {
       evidenceRefs: ["run://completed"],
       idempotencyKey: "closeout-retry-1",
     })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("prioritizes an idempotent closeout retry over the Run uniqueness conflict", async () => {
+    const { db, state } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
+    state.runs[0]!.status = "succeeded";
+    const svc = goalService(db);
+    const payload = {
+      summary: "Run completed with the verified artifact",
+      activityKind: "closeout" as const,
+      runRef: RUN_ID,
+      evidenceRefs: ["run://completed"],
+      idempotencyKey: "closeout-1",
+    };
+    const first = await svc.createActivity(GOAL_ID, payload);
+    const retry = await svc.createActivity(GOAL_ID, payload);
+    expect(retry?.id).toBe(first?.id);
+    expect(state.activities).toHaveLength(1);
+  });
+
+  it("blocks deletion when a live Calendar event still references the Goal", async () => {
+    const { db, state } = createGoalDb();
+    state.calendarEvents.push({
+      id: "calendar-event-1",
+      orgId: ORG_ID,
+      goalId: GOAL_ID,
+      title: "Goal review",
+      status: "scheduled",
+    });
+    const dependencies = await goalService(db).dependencies(state.goals[0] as any);
+    expect(dependencies.canDelete).toBe(false);
+    expect(dependencies.blockers).toContain("calendar_events");
+    expect(dependencies.counts.calendarEvents).toBe(1);
+    expect(dependencies.previews.calendarEvents).toEqual([{ id: "calendar-event-1", title: "Goal review", subtitle: "scheduled" }]);
+  });
+
+  it("clears Focus when evaluation closes the Goal", async () => {
+    const { db, state } = createGoalDb(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: OWNER_ID,
+      planRevision: 1,
+      focus: true,
+    }));
+    const closed = await goalService(db).evaluate(GOAL_ID, evaluationInput({ criteria: [{ id: "result", status: "met" }] }));
+    expect(closed.lifecycle).toBe("closed");
+    expect(closed.focus).toBe(false);
+    expect(state.goals[0]!.focus).toBe(false);
   });
 
   it("keeps Focus unique within an organization", async () => {
