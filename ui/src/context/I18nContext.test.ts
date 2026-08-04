@@ -128,4 +128,31 @@ describe("translateMessage", () => {
       "如有需要，正在替换现有 Rudder Desktop...",
     );
   });
+
+  it("translates reasoning controls and dynamic runtime labels for zh-CN", () => {
+    expect(translateLegacyString("zh-CN", "Thinking effort")).toBe("推理程度");
+    expect(translateLegacyString("zh-CN", "Thinking")).toBe("推理");
+    expect(translateLegacyString("zh-CN", "Extra High")).toBe("超高");
+    expect(translateLegacyString("zh-CN", "Max")).toBe("最大");
+    expect(translateLegacyString("zh-CN", "Minimal")).toBe("最低");
+    expect(translateLegacyString("zh-CN", "Execution mode")).toBe("执行模式");
+    expect(translateLegacyString("zh-CN", "Runtime default")).toBe("运行时默认");
+    expect(translateLegacyString("zh-CN", "Loading models...")).toBe("正在加载模型...");
+    expect(translateLegacyString("zh-CN", "Models unavailable")).toBe("模型不可用");
+    expect(translateLegacyString("zh-CN", "Select or enter provider/model")).toBe("选择或输入 provider/model");
+    expect(translateLegacyString("zh-CN", "Runtime chain environment test failed")).toBe("运行时链路环境测试失败");
+    expect(translateLegacyString("zh-CN", "Agent default · gpt-5.6-sol · Extra High")).toBe(
+      "智能体默认 · gpt-5.6-sol · 超高",
+    );
+    expect(translateLegacyString("zh-CN", "Custom profile · claude-opus-4-6 · High")).toBe(
+      "自定义配置 · claude-opus-4-6 · 高",
+    );
+    expect(translateLegacyString("zh-CN", "Configure model and thinking for Builder")).toBe(
+      "配置 Builder 的模型和推理",
+    );
+    expect(translateLegacyString("zh-CN", "Run profile for Builder")).toBe("为 Builder 配置运行档案");
+    expect(translateLegacyString("zh-CN", "Applies to runs that have not started.")).toBe(
+      "仅应用于尚未开始的运行。",
+    );
+  });
 });
