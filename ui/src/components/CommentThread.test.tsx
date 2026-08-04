@@ -31,6 +31,19 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({ confirm: mockConfirm }),
 }));
 
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({
+    locale: "en",
+    t: (key: string) => ({
+      "issueComments.unmentionedAgent.title": "No Agent mentioned",
+      "issueComments.unmentionedAgent.description":
+        "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",
+      "issueComments.unmentionedAgent.cancel": "Add an @ mention",
+      "issueComments.unmentionedAgent.confirm": "Send anyway",
+    }[key] ?? key),
+  }),
+}));
+
 vi.mock("./MarkdownEditor", async () => {
   const React = await import("react");
   return {
@@ -730,10 +743,10 @@ describe("CommentThread", () => {
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Comment") ?? null);
 
     await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
-      title: "未 @ 任何 Agent",
-      description: "您未 @ 任何 Agent，是否确认直接发送评论？未 @ Agent 的评论不会触发 Agent，可能无法被及时处理。",
-      cancelLabel: "返回并 @ Agent",
-      confirmLabel: "直接发送",
+      title: "No Agent mentioned",
+      description: "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",
+      cancelLabel: "Add an @ mention",
+      confirmLabel: "Send anyway",
       restoreFocus: expect.any(Function),
     })));
     expect(onAdd).not.toHaveBeenCalled();

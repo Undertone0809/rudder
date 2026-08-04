@@ -1,4 +1,5 @@
 import { useDialog } from "@/context/DialogContext";
+import { useI18n } from "@/context/I18nContext";
 import { extractAgentWakeMentionIds, parseShortRef } from "@rudderhq/shared";
 import { useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { MarkdownEditorRef } from "./MarkdownEditor";
@@ -57,11 +58,30 @@ export function useCommentSubmit({
   setReopen,
   updateBody,
 }: UseCommentSubmitOptions) {
+  const { t } = useI18n();
   const { confirm } = useDialog();
   const [submitting, setSubmitting] = useState(false);
   const [confirmingUnmentioned, setConfirmingUnmentioned] = useState(false);
   const submissionInFlightRef = useRef(false);
   const validAgentIds = useMemo(() => new Set(agentMap?.keys() ?? []), [agentMap]);
+
+  function restoreEditorFocus() {
+    editorRef.current?.focus();
+    if (typeof window !== "undefined") {
+      const retry = () => {
+        const activeElement = document.activeElement;
+        if (
+          !activeElement
+          || activeElement === document.body
+          || activeElement instanceof HTMLElement && activeElement.closest('[role="dialog"]')
+        ) {
+          editorRef.current?.focus();
+        }
+      };
+      window.requestAnimationFrame(retry);
+      window.setTimeout(retry, 250);
+    }
+  }
 
   async function handleSubmit() {
     if (submissionInFlightRef.current) return;
@@ -79,17 +99,20 @@ export function useCommentSubmit({
       )) {
         setConfirmingUnmentioned(true);
         const confirmed = await confirm({
-          title: "未 @ 任何 Agent",
-          description: "您未 @ 任何 Agent，是否确认直接发送评论？未 @ Agent 的评论不会触发 Agent，可能无法被及时处理。",
-          cancelLabel: "返回并 @ Agent",
-          confirmLabel: "直接发送",
+          title: t("issueComments.unmentionedAgent.title"),
+          description: t("issueComments.unmentionedAgent.description"),
+          cancelLabel: t("issueComments.unmentionedAgent.cancel"),
+          confirmLabel: t("issueComments.unmentionedAgent.confirm"),
           restoreFocus: (confirmed) => {
             if (confirmed) composerSurfaceRef.current?.focus({ preventScroll: true });
-            else editorRef.current?.focus();
+            else restoreEditorFocus();
           },
         });
         setConfirmingUnmentioned(false);
-        if (!confirmed) return;
+        if (!confirmed) {
+          restoreEditorFocus();
+          return;
+        }
       }
 
       setSubmitting(true);

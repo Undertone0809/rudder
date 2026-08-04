@@ -10,6 +10,13 @@ describe("translateMessage", () => {
     expect(translateMessage("zh-CN", "common.systemSettings")).toBe("系统设置");
   });
 
+  it("localizes the unmentioned Agent comment confirmation", () => {
+    expect(translateMessage("en", "issueComments.unmentionedAgent.title")).toBe("No Agent mentioned");
+    expect(translateMessage("en", "issueComments.unmentionedAgent.confirm")).toBe("Send anyway");
+    expect(translateMessage("zh-CN", "issueComments.unmentionedAgent.title")).toBe("未 @ 任何 Agent");
+    expect(translateMessage("zh-CN", "issueComments.unmentionedAgent.confirm")).toBe("直接发送");
+  });
+
   it("interpolates dynamic values", () => {
     expect(translateMessage("en", "app.addAnotherAgentToOrganization", { name: "Acme" })).toBe(
       "Add another agent to Acme",

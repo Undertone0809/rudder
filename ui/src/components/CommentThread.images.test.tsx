@@ -19,6 +19,13 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({ confirm: mockConfirm }),
 }));
 
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({
+    locale: "en",
+    t: (key: string) => key,
+  }),
+}));
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: vi.fn().mockImplementation((query: string) => ({

@@ -39,6 +39,11 @@ export const en = {
   "common.yourOrganizations": "Your organizations",
   "common.unknown": "unknown",
   "common.cancel": "Cancel",
+  "issueComments.unmentionedAgent.title": "No Agent mentioned",
+  "issueComments.unmentionedAgent.description":
+    "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",
+  "issueComments.unmentionedAgent.cancel": "Add an @ mention",
+  "issueComments.unmentionedAgent.confirm": "Send anyway",
   "account.title": "Account & security",
   "account.description": "Manage your Rudder Account and the devices signed in to it.",
   "account.loadFailed": "Failed to load your Rudder Account.",

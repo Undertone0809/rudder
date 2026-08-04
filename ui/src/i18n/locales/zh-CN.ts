@@ -41,6 +41,11 @@ export const zhCN: Messages = {
   "common.yourOrganizations": "你的组织",
   "common.unknown": "未知",
   "common.cancel": "取消",
+  "issueComments.unmentionedAgent.title": "未 @ 任何 Agent",
+  "issueComments.unmentionedAgent.description":
+    "您未 @ 任何 Agent，是否确认直接发送评论？未 @ Agent 的评论不会触发 Agent，可能无法被及时处理。",
+  "issueComments.unmentionedAgent.cancel": "返回并 @ Agent",
+  "issueComments.unmentionedAgent.confirm": "直接发送",
   "account.title": "账号与安全",
   "account.description": "管理你的 Rudder Account 和已登录设备。",
   "account.loadFailed": "加载 Rudder Account 失败。",
