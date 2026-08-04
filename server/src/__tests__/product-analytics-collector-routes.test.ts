@@ -75,6 +75,44 @@ describe("product analytics collector routes", () => {
     expect(afterSync.body.accepted).toBe(1);
   });
 
+  it("supports an explicitly provisioned anonymous deployment credential", async () => {
+    const store = new InMemoryProductAnalyticsCollectorStore();
+    const collector = createProductAnalyticsCollector(store);
+    const pseudonymousInstallationId = "a".repeat(64);
+    const server = express();
+    server.use(express.json());
+    server.use(productAnalyticsCollectorRoutes(collector, () => ({
+      installationId,
+      mode: "anonymous",
+      consentVersion: "v1",
+      consentEpoch: 3,
+      pseudonymousInstallationId,
+    }), { anonymousAuthorization: "deployment-secret" }));
+
+    const unauthorized = await request(server)
+      .post("/api/analytics/v1/internal/anonymous/consent")
+      .set("x-rudder-telemetry-anonymous-authorization", "wrong")
+      .send({ installationId, pseudonymousInstallationId, consentVersion: "v1", consentEpoch: 3, revoked: false });
+    expect(unauthorized.status).toBe(401);
+
+    const registered = await request(server)
+      .post("/api/analytics/v1/internal/anonymous/consent")
+      .set("x-rudder-telemetry-anonymous-authorization", "deployment-secret")
+      .send({ installationId, pseudonymousInstallationId, consentVersion: "v1", consentEpoch: 3, revoked: false });
+    expect(registered.status).toBe(200);
+    expect(registered.body).toMatchObject({ installationId, pseudonymousInstallationId, consentEpoch: 3, revoked: false });
+
+    const accepted = await request(server)
+      .post("/api/analytics/v1/events:batch")
+      .set("authorization", "Bearer deployment-secret")
+      .set("x-rudder-installation-id", installationId)
+      .set("x-rudder-telemetry-consent-version", "v1")
+      .set("x-rudder-telemetry-consent-epoch", "3")
+      .set("x-rudder-telemetry-pseudonymous-installation-id", pseudonymousInstallationId)
+      .send({ events: [{ ...event(), pseudonymousInstallationId }] });
+    expect(accepted.body.accepted).toBe(1);
+  });
+
   it("rejects consent synchronization without the private Identity hook secret", async () => {
     const { server } = app();
     const response = await request(server).post("/api/analytics/v1/internal/consent/sync").send({

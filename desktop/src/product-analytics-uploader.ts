@@ -12,6 +12,7 @@ export type DesktopProductAnalyticsUploaderOptions = {
   statePath: string;
   collectorUrl: string;
   collectorAuthorization?: string | ((context: { consentedLocalUserId: string | null }) => Promise<string> | string);
+  collectorHeaders?: HeadersInit;
   localHeaders?: HeadersInit;
   fetchImpl?: FetchLike;
   now?: () => Date;
@@ -90,6 +91,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
         headers: {
           "content-type": "application/json",
           "x-rudder-installation-id": options.installationId,
+          ...(options.collectorHeaders ?? {}),
           authorization: collectorAuthorization,
         },
         body: JSON.stringify({ events }),

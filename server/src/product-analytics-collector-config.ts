@@ -17,6 +17,7 @@ export type ProductAnalyticsCollectorConfig = {
   identityPublicKey: string;
   identityIssuer: string;
   identityKeyId: string;
+  anonymousAuthorization: string | null;
   reportSecret: string | null;
   revokeSecret: string | null;
   consentSyncSecret: string | null;
@@ -62,6 +63,7 @@ export function parseProductAnalyticsCollectorConfig(env: NodeJS.ProcessEnv = pr
     identityPublicKey: required(env, "RUDDER_TELEMETRY_COLLECTOR_IDENTITY_PUBLIC_KEY"),
     identityIssuer: required(env, "RUDDER_TELEMETRY_COLLECTOR_IDENTITY_ISSUER"),
     identityKeyId: required(env, "RUDDER_TELEMETRY_COLLECTOR_IDENTITY_KEY_ID"),
+    anonymousAuthorization: env.RUDDER_TELEMETRY_COLLECTOR_ANONYMOUS_AUTHORIZATION?.trim() || null,
     reportSecret: env.RUDDER_TELEMETRY_COLLECTOR_REPORT_SECRET?.trim() || null,
     revokeSecret: env.RUDDER_TELEMETRY_COLLECTOR_REVOKE_SECRET?.trim() || null,
     consentSyncSecret: env.RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET?.trim() || null,

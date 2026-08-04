@@ -114,6 +114,36 @@ export async function startDesktopProductAnalyticsScheduler(
     console.warn("[rudder-desktop] Product analytics registration failed", error);
   }
   const deliveryMode = mode === "account_linked" ? "account_linked" as const : "anonymous" as const;
+  const pseudonymousInstallationId = deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId);
+  const anonymousAuthorization = process.env.RUDDER_TELEMETRY_ANONYMOUS_AUTHORIZATION?.trim() ?? "";
+  const anonymousAuthorizationToken = anonymousAuthorization.replace(/^Bearer\s+/i, "");
+  const collectorHeaders = deliveryMode === "anonymous" && anonymousAuthorizationFallbackAllowed && anonymousAuthorizationToken
+    ? {
+        "x-rudder-telemetry-consent-version": consentVersion,
+        "x-rudder-telemetry-consent-epoch": String(consentEpoch),
+        "x-rudder-telemetry-pseudonymous-installation-id": pseudonymousInstallationId,
+      }
+    : undefined;
+  if (collectorHeaders && options.collectorUrl) {
+    try {
+      await fetchImpl(`${options.collectorUrl.replace(/\/$/u, "")}/api/analytics/v1/internal/anonymous/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-rudder-telemetry-anonymous-authorization": anonymousAuthorizationToken,
+        },
+        body: JSON.stringify({
+          installationId: telemetry.installationId,
+          pseudonymousInstallationId,
+          consentVersion,
+          consentEpoch,
+          revoked: false,
+        }),
+      });
+    } catch (error) {
+      console.warn("[rudder-desktop] Anonymous telemetry registration unavailable", error);
+    }
+  }
   const base = {
     localApiUrl,
     orgId,
@@ -126,7 +156,6 @@ export async function startDesktopProductAnalyticsScheduler(
     collectorAuthorization: async ({ consentedLocalUserId }: { consentedLocalUserId: string | null }) => {
       if (deliveryMode === "account_linked") {
         if (!consentedLocalUserId) return "";
-        const pseudonymousInstallationId = deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId);
         return options.identityRuntime.issueProductAnalyticsAssertion({
           mode: deliveryMode,
           consentVersion,
@@ -140,13 +169,13 @@ export async function startDesktopProductAnalyticsScheduler(
           mode: deliveryMode,
           consentVersion,
           consentEpoch,
-          pseudonymousInstallationId: deriveDesktopProductAnalyticsInstallationId(telemetry.installationSecret, telemetry.installationId),
+          pseudonymousInstallationId,
         });
       }
       if (!anonymousAuthorizationFallbackAllowed) return "";
-      const authorization = process.env.RUDDER_TELEMETRY_ANONYMOUS_AUTHORIZATION?.trim();
-      return authorization ? (authorization.startsWith("Bearer ") ? authorization : `Bearer ${authorization}`) : "";
+      return anonymousAuthorizationToken ? `Bearer ${anonymousAuthorizationToken}` : "";
     },
+    collectorHeaders,
   };
   const scheduler = createDesktopProductAnalyticsScheduler({
     upload: () => uploadDesktopProductAnalyticsOnce(base),

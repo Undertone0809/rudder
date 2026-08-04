@@ -29,8 +29,10 @@ export function createProductAnalyticsCollectorApp(options: ProductAnalyticsColl
     identityPublicKey: options.config.identityPublicKey,
     expectedKeyId: options.config.identityKeyId,
     expectedIssuer: options.config.identityIssuer,
+    anonymousAuthorization: options.config.anonymousAuthorization,
   });
   app.use(productAnalyticsCollectorRoutes(collector, authorize, {
+    anonymousAuthorization: options.config.anonymousAuthorization,
     revokeSecret: options.config.revokeSecret,
     consentSyncSecret: options.config.consentSyncSecret,
   }));

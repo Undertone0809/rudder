@@ -25,6 +25,7 @@ export function createProductAnalyticsAssertionAuthorizer(input: {
   identityPublicKey: string | Buffer;
   expectedKeyId: string;
   expectedIssuer: string;
+  anonymousAuthorization?: string | null;
   resolveInstallationId?: (req: Request) => string | null;
 }) : ProductAnalyticsCollectorAuthorizer {
   return (req) => {
@@ -32,6 +33,24 @@ export function createProductAnalyticsAssertionAuthorizer(input: {
     if (!value) throw unauthorized("Telemetry assertion required");
     const installationId = input.resolveInstallationId?.(req) ?? req.header("x-rudder-installation-id") ?? null;
     if (!installationId) throw unauthorized("Telemetry installation required");
+    if (secretMatches(value, input.anonymousAuthorization ?? null)) {
+      const consentVersion = req.header("x-rudder-telemetry-consent-version")?.trim() ?? "";
+      const pseudonymousInstallationId = req.header("x-rudder-telemetry-pseudonymous-installation-id")?.trim() ?? "";
+      const consentEpochRaw = req.header("x-rudder-telemetry-consent-epoch")?.trim() ?? "";
+      const consentEpoch = Number(consentEpochRaw);
+      if (!consentVersion || consentVersion.length > 80 || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+        || !Number.isSafeInteger(consentEpoch) || consentEpoch < 1) {
+        throw unauthorized("Anonymous telemetry authorization is missing consent state");
+      }
+      return {
+        installationId,
+        mode: "anonymous",
+        consentVersion,
+        consentEpoch,
+        analyticsSubject: null,
+        pseudonymousInstallationId,
+      };
+    }
     let claims;
     try {
       claims = verifyProductAnalyticsAssertion({
@@ -64,7 +83,7 @@ export function createProductAnalyticsAssertionAuthorizer(input: {
 export function productAnalyticsCollectorRoutes(
   collector: ProductAnalyticsCollector | ProductAnalyticsPersistentCollector,
   authorize: ProductAnalyticsCollectorAuthorizer,
-  options: { revokeSecret?: string | null; consentSyncSecret?: string | null } = {},
+  options: { anonymousAuthorization?: string | null; revokeSecret?: string | null; consentSyncSecret?: string | null } = {},
 ) {
   const router = Router();
 
@@ -87,6 +106,30 @@ export function productAnalyticsCollectorRoutes(
       revoked: true,
     });
     res.json({ installationId: authorization.installationId, consentEpoch: state.consentEpoch, revoked: state.revoked });
+  });
+
+  // Self-hosted deployments without a signed-in Identity session may use an
+  // explicitly provisioned anonymous deployment credential. This endpoint
+  // establishes the installation-scoped consent state before the first batch;
+  // it never accepts an account-linked subject.
+  router.post("/api/analytics/v1/internal/anonymous/consent", async (req, res) => {
+    if (!secretMatches(req.header("x-rudder-telemetry-anonymous-authorization"), options.anonymousAuthorization ?? null)) {
+      res.status(401).json({ errorCode: "unauthorized" });
+      return;
+    }
+    const installationId = typeof req.body?.installationId === "string" ? req.body.installationId.trim() : "";
+    const pseudonymousInstallationId = typeof req.body?.pseudonymousInstallationId === "string" ? req.body.pseudonymousInstallationId.trim() : "";
+    const consentVersion = typeof req.body?.consentVersion === "string" ? req.body.consentVersion.trim() : "";
+    const consentEpoch = typeof req.body?.consentEpoch === "number" ? req.body.consentEpoch : NaN;
+    const revoked = req.body?.revoked;
+    if (!installationId || installationId.length > 256 || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+      || !consentVersion || consentVersion.length > 80 || !Number.isSafeInteger(consentEpoch) || consentEpoch < 1
+      || typeof revoked !== "boolean") {
+      res.status(422).json({ errorCode: "invalid_request" });
+      return;
+    }
+    const state = await collector.advanceConsent({ installationId, consentVersion, consentEpoch, revoked });
+    res.json({ installationId, pseudonymousInstallationId, consentVersion: state.consentVersion, consentEpoch: state.consentEpoch, revoked: state.revoked });
   });
 
   router.post("/api/analytics/v1/internal/consent/revoke", async (req, res) => {

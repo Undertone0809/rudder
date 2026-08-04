@@ -156,4 +156,46 @@ describe("desktop product analytics main scheduler", () => {
     expect(recordProductAnalyticsConsent).toHaveBeenCalledOnce();
     expect(scheduler).toBeNull();
   });
+
+  it("registers an explicit anonymous deployment credential before uploading", async () => {
+    vi.stubEnv("RUDDER_TELEMETRY_ANONYMOUS_AUTHORIZATION", "deployment-secret");
+    try {
+      const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-main-scheduler-anonymous-deployment-"));
+      const telemetry = await loadOrCreateDesktopTelemetryState(root);
+      const identityError = Object.assign(new Error("not signed in"), { code: "IDENTITY_NOT_SIGNED_IN" });
+      const recordProductAnalyticsConsent = vi.fn(async () => { throw identityError; });
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/instance/settings/product-analytics")) {
+          return new Response(JSON.stringify({ mode: "anonymous", consentVersion: "v1", consentEpoch: 4 }), { status: 200 });
+        }
+        if (url.endsWith("/api/orgs")) return new Response(JSON.stringify([{ id: "org-1" }]), { status: 200 });
+        if (url.endsWith("/internal/anonymous/consent")) {
+          expect(init?.headers).toMatchObject({ "x-rudder-telemetry-anonymous-authorization": "deployment-secret" });
+          expect(JSON.parse(String(init?.body))).toMatchObject({ consentVersion: "v1", consentEpoch: 4, revoked: false });
+          return new Response(JSON.stringify({ revoked: false }), { status: 200 });
+        }
+        if (url.endsWith("/outbox/claim")) return new Response(JSON.stringify({ claimToken: null, events: [] }), { status: 200 });
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+      let scheduler: DesktopProductAnalyticsScheduler | null = null;
+      await startDesktopProductAnalyticsScheduler("http://127.0.0.1:3100", {
+        collectorUrl: "https://telemetry.example.test",
+        identityRuntime: {
+          telemetryStatePromise: Promise.resolve(telemetry),
+          recordProductAnalyticsConsent,
+          issueProductAnalyticsAssertion: vi.fn(async () => "assertion"),
+        },
+        scheduler: null,
+        setScheduler: (value) => { scheduler = value; },
+        fetchImpl,
+      });
+      expect(scheduler).not.toBeNull();
+      const registration = fetchImpl.mock.calls.find(([input]) => String(input).endsWith("/internal/anonymous/consent"));
+      expect(registration).toBeDefined();
+      scheduler?.stop();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

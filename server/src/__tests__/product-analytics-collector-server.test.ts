@@ -1,8 +1,10 @@
 import type { Db } from "@rudderhq/db";
+import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { parseProductAnalyticsCollectorConfig } from "../product-analytics-collector-config.js";
 import { createProductAnalyticsCollectorApp } from "../product-analytics-collector-server.js";
+import { createProductAnalyticsAssertionAuthorizer } from "../routes/product-analytics-collector.js";
 
 const baseEnv = {
   RUDDER_TELEMETRY_COLLECTOR_DATABASE_URL: "postgres://collector:secret@localhost/analytics",
@@ -27,8 +29,10 @@ describe("product analytics collector deployment", () => {
   it("keeps the consent synchronization secret separate from report/revoke secrets", () => {
     const config = parseProductAnalyticsCollectorConfig({
       ...baseEnv,
+      RUDDER_TELEMETRY_COLLECTOR_ANONYMOUS_AUTHORIZATION: "anonymous-deployment-secret",
       RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "identity-ledger-hook",
     });
+    expect(config.anonymousAuthorization).toBe("anonymous-deployment-secret");
     expect(config.consentSyncSecret).toBe("identity-ledger-hook");
   });
 
@@ -37,5 +41,39 @@ describe("product analytics collector deployment", () => {
     const response = await request(app).get("/healthz");
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, service: "product-analytics-collector", schema: "rudder_analytics" });
+  });
+
+  it("binds anonymous deployment authorization to explicit consent headers", async () => {
+    const authorize = createProductAnalyticsAssertionAuthorizer({
+      identityPublicKey: "unused-for-anonymous",
+      expectedKeyId: "unused",
+      expectedIssuer: "unused",
+      anonymousAuthorization: "anonymous-deployment-secret",
+    });
+    const app = express();
+    app.get("/authorize", (req, res) => {
+      try {
+        res.json(authorize(req));
+      } catch {
+        res.status(401).json({ errorCode: "unauthorized" });
+      }
+    });
+    const installationId = "11111111-1111-4111-8111-111111111111";
+    const pseudonymousInstallationId = "a".repeat(64);
+    const accepted = await request(app)
+      .get("/authorize")
+      .set("authorization", "Bearer anonymous-deployment-secret")
+      .set("x-rudder-installation-id", installationId)
+      .set("x-rudder-telemetry-consent-version", "v1")
+      .set("x-rudder-telemetry-consent-epoch", "2")
+      .set("x-rudder-telemetry-pseudonymous-installation-id", pseudonymousInstallationId);
+    expect(accepted.status).toBe(200);
+    expect(accepted.body).toMatchObject({ installationId, mode: "anonymous", consentVersion: "v1", consentEpoch: 2, pseudonymousInstallationId });
+
+    const missingHeaders = await request(app)
+      .get("/authorize")
+      .set("authorization", "Bearer anonymous-deployment-secret")
+      .set("x-rudder-installation-id", installationId);
+    expect(missingHeaders.status).toBe(401);
   });
 });
