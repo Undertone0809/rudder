@@ -89,6 +89,7 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       metricValue: privateProductAnalyticsCollectorPrivacyAggregates.metricValue,
       contributingInstallations: privateProductAnalyticsCollectorPrivacyAggregates.contributingInstallations,
       privacyThreshold: privateProductAnalyticsCollectorPrivacyAggregates.privacyThreshold,
+      dimensionValues: privateProductAnalyticsCollectorPrivacyAggregates.dimensionValues,
     }).from(privateProductAnalyticsCollectorPrivacyAggregates).where(and(gte(privateProductAnalyticsCollectorPrivacyAggregates.day, range.from.toISOString().slice(0, 10)), lte(privateProductAnalyticsCollectorPrivacyAggregates.day, range.to.toISOString().slice(0, 10))));
     const loops = aggregateRows
       .filter((row) => row.metricName === "weekly_completed_work_loops")
@@ -100,25 +101,27 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       if (!firstSeen || candidate < firstSeen) firstSeenByInstallation.set(event.installationId, candidate);
     }
     const meaningfulEventsByInstallation = new Map<string, Date[]>();
-    const loopEventsByInstallation = new Map<string, Date[]>();
     for (const event of retentionProduction) {
       if (meaningful.has(event.eventName)) {
         const dates = meaningfulEventsByInstallation.get(event.installationId) ?? [];
         dates.push(new Date(event.lastOccurredAt));
         meaningfulEventsByInstallation.set(event.installationId, dates);
       }
-      if (event.eventName === "work_loop_completed") {
-        const dates = loopEventsByInstallation.get(event.installationId) ?? [];
-        dates.push(new Date(event.lastOccurredAt));
-        loopEventsByInstallation.set(event.installationId, dates);
-      }
+    }
+    const loopRetentionByCohort = new Map<string, { w1: number; w4: number }>();
+    for (const row of aggregateRows.filter((value) => value.metricName === "work_loop_retention")) {
+      const cohortDay = typeof row.dimensionValues?.cohort_day === "string" ? row.dimensionValues.cohort_day : null;
+      const window = row.dimensionValues?.window;
+      if (!cohortDay || (window !== "w1" && window !== "w4")) continue;
+      const retention = loopRetentionByCohort.get(cohortDay) ?? { w1: 0, w4: 0 };
+      retention[window] = Number(row.metricValue);
+      loopRetentionByCohort.set(cohortDay, retention);
     }
     const cohorts = new Map<string, { eligibleInstallations: number; meaningfulW1: number; loopW1: number; loopW4: number }>();
     for (const [installationId, firstSeen] of firstSeenByInstallation) {
       const cohortDay = firstSeen.toISOString().slice(0, 10);
       const row = cohorts.get(cohortDay) ?? { eligibleInstallations: 0, meaningfulW1: 0, loopW1: 0, loopW4: 0 };
       const meaningfulDates = meaningfulEventsByInstallation.get(installationId) ?? [];
-      const loopDates = loopEventsByInstallation.get(installationId) ?? [];
       const inWindow = (date: Date, startDays: number, endDays: number) => {
         const start = firstSeen.getTime() + startDays * 24 * 60 * 60 * 1000;
         const end = firstSeen.getTime() + endDays * 24 * 60 * 60 * 1000;
@@ -126,8 +129,11 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       };
       if (firstSeen <= range.to && firstSeen >= range.from) row.eligibleInstallations += 1;
       if (firstSeen <= range.to && meaningfulDates.some((date) => inWindow(date, 7, 14))) row.meaningfulW1 += 1;
-      if (firstSeen <= range.to && loopDates.some((date) => inWindow(date, 7, 14))) row.loopW1 += 1;
-      if (firstSeen <= range.to && loopDates.some((date) => inWindow(date, 28, 35))) row.loopW4 += 1;
+      const loopRetention = loopRetentionByCohort.get(cohortDay);
+      if (firstSeen <= range.to && loopRetention) {
+        row.loopW1 = loopRetention.w1;
+        row.loopW4 = loopRetention.w4;
+      }
       cohorts.set(cohortDay, row);
     }
     res.json({

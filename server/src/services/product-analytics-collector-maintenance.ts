@@ -207,18 +207,57 @@ async function rebuildPrivacyAggregates(db: Db, options: ProductAnalyticsCollect
       privateProductAnalyticsCollectorEvents.eventName,
       privateProductAnalyticsCollectorEvents.origin,
     );
+  const revisionFrom = new Date(now.getTime() - options.retentionDays * 24 * 60 * 60 * 1000);
+  const installationRows = await db.select({
+    installationId: privateProductAnalyticsCollectorInstallations.installationId,
+    firstSeenAt: privateProductAnalyticsCollectorInstallations.firstSeenAt,
+  }).from(privateProductAnalyticsCollectorInstallations);
+  const firstSeenByInstallation = new Map(installationRows.map((row) => [row.installationId, new Date(row.firstSeenAt)]));
+  const eligibleByCohort = new Map<string, Set<string>>();
+  for (const row of installationRows) {
+    const cohortDay = new Date(row.firstSeenAt).toISOString().slice(0, 10);
+    const eligible = eligibleByCohort.get(cohortDay) ?? new Set<string>();
+    eligible.add(row.installationId);
+    eligibleByCohort.set(cohortDay, eligible);
+  }
+  const validLoopRows = await db.select({
+    installationId: privateProductAnalyticsCollectorWorkLoopRevisions.installationId,
+    completedAt: privateProductAnalyticsCollectorWorkLoopRevisions.completedAt,
+  }).from(privateProductAnalyticsCollectorWorkLoopRevisions).where(and(
+    gte(privateProductAnalyticsCollectorWorkLoopRevisions.completedAt, revisionFrom),
+    isNull(privateProductAnalyticsCollectorWorkLoopRevisions.invalidatedAt),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.environment, "production"),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.origin, "human"),
+    eq(privateProductAnalyticsCollectorWorkLoopRevisions.isInternal, false),
+  ));
+  const loopRetentionByCohort = new Map<string, { w1: Set<string>; w4: Set<string> }>();
+  for (const row of validLoopRows) {
+    const firstSeen = firstSeenByInstallation.get(row.installationId);
+    if (!firstSeen) continue;
+    const cohortDay = firstSeen.toISOString().slice(0, 10);
+    const completedAt = new Date(row.completedAt).getTime();
+    const ageDays = (completedAt - firstSeen.getTime()) / (24 * 60 * 60 * 1000);
+    const retention = loopRetentionByCohort.get(cohortDay) ?? { w1: new Set<string>(), w4: new Set<string>() };
+    if (ageDays >= 7 && ageDays < 14) retention.w1.add(row.installationId);
+    if (ageDays >= 28 && ageDays < 35) retention.w4.add(row.installationId);
+    loopRetentionByCohort.set(cohortDay, retention);
+  }
   const completedLoopGroups = await db.select({
     day: sql<string>`(${privateProductAnalyticsCollectorWorkLoopRevisions.completedAt} AT TIME ZONE 'UTC')::date`,
     metricValue: sql<number>`count(*)::int`,
     contributingInstallations: sql<number>`count(distinct ${privateProductAnalyticsCollectorWorkLoopRevisions.installationId})::int`,
   }).from(privateProductAnalyticsCollectorWorkLoopRevisions).where(and(
-    gte(privateProductAnalyticsCollectorWorkLoopRevisions.completedAt, from),
+    gte(privateProductAnalyticsCollectorWorkLoopRevisions.completedAt, revisionFrom),
     isNull(privateProductAnalyticsCollectorWorkLoopRevisions.invalidatedAt),
     eq(privateProductAnalyticsCollectorWorkLoopRevisions.environment, "production"),
     eq(privateProductAnalyticsCollectorWorkLoopRevisions.origin, "human"),
     eq(privateProductAnalyticsCollectorWorkLoopRevisions.isInternal, false),
   )).groupBy(sql`(${privateProductAnalyticsCollectorWorkLoopRevisions.completedAt} AT TIME ZONE 'UTC')::date`);
   await db.delete(privateProductAnalyticsCollectorPrivacyAggregates).where(gte(privateProductAnalyticsCollectorPrivacyAggregates.day, dayOf(from)));
+  await db.delete(privateProductAnalyticsCollectorPrivacyAggregates).where(inArray(
+    privateProductAnalyticsCollectorPrivacyAggregates.metricName,
+    ["weekly_completed_work_loops", "work_loop_retention"],
+  ));
   let written = 0;
   for (const group of groups) {
     const contributingInstallations = Number(group.contributingInstallations);
@@ -253,6 +292,25 @@ async function rebuildPrivacyAggregates(db: Db, options: ProductAnalyticsCollect
       updatedAt: now,
     });
     written += 1;
+  }
+  for (const [cohortDay, eligible] of eligibleByCohort) {
+    if (eligible.size < options.privacyThreshold) continue;
+    const retention = loopRetentionByCohort.get(cohortDay) ?? { w1: new Set<string>(), w4: new Set<string>() };
+    for (const [window, installations] of [["w1", retention.w1], ["w4", retention.w4]] as const) {
+      const dimensionValues = { cohort_day: cohortDay, window };
+      await db.insert(privateProductAnalyticsCollectorPrivacyAggregates).values({
+        day: cohortDay,
+        metricName: "work_loop_retention",
+        dimensionSetVersion: 1,
+        dimensionHash: hashProductAnalyticsCollectorDimension(dimensionValues),
+        dimensionValues,
+        metricValue: installations.size,
+        contributingInstallations: eligible.size,
+        privacyThreshold: options.privacyThreshold,
+        updatedAt: now,
+      });
+      written += 1;
+    }
   }
   return written;
 }
