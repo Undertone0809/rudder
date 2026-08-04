@@ -10,9 +10,12 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY patches patches/
 COPY cli/package.json cli/
 COPY server/package.json server/
+COPY server/resources server/resources/
 COPY ui/package.json ui/
 COPY packages/shared/package.json packages/shared/
 COPY packages/db/package.json packages/db/
+COPY packages/identity-core/package.json packages/identity-core/
+COPY packages/run-intelligence-core/package.json packages/run-intelligence-core/
 COPY packages/agent-runtime-utils/package.json packages/agent-runtime-utils/
 COPY packages/agent-runtimes/claude-local/package.json packages/agent-runtimes/claude-local/
 COPY packages/agent-runtimes/codex-local/package.json packages/agent-runtimes/codex-local/
@@ -22,6 +25,7 @@ COPY packages/agent-runtimes/openclaw-gateway/package.json packages/agent-runtim
 COPY packages/agent-runtimes/opencode-local/package.json packages/agent-runtimes/opencode-local/
 COPY packages/agent-runtimes/pi-local/package.json packages/agent-runtimes/pi-local/
 COPY packages/plugins/sdk/package.json packages/plugins/sdk/
+COPY packages/plugins/examples/plugin-linear/package.json packages/plugins/examples/plugin-linear/
 
 RUN pnpm install --frozen-lockfile
 
@@ -31,7 +35,7 @@ COPY --from=deps /app /app
 COPY . .
 RUN pnpm --filter @rudderhq/ui build
 RUN pnpm --filter @rudderhq/plugin-sdk build
-RUN pnpm --filter @rudderhq/server build
+RUN pnpm --filter @rudderhq/server... build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 
 FROM base AS production
