@@ -45,6 +45,12 @@ function dayOf(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
+/** Return a cohort only while its privacy aggregate is inside retention. */
+export function retainedProductAnalyticsCohortDay(firstSeenAt: Date, retentionCutoff: Date): string | null {
+  const cohortDay = dayOf(firstSeenAt);
+  return cohortDay < dayOf(retentionCutoff) ? null : cohortDay;
+}
+
 /** Ensure a collector DB cannot accidentally run with the local app role/schema. */
 export async function assertProductAnalyticsCollectorDatabaseBoundary(db: Db, expectedRole?: string | null): Promise<{ role: string; schema: string }> {
   const rows = await db.execute(sql`
@@ -215,7 +221,9 @@ async function rebuildPrivacyAggregates(db: Db, options: ProductAnalyticsCollect
   const firstSeenByInstallation = new Map(installationRows.map((row) => [row.installationId, new Date(row.firstSeenAt)]));
   const eligibleByCohort = new Map<string, Set<string>>();
   for (const row of installationRows) {
-    const cohortDay = new Date(row.firstSeenAt).toISOString().slice(0, 10);
+    const firstSeenAt = new Date(row.firstSeenAt);
+    const cohortDay = retainedProductAnalyticsCohortDay(firstSeenAt, revisionFrom);
+    if (!cohortDay) continue;
     const eligible = eligibleByCohort.get(cohortDay) ?? new Set<string>();
     eligible.add(row.installationId);
     eligibleByCohort.set(cohortDay, eligible);
