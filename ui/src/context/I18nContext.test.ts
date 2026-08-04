@@ -141,6 +141,11 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Models unavailable")).toBe("模型不可用");
     expect(translateLegacyString("zh-CN", "Select or enter provider/model")).toBe("选择或输入 provider/model");
     expect(translateLegacyString("zh-CN", "Runtime chain environment test failed")).toBe("运行时链路环境测试失败");
+    expect(translateLegacyString("zh-CN", "Passed")).toBe("通过");
+    expect(translateLegacyString("zh-CN", "Needs setup")).toBe("需要设置");
+    expect(translateLegacyString("zh-CN", "Hint: ")).toBe("提示： ");
+    expect(translateLegacyString("zh-CN", "Test now")).toBe("立即测试");
+    expect(translateLegacyString("zh-CN", "Run profile")).toBe("运行档案");
     expect(translateLegacyString("zh-CN", "Agent default · gpt-5.6-sol · Extra High")).toBe(
       "智能体默认 · gpt-5.6-sol · 超高",
     );
@@ -151,6 +156,10 @@ describe("translateMessage", () => {
       "配置 Builder 的模型和推理",
     );
     expect(translateLegacyString("zh-CN", "Run profile for Builder")).toBe("为 Builder 配置运行档案");
+    expect(translateLegacyString("zh-CN", "Paste DEEPSEEK_API_KEY")).toBe("粘贴 DEEPSEEK_API_KEY");
+    expect(translateLegacyString("zh-CN", "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.")).toBe(
+      "Cursor CLI 执行模式会通过 --mode 传入。规划模式只进行规划，询问模式只进行问答。日常自主运行请保持运行时默认值。",
+    );
     expect(translateLegacyString("zh-CN", "Applies to runs that have not started.")).toBe(
       "仅应用于尚未开始的运行。",
     );
