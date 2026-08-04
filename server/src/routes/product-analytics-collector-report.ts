@@ -18,9 +18,15 @@ function authorized(value: string | undefined, expected: string | null): boolean
 function window(req: { query: Record<string, unknown> }) {
   const toRaw = typeof req.query.to === "string" ? req.query.to : undefined;
   const fromRaw = typeof req.query.from === "string" ? req.query.from : undefined;
-  const to = toRaw ? new Date(toRaw) : new Date();
-  const from = fromRaw ? new Date(fromRaw) : new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) throw new Error("invalid_window");
+  const toInput = toRaw ? new Date(toRaw) : new Date();
+  const fromInput = fromRaw ? new Date(fromRaw) : new Date(toInput.getTime() - 7 * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(fromInput.getTime()) || Number.isNaN(toInput.getTime()) || fromInput >= toInput) throw new Error("invalid_window");
+  // Reports are built from UTC daily rollups. Normalize arbitrary timestamps
+  // to complete UTC days instead of implying sub-day precision we cannot
+  // recover after the raw event has been projected.
+  const from = new Date(Date.UTC(fromInput.getUTCFullYear(), fromInput.getUTCMonth(), fromInput.getUTCDate()));
+  const to = new Date(Date.UTC(toInput.getUTCFullYear(), toInput.getUTCMonth(), toInput.getUTCDate() + 1) - 1);
+  if (from >= to) throw new Error("invalid_window");
   return { from, to };
 }
 
