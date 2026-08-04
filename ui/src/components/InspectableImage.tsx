@@ -1,7 +1,7 @@
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { getImagePreviewElementDetails } from "@/lib/image-preview";
 import { Eye } from "lucide-react";
-import { useCallback, useRef, useState, type ImgHTMLAttributes, type MouseEvent } from "react";
+import { useCallback, useRef, useState, type ImgHTMLAttributes, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   clampImageContextMenuPosition,
   ImageContextMenu,
@@ -52,6 +52,13 @@ export function InspectableImage({
     inspectImage();
   };
 
+  const openImagePreviewFromKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    inspectImage();
+  };
+
   const openImageContextMenu = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -67,6 +74,7 @@ export function InspectableImage({
         title="Open image preview"
         onClick={openImagePreviewFromTrigger}
         onDoubleClick={openImagePreviewFromTrigger}
+        onKeyDown={openImagePreviewFromKeyboard}
         onContextMenu={openImageContextMenu}
       >
         <img

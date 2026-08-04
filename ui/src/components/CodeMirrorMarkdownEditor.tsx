@@ -1482,7 +1482,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return false;
         },
         mousedown: (event, view) => {
-          const pointerTarget = event.target instanceof HTMLElement ? event.target : null;
+          const pointerTarget = event.target instanceof Element ? event.target : null;
           if (
             event.button === 0
             && (event.metaKey || event.ctrlKey)
@@ -1499,6 +1499,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
             )
           ) {
             return false;
+          }
+          // Let the image preview trigger receive the click. Activating the
+          // source line first would replace the image before InspectableImage
+          // can open the global preview dialog.
+          if (target?.closest(".rudder-inspectable-image-trigger")) {
+            event.preventDefault();
+            return true;
           }
           const previewLine = target?.closest<HTMLElement>(
             ".cm-line[data-markdown-preview-state='preview'][data-source-line-start]",

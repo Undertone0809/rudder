@@ -137,7 +137,7 @@ test("issue description stays Library-style source-backed and preserves exact li
     if (element instanceof HTMLElement) element.blur();
   });
 
-  await page.getByRole("region", { name: "Issue properties" }).getByText("Properties", { exact: true }).click();
+  await page.getByRole("region", { name: "Issue properties" }).click();
   await expect.poll(async () => {
     const response = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
     expect(response.ok()).toBe(true);
@@ -161,7 +161,7 @@ test("issue description stays Library-style source-backed and preserves exact li
   await page.screenshot({ path: "/tmp/rudder-issue-description-fixed.png", fullPage: false });
 });
 
-test("issue description images reveal source while attachment images keep the global preview", async ({ page }) => {
+test("issue description images stay clickable while editing and open the global preview", async ({ page }) => {
   test.setTimeout(120_000);
 
   await page.addInitScript(() => {
@@ -261,23 +261,33 @@ test("issue description images reveal source while attachment images keep the gl
   await expect(descriptionEditor).toBeVisible();
   await expect(page.locator(".rudder-issue-description-markdown-read")).toHaveCount(0);
 
-  const descriptionImage = descriptionEditor.locator('img[alt="Description evidence"]:visible');
+  const descriptionImage = descriptionEditor.getByRole("button", {
+    name: "Open image preview: Description evidence",
+  });
   await expect(descriptionImage).toBeVisible();
-  await descriptionImage.dispatchEvent("mousedown", { button: 0 });
+  await expect(descriptionImage.locator('img[alt="Description evidence"]')).toBeVisible();
+
+  const previewDialog = page.getByTestId("markdown-body-image-preview-dialog");
+  const previewImage = previewDialog.getByRole("img", { name: "Description evidence" });
+  await descriptionImage.locator(".rudder-inspectable-image-overlay").click();
+  await expect(previewDialog).toBeVisible();
+  await expect(previewImage).toBeVisible();
+  await expect(previewImage).toHaveAttribute(
+    "src",
+    new URL(attachment.contentPath, E2E_BASE_URL).toString(),
+  );
+  await expect.poll(() => previewImage.evaluate((image) => image.naturalWidth)).toBe(640);
+  await expect.poll(() => previewImage.evaluate((image) => image.naturalHeight)).toBe(360);
   await expect(
     descriptionEditor.locator('[data-markdown-preview-state="source"]').filter({
       hasText: `![Description evidence](${attachment.contentPath})`,
     }),
-  ).toBeVisible();
-  await expect(page.getByTestId("markdown-editor-image-preview-dialog")).toHaveCount(0);
+  ).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/rudder-issue-description-inline-image-preview.png", fullPage: false });
 
-  await descriptionEditor.locator(".cm-content").evaluate((element) => {
-    if (element instanceof HTMLElement) element.blur();
-  });
-  await expect(descriptionEditor.locator('img[alt="Description evidence"]:visible')).toBeVisible();
-
-  await page.keyboard.press("Escape");
+  await previewDialog.getByRole("button", { name: "Close image preview" }).click();
   await expect(previewDialog).toHaveCount(0);
+  await expect(descriptionImage).toBeVisible();
 
   const commentComposer = page.getByTestId("comment-thread-fixed-composer");
   await commentComposer.locator('input[type="file"]').setInputFiles({

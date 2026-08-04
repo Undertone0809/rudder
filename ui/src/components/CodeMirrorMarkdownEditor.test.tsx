@@ -55,6 +55,19 @@ vi.mock("./MarkdownBody", () => ({
     }>;
   }) => {
     const renderedSource = children.replace(/^#{1,6}\s+/u, "");
+    const imageMatch = renderedSource.match(/^!\[([^\]]*)\]\(([^)]+)\)$/u);
+    if (imageMatch) {
+      return (
+        <div className={className} data-rendered-markdown={children}>
+          <button type="button" className="rudder-inspectable-image-trigger">
+            <img src={imageMatch[2]} alt={imageMatch[1]} />
+            <span className="rudder-inspectable-image-overlay" aria-hidden="true">
+              <svg aria-hidden="true" />
+            </span>
+          </button>
+        </div>
+      );
+    }
     const parts: ReactNode[] = [];
     const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/gu;
     let cursor = 0;
@@ -279,6 +292,50 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(container?.querySelector('[data-markdown-preview-state="preview"][data-source-line-start="1"]')).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps image previews clickable without revealing their Markdown source", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="![Screenshot](/api/assets/image/content)"
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const imageTrigger = container?.querySelector<HTMLButtonElement>(
+      ".rudder-inspectable-image-trigger",
+    );
+    expect(imageTrigger).toBeTruthy();
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+
+    const imageOverlayIcon = imageTrigger?.querySelector("svg");
+    act(() => {
+      imageOverlayIcon?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+
+    act(() => {
+      imageTrigger?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
   });
 
   it("marks fenced source lines so the active block keeps its visual container", async () => {

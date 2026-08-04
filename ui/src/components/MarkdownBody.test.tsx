@@ -922,6 +922,30 @@ describe("MarkdownBody", () => {
     expect(previewRoot?.textContent).toContain("Copy Image");
   });
 
+  it("opens a markdown image preview dialog from keyboard activation", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Keyboard screenshot](/api/assets/test/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const imageButton = container.querySelector<HTMLButtonElement>(
+      ".rudder-inspectable-image-trigger",
+    );
+    expect(imageButton).toBeTruthy();
+
+    act(() => {
+      imageButton?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
+    expect(previewRoot?.querySelector("img")?.getAttribute("alt")).toBe("Keyboard screenshot");
+  });
+
   it("shows image actions from the custom markdown image context menu", () => {
     const container = render(
       <ThemeProvider>
