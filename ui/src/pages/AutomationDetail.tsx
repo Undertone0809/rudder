@@ -1313,6 +1313,7 @@ export function AutomationDetail({
                     searchPlaceholder="Search assignees..."
                     emptyMessage="No assignees found."
                     className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
+                    keepOpenOnOptionChange
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setEditDraft((current) => ({
@@ -1358,18 +1359,20 @@ export function AutomationDetail({
                         </>
                       );
                     }}
+                    renderOptionAccessory={(option, isSelected) => (
+                      option.id && isSelected && currentAssignee && selectedOrganizationId ? (
+                        <IssueRuntimeSelector
+                          agent={currentAssignee}
+                          orgId={selectedOrganizationId}
+                          overrides={editDraft.assigneeAgentRuntimeOverrides}
+                          variant="menu"
+                          onApply={(assigneeAgentRuntimeOverrides) => {
+                            setEditDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
+                          }}
+                        />
+                      ) : null
+                    )}
                   />
-                  {currentAssignee && selectedOrganizationId ? (
-                    <IssueRuntimeSelector
-                      agent={currentAssignee}
-                      orgId={selectedOrganizationId}
-                      overrides={editDraft.assigneeAgentRuntimeOverrides}
-                      variant="menu"
-                      onApply={(assigneeAgentRuntimeOverrides) => {
-                        setEditDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
-                      }}
-                    />
-                  ) : null}
                 </div>
               </SidebarPropertyRow>
 

@@ -51,6 +51,7 @@ export interface ConfirmDialogOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: "default" | "destructive";
+  restoreFocus?: (confirmed: boolean) => void;
 }
 
 export interface PromptTextDialogOptions {
@@ -119,6 +120,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const confirmRequestRef = useRef<ConfirmDialogRequest | null>(null);
   const promptTextRequestRef = useRef<PromptTextDialogRequest | null>(null);
   const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
+  const confirmRestoreFocusRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const confirmResultRef = useRef(false);
   const promptTextReturnFocusRef = useRef<HTMLElement | null>(null);
   const dialogRequestIdRef = useRef(0);
 
@@ -180,6 +183,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const confirm = useCallback((options: ConfirmDialogOptions) => (
     new Promise<boolean>((resolve) => {
+      confirmRestoreFocusRef.current = options.restoreFocus ?? null;
+      confirmResultRef.current = false;
       confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
@@ -210,6 +215,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     const current = confirmRequestRef.current;
     if (!current) return;
     confirmRequestRef.current = null;
+    confirmResultRef.current = confirmed;
     current.resolve(confirmed);
     setConfirmRequest(null);
   }, []);
@@ -275,8 +281,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           showCloseButton={false}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
+            const restoreFocus = confirmRestoreFocusRef.current;
+            confirmRestoreFocusRef.current = null;
+            const confirmed = confirmResultRef.current;
+            confirmResultRef.current = false;
             const returnTarget = confirmReturnFocusRef.current;
             confirmReturnFocusRef.current = null;
+            if (restoreFocus) {
+              restoreFocus(confirmed);
+              return;
+            }
             if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
           }}
         >

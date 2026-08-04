@@ -60,6 +60,7 @@ import { pluginsApi } from "../api/plugins";
 import { projectsApi } from "../api/projects";
 import { AgentIdentity } from "../components/AgentAvatar";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
+import { isAgentWakeEligible } from "../components/CommentThread.submit";
 import { Identity } from "../components/Identity";
 import { InlineEditor } from "../components/InlineEditor";
 import { InspectableImage } from "../components/InspectableImage";
@@ -2612,6 +2613,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           orgId={issue.orgId}
           projectId={issue.projectId}
           issueStatus={issue.status}
+          locale={locale}
+          reopenWillWakeAgent={Boolean(currentAssigneeAgent && isAgentWakeEligible(currentAssigneeAgent.status))}
           agentMap={agentMap}
           draftKey={`rudder:issue-comment-draft:${issue.id}`}
           mentions={mentionOptions}

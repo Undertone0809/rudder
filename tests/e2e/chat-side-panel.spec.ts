@@ -2715,6 +2715,138 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
   });
 
+  test("requires confirmation before reopening blocked Agents from the Messenger Side Panel", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: "Chat-Side-Panel-Blocked-Reopen-" + Date.now(),
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const statuses = ["paused", "terminated", "pending_approval"] as const;
+    const blockedIssues: Array<{
+      status: (typeof statuses)[number];
+      issueId: string;
+      issueRef: string;
+      title: string;
+    }> = [];
+
+    for (const status of statuses) {
+      const agentRes = await page.request.post("/api/orgs/" + organization.id + "/agents", {
+        data: {
+          name: status + " Messenger Side Panel Agent",
+          role: "pm",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.4" },
+        },
+      });
+      expect(agentRes.ok(), await agentRes.text()).toBe(true);
+      const agent = await agentRes.json() as { id: string };
+      const title = status + " Messenger Side Panel reopen";
+      const issueRes = await page.request.post("/api/orgs/" + organization.id + "/issues", {
+        data: {
+          title,
+          description: "Blocked Agent reopen confirmation coverage.",
+          status: "done",
+          priority: "medium",
+          assigneeAgentId: agent.id,
+        },
+      });
+      expect(issueRes.ok(), await issueRes.text()).toBe(true);
+      const issue = await issueRes.json() as { id: string; identifier: string | null };
+      const statusRes = await page.request.patch("/api/agents/" + agent.id, {
+        data: { status },
+      });
+      expect(statusRes.ok(), await statusRes.text()).toBe(true);
+      blockedIssues.push({
+        status,
+        issueId: issue.id,
+        issueRef: issue.identifier ?? issue.id,
+        title,
+      });
+    }
+
+    const hostChatRes = await page.request.post("/api/orgs/" + organization.id + "/chats", {
+      data: {
+        title: "Blocked Agent Side Panel host",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open the blocked Agent issues." },
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: blockedIssues.map((entry) => (
+        "Open [" + entry.title + "](" + buildIssueMentionHref(entry.issueId, entry.issueRef) + ")"
+      )).join("\n\n"),
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto("/" + organization.issuePrefix + "/messenger/chat/" + hostChat.id);
+
+    const assistantMessage = page
+      .getByTestId("chat-assistant-message")
+      .filter({ hasText: blockedIssues[0].title })
+      .last();
+    await expect(assistantMessage).toBeVisible({ timeout: 15_000 });
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const dialog = page.getByRole("dialog");
+
+    for (const entry of blockedIssues) {
+      await assistantMessage
+        .locator('a[data-mention-kind="issue"]')
+        .filter({ hasText: entry.issueRef })
+        .click();
+      await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+      await expect(sidePanel).toContainText(entry.title);
+      const activity = sidePanel.getByRole("region", { name: "Activity" });
+      const composer = activity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+      const reopenCheckbox = activity.getByRole("checkbox", { name: "Re-open" });
+      await expect(reopenCheckbox).toBeChecked();
+      await composer.click();
+      await page.keyboard.type("Confirm the " + entry.status + " Side Panel reopen first");
+
+      let commentPostCount = 0;
+      const onRequest = (request: { method(): string; url(): string }) => {
+        const url = new URL(request.url());
+        if (request.method() === "POST" && url.pathname === "/api/issues/" + entry.issueId + "/comments") {
+          commentPostCount += 1;
+        }
+      };
+      page.on("request", onRequest);
+      try {
+        await activity.getByRole("button", { name: "Comment", exact: true }).click();
+        await expect(dialog).toBeVisible();
+        expect(commentPostCount).toBe(0);
+        await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+      } finally {
+        page.off("request", onRequest);
+      }
+      await expect(composer).toContainText("Confirm the " + entry.status + " Side Panel reopen first");
+      await expect(composer).toBeFocused();
+      const issueAfterCancelRes = await page.request.get("/api/issues/" + entry.issueId);
+      expect(issueAfterCancelRes.ok(), await issueAfterCancelRes.text()).toBe(true);
+      expect((await issueAfterCancelRes.json() as { status: string }).status).toBe("done");
+    }
+  });
+
   test("opens the panel picker from the Desktop new-tab event without creating placeholder tabs", async ({ page }) => {
     await installBrowserDesktopStub(page);
     await installEnabledBrowserSettingsStub(page);

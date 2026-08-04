@@ -199,6 +199,9 @@ export function IssueRuntimeSelector({
   const thinkingOptions = effortOptions(agent, effectiveModel);
   const effectiveEffort = selectedEffort;
   const summary = issueRuntimeSelectorSummary(agent, overrides);
+  const compactSummary = effortKey
+    ? `${effectiveModel} · ${effortLabel(effectiveEffort ?? configuredEffort(agent))}`
+    : effectiveModel;
 
   const closeMenu = () => {
     setMenuOpen(false);
@@ -206,8 +209,11 @@ export function IssueRuntimeSelector({
     setDraftInitialized(false);
   };
 
+  const mobileBottomInset = () => (window.innerWidth < 640 ? 72 : 0);
+
   const positionFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
     const viewportPadding = 12;
+    const viewportBottom = window.innerHeight - viewportPadding - mobileBottomInset();
     const right = window.innerWidth - rect.right;
     const left = right >= width + viewportPadding
       ? rect.right + 8
@@ -216,7 +222,7 @@ export function IssueRuntimeSelector({
       left,
       top: Math.max(
         viewportPadding,
-        Math.min(rect.top, window.innerHeight - viewportPadding - height),
+        Math.min(rect.top, viewportBottom - height),
       ),
     };
   };
@@ -224,11 +230,33 @@ export function IssueRuntimeSelector({
   const positionSubmenuFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
     const viewportPadding = 12;
     const gap = 8;
+    const viewportBottom = window.innerHeight - viewportPadding - mobileBottomInset();
     const right = window.innerWidth - rect.right;
-    const left = right >= width + gap + viewportPadding
-      ? rect.right + gap
-      : Math.max(viewportPadding, rect.left - width - gap);
-    const availableBelow = Math.max(0, window.innerHeight - viewportPadding - rect.top);
+    const canOpenRight = right >= width + gap + viewportPadding;
+    const canOpenLeft = rect.left >= width + gap + viewportPadding;
+    if (!canOpenRight && !canOpenLeft) {
+      const parentRect = menuRootRef.current?.getBoundingClientRect();
+      const aboveTop = parentRect ? parentRect.top : rect.top;
+      const belowTop = parentRect ? parentRect.bottom + gap : rect.bottom + gap;
+      const availableAbove = Math.max(0, aboveTop - viewportPadding - gap);
+      const availableBelow = Math.max(0, viewportBottom - belowTop);
+      if (availableAbove >= availableBelow) {
+        const maxHeight = Math.min(height, availableAbove);
+        return {
+          left: viewportPadding,
+          top: Math.max(viewportPadding, aboveTop - gap - maxHeight),
+          maxHeight: `${maxHeight}px`,
+        };
+      }
+      const maxHeight = Math.min(height, availableBelow);
+      return {
+        left: viewportPadding,
+        top: Math.max(viewportPadding, belowTop),
+        maxHeight: `${maxHeight}px`,
+      };
+    }
+    const left = canOpenRight ? rect.right + gap : Math.max(viewportPadding, rect.left - width - gap);
+    const availableBelow = Math.max(0, viewportBottom - rect.top);
     const availableAbove = Math.max(0, rect.bottom - viewportPadding);
     const keepTriggerAligned = availableBelow >= 120;
     const maxHeight = Math.min(
@@ -373,10 +401,11 @@ export function IssueRuntimeSelector({
     const menuPanel = menuOpen && menuPosition && typeof document !== "undefined" ? createPortal(
       <div
         ref={menuRootRef}
+        data-issue-runtime-portal
         data-testid="issue-runtime-profile-panel"
         role="dialog"
         aria-label={`Model and thinking for ${agent.name}`}
-        className="pointer-events-auto surface-overlay fixed z-[65] w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
+        className="pointer-events-auto surface-overlay fixed z-[75] w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
         style={menuPosition}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
@@ -511,10 +540,11 @@ export function IssueRuntimeSelector({
           submenuRootRef.current = node;
           submenuScrollRef(node);
         }}
+        data-issue-runtime-portal
         data-testid={`issue-runtime-${activeSubmenu}-options`}
         role="listbox"
         aria-label={activeSubmenu === "model" ? "Automation model" : "Automation thinking effort"}
-        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
+        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[80] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
         style={submenuPosition}
         onKeyDown={(event) => {
           if (event.key === "Escape" || event.key === "ArrowLeft") {
@@ -539,12 +569,15 @@ export function IssueRuntimeSelector({
           aria-haspopup="dialog"
           aria-expanded={menuOpen}
           className={cn(
-            "chat-composer-menu-row min-w-0",
+            "chat-composer-menu-row min-w-0 max-w-[14rem] shrink-0",
             disabled && "cursor-not-allowed opacity-60",
           )}
           disabled={disabled}
           title={summary}
-          onClick={() => (menuOpen ? closeMenu() : openMenu())}
+          onClick={(event) => {
+            event.stopPropagation();
+            menuOpen ? closeMenu() : openMenu();
+          }}
           onKeyDown={(event) => {
             if (event.key === "ArrowRight" || event.key === "Enter" || event.key === " ") {
               event.preventDefault();
@@ -552,10 +585,8 @@ export function IssueRuntimeSelector({
             }
           }}
         >
-          <SlidersHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground">Model</span>
-          <span className="min-w-0 max-w-[14rem] truncate text-right text-muted-foreground">{summary}</span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="min-w-0 truncate text-muted-foreground">{compactSummary}</span>
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
         {menuPanel}
         {submenu}

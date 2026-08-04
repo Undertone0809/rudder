@@ -842,6 +842,7 @@ export function Automations() {
                 disablePortal
                 side="top"
                 sideOffset={8}
+                keepOpenOnOptionChange
                 onChange={(assigneeAgentId) => {
                   if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                   setDraft((current) => ({
@@ -880,19 +881,20 @@ export function Automations() {
                     </>
                   );
                 }}
+                renderOptionAccessory={(option, isSelected) => (
+                  option.id && isSelected && currentAssignee && selectedOrganizationId ? (
+                    <IssueRuntimeSelector
+                      agent={currentAssignee}
+                      orgId={selectedOrganizationId}
+                      overrides={draft.assigneeAgentRuntimeOverrides}
+                      variant="menu"
+                      onApply={(assigneeAgentRuntimeOverrides) => {
+                        setDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
+                      }}
+                    />
+                  ) : null
+                )}
               />
-
-              {currentAssignee && selectedOrganizationId ? (
-                <IssueRuntimeSelector
-                  agent={currentAssignee}
-                  orgId={selectedOrganizationId}
-                  overrides={draft.assigneeAgentRuntimeOverrides}
-                  variant="menu"
-                  onApply={(assigneeAgentRuntimeOverrides) => {
-                    setDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
-                  }}
-                />
-              ) : null}
 
               <InlineEntitySelector
                 ref={projectSelectorRef}
