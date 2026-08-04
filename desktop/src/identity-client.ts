@@ -531,7 +531,16 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
               }
               applyDesktopSignInIntent(authorizeUrl, intentValue.intent);
             }
-            await options.openExternal(authorizeUrl.toString()).catch((error: unknown) => {
+            // Let the hosted Account page establish the browser session before
+            // continuing to the Desktop authorization endpoint. The latter
+            // intentionally requires an active browser session and otherwise
+            // returns `Auth session missing` instead of starting OAuth itself.
+            const loginUrl = new URL("/", identityOrigin);
+            loginUrl.searchParams.set(
+              "next",
+              `${authorizeUrl.pathname}${authorizeUrl.search}`,
+            );
+            await options.openExternal(loginUrl.toString()).catch((error: unknown) => {
               throw identityFallbackError(
                 "EXTERNAL_BROWSER_UNAVAILABLE",
                 "Unable to open the Rudder sign-in browser",
