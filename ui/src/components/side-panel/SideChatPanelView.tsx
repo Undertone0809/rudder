@@ -593,6 +593,7 @@ export function SideChatPanelView({
     agent: selectedAgent,
     runtime: conversation?.chatRuntime ?? null,
     overrides: activeRuntimeOverrides,
+    adapterModels: adapterModelsQuery.data,
   });
   const agentLabel = selectedAgent
     ? formatChatAgentLabel(selectedAgent)

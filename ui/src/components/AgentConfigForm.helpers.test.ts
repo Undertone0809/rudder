@@ -49,22 +49,18 @@ describe("AgentConfigForm runtime defaults", () => {
     });
   });
 
-  it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
-    "uses GPT-5.6 reasoning levels for %s",
-    (model) => {
-      expect(thinkingEffortOptionsForRuntime("codex_local", model)).toEqual([
-        { id: "", label: "Auto" },
-        { id: "light", label: "Light" },
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High" },
-        { id: "xhigh", label: "Extra High" },
-        { id: "max", label: "Max" },
-        { id: "ultra", label: "Ultra" },
-      ]);
-    },
-  );
+  it.each([
+    ["gpt-5.6-sol", ["low", "medium", "high", "xhigh", "max", "ultra"]],
+    ["gpt-5.6-terra", ["low", "medium", "high", "xhigh", "max", "ultra"]],
+    ["gpt-5.6-luna", ["low", "medium", "high", "xhigh", "max"]],
+  ] as const)("uses the official GPT-5.6 reasoning levels for %s", (model, levels) => {
+    expect(thinkingEffortOptionsForRuntime("codex_local", model)).toEqual([
+      { id: "", label: "Auto" },
+      ...levels.map((id) => ({ id, label: id === "xhigh" ? "Extra High" : id.charAt(0).toUpperCase() + id.slice(1) })),
+    ]);
+  });
 
-  it("keeps existing Codex models on the standard reasoning levels", () => {
+  it("keeps the known Codex catalog models on their standard reasoning levels", () => {
     expect(thinkingEffortOptionsForRuntime("codex_local", "gpt-5.5")).toEqual([
       { id: "", label: "Auto" },
       { id: "low", label: "Low" },
@@ -74,22 +70,83 @@ describe("AgentConfigForm runtime defaults", () => {
     ]);
   });
 
-  it.each([
-    ["claude_local", ["", "low", "medium", "high"]],
-    ["opencode_local", ["", "minimal", "low", "medium", "high", "max"]],
-    ["pi_local", ["", "off", "minimal", "low", "medium", "high", "xhigh"]],
-  ] as const)("exposes the declared reasoning levels for %s", (runtimeType, ids) => {
-    expect(thinkingEffortOptionsForRuntime(runtimeType).map((option) => option.id)).toEqual(ids);
-    expect(shouldShowThinkingEffort(runtimeType)).toBe(true);
+  it("does not guess Codex levels when official model metadata omits them", () => {
+    expect(thinkingEffortOptionsForRuntime("codex_local", "gpt-5.6-sol", {
+      capabilities: { reasoning: true },
+    })).toEqual([
+      { id: "", label: "Auto" },
+    ]);
+    expect(shouldShowThinkingEffort("codex_local", "gpt-5.6-sol", {
+      capabilities: { reasoning: true },
+    })).toBe(false);
   });
 
-  it("treats Cursor execution mode separately from reasoning effort", () => {
-    expect(thinkingEffortLabelForRuntime("cursor")).toBe("Execution mode");
-    expect(thinkingEffortOptionsForRuntime("cursor").map((option) => option.id)).toEqual([
-      "",
-      "plan",
-      "ask",
+  it("exposes Claude Code's full official effort set when model metadata provides it", () => {
+    const ids = ["", "low", "medium", "high", "xhigh", "max"];
+    const metadata = { variants: ["low", "medium", "high", "xhigh", "max"] };
+    expect(thinkingEffortOptionsForRuntime("claude_local", "claude-opus-4-6", metadata).map((option) => option.id)).toEqual(ids);
+    expect(shouldShowThinkingEffort("claude_local", "claude-opus-4-6", metadata)).toBe(true);
+  });
+
+  it("uses Pi's official CLI levels when a reasoning model has no model-specific map", () => {
+    const metadata = { capabilities: { reasoning: true } };
+    expect(thinkingEffortOptionsForRuntime("pi_local", "kimi-coding/kimi-for-coding", metadata).map((option) => option.id)).toEqual([
+      "", "off", "minimal", "low", "medium", "high",
     ]);
+    expect(shouldShowThinkingEffort("pi_local", "kimi-coding/kimi-for-coding", metadata)).toBe(true);
+  });
+
+  it("uses only Claude model metadata and does not guess unknown aliases", () => {
+    expect(thinkingEffortOptionsForRuntime("claude_local", "claude-sonnet-5")).toEqual([]);
+    expect(thinkingEffortOptionsForRuntime("claude_local", "claude-sonnet-4-6", {
+      variants: ["low", "medium", "high", "xhigh", "max"],
+    }).map((option) => option.id)).toEqual([
+      "",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(thinkingEffortOptionsForRuntime("claude_local", "claude-haiku-4-6", { variants: [] })).toEqual([]);
+  });
+
+  it("uses OpenCode's discovered per-model variants", () => {
+    expect(thinkingEffortOptionsForRuntime(
+      "opencode_local",
+      "opencode/deepseek-v4-flash-free",
+      { variants: ["low", "medium", "high", "max"] },
+    ).map((option) => option.id)).toEqual(["", "low", "medium", "high", "max"]);
+    expect(thinkingEffortOptionsForRuntime(
+      "opencode_local",
+      "opencode/laguna-s-2.1-free",
+      { variants: ["low", "medium", "high"] },
+    ).map((option) => option.id)).toEqual(["", "low", "medium", "high"]);
+    expect(thinkingEffortOptionsForRuntime(
+      "opencode_local",
+      "opencode/big-pickle",
+      { variants: [] },
+    )).toEqual([]);
+    expect(thinkingEffortOptionsForRuntime("opencode_local", "custom/provider-model")).toEqual([]);
+  });
+
+  it("uses Cursor's official model effort variants and keeps Plan/Ask out of reasoning", () => {
+    expect(thinkingEffortLabelForRuntime("cursor")).toBe("Thinking effort");
+    expect(thinkingEffortOptionsForRuntime("cursor", "gpt-5.3-codex", {
+      variants: ["low", "high", "xhigh"],
+      capabilities: { reasoning: true },
+    })).toEqual([
+      { id: "", label: "Auto" },
+      { id: "low", label: "Low" },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+    ]);
+    expect(shouldShowThinkingEffort("cursor", "gpt-5.3-codex", {
+      variants: ["low", "high", "xhigh"],
+      capabilities: { reasoning: true },
+    })).toBe(true);
+    expect(thinkingEffortOptionsForRuntime("cursor", "auto")).toEqual([]);
+    expect(shouldShowThinkingEffort("cursor", "auto")).toBe(false);
   });
 
   it.each(["gemini_local", "openclaw_gateway", "process", "http"])(

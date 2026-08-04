@@ -40,6 +40,10 @@ export interface AgentKey {
 export interface AgentRuntimeModel {
   id: string;
   label: string;
+  variants?: string[];
+  capabilities?: {
+    reasoning?: boolean;
+  };
 }
 
 export interface ClaudeLoginResult {

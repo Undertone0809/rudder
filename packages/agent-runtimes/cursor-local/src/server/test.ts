@@ -13,7 +13,7 @@ import {
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
+import { applyCursorModelEffort, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 import { parseCursorJsonl } from "./parse.js";
 
@@ -132,7 +132,10 @@ export async function testEnvironment(
         hint: "Use the `cursor-agent` CLI command to run the automatic installation and auth probe.",
       });
     } else {
-      const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
+      const model = applyCursorModelEffort(
+        asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL),
+        asString(config.effort, ""),
+      );
       const helloProbeTimeoutSec = Math.max(1, Number(config.helloProbeTimeoutSec) || DEFAULT_CURSOR_HELLO_PROBE_TIMEOUT_SEC);
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);

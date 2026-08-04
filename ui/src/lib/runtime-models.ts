@@ -47,7 +47,7 @@ export function runtimeModelEmptyMessage(agentRuntimeType: string, loading = fal
     return "No models discovered. Run `pi --list-models`, authenticate the provider, or enter provider/model such as deepseek/deepseek-chat and run Test now.";
   }
   if (agentRuntimeType === "opencode_local") {
-    return "No models discovered. Run `opencode models`, authenticate the provider, or enter provider/model and run Test now.";
+    return "No models discovered. Run `opencode models --verbose`, authenticate the provider, or enter provider/model and run Test now.";
   }
   return "No models found.";
 }
@@ -175,10 +175,6 @@ export function resolveRuntimeModels(
   agentRuntimeType: string,
   ...modelLists: Array<readonly AgentRuntimeModel[] | null | undefined>
 ): AgentRuntimeModel[] {
-  if (agentRuntimeType === "codex_local") {
-    return [...codexLocalModels];
-  }
-
   const candidates = [
     ...modelLists.flatMap((models) => models ?? []),
     ...(FALLBACK_MODELS_BY_RUNTIME[agentRuntimeType] ?? []),
@@ -190,9 +186,15 @@ export function resolveRuntimeModels(
     const id = candidate.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    const variants = Array.isArray(candidate.variants)
+      ? [...new Set(candidate.variants.filter((variant) => typeof variant === "string" && variant.trim().length > 0))]
+      : undefined;
+    const reasoning = candidate.capabilities?.reasoning;
     resolved.push({
       id,
       label: candidate.label?.trim() || id,
+      ...(variants ? { variants } : {}),
+      ...(typeof reasoning === "boolean" ? { capabilities: { reasoning } } : {}),
     });
   }
 

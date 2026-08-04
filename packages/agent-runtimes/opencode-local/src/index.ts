@@ -22,7 +22,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
 - model (string, required): OpenCode model id in provider/model format (for example opencode/deepseek-v4-flash-free)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- variant (string, optional): provider-specific model variant (for example minimal|low|medium|high|max)
+- variant (string, optional): provider-specific model variant discovered from OpenCode's official \`opencode models --verbose\` metadata. The available values are model-specific; do not assume another model supports the same variants.
 - dangerouslySkipPermissions (boolean, optional): pass --dangerously-skip-permissions to opencode
 - promptTemplate (string, optional): run prompt template
 - command (string, optional): defaults to "opencode"
@@ -35,7 +35,7 @@ Operational fields:
 
 Notes:
 - OpenCode supports multiple providers and models. Use \
-  \`opencode models\` to list available options in provider/model format.
+  \`opencode models --verbose\` to list available options and model-specific variants in provider/model format.
 - Rudder requires an explicit \`model\` value for \`opencode_local\` agents.
 - OpenCode runs keep HOME/USERPROFILE on the operator home for normal local CLI auth and host tooling state; RUDDER_OPERATOR_HOME records the same boundary.
 - OpenCode CLI currently exposes plugin loading but no verified skills-directory allowlist. Rudder points OPENCODE_CONFIG and OpenCode XDG state at sanitized adapter-managed runtime state, links selected skills into a Rudder-managed OpenCode sidecar, then injects only those selected SKILL.md files into the prompt.

@@ -40,7 +40,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
 }
 
 describe("chat conversation model options", () => {
-  it("keeps the runtime-owned Codex ordering instead of discovery ordering", () => {
+  it("uses official Codex discovery ordering before static fallback additions", () => {
     const options = chatConversationModelOptions(
       makeAgent(),
       [{ id: "gpt-5.4", label: "GPT-5.4" }, { id: "gpt-5.6-sol", label: "GPT-5.6-sol" }],
@@ -48,10 +48,10 @@ describe("chat conversation model options", () => {
     );
 
     expect(options.slice(0, 4).map((model) => model.id)).toEqual([
+      "gpt-5.4",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.5",
     ]);
   });
 
@@ -138,6 +138,20 @@ describe("chat conversation model options", () => {
 
     expect(next).toEqual({
       modelOverride: "gpt-5.5",
+      effortOverride: null,
+    });
+  });
+
+  it("clears a model-specific effort when switching to a model that does not expose it", () => {
+    const next = normalizedChatRuntimeOverridesForModel(
+      makeAgent({ agentRuntimeType: "opencode_local" }),
+      { modelOverride: "opencode/model-a", effortOverride: "max" },
+      "opencode/model-b",
+      { id: "opencode/model-b", label: "Model B", variants: ["low", "medium", "high"] },
+    );
+
+    expect(next).toEqual({
+      modelOverride: "opencode/model-b",
       effortOverride: null,
     });
   });

@@ -30,7 +30,16 @@ function dedupeModels(models: AgentRuntimeModel[]): AgentRuntimeModel[] {
     const id = model.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    deduped.push({ id, label: model.label.trim() || id });
+    const variants = Array.isArray(model.variants)
+      ? [...new Set(model.variants.filter((variant): variant is string => typeof variant === "string" && variant.trim().length > 0))]
+      : undefined;
+    const reasoning = model.capabilities?.reasoning;
+    deduped.push({
+      id,
+      label: model.label.trim() || id,
+      ...(variants ? { variants } : {}),
+      ...(typeof reasoning === "boolean" ? { capabilities: { reasoning } } : {}),
+    });
   }
   return deduped;
 }
@@ -50,9 +59,57 @@ function firstNonEmptyLine(text: string): string {
   );
 }
 
+function parseJsonObjectAfterModelLine(lines: string[], modelLineIndex: number): Record<string, unknown> | null {
+  let started = false;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const jsonLines: string[] = [];
+
+  for (let index = modelLineIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const start = !started ? line.indexOf("{") : 0;
+    if (!started && start < 0) continue;
+    started = true;
+    const chunk = !jsonLines.length && start > 0 ? line.slice(start) : line;
+    jsonLines.push(chunk);
+
+    for (const character of chunk) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\" && inString) {
+        escaped = true;
+        continue;
+      }
+      if (character === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (character === "{") depth += 1;
+      if (character === "}") depth -= 1;
+    }
+
+    if (depth !== 0) continue;
+    try {
+      const parsed = JSON.parse(jsonLines.join("\n")) as unknown;
+      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function parseModelsOutput(stdout: string): AgentRuntimeModel[] {
   const parsed: AgentRuntimeModel[] = [];
-  for (const raw of stdout.split(/\r?\n/)) {
+  const lines = stdout.split(/\r?\n/);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const raw = lines[lineIndex] ?? "";
     const line = raw.trim();
     if (!line) continue;
     const firstToken = line.split(/\s+/)[0]?.trim() ?? "";
@@ -60,7 +117,30 @@ function parseModelsOutput(stdout: string): AgentRuntimeModel[] {
     const provider = firstToken.slice(0, firstToken.indexOf("/")).trim();
     const model = firstToken.slice(firstToken.indexOf("/") + 1).trim();
     if (!provider || !model) continue;
-    parsed.push({ id: `${provider}/${model}`, label: `${provider}/${model}` });
+    const id = `${provider}/${model}`;
+    const metadata = parseJsonObjectAfterModelLine(lines, lineIndex);
+    const variantsValue = metadata?.variants;
+    const variants = typeof variantsValue === "object"
+      && variantsValue !== null
+      && !Array.isArray(variantsValue)
+      ? Object.keys(variantsValue)
+      : undefined;
+    const capabilitiesValue = metadata?.capabilities;
+    const reasoning = typeof capabilitiesValue === "object"
+      && capabilitiesValue !== null
+      && !Array.isArray(capabilitiesValue)
+      && typeof (capabilitiesValue as Record<string, unknown>).reasoning === "boolean"
+      ? (capabilitiesValue as Record<string, unknown>).reasoning as boolean
+      : undefined;
+    const label = typeof metadata?.name === "string" && metadata.name.trim()
+      ? metadata.name.trim()
+      : id;
+    parsed.push({
+      id,
+      label,
+      ...(variants ? { variants } : {}),
+      ...(typeof reasoning === "boolean" ? { capabilities: { reasoning } } : {}),
+    });
   }
   return dedupeModels(parsed);
 }
@@ -125,7 +205,7 @@ export async function discoverOpenCodeModels(input: {
   const result = await runChildProcess(
     `opencode-models-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     command,
-    ["models"],
+    ["models", "--verbose"],
     {
       cwd,
       env: runtimeEnv,

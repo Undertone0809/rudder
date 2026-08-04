@@ -145,11 +145,10 @@ test.describe("Agent configuration advanced options", () => {
     await expect(primaryThinkingEffortButton).toBeVisible();
     await primaryThinkingEffortButton.click();
     const thinkingEffortPopover = page.locator('[data-radix-popper-content-wrapper]').last();
-    await expect(thinkingEffortPopover.getByText("Light", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Extra High", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Max", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
-    await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toHaveCount(0);
     await thinkingEffortPopover.getByText("Ultra", { exact: true }).click();
     await expect(page.getByRole("button", { name: "Ultra", exact: true }).first()).toBeVisible();
     const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });

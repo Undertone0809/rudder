@@ -31,7 +31,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
+import { applyCursorModelEffort, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
@@ -253,7 +253,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     context,
   );
   const command = asString(config.command, "cursor-agent");
-  const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
+  const model = applyCursorModelEffort(
+    asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL),
+    asString(config.effort, ""),
+  );
   const mode = normalizeMode(asString(config.mode, ""));
 
   const workspaceContext = parseObject(context.rudderWorkspace);

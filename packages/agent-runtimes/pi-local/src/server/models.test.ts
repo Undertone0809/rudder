@@ -12,6 +12,7 @@ import {
 describe("pi models", () => {
   afterEach(() => {
     delete process.env.RUDDER_PI_COMMAND;
+    delete process.env.PI_CODING_AGENT_DIR;
     resetPiModelsCacheForTests();
   });
 
@@ -63,10 +64,219 @@ describe("pi models", () => {
         env: {},
       });
 
-      expect(models.map((entry) => entry.id)).toEqual([
-        "anthropic/claude-3-5-haiku-20241022",
-        "opencode/deepseek-v4-flash-free",
+      expect(models).toEqual([
+        {
+          id: "anthropic/claude-3-5-haiku-20241022",
+          label: "anthropic/claude-3-5-haiku-20241022",
+          capabilities: { reasoning: false },
+        },
+        {
+          id: "opencode/deepseek-v4-flash-free",
+          label: "opencode/deepseek-v4-flash-free",
+          capabilities: { reasoning: false },
+        },
       ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses Pi's official thinkingLevelMap from models.json", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pi-models-"));
+    const command = path.join(tempDir, "pi-fixture.mjs");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write('provider   model             context  max-out  thinking  images\\n');",
+        "process.stdout.write('openai     gpt-5.6-luna     128K     16K      yes       no\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+    await writeFile(
+      path.join(tempDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          openai: {
+            models: [{
+              id: "gpt-5.6-luna",
+              reasoning: true,
+              thinkingLevelMap: {
+                off: "none",
+                minimal: "minimal",
+                low: "low",
+                medium: "medium",
+                high: "high",
+                xhigh: "max",
+              },
+            }],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      const models = await discoverPiModels({
+        command,
+        cwd: process.cwd(),
+        env: { PI_CODING_AGENT_DIR: tempDir },
+      });
+
+      expect(models).toEqual([{
+        id: "openai/gpt-5.6-luna",
+        label: "openai/gpt-5.6-luna",
+        variants: ["off", "minimal", "low", "medium", "high", "xhigh"],
+        capabilities: { reasoning: true },
+      }]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps omitted map entries on Pi's provider defaults and hides explicit null entries", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pi-models-"));
+    const command = path.join(tempDir, "pi-fixture.mjs");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write('provider   model             context  max-out  thinking  images\\n');",
+        "process.stdout.write('openai     custom-reasoner  128K     16K      yes       no\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+    await writeFile(
+      path.join(tempDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          openai: {
+            models: [{
+              id: "custom-reasoner",
+              reasoning: true,
+              thinkingLevelMap: { low: null },
+            }],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      await expect(discoverPiModels({
+        command,
+        cwd: process.cwd(),
+        env: { PI_CODING_AGENT_DIR: tempDir },
+      })).resolves.toEqual([{
+        id: "openai/custom-reasoner",
+        label: "openai/custom-reasoner",
+        variants: ["off", "minimal", "medium", "high"],
+        capabilities: { reasoning: true },
+      }]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses Pi's official defaults when thinkingLevelMap is omitted", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pi-models-"));
+    const command = path.join(tempDir, "pi-fixture.mjs");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write('provider   model             context  max-out  thinking  images\\n');",
+        "process.stdout.write('openai     default-reasoner  128K     16K      yes       no\\n');",
+        "process.stdout.write('openai     no-reasoner       128K     16K      no        no\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+    await writeFile(
+      path.join(tempDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          openai: {
+            models: [
+              { id: "default-reasoner", reasoning: true },
+              { id: "no-reasoner", reasoning: false },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      await expect(discoverPiModels({
+        command,
+        cwd: process.cwd(),
+        env: { PI_CODING_AGENT_DIR: tempDir },
+      })).resolves.toEqual([
+        {
+          id: "openai/default-reasoner",
+          label: "openai/default-reasoner",
+          variants: ["off", "minimal", "low", "medium", "high"],
+          capabilities: { reasoning: true },
+        },
+        {
+          id: "openai/no-reasoner",
+          label: "openai/no-reasoner",
+          variants: ["off"],
+          capabilities: { reasoning: false },
+        },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps custom Pi models ahead of same-id modelOverrides", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pi-models-"));
+    const command = path.join(tempDir, "pi-fixture.mjs");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write('provider   model             context  max-out  thinking  images\\n');",
+        "process.stdout.write('openai     custom-model     128K     16K      yes       no\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+    await writeFile(
+      path.join(tempDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          openai: {
+            modelOverrides: {
+              "custom-model": { name: "Override", reasoning: false },
+            },
+            models: [{
+              id: "custom-model",
+              name: "Custom",
+              reasoning: true,
+              thinkingLevelMap: { xhigh: "max" },
+            }],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      await expect(discoverPiModels({
+        command,
+        cwd: process.cwd(),
+        env: { PI_CODING_AGENT_DIR: tempDir },
+      })).resolves.toEqual([{
+        id: "openai/custom-model",
+        label: "Custom",
+        variants: ["off", "minimal", "low", "medium", "high", "xhigh"],
+        capabilities: { reasoning: true },
+      }]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -95,7 +305,11 @@ describe("pi models", () => {
           env: {},
         }),
       ).resolves.toEqual([
-        { id: "kimi-coding/kimi-for-coding", label: "kimi-coding/kimi-for-coding" },
+        {
+          id: "kimi-coding/kimi-for-coding",
+          label: "kimi-coding/kimi-for-coding",
+          capabilities: { reasoning: false },
+        },
       ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

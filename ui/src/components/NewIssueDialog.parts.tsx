@@ -1,5 +1,4 @@
 import { priorityOptions } from "../lib/priorities";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
 
 export const DEBOUNCE_MS = 800;
@@ -12,7 +11,7 @@ export type StagedIssueFile = {
   title?: string | null;
 };
 
-export const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
+export const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 export const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 export const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
 
@@ -38,24 +37,6 @@ export function buildIssueDetailSourceHref(openContextLocation: { pathname: stri
   return `${openContextLocation.pathname}${openContextLocation.search}`;
 }
 
-export const ISSUE_THINKING_EFFORT_OPTIONS = {
-  claude_local: [
-    { value: "", label: "Default" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
-  codex_local: withDefaultThinkingEffortOption("Default", CODEX_LOCAL_REASONING_EFFORT_OPTIONS),
-  opencode_local: [
-    { value: "", label: "Default" },
-    { value: "minimal", label: "Minimal" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-  ],
-} as const;
-
 export function buildAssigneeAdapterOverrides(input: {
   agentRuntimeType: string | null | undefined;
   modelOverride: string;
@@ -76,8 +57,10 @@ export function buildAssigneeAdapterOverrides(input: {
       agentRuntimeConfig.variant = input.thinkingEffortOverride;
     } else if (agentRuntimeType === "claude_local") {
       agentRuntimeConfig.effort = input.thinkingEffortOverride;
-    } else if (agentRuntimeType === "opencode_local") {
-      agentRuntimeConfig.variant = input.thinkingEffortOverride;
+    } else if (agentRuntimeType === "pi_local") {
+      agentRuntimeConfig.thinking = input.thinkingEffortOverride;
+    } else if (agentRuntimeType === "cursor") {
+      agentRuntimeConfig.effort = input.thinkingEffortOverride;
     }
   }
   if (agentRuntimeType === "claude_local" && input.chrome) {

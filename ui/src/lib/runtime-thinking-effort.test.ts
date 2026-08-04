@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "./runtime-thinking-effort";
+import {
+  CODEX_LOCAL_REASONING_EFFORT_OPTIONS,
+  piLocalThinkingEffortOptionsForModel,
+  withDefaultThinkingEffortOption,
+} from "./runtime-thinking-effort";
 
 describe("runtime thinking effort options", () => {
   it("uses Codex reasoning effort levels supported by Codex", () => {
@@ -19,5 +23,15 @@ describe("runtime thinking effort options", () => {
     expect(withAuto[0]).toEqual({ value: "", label: "Auto" });
     expect(withDefault.slice(1)).toEqual(CODEX_LOCAL_REASONING_EFFORT_OPTIONS);
     expect(withAuto.slice(1)).toEqual(CODEX_LOCAL_REASONING_EFFORT_OPTIONS);
+  });
+
+  it("uses Pi's default model map and hides thinking for non-reasoning models", () => {
+    expect(piLocalThinkingEffortOptionsForModel("openai/model", {
+      capabilities: { reasoning: true },
+    }).map((option) => option.value)).toEqual(["", "off", "minimal", "low", "medium", "high"]);
+    expect(piLocalThinkingEffortOptionsForModel("openai/model", {
+      variants: ["off"],
+      capabilities: { reasoning: false },
+    })).toEqual([]);
   });
 });
