@@ -981,6 +981,27 @@
       "when": 1785777720676,
       "tag": "0139_certain_selene",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1785781260070,
+      "tag": "0140_faulty_kitty_pryde",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1785781261070,
+      "tag": "0141_product_analytics_revision_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1785781262070,
+      "tag": "0142_product_analytics_quality_counters",
+      "breakpoints": true
     }
   ]
 }

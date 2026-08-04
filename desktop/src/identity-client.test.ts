@@ -59,6 +59,52 @@ describe("Desktop Identity client", () => {
     );
   });
 
+  it("binds account-linked telemetry assertions to the consented local user", async () => {
+    const stored = {
+      version: 1 as const,
+      issuer: "https://accounts.rudderhq.dev",
+      accountId: "account-1",
+      accountEmail: "river@rudderhq.dev",
+      accountName: "River Alvarez",
+      deviceId: "device-1",
+      refreshToken: "refresh-old",
+      refreshTokenExpiresAt: "2026-08-29T00:00:00.000Z",
+    };
+    const assertion = "a".repeat(32);
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: "access-new",
+        token_type: "Bearer",
+        expires_in: 900,
+        refresh_token: "refresh-new",
+        account: { id: "account-1", email: "river@rudderhq.dev", name: "River Alvarez", image: null },
+        device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ assertion }), { status: 200 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: stored.issuer,
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: () => stored, write: vi.fn(), clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+    });
+
+    await expect(client.issueProductAnalyticsAssertion({
+      mode: "account_linked",
+      consentVersion: "v1",
+      consentEpoch: 3,
+      pseudonymousInstallationId: "b".repeat(64),
+      consentedLocalUserId: "user-a",
+    })).resolves.toBe(`Bearer ${assertion}`);
+
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({
+      installation_id: "installation-1",
+      mode: "account_linked",
+      consented_local_user_id: "user-a",
+    });
+  });
+
   it("clears the credential vault on local sign-out", async () => {
     const clear = vi.fn();
     const client = createDesktopIdentityClient({

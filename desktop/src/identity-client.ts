@@ -65,6 +65,20 @@ export type IdentityDeviceSession = {
   current: boolean;
 };
 
+export type ProductAnalyticsAssertionRequest = {
+  mode: "anonymous" | "account_linked";
+  consentVersion: string;
+  consentEpoch: number;
+  pseudonymousInstallationId: string;
+  consentedLocalUserId?: string | null;
+};
+
+export type ProductAnalyticsConsentRequest = {
+  mode: "anonymous" | "account_linked";
+  decision: "granted" | "revoked";
+  consentVersion: string;
+};
+
 type DesktopNativeSignInInput =
   | { method: "email_otp"; email: string; token: string }
   | { method: "password"; email: string; password: string }
@@ -226,7 +240,9 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
     if (refreshInFlight) return refreshInFlight;
     const credential = options.vault.read();
     if (!credential || credential.issuer !== identityOrigin) {
-      throw new Error("Rudder Account is not signed in");
+      throw Object.assign(new Error("Rudder Account is not signed in"), {
+        code: "IDENTITY_NOT_SIGNED_IN",
+      });
     }
     const pending = (async () => {
       const material = offlineMaterial();
@@ -408,6 +424,58 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
         throw new Error("Rudder Identity returned an invalid server exchange");
       }
       return value.code;
+    },
+
+    async issueProductAnalyticsAssertion(input: ProductAnalyticsAssertionRequest): Promise<string> {
+      if (!/^[0-9a-f]{64}$/u.test(input.pseudonymousInstallationId)) {
+        throw new Error("Product analytics installation pseudonym is invalid");
+      }
+      const response = await authenticatedRequest("/api/desktop/telemetry/assertion", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          installation_id: options.installationId,
+          mode: input.mode,
+          consent_version: input.consentVersion,
+          pseudonymous_installation_id: input.pseudonymousInstallationId,
+          ...(input.mode === "account_linked" && input.consentedLocalUserId ? { consented_local_user_id: input.consentedLocalUserId } : {}),
+        }),
+      });
+      if (!response.ok) {
+        throw Object.assign(
+          new Error(`Unable to authorize product analytics upload (${response.status})`),
+          { code: response.status === 401 ? "IDENTITY_SESSION_REJECTED" : "IDENTITY_UNAVAILABLE" },
+        );
+      }
+      const value = await response.json() as { assertion?: unknown };
+      if (typeof value.assertion !== "string" || value.assertion.length < 32) {
+        throw new Error("Rudder Identity returned an invalid telemetry assertion");
+      }
+      return `Bearer ${value.assertion}`;
+    },
+
+    async recordProductAnalyticsConsent(input: ProductAnalyticsConsentRequest): Promise<{ consentEpoch: number }> {
+      const response = await authenticatedRequest("/api/desktop/telemetry/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          installation_id: options.installationId,
+          mode: input.mode,
+          decision: input.decision,
+          consent_version: input.consentVersion,
+        }),
+      });
+      if (!response.ok) {
+        throw Object.assign(
+          new Error(`Unable to record product analytics consent (${response.status})`),
+          { code: response.status === 401 ? "IDENTITY_SESSION_REJECTED" : "IDENTITY_UNAVAILABLE" },
+        );
+      }
+      const value = await response.json() as { consentEpoch?: unknown };
+      if (!Number.isSafeInteger(value.consentEpoch) || Number(value.consentEpoch) < 1) {
+        throw new Error("Rudder Identity returned an invalid telemetry consent");
+      }
+      return { consentEpoch: Number(value.consentEpoch) };
     },
 
     async signIn(hint?: DesktopSignInHint): Promise<{

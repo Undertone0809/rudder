@@ -1,11 +1,14 @@
 import {
+  deriveProductAnalyticsSubject,
   hashOpaqueSecret,
   issueOfflineGrant,
+  issueProductAnalyticsAssertion,
   normalizeVerifiedEmail,
   opaqueSecretMatches,
 } from "@rudderhq/identity-core";
 import {
   approveDeviceAuthorization,
+  assertIdentityProductAnalyticsConsent,
   beginCredentialRevocationIntent,
   beginSupabaseAuthMigration,
   bindSupabaseAuthUser,
@@ -22,6 +25,7 @@ import {
   listIdentityDevices,
   markCredentialProviderMutationComplete,
   markCredentialRevocationFailed,
+  recordIdentityProductAnalyticsConsent,
   recordSecurityEvent,
   recordSupabaseAuthUserCreated,
   recoverCredentialRevocationIntents,
@@ -59,10 +63,18 @@ import {
   type RootIdentityRequestContext,
 } from "./root-identity-adapter.js";
 import { getIdentityRuntime } from "./runtime.js";
+import { syncProductAnalyticsConsent } from "./telemetry-sync.js";
 
 const credentialRecoveryWorkerId = `identity-${randomUUID()}`;
 const MAX_ACCOUNT_PROFILE_BODY_BYTES = 512 * 1024;
 const MAX_ACCOUNT_AVATAR_DATA_URL_LENGTH = 480 * 1024;
+
+class TelemetryConsentSyncUnavailableError extends Error {
+  constructor() {
+    super("telemetry_consent_sync_unavailable");
+    this.name = "TelemetryConsentSyncUnavailableError";
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status;
@@ -2063,6 +2075,154 @@ export async function identityHandler(
       });
     } catch {
       sendJson(res, 400, { error: "invalid_grant" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/assertion") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    if (!runtime.telemetryAssertionSigning) {
+      sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const consentVersion = stringField(body, "consent_version");
+      const pseudonymousInstallationId = stringField(body, "pseudonymous_installation_id");
+      const consentedLocalUserId = body.consented_local_user_id;
+      if (
+        installationId !== access.installationId
+        || (mode !== "anonymous" && mode !== "account_linked")
+        || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+        || (consentedLocalUserId !== undefined && (typeof consentedLocalUserId !== "string" || consentedLocalUserId !== access.userId))
+      ) throw new Error("invalid_request");
+      const consent = await assertIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        consentVersion,
+      });
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning.subjectSecret, access.userId)
+        : null;
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      if (collectorConsentSync) {
+        try {
+          await syncProductAnalyticsConsent({
+            config: collectorConsentSync,
+            consent: {
+              installationId,
+              analyticsSubject,
+              consentVersion: consent.consentVersion,
+              consentEpoch: consent.consentEpoch,
+              revoked: false,
+            },
+          });
+        } catch {
+          sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+          return;
+        }
+      }
+      const nowMs = Date.now();
+      const assertion = issueProductAnalyticsAssertion({
+        signingPrivateKey: runtime.telemetryAssertionSigning.privateKey,
+        keyId: runtime.telemetryAssertionSigning.keyId,
+        issuer: runtime.config.baseUrl,
+        installationId,
+        pseudonymousInstallationId,
+        analyticsSubject,
+        consentVersion,
+        consentEpoch: consent.consentEpoch,
+        nowMs,
+        jti: randomUUID(),
+      });
+      sendJson(res, 200, {
+        assertion,
+        expires_at: new Date(nowMs + 15 * 60 * 1000).toISOString(),
+        audience: "telemetry-collector",
+        analytics_subject: analyticsSubject,
+      });
+    } catch {
+      sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/consent") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const decision = body.decision;
+      const consentVersion = stringField(body, "consent_version");
+      if (
+        installationId !== access.installationId
+        || (mode !== "anonymous" && mode !== "account_linked")
+        || (decision !== "granted" && decision !== "revoked")
+      ) throw new Error("invalid_request");
+      if (mode === "account_linked" && !runtime.telemetryAssertionSigning) {
+        sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+        return;
+      }
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning!.subjectSecret, access.userId)
+        : null;
+      const consent = await recordIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        decision,
+        consentVersion,
+        beforePersist: collectorConsentSync
+          ? async (next) => {
+              try {
+                await syncProductAnalyticsConsent({
+                  config: collectorConsentSync,
+                  consent: {
+                    installationId,
+                    analyticsSubject,
+                    consentVersion: next.consentVersion,
+                    consentEpoch: next.consentEpoch,
+                    revoked: next.revoked,
+                  },
+                });
+              } catch {
+                throw new TelemetryConsentSyncUnavailableError();
+              }
+            }
+          : undefined,
+      });
+      sendJson(res, 201, {
+        mode: consent.mode,
+        decision: consent.decision,
+        consentVersion: consent.consentVersion,
+        consentEpoch: consent.consentEpoch,
+        decidedAt: consent.decidedAt.toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof TelemetryConsentSyncUnavailableError) {
+        sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+        return;
+      }
+      sendJson(res, 422, { error: "invalid_request" });
     }
     return;
   }

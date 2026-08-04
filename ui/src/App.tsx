@@ -62,6 +62,7 @@ import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
+import { InstancePrivacyTelemetrySettings } from "./pages/InstancePrivacyTelemetrySettings";
 import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { InstanceShortcutsSettings } from "./pages/InstanceShortcutsSettings";
@@ -596,6 +597,7 @@ export function App() {
               }
             />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
+            <Route path="privacy" element={<InstancePrivacyTelemetrySettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="plugins" element={<PluginManager />} />
@@ -673,6 +675,7 @@ export function App() {
                 }
               />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
+              <Route path="privacy" element={<InstancePrivacyTelemetrySettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />
               <Route path="plugins" element={<PluginManager />} />

@@ -7,6 +7,7 @@ export * from "./desktop-authorization.js";
 export * from "./device-authorization.js";
 export * from "./email-rate-limit.js";
 export * from "./operation-rate-limit.js";
+export * from "./product-analytics-consent.js";
 export * from "./production-migration-safety.js";
 export * from "./schema.js";
 export * from "./security-events.js";

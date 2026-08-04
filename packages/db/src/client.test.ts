@@ -569,6 +569,9 @@ describe("applyPendingMigrations", () => {
           "0137_shallow_quasimodo.sql",
           "0138_wild_kinsey_walden.sql",
           "0139_certain_selene.sql",
+          "0140_faulty_kitty_pryde.sql",
+          "0141_product_analytics_revision_origin.sql",
+          "0142_product_analytics_quality_counters.sql",
         ],
         reason: "pending-migrations",
       });
@@ -729,6 +732,9 @@ describe("applyPendingMigrations", () => {
           "0137_shallow_quasimodo.sql",
           "0138_wild_kinsey_walden.sql",
           "0139_certain_selene.sql",
+          "0140_faulty_kitty_pryde.sql",
+          "0141_product_analytics_revision_origin.sql",
+          "0142_product_analytics_quality_counters.sql",
         ],
         reason: "pending-migrations",
       });

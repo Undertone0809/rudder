@@ -45,6 +45,15 @@ vi.mock("../services/native-path-picker.js", () => ({
   createNativePathPicker: () => mockPathPicker,
 }));
 
+const mockProductAnalytics = vi.hoisted(() => ({
+  getProductAnalyticsInstallationState: vi.fn(),
+  reconcileProductAnalyticsInstallationMode: vi.fn(),
+  recordProductAnalyticsConsent: vi.fn(),
+  registerProductAnalyticsInstallation: vi.fn(),
+}));
+
+vi.mock("../services/product-analytics.js", () => mockProductAnalytics);
+
 async function createApp(actor: any, deploymentMode: "local_trusted" | "authenticated" = "local_trusted") {
   const { errorHandler } = await import("../middleware/index.js");
   const { instanceSettingsRoutes } = await import("../routes/instance-settings.js");
@@ -117,6 +126,67 @@ describe("instance settings routes", () => {
     mockOperatorProfileService.updateShortcuts.mockImplementation(async (_userId, patch) => patch);
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["organization-1"]);
     mockPathPicker.pick.mockResolvedValue("/Users/test/project");
+    mockProductAnalytics.getProductAnalyticsInstallationState.mockResolvedValue(null);
+    mockProductAnalytics.registerProductAnalyticsInstallation.mockResolvedValue({ installation: null, installationSecret: null });
+    mockProductAnalytics.recordProductAnalyticsConsent.mockResolvedValue(null);
+    mockProductAnalytics.reconcileProductAnalyticsInstallationMode.mockResolvedValue(null);
+  });
+
+  it("does not expose account-linked payload previews through installation settings", async () => {
+    mockInstanceSettingsService.getGeneral.mockResolvedValue({
+      productAnalyticsMode: "account_linked",
+      productAnalyticsConsentEpoch: 4,
+    });
+    mockProductAnalytics.getProductAnalyticsInstallationState.mockResolvedValue({
+      pendingCount: 1,
+      installation: {
+        installationId: "installation-analytics",
+        state: {
+          lastPayloadMode: "account_linked",
+          lastPayloadAt: "2026-08-04T09:00:00.000Z",
+          lastPayload: [{ eventName: "work_loop_completed", pseudonymousOrgId: "org-hash-a" }],
+        },
+      },
+    });
+
+    const response = await request(await createApp({
+      type: "board",
+      userId: "user-b",
+      source: "session",
+      isInstanceAdmin: true,
+    })).get("/api/instance/settings/product-analytics");
+
+    expect(response.status).toBe(200);
+    expect(response.body.lastPayload).toBeNull();
+    expect(response.body.lastPayloadAt).toBeNull();
+  });
+
+  it("exposes only explicitly anonymous payload previews", async () => {
+    mockInstanceSettingsService.getGeneral.mockResolvedValue({
+      productAnalyticsMode: "anonymous",
+      productAnalyticsConsentEpoch: 2,
+    });
+    mockProductAnalytics.getProductAnalyticsInstallationState.mockResolvedValue({
+      pendingCount: 0,
+      installation: {
+        installationId: "installation-analytics",
+        state: {
+          lastPayloadMode: "anonymous",
+          lastPayloadAt: "2026-08-04T09:00:00.000Z",
+          lastPayload: [{ eventName: "work_loop_completed", pseudonymousOrgId: "org-hash" }],
+        },
+      },
+    });
+
+    const response = await request(await createApp({
+      type: "board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    })).get("/api/instance/settings/product-analytics");
+
+    expect(response.status).toBe(200);
+    expect(response.body.lastPayload).toEqual([{ eventName: "work_loop_completed", pseudonymousOrgId: "org-hash" }]);
+    expect(response.body.lastPayloadAt).toBe("2026-08-04T09:00:00.000Z");
   });
 
   it("allows local board users to read and update general settings", async () => {

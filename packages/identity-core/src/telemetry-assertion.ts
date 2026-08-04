@@ -1,7 +1,15 @@
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
+import { createHmac, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
 
 export const PRODUCT_ANALYTICS_ASSERTION_AUDIENCE = "telemetry-collector" as const;
 export const MAX_PRODUCT_ANALYTICS_ASSERTION_LIFETIME_MS = 15 * 60 * 1000;
+
+export function deriveProductAnalyticsSubject(secret: string, subject: string): string {
+  return createHmac("sha256", secret).update(`rudder-telemetry-subject:v1:${subject}`).digest("hex");
+}
+
+export function deriveProductAnalyticsInstallationId(secret: string, installationId: string): string {
+  return createHmac("sha256", secret).update(`rudder-telemetry-installation:v1:${installationId}`).digest("hex");
+}
 
 export type ProductAnalyticsAssertionClaims = {
   version: 1;
