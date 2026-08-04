@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import postgres from "postgres";
+
+const requireFromDbPackage = createRequire(new URL("../packages/db/package.json", import.meta.url));
 
 const migrationDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/db/src/migrations");
 const migrations = [
@@ -19,6 +21,7 @@ export function splitStatements(content) {
 
 export async function applyProductAnalyticsMigrations({ databaseUrl, sqlImpl } = {}) {
   if (!databaseUrl && !sqlImpl) throw new Error("DATABASE_URL is required");
+  const postgres = sqlImpl ? null : requireFromDbPackage("postgres");
   const sql = sqlImpl ?? postgres(databaseUrl, { max: 1, onnotice: () => {} });
   try {
     await sql.unsafe('CREATE SCHEMA IF NOT EXISTS "rudder_analytics"');
