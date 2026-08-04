@@ -9,6 +9,7 @@ import type {
   Organization,
   Project
 } from "@rudderhq/plugin-sdk";
+import { updateGoalSchema } from "@rudderhq/shared";
 import { and, desc, eq, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -868,17 +869,14 @@ export function buildHostServices(
         return (await goals.create(orgId, {
           title: params.title,
           description: params.description,
-          level: params.level as any,
-          status: params.status as any,
-          parentId: params.parentId,
-          ownerAgentId: params.ownerAgentId,
         })) as Goal;
       },
       async update(params) {
         const orgId = ensureCompanyId(params.orgId);
         await ensurePluginAvailableForOrganization(orgId);
         requireInOrganization("Goal", await goals.getById(params.goalId), orgId);
-        return (await goals.update(params.goalId, params.patch as any)) as Goal;
+        const patch = updateGoalSchema.parse(params.patch);
+        return (await goals.update(params.goalId, patch)) as Goal;
       },
     },
 

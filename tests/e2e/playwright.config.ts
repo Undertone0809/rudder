@@ -12,6 +12,7 @@ import {
   E2E_INSTANCE_ID,
   E2E_INSTANCE_ROOT,
   E2E_PORT,
+  E2E_SERVER_PID_PATH,
 } from "./support/e2e-env";
 
 const PORT = E2E_PORT;
@@ -207,7 +208,8 @@ cat > "${E2E_CONFIG}" <<'"'"'EOF'"'"'
 ${e2eConfigJson}
 EOF
 ${CLEAR_INHERITED_RUNTIME_ENV_COMMAND}
-${SERVER_ENV_PREFIX} pnpm --filter @rudderhq/server dev'`,
+echo "$$" > "${E2E_SERVER_PID_PATH}"
+exec env ${SERVER_ENV_PREFIX} pnpm --filter @rudderhq/server dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

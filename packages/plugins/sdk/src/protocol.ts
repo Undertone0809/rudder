@@ -661,17 +661,13 @@ export interface WorkerToHostMethods {
       orgId: string;
       title: string;
       description?: string;
-      level?: string;
-      status?: string;
-      parentId?: string;
-      ownerAgentId?: string;
     },
     result: Goal,
   ];
   "goals.update": [
     params: {
       goalId: string;
-      patch: Record<string, unknown>;
+      patch: { title?: string; description?: string | null };
       orgId: string;
     },
     result: Goal,

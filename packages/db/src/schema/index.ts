@@ -48,7 +48,7 @@ export { documentRevisions } from "./document_revisions.js";
 export { documents } from "./documents.js";
 export { executionWorkspaces } from "./execution_workspaces.js";
 export { financeEvents } from "./finance_events.js";
-export { goals } from "./goals.js";
+export { goalActivities, goalOwnerAssignments, goalPlans, goals } from "./goals.js";
 export { heartbeatRunEvents } from "./heartbeat_run_events.js";
 export { heartbeatRuns } from "./heartbeat_runs.js";
 export { instanceSettings } from "./instance_settings.js";

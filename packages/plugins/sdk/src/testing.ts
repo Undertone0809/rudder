@@ -550,10 +550,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           orgId: input.orgId,
           title: input.title,
           description: input.description ?? null,
-          level: input.level ?? "task",
-          status: input.status ?? "planned",
-          parentId: input.parentId ?? null,
-          ownerAgentId: input.ownerAgentId ?? null,
+          level: "task",
+          status: "planned",
+          parentId: null,
+          ownerAgentId: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -566,7 +566,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (!isInOrganization(record, orgId)) throw new Error(`Goal not found: ${goalId}`);
         const updated: Goal = {
           ...record,
-          ...patch,
+          title: patch.title ?? record.title,
+          description: patch.description === undefined ? record.description : patch.description,
           updatedAt: new Date(),
         };
         goals.set(goalId, updated);

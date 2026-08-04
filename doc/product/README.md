@@ -75,7 +75,7 @@ history or line-by-line code copies.
 - `domains/identity-and-access/`: Rudder Account authentication, identity
   linking, device/Local sessions, release isolation, and the Local data privacy
   boundary.
-- `domains/organizations-and-goals/`: organization mission, goal hierarchy,
+- `domains/organizations-and-goals/`: organization mission, Goal Contracts,
   project grouping, and project-to-work context.
 - `domains/library-and-context/`: Library files, resources, project context,
   workspace selection, and runtime context eligibility.

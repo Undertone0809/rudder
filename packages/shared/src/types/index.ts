@@ -88,7 +88,16 @@ export type {
 } from "./custom-integration.js";
 export type { DashboardSummary } from "./dashboard.js";
 export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } from "./finance.js";
-export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
+export type {
+  Goal,
+  GoalActivity,
+  GoalContinuation,
+  GoalCriterion,
+  GoalDependencies,
+  GoalDependencyPreview,
+  GoalOwnerAssignment,
+  GoalPlan
+} from "./goal.js";
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,

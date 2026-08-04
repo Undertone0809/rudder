@@ -1,23 +1,16 @@
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { Link, useNavigate, useParams } from "@/lib/router";
-import { GOAL_STATUSES, type ActivityEvent, type GoalStatus, type Issue, type Project } from "@rudderhq/shared";
+import { GOAL_CONTINUATION_KINDS, GOAL_EVALUATOR_KINDS, GOAL_OBJECTIVE_MODES, type GoalActivity, type GoalEvaluatorKind, type GoalObjectiveMode, type Issue, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { activityApi } from "../api/activity";
+import { Check, CircleDot, ClipboardCheck, Focus, Pencil, Play, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
-import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
-import { EntityRow } from "../components/EntityRow";
-import { GoalProperties } from "../components/GoalProperties";
-import { GoalTree } from "../components/GoalTree";
 import { InlineEditor } from "../components/InlineEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { ProjectIcon } from "../components/ProjectIdentity";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
@@ -26,465 +19,294 @@ import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
-import { cn, formatDate, issueUrl, projectUrl } from "../lib/utils";
+import { formatDate, issueUrl, projectUrl } from "../lib/utils";
 
-function SummaryMetric({
-  label,
-  value,
-  to,
-}: {
-  label: string;
-  value: string | number;
-  to?: string;
-}) {
-  const content = (
-    <div className="rounded-md border border-border bg-card px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-medium">{value}</div>
-    </div>
-  );
-  return to ? <Link to={to}>{content}</Link> : content;
-}
+const fieldClassName = "mt-1 w-full rounded border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-ring";
 
-function WorkSection({
-  linkedProjects,
-  linkedIssues,
-}: {
-  linkedProjects: Project[];
-  linkedIssues: Issue[];
-}) {
-  if (linkedProjects.length === 0 && linkedIssues.length === 0) {
-    return (
-      <div className="rounded-md border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
-        No linked work yet. Link projects or issues to make this goal operational.
-      </div>
-    );
-  }
-
+function Section({ title, icon: Icon, children }: { title: string; icon: typeof CircleDot; children: ReactNode }) {
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <div className="text-sm font-medium">Projects ({linkedProjects.length})</div>
-        {linkedProjects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No linked projects.</p>
-        ) : (
-          <div className="border border-border">
-            {linkedProjects.map((project) => (
-              <EntityRow
-                key={project.id}
-                title={project.name}
-                subtitle={project.description ?? undefined}
-                to={projectUrl(project)}
-                leading={<ProjectIcon color={project.color} icon={project.icon} size="md" />}
-                trailing={<StatusBadge status={project.status} />}
-              />
-            ))}
-          </div>
-        )}
+    <section className="space-y-3 border-t border-border pt-5">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        {title}
       </div>
-
-      <div className="space-y-2">
-        <div className="text-sm font-medium">Issues ({linkedIssues.length})</div>
-        {linkedIssues.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No linked issues.</p>
-        ) : (
-          <div className="border border-border">
-            {linkedIssues.map((issue) => (
-              <EntityRow
-                key={issue.id}
-                title={issue.title}
-                subtitle={issue.identifier ?? undefined}
-                to={issueUrl(issue)}
-                trailing={<StatusBadge status={issue.status} />}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+      {children}
+    </section>
   );
 }
 
-function ActivityList({ events }: { events: ActivityEvent[] }) {
-  if (events.length === 0) {
-    return <p className="text-sm text-muted-foreground">No activity yet.</p>;
-  }
+function ActivityFeed({ activities }: { activities: GoalActivity[] }) {
+  if (activities.length === 0) return <p className="text-sm text-muted-foreground">No Goal activity yet.</p>;
   return (
-    <div className="border border-border divide-y divide-border">
-      {events.map((event) => (
-        <div key={event.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-          <span>{event.action.replace(/^goal\./, "").replace(/_/g, " ")}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.createdAt)}</span>
+    <div className="divide-y divide-border border border-border">
+      {activities.map((activity) => (
+        <div key={activity.id} className="space-y-1 px-3 py-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-sm">{activity.summary}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{formatDate(activity.occurredAt)}</span>
+          </div>
+          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+            <span>{activity.activityKind ?? "progress"}</span>
+            {activity.runRef && <span>Run {activity.runRef.slice(0, 8)}</span>}
+            {activity.evidenceRefs.length > 0 && <span>{activity.evidenceRefs.length} evidence reference(s)</span>}
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-function formatGoalStatusLabel(status: string) {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function GoalStatusControl({
-  status,
-  disabled,
-  onChange,
-}: {
-  status: GoalStatus;
-  disabled?: boolean;
-  onChange: (status: GoalStatus) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
+function WorkLinks({ projects, issues }: { projects: Project[]; issues: Issue[] }) {
+  if (projects.length === 0 && issues.length === 0) return <p className="text-sm text-muted-foreground">No linked work.</p>;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-auto gap-1 px-0 py-0 hover:bg-transparent"
-          disabled={disabled}
-          aria-label={`Change goal status: ${formatGoalStatusLabel(status)}`}
-        >
-          <StatusBadge status={status} />
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-44 p-1">
-        {GOAL_STATUSES.map((candidate) => (
-          <Button
-            key={candidate}
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={cn("w-full justify-start gap-2 text-xs", candidate === status && "bg-accent")}
-            disabled={candidate === status || disabled}
-            onClick={() => {
-              onChange(candidate);
-              setOpen(false);
-            }}
-          >
-            <Check className={cn("h-3.5 w-3.5", candidate === status ? "opacity-100" : "opacity-0")} />
-            {formatGoalStatusLabel(candidate)}
-          </Button>
-        ))}
-      </PopoverContent>
-    </Popover>
+    <div className="divide-y divide-border border border-border">
+      {projects.map((project) => <Link key={`project-${project.id}`} to={projectUrl(project)} className="flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/40"><span>{project.name}</span><span className="text-xs text-muted-foreground">Project</span></Link>)}
+      {issues.map((issue) => <Link key={`issue-${issue.id}`} to={issueUrl(issue)} className="flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/40"><span>{issue.identifier ?? issue.title}</span><span className="truncate pl-3 text-xs text-muted-foreground">{issue.title}</span></Link>)}
+    </div>
   );
 }
 
 export function GoalDetail() {
   const { goalId } = useParams<{ goalId: string }>();
   const { selectedOrganizationId, setSelectedOrganizationId } = useOrganization();
-  const { openNewGoal, confirm, promptText } = useDialog();
-  const { openPanel, closePanel } = usePanel();
+  const { confirm, promptText } = useDialog();
+  const { closePanel } = usePanel();
   const { pushToast } = useToast();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [objectiveMode, setObjectiveMode] = useState<GoalObjectiveMode>("target");
+  const [outcomeStatement, setOutcomeStatement] = useState("");
+  const [criterionLabel, setCriterionLabel] = useState("The desired external outcome is true");
+  const [criterionEvaluator, setCriterionEvaluator] = useState<GoalEvaluatorKind>("artifact");
+  const [ownerAgentId, setOwnerAgentId] = useState("");
+  const [continuationKind, setContinuationKind] = useState<(typeof GOAL_CONTINUATION_KINDS)[number]>("commitment");
+  const [continuationSummary, setContinuationSummary] = useState("Start the first bounded commitment");
+  const [planSummary, setPlanSummary] = useState("Test the first strategy and report what changed");
+  const [activitySummary, setActivitySummary] = useState("");
+  const [evidence, setEvidence] = useState("");
+  const [criterionStatuses, setCriterionStatuses] = useState<Record<string, "met" | "unmet" | "breached" | "unknown">>({});
+  const [resultValue, setResultValue] = useState("");
+  const [decision, setDecision] = useState("");
 
-  const {
-    data: goal,
-    isLoading,
-    error
-  } = useQuery({
+  const { data: goal, isLoading, error } = useQuery({
     queryKey: queryKeys.goals.detail(goalId!),
     queryFn: () => goalsApi.get(goalId!),
-    enabled: !!goalId
+    enabled: !!goalId,
   });
-  const resolvedCompanyId = goal?.orgId ?? selectedOrganizationId;
-
-  const { data: allGoals } = useQuery({
-    queryKey: queryKeys.goals.list(resolvedCompanyId!),
-    queryFn: () => goalsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
-  });
-
-  const { data: allProjects } = useQuery({
-    queryKey: queryKeys.projects.list(resolvedCompanyId!),
-    queryFn: () => projectsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
-  });
-
-  const { data: allIssues } = useQuery({
-    queryKey: queryKeys.issues.list(resolvedCompanyId!),
-    queryFn: () => issuesApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
-  });
-
+  const orgId = goal?.orgId ?? selectedOrganizationId;
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(resolvedCompanyId!),
-    queryFn: () => agentsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
+    queryKey: queryKeys.agents.list(orgId!),
+    queryFn: () => agentsApi.list(orgId!),
+    enabled: !!orgId,
   });
-
-  const {
-    data: dependencies,
-    isLoading: dependenciesLoading,
-  } = useQuery({
+  const { data: allProjects } = useQuery({
+    queryKey: queryKeys.projects.list(orgId!),
+    queryFn: () => projectsApi.list(orgId!),
+    enabled: !!orgId,
+  });
+  const { data: allIssues } = useQuery({
+    queryKey: queryKeys.issues.list(orgId!),
+    queryFn: () => issuesApi.list(orgId!),
+    enabled: !!orgId,
+  });
+  const { data: dependencies } = useQuery({
     queryKey: queryKeys.goals.dependencies(goalId!),
     queryFn: () => goalsApi.dependencies(goalId!),
     enabled: !!goalId && !!goal,
   });
 
-  const { data: activity } = useQuery({
-    queryKey: ["goals", "detail", goalId, "activity"],
-    queryFn: () =>
-      activityApi.list(resolvedCompanyId!, {
-        entityType: "goal",
-        entityId: goalId!,
-      }),
-    enabled: !!resolvedCompanyId && !!goalId,
-  });
-
+  useEffect(() => closePanel(), [closePanel]);
   useEffect(() => {
-    if (!goal?.orgId || goal.orgId === selectedOrganizationId) return;
-    setSelectedOrganizationId(goal.orgId, { source: "route_sync" });
+    if (goal?.orgId && goal.orgId !== selectedOrganizationId) setSelectedOrganizationId(goal.orgId, { source: "route_sync" });
   }, [goal?.orgId, selectedOrganizationId, setSelectedOrganizationId]);
+  useEffect(() => {
+    setBreadcrumbs([{ label: "Goals", href: "/goals" }, { label: goal?.title ?? goalId ?? "Goal" }]);
+  }, [goal?.title, goalId, setBreadcrumbs]);
+  useEffect(() => {
+    if (!goal) return;
+    setObjectiveMode(goal.objectiveMode ?? "target");
+    setOutcomeStatement(goal.outcomeStatement ?? "");
+    setOwnerAgentId(goal.ownerAgentId ?? "");
+    setPlanSummary(goal.plan?.summary ?? "Test the first strategy and report what changed");
+  }, [goal?.id, goal?.objectiveMode, goal?.outcomeStatement, goal?.ownerAgentId, goal?.plan?.summary]);
+  useEffect(() => {
+    if (!goal) return;
+    setContinuationKind("commitment");
+    setContinuationSummary("Start the first bounded commitment");
+    setActivitySummary("");
+    setEvidence("");
+    setCriterionLabel("The desired external outcome is true");
+    setCriterionEvaluator("artifact");
+    setCriterionStatuses(Object.fromEntries((goal.criteria ?? []).map((criterion) => [criterion.id, "unknown" as const])));
+    setResultValue("");
+    setDecision("");
+  }, [goal?.id, goal?.criteria]);
 
-  const updateGoal = useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
-      goalsApi.update(goalId!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.goals.detail(goalId!)
-      });
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.goals.list(resolvedCompanyId)
-        });
-      }
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.goals.dependencies(goalId!)
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to update goal",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.goals.detail(goalId!) });
+    if (orgId) queryClient.invalidateQueries({ queryKey: queryKeys.goals.list(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.goals.dependencies(goalId!) });
+  };
+  const mutationOptions = (title: string) => ({
+    onSuccess: () => { invalidate(); pushToast({ id: "goal-detail-operation", title, tone: "success" }); },
+    onError: (mutationError: Error) => pushToast({ title: mutationError.message, tone: "error" }),
   });
-
+  const updateGoal = useMutation({ mutationFn: (data: Record<string, unknown>) => goalsApi.update(goalId!, data), ...mutationOptions("Goal updated") });
+  const activateGoal = useMutation({
+    mutationFn: () => goalsApi.activate(goalId!, {
+      confirmed: true,
+      ownerAgentId,
+      outcomeStatement: outcomeStatement.trim(),
+      objectiveMode,
+      criteria: [{ id: "outcome", label: criterionLabel.trim(), evaluator: criterionEvaluator.trim() }],
+      autonomyEnvelope: {},
+      humanAuthorities: {},
+      evaluationPolicy: {},
+      initialContinuation: { kind: continuationKind, summary: continuationSummary.trim() },
+      initialPlan: { summary: planSummary.trim() },
+    }),
+    ...mutationOptions("Goal activated"),
+  });
+  const updatePlan = useMutation({ mutationFn: () => goalsApi.updatePlan(goalId!, { summary: planSummary.trim() }), ...mutationOptions("Plan revision recorded") });
+  const addActivity = useMutation({ mutationFn: () => goalsApi.createActivity(goalId!, { summary: activitySummary.trim(), activityKind: "progress", idempotencyKey: `ui-${Date.now()}` }), ...mutationOptions("Activity recorded"), onSuccess: () => { setActivitySummary(""); invalidate(); pushToast({ id: "goal-detail-operation", title: "Activity recorded", tone: "success" }); } });
+  const assignOwner = useMutation({ mutationFn: () => goalsApi.assignOwner(goalId!, { agentId: ownerAgentId, authorityRef: "operator" }), ...mutationOptions("Owner reassigned") });
+  const setFocus = useMutation({ mutationFn: (focus: boolean) => goalsApi.setFocus(goalId!, focus), ...mutationOptions("Focus updated") });
+  const evaluate = useMutation({
+    mutationFn: () => goalsApi.evaluate(goalId!, {
+      evidenceRefs: [evidence.trim()],
+      criteria: (goal?.criteria ?? []).map((criterion) => ({ id: criterion.id, status: criterionStatuses[criterion.id] ?? "unknown" })),
+      ...((goal?.criteria ?? []).some((criterion) => criterion.evaluator === "metric") && resultValue.trim() ? { resultValue: resultValue.trim() } : {}),
+      ...((goal?.criteria ?? []).some((criterion) => criterion.evaluator === "human") && decision.trim() ? { decision: decision.trim() } : {}),
+      resultPayload: {},
+    }),
+    ...mutationOptions("Goal evaluated"),
+  });
   const deleteGoal = useMutation({
     mutationFn: () => goalsApi.remove(goalId!),
-    onSuccess: () => {
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.goals.list(resolvedCompanyId)
-        });
-      }
-      pushToast({ title: "Goal deleted", tone: "success" });
-      navigate("/goals");
-    },
-    onError: (error) => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.goals.dependencies(goalId!)
-      });
-      pushToast({
-        title: "Failed to delete goal",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
+    onSuccess: () => { if (orgId) queryClient.invalidateQueries({ queryKey: queryKeys.goals.list(orgId) }); navigate("/goals"); },
+    onError: (mutationError: Error) => pushToast({ title: mutationError.message, tone: "error" }),
   });
 
-  const uploadImage = useMutation({
-    mutationFn: async (file: File) => {
-      if (!resolvedCompanyId) throw new Error("No organization selected");
-      return assetsApi.uploadImage(
-        resolvedCompanyId,
-        file,
-        `goals/${goalId ?? "draft"}`
-      );
-    }
-  });
-
-  const childGoals = (allGoals ?? []).filter((g) => g.parentId === goalId);
-  const linkedProjects = (allProjects ?? []).filter((p) => {
-    if (!goalId) return false;
-    if (p.goalIds.includes(goalId)) return true;
-    if (p.goals.some((goalRef) => goalRef.id === goalId)) return true;
-    return p.goalId === goalId;
-  });
-  const linkedIssues = (allIssues ?? []).filter((issue) => issue.goalId === goalId);
-  const ownerAgent = goal?.ownerAgentId
-    ? agents?.find((agent) => agent.id === goal.ownerAgentId) ?? null
-    : null;
-  const parentGoal = goal?.parentId
-    ? allGoals?.find((candidate) => candidate.id === goal.parentId) ?? null
-    : null;
-
-  useEffect(() => {
-    setBreadcrumbs([
-      { label: "Goals", href: "/goals" },
-      { label: goal?.title ?? goalId ?? "Goal" }
-    ]);
-  }, [setBreadcrumbs, goal, goalId]);
-
-  useEffect(() => {
-    if (goal) {
-      openPanel(
-        <GoalProperties
-          goal={goal}
-          onUpdate={(data) => updateGoal.mutate(data)}
-          dependencies={dependencies}
-          dependenciesLoading={dependenciesLoading}
-          onDelete={() => deleteGoal.mutate()}
-          deletePending={deleteGoal.isPending}
-          deleteError={deleteGoal.error instanceof Error ? deleteGoal.error : null}
-        />
-      );
-    }
-    return () => closePanel();
-  }, [goal, dependencies, dependenciesLoading, deleteGoal.isPending, deleteGoal.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  const linkedProjects = useMemo(() => (allProjects ?? []).filter((project) => project.goalIds.includes(goalId!) || project.goalId === goalId), [allProjects, goalId]);
+  const linkedIssues = useMemo(() => (allIssues ?? []).filter((issue) => issue.goalId === goalId), [allIssues, goalId]);
+  const lifecycle = goal?.lifecycle ?? "draft";
+  const isDraft = lifecycle === "draft";
+  const isActive = lifecycle === "active";
+  const isClosed = lifecycle === "closed";
 
   if (isLoading) return <PageSkeleton variant="detail" />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!goal) return null;
 
-  const handleRenameGoal = async () => {
-    const title = await promptText({
-      title: "Edit goal",
-      label: "Title",
-      defaultValue: goal.title,
-      confirmLabel: "Save",
-    });
-    if (!title || title === goal.title) return;
-    updateGoal.mutate({ title });
+  const rename = async () => {
+    const title = await promptText({ title: "Rename Goal", label: "Title", defaultValue: goal.title, confirmLabel: "Save" });
+    if (title?.trim() && title.trim() !== goal.title) updateGoal.mutate({ title: title.trim() });
   };
-
-  const handleDeleteGoal = async () => {
+  const remove = async () => {
     if (dependencies && !dependencies.canDelete) {
-      pushToast({
-        title: "Goal cannot be deleted yet",
-        body: `Blocked by ${dependencies.blockers.map((blocker) => blocker.replace(/_/g, " ")).join(", ")}.`,
-        tone: "warn",
-      });
+      pushToast({ title: "Goal cannot be deleted", body: dependencies.blockers.join(", "), tone: "warn" });
       return;
     }
-
-    const confirmed = await confirm({
-      title: "Delete goal?",
-      description: "This permanently deletes the goal. Goals with linked work should be cancelled instead.",
-      confirmLabel: "Delete",
-      tone: "destructive",
-    });
-    if (!confirmed) return;
-    deleteGoal.mutate();
+    if (await confirm({ title: "Delete draft Goal?", description: "This removes the unlinked draft record.", confirmLabel: "Delete", tone: "destructive" })) deleteGoal.mutate();
   };
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+    <div className="space-y-6 pb-8">
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs uppercase text-muted-foreground">
-              {goal.level}
-            </span>
-            <GoalStatusControl
-              status={goal.status}
-              disabled={updateGoal.isPending}
-              onChange={(status) => updateGoal.mutate({ status })}
-            />
+            <StatusBadge status={lifecycle} />
+            {goal.focus && <span className="text-xs font-medium text-[color:var(--accent-base)]">Focus Goal</span>}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleRenameGoal}
-              disabled={updateGoal.isPending}
-            >
-              <Pencil className="h-3.5 w-3.5 mr-1.5" />
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleDeleteGoal}
-              disabled={deleteGoal.isPending || dependenciesLoading}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-              Delete
-            </Button>
+            <Button size="sm" variant="outline" onClick={rename}><Pencil className="mr-1.5 h-3.5 w-3.5" />Rename</Button>
+            {isDraft && <Button size="sm" variant="outline" onClick={remove} disabled={deleteGoal.isPending}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete</Button>}
+            {isActive && <Button size="sm" variant={goal.focus ? "outline" : "default"} onClick={() => setFocus.mutate(!goal.focus)} disabled={setFocus.isPending}><Focus className="mr-1.5 h-3.5 w-3.5" />{goal.focus ? "Unfocus" : "Set focus"}</Button>}
           </div>
         </div>
+        <InlineEditor value={goal.title} onSave={(title) => updateGoal.mutate({ title })} as="h1" className="text-2xl font-semibold" />
+        <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
+      </header>
 
-        <InlineEditor
-          value={goal.title}
-          onSave={(title) => updateGoal.mutate({ title })}
-          as="h2"
-          className="text-xl font-bold"
-        />
-
-        <InlineEditor
-          value={goal.description ?? ""}
-          onSave={(description) => updateGoal.mutate({
-            description: markdownDocumentOrNull(description),
-          })}
-          as="p"
-          className="text-sm text-muted-foreground"
-          placeholder="Add a description..."
-          multiline
-          editorEngine="codemirror"
-          documentIdentity={`goal:${goal.id}`}
-          imageUploadHandler={async (file) => {
-            const asset = await uploadImage.mutateAsync(file);
-            return asset.contentPath;
-          }}
-        />
-      </div>
-
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-        <SummaryMetric label="Owner" value={ownerAgent?.name ?? (goal.ownerAgentId ? goal.ownerAgentId.slice(0, 8) : "None")} />
-        <SummaryMetric label="Parent" value={parentGoal?.title ?? "None"} to={parentGoal ? `/goals/${parentGoal.id}` : undefined} />
-        <SummaryMetric label="Sub-goals" value={childGoals.length} />
-        <SummaryMetric label="Projects" value={linkedProjects.length} />
-        <SummaryMetric label="Issues" value={linkedIssues.length} />
-        <SummaryMetric label="Updated" value={formatDate(goal.updatedAt)} />
-      </div>
-
-      <Tabs defaultValue="work">
-        <TabsList>
-          <TabsTrigger value="work">
-            Work ({linkedProjects.length + linkedIssues.length})
-          </TabsTrigger>
-          <TabsTrigger value="children">
-            Sub-Goals ({childGoals.length})
-          </TabsTrigger>
-          <TabsTrigger value="activity">
-            Activity ({activity?.length ?? 0})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="work" className="mt-4">
-          <WorkSection linkedProjects={linkedProjects} linkedIssues={linkedIssues} />
-        </TabsContent>
-
-        <TabsContent value="children" className="mt-4 space-y-3">
-          <div className="flex items-center justify-start">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => openNewGoal({ parentId: goalId })}
-            >
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              Sub Goal
-            </Button>
+      {isDraft && (
+        <Section title="Contract activation" icon={Play}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-muted-foreground">Objective mode<select className={fieldClassName} value={objectiveMode} onChange={(event) => setObjectiveMode(event.target.value as GoalObjectiveMode)}>{GOAL_OBJECTIVE_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></label>
+            <label className="text-xs text-muted-foreground">Agent Owner<select aria-label="Agent Owner" className={fieldClassName} value={ownerAgentId} onChange={(event) => setOwnerAgentId(event.target.value)}><option value="">Select an Agent</option>{(agents ?? []).map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
           </div>
-          {childGoals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sub-goals.</p>
-          ) : (
-            <GoalTree goals={childGoals} goalLink={(g) => `/goals/${g.id}`} />
-          )}
-        </TabsContent>
+          <label className="block text-xs text-muted-foreground">Outcome statement<input className={fieldClassName} value={outcomeStatement} onChange={(event) => setOutcomeStatement(event.target.value)} placeholder="What external result should become true?" /></label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-muted-foreground">Criterion<input className={fieldClassName} value={criterionLabel} onChange={(event) => setCriterionLabel(event.target.value)} /></label>
+            <label className="text-xs text-muted-foreground">Evaluator<select className={fieldClassName} value={criterionEvaluator} onChange={(event) => setCriterionEvaluator(event.target.value as GoalEvaluatorKind)}>{GOAL_EVALUATOR_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs text-muted-foreground">Continuation<select className={fieldClassName} value={continuationKind} onChange={(event) => setContinuationKind(event.target.value as typeof continuationKind)}>{GOAL_CONTINUATION_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+            <label className="text-xs text-muted-foreground sm:col-span-2">First next step<input className={fieldClassName} value={continuationSummary} onChange={(event) => setContinuationSummary(event.target.value)} /></label>
+          </div>
+          <label className="block text-xs text-muted-foreground">Initial Plan<textarea className={`${fieldClassName} min-h-20 resize-y`} value={planSummary} onChange={(event) => setPlanSummary(event.target.value)} /></label>
+          <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+            <span className="text-xs text-muted-foreground">Activation is recorded as an operator confirmation.</span>
+            <Button onClick={() => activateGoal.mutate()} disabled={activateGoal.isPending || !ownerAgentId || !outcomeStatement.trim() || !continuationSummary.trim() || !planSummary.trim()}><Play className="mr-1.5 h-3.5 w-3.5" />{activateGoal.isPending ? "Activating..." : "Confirm activation"}</Button>
+          </div>
+        </Section>
+      )}
 
-        <TabsContent value="activity" className="mt-4">
-          <ActivityList events={activity ?? []} />
-        </TabsContent>
-      </Tabs>
+      <Section title="Contract" icon={ShieldCheck}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div><div className="text-[11px] uppercase text-muted-foreground">Mode</div><div className="mt-1 text-sm">{goal.objectiveMode ?? "target"}</div></div>
+          <div><div className="text-[11px] uppercase text-muted-foreground">Contract revision</div><div className="mt-1 text-sm">{goal.contractRevision ?? 1}</div></div>
+          <div><div className="text-[11px] uppercase text-muted-foreground">Owner</div><div className="mt-1 text-sm">{agents?.find((agent) => agent.id === goal.ownerAgentId)?.name ?? (goal.ownerAgentId ? goal.ownerAgentId.slice(0, 8) : "Unassigned")}</div></div>
+        </div>
+        <p className="text-sm text-foreground">{goal.outcomeStatement ?? "Draft contract has no outcome statement."}</p>
+        {goal.criteria && goal.criteria.length > 0 && <div className="divide-y divide-border border border-border">{goal.criteria.map((criterion) => <div key={criterion.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm"><span>{criterion.label}</span><span className="text-xs text-muted-foreground">{criterion.evaluator}</span></div>)}</div>}
+      </Section>
+
+      <Section title="Plan" icon={CircleDot}>
+        {goal.plan ? <div className="space-y-2"><div className="flex flex-wrap items-start justify-between gap-3"><p className="min-w-0 flex-1 text-sm">{goal.plan.summary}</p><span className="whitespace-nowrap text-xs text-muted-foreground">Revision {goal.plan.revision}</span></div>{isActive && <div className="flex gap-2"><Textarea aria-label="Plan revision" value={planSummary} onChange={(event) => setPlanSummary(event.target.value)} className="min-h-9 flex-1" /><Button variant="outline" size="sm" onClick={() => updatePlan.mutate()} disabled={!planSummary.trim() || updatePlan.isPending}>Save revision</Button></div>}</div> : <p className="text-sm text-muted-foreground">No Plan yet.</p>}
+      </Section>
+
+      {!isDraft && (
+        <Section title="Owner and continuation" icon={UserRound}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><div className="text-[11px] uppercase text-muted-foreground">Current owner</div><div className="mt-1 text-sm">{agents?.find((agent) => agent.id === goal.ownerAgentId)?.name ?? (goal.ownerAgentId ? goal.ownerAgentId.slice(0, 8) : "Unassigned")}</div></div>
+            <div><div className="text-[11px] uppercase text-muted-foreground">Continuation</div><div className="mt-1 text-sm">{goal.continuationKind ?? "Not set"}</div></div>
+          </div>
+          <p className="text-sm">{goal.continuationSummary ?? "No continuation has been recorded."}</p>
+          {goal.wakeCondition && <p className="text-xs text-muted-foreground">Wake condition: {goal.wakeCondition}</p>}
+          {isActive && <div className="flex flex-wrap items-end gap-2"><label className="min-w-60 flex-1 text-xs text-muted-foreground">Current or replacement Owner<select className={fieldClassName} value={ownerAgentId} onChange={(event) => setOwnerAgentId(event.target.value)}>{(agents ?? []).map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label><Button variant="outline" size="sm" onClick={() => assignOwner.mutate()} disabled={!ownerAgentId || assignOwner.isPending}>Reassign Owner</Button></div>}
+        </Section>
+      )}
+
+      {isActive && (
+        <Section title="Evaluate" icon={ClipboardCheck}>
+          <label className="block text-xs text-muted-foreground">Evidence reference<input className={fieldClassName} value={evidence} onChange={(event) => setEvidence(event.target.value)} placeholder="A stable URL, artifact, run, or decision reference" /></label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(goal.criteria ?? []).map((criterion) => (
+              <label key={criterion.id} className="text-xs text-muted-foreground">{criterion.label}
+                <select aria-label={`Criterion result: ${criterion.label}`} className={fieldClassName} value={criterionStatuses[criterion.id] ?? "unknown"} onChange={(event) => setCriterionStatuses((current) => ({ ...current, [criterion.id]: event.target.value as "met" | "unmet" | "breached" | "unknown" }))}>
+                  <option value="unknown">unknown</option>
+                  <option value="met">met</option>
+                  <option value="unmet">unmet</option>
+                  <option value="breached">breached</option>
+                </select>
+              </label>
+            ))}
+            {goal.criteria?.some((criterion) => criterion.evaluator === "metric") && <label className="text-xs text-muted-foreground">Observed result<input aria-label="Observed result" className={fieldClassName} value={resultValue} onChange={(event) => setResultValue(event.target.value)} /></label>}
+            {goal.criteria?.some((criterion) => criterion.evaluator === "human") && <label className="text-xs text-muted-foreground">Human decision<input aria-label="Human decision" className={fieldClassName} value={decision} onChange={(event) => setDecision(event.target.value)} /></label>}
+          </div>
+          <Button onClick={() => evaluate.mutate()} disabled={evaluate.isPending || !evidence.trim()}><Check className="mr-1.5 h-3.5 w-3.5" />Evaluate from evidence</Button>
+        </Section>
+      )}
+
+      {isClosed && <Section title="Proof" icon={ClipboardCheck}><div className="border border-border px-3 py-3"><div className="text-sm font-medium">{String(goal.evaluationResult?.outcome ?? "inconclusive")}</div><div className="mt-1 text-xs text-muted-foreground">Evaluation is derived from the submitted evidence and cannot be edited as a status.</div></div></Section>}
+
+      <Section title="Activity" icon={CircleDot}>
+        {isActive && <div className="flex gap-2"><Textarea aria-label="Activity summary" value={activitySummary} onChange={(event) => setActivitySummary(event.target.value)} placeholder="Record a material Goal update..." className="min-h-9 flex-1" /><Button variant="outline" size="sm" onClick={() => addActivity.mutate()} disabled={!activitySummary.trim() || addActivity.isPending}><Plus className="mr-1.5 h-3.5 w-3.5" />Add activity</Button></div>}
+        <ActivityFeed activities={goal.activities ?? []} />
+      </Section>
+
+      <Section title="Linked work" icon={CircleDot}><WorkLinks projects={linkedProjects} issues={linkedIssues} /></Section>
     </div>
   );
 }

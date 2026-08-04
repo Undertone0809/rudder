@@ -15,13 +15,56 @@ const goal = {
   orgId: "org-1",
   title: "Restore goal lifecycle controls",
   description: "Goal detail should expose lifecycle operations.",
-  level: "team",
+  level: "task",
   status: "active",
   parentId: null,
-  ownerAgentId: null,
+  ownerAgentId: "agent-1",
+  lifecycle: "active",
+  objectiveMode: "target",
+  contractRevision: 1,
+  outcomeStatement: "The linked work is verified",
+  criteria: [
+    { id: "outcome", label: "The linked work is verified", evaluator: "artifact" },
+    { id: "safety", label: "The result stays within the safety boundary", evaluator: "policy" },
+  ],
+  planRevision: 1,
+  plan: {
+    id: "plan-1",
+    orgId: "org-1",
+    goalId: "goal-1",
+    revision: 1,
+    summary: "Verify linked work",
+    hypotheses: [],
+    selectedPaths: [],
+    rejectedPaths: [],
+    sequencing: [],
+    budgetAllocations: {},
+    invalidationConditions: [],
+    createdByAgentId: null,
+    createdAt: new Date("2026-05-04T00:05:00.000Z"),
+    updatedAt: new Date("2026-05-04T00:05:00.000Z"),
+  },
+  activities: [{
+    id: "goal-activity-1",
+    orgId: "org-1",
+    goalId: "goal-1",
+    contractRevision: 1,
+    submittedByAgentId: null,
+    agentOwnerRefAtTime: "agent-1",
+    commitmentRef: null,
+    runRef: null,
+    activityKind: "progress",
+    summary: "Verified linked work",
+    evidenceRefs: [],
+    idempotencyKey: null,
+    occurredAt: new Date("2026-05-04T00:11:00.000Z"),
+    createdAt: new Date("2026-05-04T00:11:00.000Z"),
+  }],
   createdAt: new Date("2026-05-04T00:00:00.000Z"),
   updatedAt: new Date("2026-05-04T00:10:00.000Z"),
 };
+
+let queryGoal = goal;
 
 const childGoal = {
   ...goal,
@@ -72,26 +115,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "goals" && queryKey[1] === "detail" && queryKey[3] === "dependencies") {
       return { data: dependencies, isLoading: false, error: null };
     }
-    if (queryKey[0] === "goals" && queryKey[1] === "detail" && queryKey[3] === "activity") {
-      return {
-        data: [{
-          id: "activity-1",
-          orgId: "org-1",
-          actorType: "user",
-          actorId: "user-1",
-          agentId: null,
-          action: "goal.updated",
-          entityType: "goal",
-          entityId: "goal-1",
-          details: {},
-          createdAt: new Date("2026-05-04T00:11:00.000Z"),
-        }],
-        isLoading: false,
-        error: null,
-      };
-    }
     if (queryKey[0] === "goals" && queryKey[1] === "detail") {
-      return { data: goal, isLoading: false, error: null };
+      return { data: queryGoal, isLoading: false, error: null };
     }
     if (queryKey[0] === "goals" && queryKey[1] === "org-1") {
       return { data: [goal, childGoal], isLoading: false, error: null };
@@ -103,7 +128,7 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: [], isLoading: false, error: null };
     }
     if (queryKey[0] === "agents") {
-      return { data: [], isLoading: false, error: null };
+      return { data: [{ id: "agent-1", name: "Goal owner" }], isLoading: false, error: null };
     }
     return { data: [], isLoading: false, error: null };
   },
@@ -173,6 +198,7 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   vi.clearAllMocks();
+  queryGoal = goal;
 });
 
 function renderPage() {
@@ -195,19 +221,43 @@ function renderPage() {
 }
 
 describe("GoalDetail", () => {
-  it("renders lifecycle actions and restored detail tabs", async () => {
+  it("renders the Goal Contract surface and linked work", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Edit");
-    expect(container.textContent).toContain("Delete");
-    expect(container.textContent).toContain("Work (1)");
-    expect(container.textContent).toContain("Sub-Goals (1)");
-    expect(container.textContent).toContain("Activity (1)");
-    expect(container.textContent).toContain("Issues (1)");
+    expect(container.textContent).toContain("Contract");
+    expect(container.textContent).toContain("Plan");
+    expect(container.textContent).toContain("Owner and continuation");
+    expect(container.textContent).toContain("Evaluate");
+    expect(container.textContent).toContain("Activity");
+    expect(container.textContent).toContain("Linked work");
+    expect(container.textContent).toContain("Goal owner");
+    expect(container.textContent).toContain("The linked work is verified");
+    expect(container.querySelector('[aria-label="Criterion result: The linked work is verified"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Criterion result: The result stays within the safety boundary"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Activity summary"]')).not.toBeNull();
     expect(container.textContent).toContain("Verify linked work");
+    expect(container.textContent).toContain("Verified linked work");
+  });
+
+  it("renders evaluator-specific inputs for metric and human criteria", async () => {
+    queryGoal = {
+      ...goal,
+      criteria: [
+        { id: "metric", label: "The target result is measurable", evaluator: "metric" },
+        { id: "human", label: "The target result is approved", evaluator: "human" },
+      ],
+    };
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[aria-label="Observed result"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Human decision"]')).not.toBeNull();
   });
 });

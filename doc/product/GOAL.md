@@ -61,7 +61,8 @@ The central nervous system. Manages:
 - Issue assignment and status
 - Budget and token spend tracking
 - Organization knowledge and reusable operating context
-- Goal hierarchy and context links across organizations, teams, agents, chats, and issues
+- Goal Contracts and context links across organizations, agents, chats, and
+  issues, with legacy hierarchy fields retained only for compatibility reads
 - Heartbeat monitoring — know when agents are alive, idle, or stuck
 
 ### Agent runtimes

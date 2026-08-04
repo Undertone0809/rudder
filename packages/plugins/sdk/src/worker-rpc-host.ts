@@ -701,17 +701,13 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             orgId: input.orgId,
             title: input.title,
             description: input.description,
-            level: input.level,
-            status: input.status,
-            parentId: input.parentId,
-            ownerAgentId: input.ownerAgentId,
           });
         },
 
         async update(goalId: string, patch, orgId: string) {
           return callHost("goals.update", {
             goalId,
-            patch: patch as Record<string, unknown>,
+            patch,
             orgId,
           });
         },

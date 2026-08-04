@@ -213,10 +213,16 @@ export {
 } from "./workspace-backup.js";
 
 export {
+  activateGoalSchema,
+  assignGoalOwnerSchema,
+  createGoalActivitySchema,
   createGoalSchema,
-  updateGoalSchema,
-  type CreateGoal,
-  type UpdateGoal
+  evaluateGoalSchema,
+  setGoalFocusSchema, updateGoalPlanSchema, updateGoalSchema, type ActivateGoal,
+  type AssignGoalOwner, type CreateGoal, type CreateGoalActivity, type EvaluateGoal,
+  type SetGoalFocus,
+  type UpdateGoal,
+  type UpdateGoalPlan
 } from "./goal.js";
 
 export {

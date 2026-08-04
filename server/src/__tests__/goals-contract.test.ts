@@ -1,0 +1,416 @@
+import { agents, goalActivities, goalOwnerAssignments, goalPlans, goals, heartbeatRuns } from "@rudderhq/db";
+import { activateGoalSchema, createGoalActivitySchema, evaluateGoalSchema, updateGoalSchema } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
+import { goalService, reduceGoalEvaluation } from "../services/goals.js";
+
+const ORG_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_ORG_ID = "22222222-2222-4222-8222-222222222222";
+const GOAL_ID = "33333333-3333-4333-8333-333333333333";
+const SECOND_GOAL_ID = "44444444-4444-4444-8444-444444444444";
+const OWNER_ID = "55555555-5555-4555-8555-555555555555";
+const OTHER_ORG_OWNER_ID = "66666666-6666-4666-8666-666666666666";
+const RUN_ID = "77777777-7777-4777-8777-777777777777";
+
+function makeGoal(overrides: Record<string, unknown> = {}) {
+  const now = new Date("2026-08-04T00:00:00.000Z");
+  return {
+    id: GOAL_ID,
+    orgId: ORG_ID,
+    title: "Ship the verified result",
+    description: null,
+    outcomeStatement: "The verified result is available",
+    objectiveMode: "target",
+    lifecycle: "draft",
+    contractRevision: 1,
+    criteria: [{ id: "result", label: "Result exists", evaluator: "artifact" }],
+    autonomyEnvelope: {},
+    humanAuthorities: {},
+    evaluationPolicy: {},
+    actionDeadline: null,
+    evaluationDeadline: null,
+    evaluationResult: null,
+    closeReason: null,
+    resultPayload: null,
+    focus: false,
+    planRevision: 0,
+    continuationKind: "verification",
+    continuationSummary: "Verify the next result",
+    wakeCondition: null,
+    level: "task",
+    status: "planned",
+    parentId: null,
+    ownerAgentId: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createGoalDb(initialGoal = makeGoal()) {
+  const state = {
+    goals: [initialGoal, makeGoal({ id: SECOND_GOAL_ID, title: "Keep a second focus candidate" })],
+    agents: [
+      { id: OWNER_ID, orgId: ORG_ID },
+      { id: OTHER_ORG_OWNER_ID, orgId: OTHER_ORG_ID },
+    ],
+    runs: [{ id: RUN_ID, orgId: ORG_ID, status: "running" }],
+    activities: [] as Array<Record<string, unknown>>,
+    ownerAssignments: [] as Array<Record<string, unknown>>,
+    plans: [] as Array<Record<string, unknown>>,
+    selectedGoalId: initialGoal.id,
+    rejectOwnerLookup: false,
+  };
+
+  function selectBuilder() {
+    let table: unknown;
+    const builder: any = {
+      from(value: unknown) {
+        table = value;
+        return builder;
+      },
+      innerJoin() {
+        return builder;
+      },
+      where() {
+        return builder;
+      },
+      orderBy() {
+        return builder;
+      },
+      limit() {
+        return builder;
+      },
+      then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
+        let rows: unknown[] = [];
+        if (table === goals) {
+          rows = state.goals.filter((goal) => goal.id === state.selectedGoalId);
+        } else if (table === agents) {
+          rows = state.rejectOwnerLookup ? [] : state.agents;
+        } else if (table === heartbeatRuns) {
+          rows = state.runs;
+        } else if (table === goalActivities) {
+          rows = state.activities;
+        }
+        return Promise.resolve(rows).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+
+  function insertBuilder(table: unknown) {
+    let values: Record<string, unknown>;
+    const execute = () => {
+      if (table === goalActivities) {
+        const duplicate = state.activities.find((activity) =>
+          (values.idempotencyKey && activity.goalId === values.goalId && activity.idempotencyKey === values.idempotencyKey)
+          || (values.activityKind === "closeout" && activity.goalId === values.goalId && activity.runRef === values.runRef && activity.activityKind === "closeout"),
+        );
+        if (duplicate) return [];
+        const activity = { id: `activity-${state.activities.length + 1}`, ...values };
+        state.activities.push(activity);
+        return [activity];
+      }
+      if (table === goalOwnerAssignments) {
+        const assignment = { id: `assignment-${state.ownerAssignments.length + 1}`, ...values };
+        state.ownerAssignments.push(assignment);
+        return [assignment];
+      }
+      if (table === goalPlans) {
+        const plan = { id: `plan-${state.plans.length + 1}`, ...values };
+        state.plans.push(plan);
+        return [plan];
+      }
+      return [];
+    };
+    const builder: any = {
+      values(next: Record<string, unknown>) {
+        values = next;
+        return builder;
+      },
+      onConflictDoNothing() {
+        return builder;
+      },
+      returning() {
+        return Promise.resolve(execute());
+      },
+      then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
+        return Promise.resolve(execute()).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+
+  function updateBuilder(table: unknown) {
+    let patch: Record<string, unknown> = {};
+    const execute = () => {
+      if (table !== goals) return [];
+      if (patch.focus === false) {
+        for (const goal of state.goals) {
+          if (goal.orgId === ORG_ID) Object.assign(goal, patch);
+        }
+      } else {
+        const goal = state.goals.find((candidate) => candidate.id === state.selectedGoalId);
+        if (goal) Object.assign(goal, patch);
+      }
+      return state.goals.filter((goal) => goal.id === state.selectedGoalId);
+    };
+    const builder: any = {
+      set(next: Record<string, unknown>) {
+        patch = next;
+        return builder;
+      },
+      where() {
+        return builder;
+      },
+      returning() {
+        return Promise.resolve(execute());
+      },
+      then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
+        return Promise.resolve(execute()).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+
+  const db: any = {
+    select: () => selectBuilder(),
+    insert: (table: unknown) => insertBuilder(table),
+    update: (table: unknown) => updateBuilder(table),
+    transaction: async (callback: (tx: any) => unknown) => callback(db),
+  };
+  return { db, state };
+}
+
+function evaluationInput(overrides: Record<string, unknown> = {}) {
+  return evaluateGoalSchema.parse({ evidenceRefs: ["artifact://result"], ...overrides });
+}
+
+describe("Goal contract", () => {
+  it("requires a Run reference for closeout Activities", () => {
+    expect(() => createGoalActivitySchema.parse({
+      summary: "Unbound closeout",
+      activityKind: "closeout",
+      evidenceRefs: ["artifact://unbound"],
+    })).toThrow(/Run reference/);
+  });
+
+  it("requires explicit confirmation, Owner, Contract, Plan, and continuation for activation", () => {
+    expect(() => activateGoalSchema.parse({})).toThrow();
+    expect(() => activateGoalSchema.parse({ confirmed: false })).toThrow();
+
+    const parsed = activateGoalSchema.parse({
+      confirmed: true,
+      ownerAgentId: OWNER_ID,
+      outcomeStatement: "The verified result is available",
+      objectiveMode: "target",
+      criteria: [{ id: "result", label: "Result exists", evaluator: "artifact" }],
+      initialContinuation: { kind: "verification", summary: "Verify the next result" },
+      initialPlan: { summary: "Build and verify the result" },
+    });
+    expect(parsed.initialPlan.summary).toBe("Build and verify the result");
+    expect(parsed.initialContinuation.kind).toBe("verification");
+    expect(() => activateGoalSchema.parse({
+      confirmed: true,
+      ownerAgentId: OWNER_ID,
+      outcomeStatement: "The verified result is available",
+      objectiveMode: "target",
+      criteria: [{ id: "result", label: "Result exists", evaluator: "legacy" }],
+      initialContinuation: { kind: "verification", summary: "Verify the next result" },
+      initialPlan: { summary: "Build and verify the result" },
+    })).toThrow();
+  });
+
+  it.each([
+    ["target", { criteria: [{ id: "result", status: "met" }] }, "achieved"],
+    ["target", { criteria: [{ id: "result", status: "unmet" }] }, "not_achieved"],
+    ["maximize", { criteria: [{ id: "result", status: "met" }], resultValue: 42 }, "completed_with_result"],
+    ["maintain", { criteria: [{ id: "result", status: "breached" }] }, "breached"],
+    ["maintain", { criteria: [{ id: "result", status: "met" }] }, "maintained"],
+    ["decide", { criteria: [{ id: "result", status: "met" }], decision: "Choose path B" }, "decided"],
+  ])("reduces %s evaluation to %s", (mode, input, outcome) => {
+    const result = reduceGoalEvaluation(
+      { objectiveMode: mode as "target" | "maximize" | "maintain" | "decide", criteria: [{ id: "result" }] },
+      evaluationInput(input),
+    );
+    expect(result.outcome).toBe(outcome);
+  });
+
+  it("does not produce positive maximize or decide Proof when a criterion fails", () => {
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "maximize", criteria: [{ id: "result" }, { id: "safety" }] },
+      evaluationInput({ resultValue: 42, criteria: [{ id: "result", status: "met" }, { id: "safety", status: "unmet" }] }),
+    ).outcome).toBe("inconclusive");
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "decide", criteria: [{ id: "result" }, { id: "safety" }] },
+      evaluationInput({ decision: "Choose path B", criteria: [{ id: "result", status: "met" }, { id: "safety", status: "breached" }] }),
+    ).outcome).toBe("inconclusive");
+  });
+
+  it("keeps incomplete evidence inconclusive", () => {
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "target", criteria: [{ id: "result" }] },
+      evaluationInput({ criteria: [{ id: "result", status: "unknown" }] }),
+    ).outcome).toBe("inconclusive");
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "maximize", criteria: [{ id: "result" }] },
+      evaluationInput(),
+    ).outcome).toBe("inconclusive");
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "decide", criteria: [{ id: "result" }] },
+      evaluationInput(),
+    ).outcome).toBe("inconclusive");
+  });
+
+  it("does not treat evaluator status as met when its evidence contract is incomplete", () => {
+    expect(reduceGoalEvaluation(
+      {
+        objectiveMode: "maximize",
+        criteria: [{ id: "metric", evaluator: "metric" }],
+      },
+      evaluationInput({ criteria: [{ id: "metric", status: "met" }] }),
+    ).criteria[0]).toMatchObject({ status: "unknown", evidenceSatisfied: false });
+    expect(reduceGoalEvaluation(
+      {
+        objectiveMode: "target",
+        criteria: [{ id: "artifact", evaluator: "artifact", evidenceRequirements: ["artifact://required"] }],
+      },
+      evaluationInput({ criteria: [{ id: "artifact", status: "met" }] }),
+    ).criteria[0]).toMatchObject({ status: "unknown", missingEvidence: ["artifact://required"] });
+    expect(reduceGoalEvaluation(
+      {
+        objectiveMode: "decide",
+        criteria: [{ id: "human", evaluator: "human" }],
+      },
+      evaluationInput({ criteria: [{ id: "human", status: "met" }] }),
+    ).criteria[0]).toMatchObject({ status: "unknown", evidenceSatisfied: false });
+  });
+
+  it("requires structured evidence references and meaningful metric results", () => {
+    expect(() => evaluateGoalSchema.parse({ evidenceRefs: [null] })).toThrow();
+    expect(() => evaluateGoalSchema.parse({ evidenceRefs: ["plain text"] })).toThrow();
+    expect(() => evaluateGoalSchema.parse({ evidenceRefs: ["artifact://result"], resultValue: null })).toThrow();
+    expect(() => evaluateGoalSchema.parse({ evidenceRefs: ["artifact://result"], resultValue: {} })).toThrow();
+    expect(() => createGoalActivitySchema.parse({ summary: "Bad evidence", evidenceRefs: ["plain text"] })).toThrow();
+  });
+
+  it("supports metric and human evaluators for every objective mode", () => {
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "target", criteria: [{ id: "metric", evaluator: "metric" }] },
+      evaluationInput({ resultValue: 42, criteria: [{ id: "metric", status: "met" }] }),
+    ).outcome).toBe("achieved");
+    expect(reduceGoalEvaluation(
+      { objectiveMode: "target", criteria: [{ id: "human", evaluator: "human" }] },
+      evaluationInput({ decision: "Approve path B", criteria: [{ id: "human", status: "met" }] }),
+    ).outcome).toBe("achieved");
+  });
+
+  it("does not expose legacy lifecycle fields through Goal updates", () => {
+    expect(updateGoalSchema.parse({ title: "Renamed Goal" })).toEqual({ title: "Renamed Goal" });
+    expect(() => updateGoalSchema.parse({ status: "achieved" })).toThrow();
+    expect(() => updateGoalSchema.parse({ ownerAgentId: OWNER_ID })).toThrow();
+  });
+
+  it("rejects an Owner from another organization", async () => {
+    const { db, state } = createGoalDb();
+    state.rejectOwnerLookup = true;
+    const svc = goalService(db);
+    await expect(svc.activate(GOAL_ID, activateGoalSchema.parse({
+      confirmed: true,
+      ownerAgentId: OTHER_ORG_OWNER_ID,
+      outcomeStatement: "The verified result is available",
+      objectiveMode: "target",
+      criteria: [{ id: "result", label: "Result exists", evaluator: "artifact" }],
+      initialContinuation: { kind: "verification", summary: "Verify the next result" },
+      initialPlan: { summary: "Build and verify the result" },
+    }))).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects non-owner Agent commands and incomplete legacy active Goals", async () => {
+    const { db } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
+    const svc = goalService(db);
+    await expect(svc.updatePlan(GOAL_ID, { summary: "Unauthorized revision" }, OTHER_ORG_OWNER_ID)).rejects.toMatchObject({ status: 403 });
+
+    const incomplete = createGoalDb(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      outcomeStatement: null,
+      criteria: [],
+      ownerAgentId: null,
+      planRevision: 0,
+      continuationKind: null,
+      continuationSummary: null,
+    }));
+    await expect(goalService(incomplete.db).evaluate(GOAL_ID, evaluationInput({ criteria: [{ id: "result", status: "met" }] }))).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("makes activity submission idempotent and requires a terminal Run for closeout", async () => {
+    const { db, state } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
+    const svc = goalService(db);
+
+    const first = await svc.createActivity(GOAL_ID, {
+      summary: "The same progress update",
+      activityKind: "progress",
+      evidenceRefs: [],
+      idempotencyKey: "progress-1",
+    });
+    const retry = await svc.createActivity(GOAL_ID, {
+      summary: "The same progress update",
+      activityKind: "progress",
+      evidenceRefs: [],
+      idempotencyKey: "progress-1",
+    });
+    expect(retry?.id).toBe(first?.id);
+    expect(state.activities).toHaveLength(1);
+
+    await expect(svc.createActivity(GOAL_ID, {
+      summary: "Closeout without a Run",
+      activityKind: "closeout",
+      evidenceRefs: ["artifact://unbound"],
+    })).rejects.toMatchObject({ status: 422 });
+
+    await expect(svc.createActivity(GOAL_ID, {
+      summary: "Run is still executing",
+      activityKind: "closeout",
+      runRef: RUN_ID,
+      evidenceRefs: ["run://pending"],
+    })).rejects.toMatchObject({ status: 409 });
+
+    state.runs[0]!.status = "succeeded";
+    const closeout = await svc.createActivity(GOAL_ID, {
+      summary: "Run completed with the verified artifact",
+      activityKind: "closeout",
+      runRef: RUN_ID,
+      evidenceRefs: ["run://completed"],
+    });
+    expect(closeout?.activityKind).toBe("closeout");
+    await expect(svc.createActivity(GOAL_ID, {
+      summary: "Duplicate closeout",
+      activityKind: "closeout",
+      runRef: RUN_ID,
+      evidenceRefs: ["run://completed"],
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(svc.createActivity(GOAL_ID, {
+      summary: "Duplicate closeout with a new idempotency key",
+      activityKind: "closeout",
+      runRef: RUN_ID,
+      evidenceRefs: ["run://completed"],
+      idempotencyKey: "closeout-retry-1",
+    })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("keeps Focus unique within an organization", async () => {
+    const firstFixture = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1, focus: true }));
+    const { db, state } = firstFixture;
+    state.goals[1]!.lifecycle = "active";
+    state.goals[1]!.status = "active";
+    state.goals[1]!.ownerAgentId = OWNER_ID;
+    state.goals[1]!.planRevision = 1;
+    state.goals[1]!.focus = false;
+    state.selectedGoalId = SECOND_GOAL_ID;
+    const svc = goalService(db);
+
+    await svc.setFocus(SECOND_GOAL_ID, true);
+
+    expect(state.goals.filter((goal) => goal.focus).map((goal) => goal.id)).toEqual([SECOND_GOAL_ID]);
+  });
+});

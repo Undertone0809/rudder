@@ -593,6 +593,31 @@ export type GoalLevel = (typeof GOAL_LEVELS)[number];
 export const GOAL_STATUSES = ["planned", "active", "achieved", "cancelled"] as const;
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
 
+export const GOAL_OBJECTIVE_MODES = ["target", "maximize", "maintain", "decide"] as const;
+export type GoalObjectiveMode = (typeof GOAL_OBJECTIVE_MODES)[number];
+
+export const GOAL_EVALUATOR_KINDS = ["artifact", "metric", "policy", "human"] as const;
+export type GoalEvaluatorKind = (typeof GOAL_EVALUATOR_KINDS)[number];
+
+export const GOAL_LIFECYCLES = ["draft", "active", "closed"] as const;
+export type GoalLifecycle = (typeof GOAL_LIFECYCLES)[number];
+
+export const GOAL_CLOSE_REASONS = ["evaluated", "cancelled", "superseded"] as const;
+export type GoalCloseReason = (typeof GOAL_CLOSE_REASONS)[number];
+
+export const GOAL_CONTINUATION_KINDS = ["commitment", "wait", "decision", "verification"] as const;
+export type GoalContinuationKind = (typeof GOAL_CONTINUATION_KINDS)[number];
+
+export const GOAL_ACTIVITY_KINDS = [
+  "progress",
+  "closeout",
+  "evidence",
+  "decision_requested",
+  "bottleneck",
+  "checkpoint",
+] as const;
+export type GoalActivityKind = (typeof GOAL_ACTIVITY_KINDS)[number];
+
 export const PROJECT_STATUSES = [
   "backlog",
   "planned",

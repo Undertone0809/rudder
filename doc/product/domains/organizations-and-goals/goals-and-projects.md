@@ -32,43 +32,89 @@ Why:
 
 - A goal is the durable "why" for agent work. Without it, tasks become a queue
   with no compounding product memory.
-- Goal hierarchy lets the organization mission connect to project, team, agent,
-  and task-level work without forcing every Chat or issue to duplicate strategy text.
+- A Goal Contract turns that durable reason into an accountable, evidence-backed
+  commitment that can be planned, continued, evaluated, and reviewed.
 
 Product model:
 
 - Goals belong to one organization.
-- A goal has level, status, optional parent, optional owner agent, and linked
-  work.
+- A canonical Goal starts as a Draft with no implicit Owner or hierarchy. Its
+  Contract declares the outcome, objective mode, criteria, autonomy envelope,
+  human authorities, evaluation policy, and relevant deadlines.
+- Activation assigns exactly one same-organization Agent Owner, creates the
+  initial Plan and continuation, and records the Contract revision.
+- Plans are mutable revisions; Activity is append-only and carries the owner,
+  commitment, Run, and evidence references available at submission time.
+- Terminal Proof is derived from the required evidence references and the
+  declared evaluator. Criteria use one of four evaluator kinds: `artifact`
+  requires evidence references, `metric` requires an observed `resultValue`,
+  `policy` requires evidence references, and `human` requires a decision or
+  explicit human approval in the result payload. Any declared
+  `evidenceRequirements` must match submitted evidence references. Every
+  declared criterion is evaluated independently; omitted or evidence-invalid
+  criteria become `unknown`, and a positive Proof requires every criterion to
+  be `met` plus the mode-specific value (`resultValue` for `maximize`, or
+  `decision` for `decide`). `target` yields `achieved` only when all criteria
+  are met and `not_achieved` when one fails; `maintain` yields `maintained` only
+  when all criteria are met and `breached` when one breaches; incomplete
+  `maximize`/`decide` evaluations remain `inconclusive`.
+- Users and Agents cannot produce a terminal result by patching a legacy status
+  field. Board users act as operators; an Agent API key may issue Goal commands
+  only for the current Goal Owner, and an Agent may activate only with itself as
+  Owner.
+- Legacy `level`, `status`, and `parentId` columns remain readable for existing
+  project, issue, and dependency links. They do not create a new Goal hierarchy,
+  implicit root Goal, or parent/child scheduler for canonical Goals.
+- During migration, every legacy `active` row is returned to Draft. A row that
+  already has a complete Contract and Owner may retain compatibility fields
+  such as a continuation hint, but it still requires explicit activation to
+  create the canonical Plan and Owner assignment before receiving commands.
+  Contract, Plan, Owner, Activity, and Proof state is database-backed and must
+  survive API process restart without changing lifecycle or continuation.
 - A goal description is durable Markdown and follows
   `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` in create and detail authoring surfaces.
   Full description views render Markdown; compact list/search summaries may
   flatten it to plain text.
-- A valid organization has at least one root organization-level goal.
-- Parent goals must be in the same organization and must not form a cycle.
 - Deleting a goal is blocked when dependent projects, issues, automations, or
-  other linked work still rely on it.
+  legacy child Goals, or other linked work still rely on it, and canonical Goals
+  must be in Draft before deletion.
 
 Flow:
 
-1. Board creates or edits a goal in Goals UI or API.
-2. Server validates organization boundary, parent cycle, owner, and status.
-3. Linked work is exposed on Goal Detail: sub-goals, projects, issues,
-   automations, costs, and activity where available.
-4. Before deletion, dependency preview/check prevents accidental loss of the
+1. Board creates a Draft Goal in Goals UI or API.
+2. Board or an authorized Agent activates a complete Contract with an explicit
+   same-organization Owner, initial Plan, and continuation.
+3. Owner and authorized actors revise the Plan, append Activity, set Focus, and
+   submit evidence through the command APIs.
+4. Goal Detail exposes Contract, Plan, Owner and continuation, Activity, Proof,
+   and linked dependency previews where available.
+5. Before deletion, dependency preview/check prevents accidental loss of the
    work loop's reason.
 
 Invariants:
 
-- Goal hierarchy cannot cross organizations or cycle.
+- Canonical Goal lifecycle changes occur through activation, Plan, Activity,
+  Owner, Focus, and evaluation commands; direct terminal status writes are
+  rejected.
+- Positive evaluator outcomes are impossible when any criterion is unmet,
+  breached, or unknown; a mode-specific payload is also required where the mode
+  declares one.
+- Owner assignment and all Goal-linked records remain organization-scoped.
+- Focus has at most one active Goal per organization.
+- A terminal Run can produce at most one closeout Activity for a Goal/Run pair,
+  and idempotent Activity retries do not duplicate effects.
 - Goal deletion must not silently detach existing work from its rationale.
 - Rendering or focusing a Goal description must not normalize its non-empty
   Markdown source.
 
 Evidence:
 
-- Goal Detail lifecycle E2E covers create/edit/status/delete paths.
-- Activity and linked-work surfaces show the goal's downstream work.
+- Goal Detail lifecycle E2E covers Draft activation, persistence, denial cases,
+  organization boundaries, Owner command authority, Plan/Activity/Focus, Run
+  closeout, idempotency, restart continuity, contradictory multi-criterion
+  evaluation, and all objective modes.
+- Contract, Plan, Owner, continuation, Activity, Proof, and linked-work
+  surfaces show the Goal's downstream work.
 
 ## ORG.PROJECT.001
 

@@ -1377,7 +1377,6 @@ function KitchenSinkConsole({ context }: { context: { orgId: string | null; comp
   const createIssue = usePluginAction("create-issue");
   const advanceIssueStatus = usePluginAction("advance-issue-status");
   const createGoal = usePluginAction("create-goal");
-  const advanceGoalStatus = usePluginAction("advance-goal-status");
   const writeScopedState = usePluginAction("write-scoped-state");
   const deleteScopedState = usePluginAction("delete-scoped-state");
   const upsertEntity = usePluginAction("upsert-entity");
@@ -1657,27 +1656,6 @@ function KitchenSinkConsole({ context }: { context: { orgId: string | null; comp
             <strong>Create goal</strong>
             <input style={inputStyle} value={goalTitle} onChange={(event) => setGoalTitle(event.target.value)} />
             <button type="submit" style={primaryButtonStyle} disabled={!orgId}>Create goal</button>
-          </form>
-          <form
-            style={layoutStack}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!orgId || !selectedGoalId) return;
-              void advanceGoalStatus({ orgId, goalId: selectedGoalId, status: "active" })
-                .then((next) => {
-                  setResult(next);
-                  return refreshAll();
-                })
-                .catch((error) => setResult({ error: error instanceof Error ? error.message : String(error) }));
-            }}
-          >
-            <strong>Advance selected goal</strong>
-            <select style={inputStyle} value={selectedGoalId} onChange={(event) => setSelectedGoalId(event.target.value)}>
-              {(goals.data ?? []).map((goal) => (
-                <option key={goal.id} value={goal.id}>{goal.title}</option>
-              ))}
-            </select>
-            <button type="submit" style={buttonStyle} disabled={!orgId || !selectedGoalId}>Move to active</button>
           </form>
         </div>
       </Section>
