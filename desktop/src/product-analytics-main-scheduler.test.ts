@@ -45,6 +45,62 @@ describe("desktop product analytics main scheduler", () => {
     scheduler?.stop();
   });
 
+  it("binds account-linked delivery authorization to the claimed local user", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-main-scheduler-linked-"));
+    const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "account_linked", consentEpoch: 7 });
+    const recordProductAnalyticsConsent = vi.fn(async () => ({ consentEpoch: 7 }));
+    const issueProductAnalyticsAssertion = vi.fn(async (input: { consentedLocalUserId?: string | null }) => {
+      expect(input.consentedLocalUserId).toBe("user-a");
+      return "assertion";
+    });
+    const eventId = "22222222-2222-4222-8222-222222222222";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/instance/settings/product-analytics")) {
+        return new Response(JSON.stringify({ mode: "account_linked", consentVersion: "v1", consentEpoch: 7 }), { status: 200 });
+      }
+      if (url.endsWith("/api/orgs")) return new Response(JSON.stringify([{ id: "org-1" }]), { status: 200 });
+      if (url.endsWith("/outbox/claim")) {
+        return new Response(JSON.stringify({ claimToken: "claim-1", consentedLocalUserId: "user-a", events: [{ eventId, eventName: "work_loop_completed" }] }), { status: 200 });
+      }
+      if (url.endsWith("/events:batch")) {
+        expect(init?.headers).toMatchObject({ authorization: "assertion" });
+        return new Response(JSON.stringify({ accepted: 1, duplicate: 0, rejected: [] }), { status: 200 });
+      }
+      if (url.endsWith("/outbox/ack")) return new Response(JSON.stringify({ state: "delivered", updatedCount: 1 }), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    let scheduler: DesktopProductAnalyticsScheduler | null = null;
+
+    await startDesktopProductAnalyticsScheduler("http://127.0.0.1:3100", {
+      collectorUrl: "https://telemetry.example.test",
+      identityRuntime: {
+        telemetryStatePromise: Promise.resolve(telemetry),
+        recordProductAnalyticsConsent,
+        issueProductAnalyticsAssertion,
+      },
+      scheduler: null,
+      setScheduler: (value) => { scheduler = value; },
+      fetchImpl,
+    });
+
+    await scheduler?.runNow();
+
+    expect(issueProductAnalyticsAssertion).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "account_linked",
+      consentedLocalUserId: "user-a",
+    }));
+    const ackCall = fetchImpl.mock.calls.find(([input]) => String(input).endsWith("/outbox/ack"));
+    expect(JSON.parse(String(ackCall?.[1]?.body))).toMatchObject({
+      deliveryMode: "account_linked",
+      claimToken: "claim-1",
+      eventIds: [eventId],
+      delivered: true,
+    });
+    scheduler?.stop();
+  });
+
   it("stops without uploading when local analytics settings cannot be read", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-main-scheduler-settings-error-"));
     const telemetry = await loadOrCreateDesktopTelemetryState(root);

@@ -1161,10 +1161,21 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       pseudonymous_installation_id: pseudonymousInstallationId,
       consent_epoch: 999,
       consent_granted: false,
+      consented_local_user_id: tokens.account.id,
     });
     expect(assertionResponse.status).toBe(200);
     const assertion = await assertionResponse.json() as { assertion?: string };
     expect(assertion.assertion).toEqual(expect.any(String));
+    expect(collectorRequests).toHaveLength(2);
+
+    const wrongUserAssertion = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+      consented_local_user_id: "another-user",
+    });
+    expect(wrongUserAssertion.status).toBe(400);
     expect(collectorRequests).toHaveLength(2);
 
     const anonymousConsent = await telemetryRequest("/api/desktop/telemetry/consent", {

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.js";
 
@@ -93,5 +93,40 @@ describe("desktop product analytics uploader", () => {
     });
     expect(result).toMatchObject({ status: "retry_wait", errorCode: "collector_authorization_unavailable" });
     expect(calls.some((call) => call.includes(telemetry.installationSecret))).toBe(false);
+  });
+
+  it("passes the claimed local user to account-linked collector authorization", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-linked-"));
+    const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "account_linked" });
+    const eventId = "22222222-2222-4222-8222-222222222222";
+    const authorization = vi.fn(({ consentedLocalUserId }: { consentedLocalUserId: string | null }) => {
+      expect(consentedLocalUserId).toBe("user-a");
+      return "Bearer assertion";
+    });
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/outbox/claim")) {
+        return new Response(JSON.stringify({ claimToken: "claim-1", consentedLocalUserId: "user-a", events: [{ eventId, eventName: "work_loop_completed" }] }), { status: 200 });
+      }
+      if (url.includes("events:batch")) {
+        expect(init?.headers).toMatchObject({ authorization: "Bearer assertion" });
+        return new Response(JSON.stringify({ accepted: 1, duplicate: 0, rejected: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ state: "delivered", updatedCount: 1 }), { status: 200 });
+    };
+
+    await expect(uploadDesktopProductAnalyticsOnce({
+      localApiUrl: "http://127.0.0.1:3100",
+      orgId: "org-1",
+      installationId: telemetry.installationId,
+      installationSecret: telemetry.installationSecret,
+      deliveryMode: "account_linked",
+      statePath: telemetry.statePath,
+      collectorUrl: "https://telemetry.example.test",
+      collectorAuthorization: authorization,
+      fetchImpl,
+    })).resolves.toMatchObject({ status: "delivered", eventCount: 1 });
+
+    expect(authorization).toHaveBeenCalledWith({ consentedLocalUserId: "user-a" });
   });
 });
