@@ -43,7 +43,7 @@ import {
   ToggleWithNumber
 } from "./agent-config-primitives";
 import { AdapterEnvironmentError, AdapterEnvironmentResult, SortableRuntimeProviderCard } from "./AgentConfigForm.environment";
-import { AgentConfigFormProps, applyRuntimeChainOrder, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackItemForChain, defaultModelForRuntime, emptyOverlay, formatRuntimeEnvironmentLabel, hasClearedConfigValue, inputClass, isOverlayDirty, LOCAL_MODEL_RUNTIME_TYPES, normalizeModelFallbacksForEditor, omitClearedConfigValues, Overlay, primaryModelFallbackKey, runtimeChainItemsFromConfig, RuntimeEnvironmentStatus, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentTestTarget, runtimeProviderItemClassName, runtimeProviderRailClassName } from "./AgentConfigForm.helpers";
+import { AgentConfigFormProps, applyRuntimeChainOrder, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackItemForChain, defaultModelForRuntime, emptyOverlay, formatRuntimeEnvironmentLabel, hasClearedConfigValue, inputClass, isOverlayDirty, LOCAL_MODEL_RUNTIME_TYPES, normalizeModelFallbacksForEditor, omitClearedConfigValues, Overlay, primaryModelFallbackKey, runtimeChainItemsFromConfig, RuntimeEnvironmentStatus, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentTestTarget, runtimeProviderItemClassName, runtimeProviderRailClassName, thinkingEffortKeyForRuntime } from "./AgentConfigForm.helpers";
 import { MarkdownEditor } from "./MarkdownEditor";
 
 /* ---- Create mode values ---- */
@@ -611,8 +611,10 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                             markAgentRuntimeConfigPatch({
                               model: model || undefined,
                               modelFallbacks: normalizedFallbacks,
-                              ...(clearThinkingEffort && agentRuntimeType === "codex_local"
-                                ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                              ...(clearThinkingEffort
+                                ? agentRuntimeType === "codex_local"
+                                  ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                                : { [thinkingEffortKeyForRuntime(agentRuntimeType)]: undefined }
                                 : {}),
                             });
                           }
@@ -674,8 +676,10 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                           config: {
                             ...(fallback.config ?? {}),
                             model,
-                            ...(clearThinkingEffort && fallback.agentRuntimeType === "codex_local"
-                              ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                            ...(clearThinkingEffort
+                              ? fallback.agentRuntimeType === "codex_local"
+                                ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                                : { [thinkingEffortKeyForRuntime(fallback.agentRuntimeType)]: undefined }
                               : {}),
                           },
                         };

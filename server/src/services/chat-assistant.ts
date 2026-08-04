@@ -12,7 +12,7 @@ import {
 } from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { findServerAdapter } from "../agent-runtimes/index.js";
+import { discoverAgentRuntimeModels, findServerAdapter } from "../agent-runtimes/index.js";
 import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
@@ -365,11 +365,28 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ? undefined
             : safeTrim(conversation.effortOverride);
         if (!model && effort === undefined) return agentRuntime;
+        const shouldValidateRuntimeEffort = effort !== undefined
+          || chatEffortFromConfig(agentRuntime.agentRuntimeType, agentRuntime.agentRuntimeConfig) !== null;
+        let runtimeModelCatalog: Awaited<ReturnType<typeof discoverAgentRuntimeModels>>;
+        if (
+          shouldValidateRuntimeEffort
+          && ["codex_local", "opencode_local", "pi_local", "cursor"].includes(agentRuntime.agentRuntimeType)
+        ) {
+          try {
+            runtimeModelCatalog = await discoverAgentRuntimeModels(agentRuntime.agentRuntimeType);
+          } catch {
+            // Model discovery is advisory. Preserve the configured runtime when
+            // a local CLI probe is unavailable; the adapter will still validate
+            // against its built-in contract where one exists.
+            runtimeModelCatalog = undefined;
+          }
+        }
         const derivedConfig = applyChatRuntimeOverrides(
           agentRuntime.agentRuntimeType,
           agentRuntime.agentRuntimeConfig,
           model,
           effort,
+          runtimeModelCatalog,
         );
         return {
           ...agentRuntime,

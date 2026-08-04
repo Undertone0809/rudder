@@ -149,7 +149,6 @@ test.describe("Onboarding wizard", () => {
     );
     await page.getByRole("button", { name: "Next" }).click();
     const organization = await (await createOrganizationResponse).json() as { id: string };
-
     await expectOnboardingStep(page, "Create your first agent");
     await page.getByRole("button", { name: "Codex" }).click();
     await expectSelectedCodexModel(page);
@@ -167,7 +166,7 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingDialog.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
     await onboardingDialog.getByRole("button", { name: "Ultra", exact: true }).click();
     const defaultEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
-    await expect(defaultEffortPopover.getByText("Light", { exact: true })).toBeVisible();
+    await expect(defaultEffortPopover.getByText("Low", { exact: true })).toBeVisible();
     await expect(defaultEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
     await defaultEffortPopover.getByText("Ultra", { exact: true }).click();
 
@@ -211,11 +210,51 @@ test.describe("Onboarding wizard", () => {
     await page.goto("/onboarding");
     await expectOnboardingStep(page, "Name your organization");
     await page.locator('input[placeholder="Acme Corp"]').fill(`E2E-Runtime-Effort-${Date.now()}`);
+    const createOrganizationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith("/api/orgs")
+      && response.ok(),
+    );
     await page.getByRole("button", { name: "Next" }).click();
+    const organization = await (await createOrganizationResponse).json() as { id: string };
+    await page.route(`**/api/orgs/${organization.id}/adapters/opencode_local/models`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "opencode/deepseek-v4-flash-free",
+            label: "DeepSeek V4 Flash Free",
+            variants: ["low", "medium", "high", "max"],
+          },
+        ]),
+      });
+    });
+    await page.route(`**/api/orgs/${organization.id}/adapters/pi_local/models`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "kimi-coding/kimi-for-coding",
+            label: "Kimi for Coding",
+            variants: ["off", "minimal", "low", "medium", "high", "xhigh"],
+            capabilities: { reasoning: true },
+          },
+        ]),
+      });
+    });
+    await page.route(`**/api/orgs/${organization.id}/adapters/cursor/models`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{ id: "auto", label: "auto" }]),
+      });
+    });
 
     const onboardingDialog = page.getByTestId("onboarding-dialog");
     await expectOnboardingStep(page, "Create your first agent");
-    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toBeVisible();
+    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
 
     let moreRuntimesOpened = false;
     const selectRuntime = async (runtimeLabel: string) => {
@@ -239,16 +278,25 @@ test.describe("Onboarding wizard", () => {
       await page.keyboard.press("Escape");
     };
 
-    await expectEffortOptions(["Low", "Medium", "High"]);
+    const selectModel = async (modelLabel: string) => {
+      const currentModelButton = onboardingDialog.getByRole("button", { name: /^(Default|Claude Opus 4\.6)$/ }).last();
+      await currentModelButton.click();
+      const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+      await modelPopover.getByRole("button", { name: modelLabel, exact: true }).click();
+    };
+
+    await selectModel("Claude Opus 4.6");
+    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toBeVisible();
+    await expectEffortOptions(["Low", "Medium", "High", "Extra High", "Max"]);
     await selectRuntime("Codex");
-    await expectEffortOptions(["Light", "Medium", "High", "Extra High", "Max", "Ultra"]);
+    await expectEffortOptions(["Low", "Medium", "High", "Extra High", "Max", "Ultra"]);
     await selectRuntime("OpenCode");
-    await expectEffortOptions(["Minimal", "Low", "Medium", "High", "Max"]);
+    await expectEffortOptions(["Low", "Medium", "High", "Max"]);
     await selectRuntime("Pi");
     await expectEffortOptions(["Off", "Minimal", "Low", "Medium", "High", "Extra High"]);
     await selectRuntime("Cursor");
+    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
     await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toBeVisible();
-    await expectEffortOptions(["Plan", "Ask"]);
     await selectRuntime("Gemini CLI");
     await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
     await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toHaveCount(0);
@@ -400,7 +448,7 @@ test.describe("Onboarding wizard", () => {
     await expect(thinkingEffortButton).toBeVisible();
     await thinkingEffortButton.click();
     const thinkingEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
-    await expect(thinkingEffortPopover.getByText("Light", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
     await thinkingEffortPopover.getByText("Ultra", { exact: true }).click();
     await expect(page.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
@@ -650,9 +698,13 @@ test.describe("Onboarding wizard", () => {
     await expect(page.getByRole("heading", { name: nextIssueSource!.title })).toBeVisible({
       timeout: 15_000,
     });
-    const nextIssueLink = page.getByRole("link", { name: "Review the result" });
-    await expect(nextIssueLink).toHaveAttribute("href", nextIssueHref);
-    await nextIssueLink.click();
+    const nextIssueLink = page.locator("[data-markdown-link-href]").filter({
+      hasText: "Review the result",
+    });
+    await expect(nextIssueLink).toHaveAttribute("data-markdown-link-href", nextIssueHref);
+    await nextIssueLink.click({
+      modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+    });
     await expect(page).toHaveURL(
       new RegExp(
         `/${escapeRegExp(organization.urlKey)}/issues/${escapeRegExp(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}$`,
@@ -665,9 +717,11 @@ test.describe("Onboarding wizard", () => {
 
     await page.goto(`/${organization.urlKey}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
     await expect(page.getByRole("heading", { name: chatIssue!.title })).toBeVisible({ timeout: 15_000 });
-    const chatCta = page.getByRole("link", { name: "Start in Chat" });
-    await expect(chatCta).toHaveAttribute("href", chatCtaHref);
-    await chatCta.click();
+    const chatCta = page.locator("[data-markdown-link-href]").filter({ hasText: "Start in Chat" });
+    await expect(chatCta).toHaveAttribute("data-markdown-link-href", chatCtaHref);
+    await chatCta.click({
+      modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+    });
     await expect(page).toHaveURL(
       new RegExp(`/${escapeRegExp(organization.urlKey)}/messenger/chat(?:\\?|$)`),
       { timeout: 15_000 },
@@ -679,9 +733,11 @@ test.describe("Onboarding wizard", () => {
     await expect(page.locator(".chat-warning")).toHaveCount(0);
 
     await page.goto(`/${organization.urlKey}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
-    const openIssuesCta = page.getByRole("link", { name: "Open Issues" });
-    await expect(openIssuesCta).toHaveAttribute("href", issuesCtaHref);
-    await openIssuesCta.click();
+    const openIssuesCta = page.locator("[data-markdown-link-href]").filter({ hasText: "Open Issues" });
+    await expect(openIssuesCta).toHaveAttribute("data-markdown-link-href", issuesCtaHref);
+    await openIssuesCta.click({
+      modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+    });
     await expect(page).toHaveURL(
       new RegExp(`/${escapeRegExp(organization.urlKey)}/issues\\?projectId=${gettingStartedProject.id}$`),
       { timeout: 15_000 },

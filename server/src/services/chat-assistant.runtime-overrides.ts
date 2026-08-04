@@ -1,16 +1,53 @@
-import { GPT_5_6_CODEX_LOCAL_MODEL_IDS } from "@rudderhq/agent-runtime-codex-local";
+import { models as claudeModels } from "@rudderhq/agent-runtime-claude-local";
+import {
+  CODEX_LOCAL_REASONING_EFFORTS_BY_MODEL,
+} from "@rudderhq/agent-runtime-codex-local";
+import { models as cursorModels } from "@rudderhq/agent-runtime-cursor-local";
+import {
+  PI_LOCAL_THINKING_LEVELS,
+  models as piModels,
+} from "@rudderhq/agent-runtime-pi-local";
+import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
 import type { AgentRuntimeType } from "@rudderhq/shared";
 
-const GPT_5_6_CODEX_LOCAL_MODEL_ID_SET = new Set<string>(GPT_5_6_CODEX_LOCAL_MODEL_IDS);
-const CODEX_LOCAL_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
-const GPT_5_6_CODEX_LOCAL_REASONING_EFFORTS = new Set([
-  "light",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-]);
+const CODEX_LOCAL_REASONING_EFFORT_SET_BY_MODEL = new Map(
+  Object.entries(CODEX_LOCAL_REASONING_EFFORTS_BY_MODEL)
+    .map(([model, efforts]) => [model, new Set(efforts)] as const),
+);
+const PI_LOCAL_THINKING_LEVEL_SET = new Set(PI_LOCAL_THINKING_LEVELS);
+
+function supportedEffortsForRuntime(
+  agentRuntimeType: AgentRuntimeType,
+  model: string,
+  catalog?: readonly AgentRuntimeModel[],
+): Set<string> | null | undefined {
+  const normalizedModel = model.toLowerCase();
+  if (catalog) {
+    const catalogModel = catalog.find((candidate) => candidate.id.toLowerCase() === normalizedModel);
+    if (!catalogModel) return new Set();
+    if (catalogModel.variants !== undefined) return new Set(catalogModel.variants);
+    return new Set();
+  }
+  if (agentRuntimeType === "codex_local") {
+    return CODEX_LOCAL_REASONING_EFFORT_SET_BY_MODEL.get(normalizedModel) ?? new Set();
+  }
+  if (agentRuntimeType === "claude_local") {
+    const catalogModel = claudeModels.find((candidate) => candidate.id.toLowerCase() === normalizedModel);
+    return catalogModel ? new Set(catalogModel.variants ?? []) : new Set();
+  }
+  if (agentRuntimeType === "cursor") {
+    const catalogModel = cursorModels.find((candidate) => candidate.id.toLowerCase() === normalizedModel);
+    return catalogModel?.variants ? new Set(catalogModel.variants) : new Set();
+  }
+  if (agentRuntimeType === "pi_local") {
+    if (!catalog) return PI_LOCAL_THINKING_LEVEL_SET;
+    const catalogModel = piModels.find((candidate) => candidate.id.toLowerCase() === normalizedModel);
+    if (!catalogModel) return new Set();
+    return catalogModel.variants ? new Set(catalogModel.variants) : new Set();
+  }
+  if (agentRuntimeType === "opencode_local") return undefined;
+  return null;
+}
 
 function safeTrim(value: string | null | undefined) {
   return value?.trim() || null;
@@ -27,7 +64,7 @@ export function applyChatPrimaryModel(
 export function chatEffortKeyForRuntime(agentRuntimeType: AgentRuntimeType): string | null {
   if (agentRuntimeType === "gemini_local") return null;
   if (agentRuntimeType === "codex_local") return "modelReasoningEffort";
-  if (agentRuntimeType === "cursor") return "mode";
+  if (agentRuntimeType === "cursor") return "effort";
   if (agentRuntimeType === "opencode_local") return "variant";
   if (agentRuntimeType === "pi_local") return "thinking";
   return "effort";
@@ -64,6 +101,7 @@ export function applyChatRuntimeOverrides(
   agentRuntimeConfig: Record<string, unknown>,
   model: string | null | undefined,
   effort: string | null | undefined,
+  catalog?: readonly AgentRuntimeModel[],
 ) {
   const selectedModel = safeTrim(model);
   let nextConfig: Record<string, unknown> = selectedModel
@@ -79,15 +117,13 @@ export function applyChatRuntimeOverrides(
     }
   }
 
-  if (agentRuntimeType !== "codex_local") return nextConfig;
   const effectiveModel = selectedModel
     ?? safeTrim(typeof nextConfig.model === "string" ? nextConfig.model : null);
   const effectiveEffort = chatEffortFromConfig(agentRuntimeType, nextConfig);
   if (!effectiveModel || !effectiveEffort) return nextConfig;
-
-  const supportedEfforts = GPT_5_6_CODEX_LOCAL_MODEL_ID_SET.has(effectiveModel.toLowerCase())
-    ? GPT_5_6_CODEX_LOCAL_REASONING_EFFORTS
-    : CODEX_LOCAL_REASONING_EFFORTS;
+  const supportedEfforts = supportedEffortsForRuntime(agentRuntimeType, effectiveModel, catalog);
+  if (supportedEfforts === undefined) return nextConfig;
+  if (supportedEfforts === null) return clearChatEffort(agentRuntimeType, nextConfig);
   return supportedEfforts.has(effectiveEffort.toLowerCase())
     ? nextConfig
     : clearChatEffort(agentRuntimeType, nextConfig);

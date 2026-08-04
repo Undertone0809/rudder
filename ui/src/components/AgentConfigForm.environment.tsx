@@ -202,10 +202,21 @@ export function RuntimeProviderCard({
   );
   const requiresProviderModel = requiresExplicitProviderModel(runtimeType);
   const thinkingEffortKey = thinkingEffortKeyForRuntime(runtimeType);
+  const selectedModelMetadata = models.find((candidate) => candidate.id === model);
   const currentThinkingEffort = createValues
     ? createValues.thinkingEffort
     : String(config[thinkingEffortKey] ?? config.reasoningEffort ?? "");
-  const thinkingEffortOptions = thinkingEffortOptionsForRuntime(runtimeType, model);
+  const currentCursorMode = createValues
+    ? createValues.mode ?? ""
+    : String(config.mode ?? "");
+  const thinkingEffortOptions = thinkingEffortOptionsForRuntime(runtimeType, model, selectedModelMetadata);
+  const showThinkingEffort = shouldShowThinkingEffort(runtimeType, model, selectedModelMetadata);
+  const shouldClearThinkingEffortOnModelChange = (nextModel: string) => {
+    if (!currentThinkingEffort) return false;
+    const nextModelMetadata = models.find((candidate) => candidate.id === nextModel);
+    const supportedEfforts = thinkingEffortOptionsForRuntime(runtimeType, nextModel, nextModelMetadata);
+    return !supportedEfforts.some((option) => option.id === currentThinkingEffort);
+  };
   const updateThinkingEffort = (value: string) => {
     if (createSet) {
       createSet({ thinkingEffort: value });
@@ -213,6 +224,13 @@ export function RuntimeProviderCard({
       onConfigPatchChange?.({ modelReasoningEffort: value || undefined, reasoningEffort: undefined });
     } else {
       onConfigFieldChange(thinkingEffortKey, value || undefined);
+    }
+  };
+  const updateCursorMode = (value: string) => {
+    if (createSet) {
+      createSet({ mode: value });
+    } else {
+      onConfigFieldChange("mode", value || undefined);
     }
   };
   const adapterFieldProps: AgentRuntimeConfigFieldsProps = {
@@ -288,11 +306,7 @@ export function RuntimeProviderCard({
           models={models}
           value={model}
           onChange={(nextModel) => {
-            const supportedEfforts = thinkingEffortOptionsForRuntime(runtimeType, nextModel);
-            const clearThinkingEffort = Boolean(
-              currentThinkingEffort
-              && !supportedEfforts.some((option) => option.id === currentThinkingEffort)
-            );
+            const clearThinkingEffort = shouldClearThinkingEffortOnModelChange(nextModel);
             onModelChange(nextModel, clearThinkingEffort);
           }}
           open={modelOpen}
@@ -308,7 +322,7 @@ export function RuntimeProviderCard({
           triggerTestId={triggerTestId}
           disabled={disabled}
         />
-        {shouldShowThinkingEffort(runtimeType) && (
+        {showThinkingEffort && (
           <>
             <ThinkingEffortDropdown
               value={currentThinkingEffort}
@@ -321,6 +335,20 @@ export function RuntimeProviderCard({
             />
           </>
         )}
+        {runtimeType === "cursor" ? (
+          <Field label="Execution mode" hint={help.cursorMode}>
+            <select
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              value={currentCursorMode}
+              onChange={(event) => updateCursorMode(event.target.value)}
+              disabled={disabled}
+            >
+              <option value="">Runtime default</option>
+              <option value="plan">Plan</option>
+              <option value="ask">Ask</option>
+            </select>
+          </Field>
+        ) : null}
         <CollapsibleSection
           title="Advanced options"
           bordered

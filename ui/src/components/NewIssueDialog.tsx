@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { agentsApi } from "../api/agents";
+import { agentsApi, type AgentRuntimeModel } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
@@ -74,7 +74,11 @@ import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import {
+  claudeLocalThinkingEffortOptionsForModel,
   codexLocalReasoningEffortOptionsForModel,
+  cursorLocalThinkingEffortOptionsForModel,
+  openCodeLocalVariantOptionsForModel,
+  piLocalThinkingEffortOptionsForModel,
   withDefaultThinkingEffortOption,
 } from "../lib/runtime-thinking-effort";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
@@ -96,30 +100,13 @@ type StagedIssueFile = {
   title?: string | null;
 };
 
-const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
+const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
-
-const ISSUE_THINKING_EFFORT_OPTIONS = {
-  claude_local: [
-    { value: "", label: "Default" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
-  opencode_local: [
-    { value: "", label: "Default" },
-    { value: "minimal", label: "Minimal" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-  ],
-} as const;
 
 function buildAssigneeAdapterOverrides(input: {
   agentRuntimeType: string | null | undefined;
@@ -141,8 +128,10 @@ function buildAssigneeAdapterOverrides(input: {
       agentRuntimeConfig.variant = input.thinkingEffortOverride;
     } else if (agentRuntimeType === "claude_local") {
       agentRuntimeConfig.effort = input.thinkingEffortOverride;
-    } else if (agentRuntimeType === "opencode_local") {
-      agentRuntimeConfig.variant = input.thinkingEffortOverride;
+    } else if (agentRuntimeType === "pi_local") {
+      agentRuntimeConfig.thinking = input.thinkingEffortOverride;
+    } else if (agentRuntimeType === "cursor") {
+      agentRuntimeConfig.effort = input.thinkingEffortOverride;
     }
   }
   if (agentRuntimeType === "claude_local" && input.chrome) {
@@ -154,6 +143,24 @@ function buildAssigneeAdapterOverrides(input: {
     overrides.agentRuntimeConfig = agentRuntimeConfig;
   }
   return Object.keys(overrides).length > 0 ? overrides : null;
+}
+
+function thinkingOptionsForAssignee(
+  runtimeType: string | null,
+  model: string,
+  metadata: AgentRuntimeModel | undefined,
+) {
+  if (runtimeType === "codex_local") {
+    return withDefaultThinkingEffortOption(
+      "Default",
+      codexLocalReasoningEffortOptionsForModel(model, metadata),
+    );
+  }
+  if (runtimeType === "claude_local") return claudeLocalThinkingEffortOptionsForModel(model, metadata);
+  if (runtimeType === "opencode_local") return openCodeLocalVariantOptionsForModel(model, metadata);
+  if (runtimeType === "pi_local") return piLocalThinkingEffortOptionsForModel(model, metadata);
+  if (runtimeType === "cursor") return cursorLocalThinkingEffortOptionsForModel(model, metadata);
+  return [];
 }
 
 function formatFileSize(file: File) {
@@ -297,6 +304,18 @@ export function NewIssueDialog() {
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
 
+  const { data: assigneeAgentRuntimeModels } = useQuery({
+    queryKey:
+      effectiveCompanyId && assigneeAdapterType
+        ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
+        : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
+    queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
+  });
+  const assigneeModelMetadata = assigneeAgentRuntimeModels?.find(
+    (candidate) => candidate.id === effectiveAssigneeModel,
+  );
+
   const { data: assigneeOrganizationSkills } = useQuery({
     queryKey: queryKeys.organizationSkills.list(effectiveCompanyId ?? "__none__"),
     queryFn: () => organizationSkillsApi.list(effectiveCompanyId!),
@@ -380,15 +399,6 @@ export function NewIssueDialog() {
       skillMentionOptions,
     ],
   );
-
-  const { data: assigneeAgentRuntimeModels } = useQuery({
-    queryKey:
-      effectiveCompanyId && assigneeAdapterType
-        ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
-        : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
-    queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
-  });
 
   const clearPendingDraftSave = useCallback(() => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -692,19 +702,21 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       return;
     }
-    const validThinkingValues =
-      assigneeAdapterType === "codex_local"
-        ? withDefaultThinkingEffortOption(
-          "Default",
-          codexLocalReasoningEffortOptionsForModel(effectiveAssigneeModel),
-        )
-        : assigneeAdapterType === "opencode_local"
-          ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
-          : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
+    const validThinkingValues = thinkingOptionsForAssignee(
+      assigneeAdapterType,
+      effectiveAssigneeModel,
+      assigneeModelMetadata,
+    );
     if (!validThinkingValues.some((option) => option.value === assigneeThinkingEffort)) {
       setAssigneeThinkingEffort("");
     }
-  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort, effectiveAssigneeModel]);
+  }, [
+    assigneeAdapterType,
+    assigneeModelMetadata,
+    assigneeThinkingEffort,
+    effectiveAssigneeModel,
+    supportsAssigneeOverrides,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -940,17 +952,18 @@ export function NewIssueDialog() {
       : assigneeAdapterType === "codex_local"
         ? "Codex options"
         : assigneeAdapterType === "opencode_local"
-          ? "OpenCode options"
+        ? "OpenCode options"
+        : assigneeAdapterType === "pi_local"
+          ? "Pi options"
+          : assigneeAdapterType === "cursor"
+            ? "Cursor options"
         : "Agent options";
-  const thinkingEffortOptions =
-    assigneeAdapterType === "codex_local"
-      ? withDefaultThinkingEffortOption(
-        "Default",
-        codexLocalReasoningEffortOptionsForModel(effectiveAssigneeModel),
-      )
-      : assigneeAdapterType === "opencode_local"
-        ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
-      : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
+  const thinkingEffortOptions = thinkingOptionsForAssignee(
+    assigneeAdapterType,
+    effectiveAssigneeModel,
+    assigneeModelMetadata,
+  );
+  const hasThinkingEffortOptions = thinkingEffortOptions.length > 1;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () => [
@@ -1472,23 +1485,25 @@ export function NewIssueDialog() {
                     onChange={setAssigneeModelOverride}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">Thinking effort</div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {thinkingEffortOptions.map((option) => (
-                      <button
-                        key={option.value || "default"}
-                        className={cn(
-                          "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
-                          assigneeThinkingEffort === option.value && "bg-accent"
-                        )}
-                        onClick={() => setAssigneeThinkingEffort(option.value)}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                {hasThinkingEffortOptions ? (
+                  <div className="space-y-1.5">
+                    <div className="text-xs text-muted-foreground">Thinking effort</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {thinkingEffortOptions.map((option) => (
+                        <button
+                          key={option.value || "default"}
+                          className={cn(
+                            "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
+                            assigneeThinkingEffort === option.value && "bg-accent"
+                          )}
+                          onClick={() => setAssigneeThinkingEffort(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : null}
                 {assigneeAdapterType === "claude_local" && (
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
                     <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>

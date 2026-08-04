@@ -207,16 +207,25 @@ export function normalizedChatRuntimeOverridesForModel(
   agent: Agent,
   current: ChatRuntimeOverrides,
   modelOverride: string | null,
+  modelMetadata?: AgentRuntimeModel,
 ): ChatRuntimeOverrides {
-  if (!shouldShowThinkingEffort(agent.agentRuntimeType)) {
+  const model = modelOverride ?? configuredAgentModel(agent);
+  if (!shouldShowThinkingEffort(agent.agentRuntimeType, model, modelMetadata)) {
     return { modelOverride, effortOverride: null };
   }
+  const supportedEfforts = thinkingEffortOptionsForRuntime(
+    agent.agentRuntimeType,
+    model,
+    modelMetadata,
+  );
   return {
     modelOverride,
-    // Preserve inheritance and explicit effort selection. Compatibility is a
-    // derived runtime concern, so switching back to the original model can
-    // recover the Agent's configured effort without another persisted change.
-    effortOverride: current.effortOverride,
+    // A runtime model owns its available levels. Do not carry an override into
+    // a model whose official catalog does not expose that level.
+    effortOverride: current.effortOverride
+      && supportedEfforts.some((option) => option.id === current.effortOverride)
+      ? current.effortOverride
+      : null,
   };
 }
 
@@ -224,12 +233,14 @@ export function chatRuntimeSelectionLabel(input: {
   agent: Agent | null;
   runtime: ChatRuntimeDescriptor | null;
   overrides: ChatRuntimeOverrides;
+  adapterModels?: readonly AgentRuntimeModel[] | null;
 }) {
   if (!input.agent) return "Loading runtime";
   const model = input.overrides.modelOverride
     ?? input.runtime?.model
     ?? configuredAgentModel(input.agent);
-  if (!shouldShowThinkingEffort(input.agent.agentRuntimeType)) return model;
+  const modelMetadata = input.adapterModels?.find((candidate) => candidate.id === model);
+  if (!shouldShowThinkingEffort(input.agent.agentRuntimeType, model, modelMetadata)) return model;
   const effort = input.overrides.effortOverride == null
     ? input.runtime?.effort ?? configuredAgentEffort(input.agent)
     : input.overrides.effortOverride;
@@ -264,23 +275,21 @@ export function ChatConversationRuntimeControls(props: {
   const configuredEffort = configuredAgentEffort(props.agent);
   const effortControlLabel = thinkingEffortLabelForRuntime(props.agent.agentRuntimeType);
   const effectiveModel = props.overrides.modelOverride ?? configuredModel;
+  const effectiveModelMetadata = options.find((candidate) => candidate.id === effectiveModel);
+  const showThinkingEffort = shouldShowThinkingEffort(
+    props.agent.agentRuntimeType,
+    effectiveModel,
+    effectiveModelMetadata,
+  );
   const effortOptions = thinkingEffortOptionsForRuntime(
     props.agent.agentRuntimeType,
     effectiveModel,
+    effectiveModelMetadata,
   ).map((option) => ({
     id: option.id || "auto",
     label: option.label,
   }));
   const currentEffortOverride = props.overrides.effortOverride;
-  if (
-    currentEffortOverride
-    && !effortOptions.some((option) => option.id === currentEffortOverride)
-  ) {
-    effortOptions.push({
-      id: currentEffortOverride,
-      label: effortLabel(currentEffortOverride),
-    });
-  }
   const errorMessage = props.error instanceof Error
     ? props.error.message
     : props.error
@@ -399,6 +408,7 @@ export function ChatConversationRuntimeControls(props: {
                   props.agent,
                   props.overrides,
                   null,
+                  options.find((candidate) => candidate.id === configuredModel),
                 ));
                 setActiveSubmenu(null);
               }}
@@ -423,6 +433,7 @@ export function ChatConversationRuntimeControls(props: {
                       props.agent,
                       props.overrides,
                       model.id,
+                      model,
                     ));
                     setActiveSubmenu(null);
                   }}
@@ -441,7 +452,7 @@ export function ChatConversationRuntimeControls(props: {
           document.body,
         ) : null}
       </div>
-      {shouldShowThinkingEffort(props.agent.agentRuntimeType) ? (
+      {showThinkingEffort ? (
         <div className="relative">
           <button
             ref={effortTriggerRef}
@@ -463,7 +474,7 @@ export function ChatConversationRuntimeControls(props: {
             }}
           >
             <span className="font-medium text-foreground">
-              {effortControlLabel === "Execution mode" ? "Mode" : "Thinking"}
+              Thinking
             </span>
             <span className="min-w-0 truncate text-right text-muted-foreground">
               {effortLabel(effectiveEffort)}

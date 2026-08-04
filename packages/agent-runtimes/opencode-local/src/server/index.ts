@@ -63,6 +63,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
 export { execute } from "./execute.js";
 export {
   discoverOpenCodeModels,
+  discoverOpenCodeModelsCached,
   ensureOpenCodeModelConfiguredAndAvailable,
   listOpenCodeModels,
   resetOpenCodeModelsCacheForTests,

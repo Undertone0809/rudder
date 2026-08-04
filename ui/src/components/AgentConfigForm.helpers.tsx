@@ -21,9 +21,13 @@ import type {
 import { getUIAdapter } from "../agent-runtimes";
 import type { AgentRuntimeModel } from "../api/agents";
 import {
-  CODEX_LOCAL_REASONING_EFFORT_OPTIONS,
+  claudeLocalThinkingEffortOptionsForModel,
   codexLocalReasoningEffortOptionsForModel,
-  withDefaultThinkingEffortOption,
+  cursorLocalThinkingEffortOptionsForModel,
+  openCodeLocalVariantOptionsForModel,
+  piLocalThinkingEffortOptionsForModel,
+  type RuntimeModelMetadata,
+  withDefaultThinkingEffortOption
 } from "../lib/runtime-thinking-effort";
 import { defaultCreateValues } from "./agent-config-defaults";
 import {
@@ -114,70 +118,26 @@ export function formatArgList(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export const codexThinkingEffortOptions = [
-  ...withDefaultThinkingEffortOption("Auto", CODEX_LOCAL_REASONING_EFFORT_OPTIONS).map((option) => ({
-    id: option.value,
-    label: option.label,
-  })),
-] as const;
-
-export const openCodeThinkingEffortOptions = [
-  { id: "", label: "Auto" },
-  { id: "minimal", label: "Minimal" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "max", label: "Max" },
-] as const;
-
-export const cursorModeOptions = [
-  { id: "", label: "Auto" },
-  { id: "plan", label: "Plan" },
-  { id: "ask", label: "Ask" },
-] as const;
-
-export const piThinkingEffortOptions = [
-  { id: "", label: "Auto" },
-  { id: "off", label: "Off" },
-  { id: "minimal", label: "Minimal" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra High" },
-] as const;
-
-export const claudeThinkingEffortOptions = [
-  { id: "", label: "Auto" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-] as const;
-
 const RUNTIME_THINKING_EFFORT_DEFINITIONS = {
   claude_local: {
     key: "effort",
     label: "Thinking effort",
-    options: claudeThinkingEffortOptions,
   },
   codex_local: {
     key: "modelReasoningEffort",
     label: "Thinking effort",
-    options: codexThinkingEffortOptions,
-  },
-  cursor: {
-    key: "mode",
-    label: "Execution mode",
-    options: cursorModeOptions,
   },
   opencode_local: {
     key: "variant",
     label: "Thinking effort",
-    options: openCodeThinkingEffortOptions,
   },
   pi_local: {
     key: "thinking",
     label: "Thinking effort",
-    options: piThinkingEffortOptions,
+  },
+  cursor: {
+    key: "effort",
+    label: "Thinking effort",
   },
 } as const;
 
@@ -291,7 +251,11 @@ export function thinkingEffortKeyForRuntime(agentRuntimeType: string) {
     ?? "effort";
 }
 
-export function thinkingEffortOptionsForRuntime(agentRuntimeType: string, model = "") {
+export function thinkingEffortOptionsForRuntime(
+  agentRuntimeType: string,
+  model = "",
+  metadata?: RuntimeModelMetadata,
+) {
   const definition = RUNTIME_THINKING_EFFORT_DEFINITIONS[
     agentRuntimeType as keyof typeof RUNTIME_THINKING_EFFORT_DEFINITIONS
   ];
@@ -299,10 +263,34 @@ export function thinkingEffortOptionsForRuntime(agentRuntimeType: string, model 
   if (agentRuntimeType === "codex_local") {
     return withDefaultThinkingEffortOption(
       "Auto",
-      codexLocalReasoningEffortOptionsForModel(model),
+      codexLocalReasoningEffortOptionsForModel(model, metadata),
     ).map((option) => ({ id: option.value, label: option.label }));
   }
-  return definition.options;
+  if (agentRuntimeType === "claude_local") {
+    return claudeLocalThinkingEffortOptionsForModel(model, metadata).map((option) => ({
+      id: option.value,
+      label: option.label,
+    }));
+  }
+  if (agentRuntimeType === "opencode_local") {
+    return openCodeLocalVariantOptionsForModel(model, metadata).map((option) => ({
+      id: option.value,
+      label: option.label,
+    }));
+  }
+  if (agentRuntimeType === "pi_local") {
+    return piLocalThinkingEffortOptionsForModel(model, metadata).map((option) => ({
+      id: option.value,
+      label: option.label,
+    }));
+  }
+  if (agentRuntimeType === "cursor") {
+    return cursorLocalThinkingEffortOptionsForModel(model, metadata).map((option) => ({
+      id: option.value,
+      label: option.label,
+    }));
+  }
+  return [];
 }
 
 export function thinkingEffortLabelForRuntime(agentRuntimeType: string) {
@@ -311,7 +299,22 @@ export function thinkingEffortLabelForRuntime(agentRuntimeType: string) {
   ]?.label ?? "Thinking effort";
 }
 
-export function shouldShowThinkingEffort(agentRuntimeType: string) {
+export function shouldShowThinkingEffort(
+  agentRuntimeType: string,
+  model = "",
+  metadata?: RuntimeModelMetadata,
+) {
+  if (agentRuntimeType === "cursor") {
+    return thinkingEffortOptionsForRuntime(agentRuntimeType, model, metadata).length > 1;
+  }
+  if (
+    agentRuntimeType === "codex_local"
+    || agentRuntimeType === "claude_local"
+    || agentRuntimeType === "opencode_local"
+    || agentRuntimeType === "pi_local"
+  ) {
+    return thinkingEffortOptionsForRuntime(agentRuntimeType, model, metadata).length > 1;
+  }
   return agentRuntimeType in RUNTIME_THINKING_EFFORT_DEFINITIONS;
 }
 

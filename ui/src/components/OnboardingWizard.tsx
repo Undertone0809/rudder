@@ -59,6 +59,7 @@ import {
 } from "../lib/runtime-models";
 import { cn } from "../lib/utils";
 import { defaultCreateValues } from "./agent-config-defaults";
+import { Field, help } from "./agent-config-primitives";
 import {
   defaultModelForRuntime,
   shouldShowThinkingEffort,
@@ -127,6 +128,7 @@ export function OnboardingWizard() {
   const [model, setModel] = useState("");
   const [thinkingEffort, setThinkingEffort] = useState("");
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
+  const [cursorMode, setCursorMode] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
@@ -337,7 +339,7 @@ export function OnboardingWizard() {
     if (step !== 2) return;
     setAdapterEnvResult(null);
     setAdapterEnvError(null);
-  }, [step, agentRuntimeType, model, thinkingEffort, command, args, providerApiKey, url]);
+  }, [step, agentRuntimeType, model, thinkingEffort, cursorMode, command, args, providerApiKey, url]);
   useEffect(() => {
     if (!effectiveOnboardingOpen) return;
     const handlePageHide = () => {
@@ -352,12 +354,14 @@ export function OnboardingWizard() {
     () => resolveRuntimeModels(agentRuntimeType, adapterModels),
     [agentRuntimeType, adapterModels]
   );
+  const selectedModelMetadata = availableAdapterModels.find((candidate) => candidate.id === model);
   const availableThinkingEffortOptions = useMemo(
     () => thinkingEffortOptionsForRuntime(
       agentRuntimeType,
       model || defaultModelForRuntime(agentRuntimeType),
+      selectedModelMetadata,
     ),
-    [agentRuntimeType, model],
+    [agentRuntimeType, model, selectedModelMetadata],
   );
   const requiresProviderModel = requiresExplicitProviderModel(agentRuntimeType);
   const providerSetupHint = runtimeProviderSetupHint(agentRuntimeType, model);
@@ -380,6 +384,7 @@ export function OnboardingWizard() {
     setModel(defaultModelForRuntime(nextType));
     setThinkingEffort("");
     setThinkingEffortOpen(false);
+    setCursorMode("");
     setProviderApiKey("");
     setProviderSecretBinding(null);
   }
@@ -389,6 +394,7 @@ export function OnboardingWizard() {
     const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(
       agentRuntimeType,
       nextModel || defaultModelForRuntime(agentRuntimeType),
+      availableAdapterModels.find((candidate) => candidate.id === nextModel),
     );
     setModel(nextModel);
     setThinkingEffort((current) =>
@@ -413,6 +419,7 @@ export function OnboardingWizard() {
     setModel("");
     setThinkingEffort("");
     setThinkingEffortOpen(false);
+    setCursorMode("");
     setCommand("");
     setArgs("");
     setProviderApiKey("");
@@ -472,6 +479,7 @@ export function OnboardingWizard() {
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
           : model,
       thinkingEffort,
+      mode: agentRuntimeType === "cursor" ? cursorMode : undefined,
       command,
       args,
       url,
@@ -1034,7 +1042,11 @@ export function OnboardingWizard() {
                         )}
                         allowCustom
                       />
-                      {shouldShowThinkingEffort(agentRuntimeType) ? (
+                      {shouldShowThinkingEffort(
+                        agentRuntimeType,
+                        model || defaultModelForRuntime(agentRuntimeType),
+                        selectedModelMetadata,
+                      ) ? (
                         <TooltipProvider>
                           <ThinkingEffortDropdown
                             value={thinkingEffort}
@@ -1045,6 +1057,19 @@ export function OnboardingWizard() {
                             onOpenChange={setThinkingEffortOpen}
                           />
                         </TooltipProvider>
+                      ) : null}
+                      {agentRuntimeType === "cursor" ? (
+                        <Field label="Execution mode" hint={help.cursorMode}>
+                          <select
+                            className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                            value={cursorMode}
+                            onChange={(event) => setCursorMode(event.currentTarget.value)}
+                          >
+                            <option value="">Runtime default</option>
+                            <option value="plan">Plan</option>
+                            <option value="ask">Ask</option>
+                          </select>
+                        </Field>
                       ) : null}
                       {providerSetupHint ? (
                         <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">

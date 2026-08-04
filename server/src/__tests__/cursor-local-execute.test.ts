@@ -312,7 +312,8 @@ describe("cursor execute", { timeout: 20_000 }, () => {
         config: {
           command: commandPath,
           cwd: workspace,
-          model: "auto",
+          model: "gpt-5.3-codex[context=1m]",
+          effort: "high",
           mode: "ask",
           env: {
             RUDDER_TEST_CAPTURE_PATH: capturePath,
@@ -330,6 +331,8 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.argv).toContain("--mode");
       expect(capture.argv).toContain("ask");
+      expect(capture.argv).toContain("--model");
+      expect(capture.argv).toContain("gpt-5.3-codex[context=1m,effort=high]");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

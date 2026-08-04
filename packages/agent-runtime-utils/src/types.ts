@@ -307,6 +307,12 @@ export interface AgentRuntimeMediaAttachment {
 export interface AgentRuntimeModel {
   id: string;
   label: string;
+  /** Runtime-native model variants, when the adapter can discover them. */
+  variants?: string[];
+  /** Runtime-native model capabilities, when the adapter can discover them. */
+  capabilities?: {
+    reasoning?: boolean;
+  };
 }
 
 export type AgentRuntimeEnvironmentCheckLevel = "info" | "warn" | "error";
@@ -537,6 +543,8 @@ export interface CreateConfigValues {
   model: string;
   modelFallbacks: ModelFallbackConfig[];
   thinkingEffort: string;
+  /** Cursor CLI's independent --mode setting (plan|ask). */
+  mode?: string;
   chrome: boolean;
   dangerouslySkipPermissions: boolean;
   permissionMode?: string;

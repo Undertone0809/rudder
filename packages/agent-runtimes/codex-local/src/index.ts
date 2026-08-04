@@ -11,14 +11,36 @@ export const GPT_5_6_CODEX_LOCAL_MODEL_IDS = [
   "gpt-5.6-luna",
 ] as const;
 
+export const CODEX_LOCAL_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+
+export const CODEX_LOCAL_REASONING_EFFORTS_BY_MODEL: Record<string, readonly string[]> = {
+  "gpt-5.6-sol": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
+  "gpt-5.6-terra": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
+  "gpt-5.6-luna": [...CODEX_LOCAL_REASONING_EFFORTS, "max"],
+  "gpt-5.5": [...CODEX_LOCAL_REASONING_EFFORTS],
+  "gpt-5.4": [...CODEX_LOCAL_REASONING_EFFORTS],
+  "gpt-5.4-mini": [...CODEX_LOCAL_REASONING_EFFORTS],
+  "gpt-5.2": [...CODEX_LOCAL_REASONING_EFFORTS],
+};
+
+function codexModelVariants(model: string): string[] | undefined {
+  const efforts = CODEX_LOCAL_REASONING_EFFORTS_BY_MODEL[model];
+  return efforts ? [...efforts] : undefined;
+}
+
 export const models = [
-  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[0], label: "GPT-5.6-sol" },
-  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[1], label: "GPT-5.6-terra" },
-  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[2], label: "GPT-5.6-luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "gpt-5.2", label: "GPT-5.2" },
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[0], label: "GPT-5.6-sol", variants: codexModelVariants("gpt-5.6-sol") },
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[1], label: "GPT-5.6-terra", variants: codexModelVariants("gpt-5.6-terra") },
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[2], label: "GPT-5.6-luna", variants: codexModelVariants("gpt-5.6-luna") },
+  { id: "gpt-5.5", label: "GPT-5.5", variants: codexModelVariants("gpt-5.5") },
+  { id: "gpt-5.4", label: "GPT-5.4", variants: codexModelVariants("gpt-5.4") },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", variants: codexModelVariants("gpt-5.4-mini") },
+  { id: "gpt-5.2", label: "GPT-5.2", variants: codexModelVariants("gpt-5.2") },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
@@ -30,7 +52,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
 - model (string, optional): Codex model id
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- modelReasoningEffort (string, optional): model-dependent reasoning effort override (light|low|medium|high|xhigh|max|ultra) passed via -c model_reasoning_effort=...
+- modelReasoningEffort (string, optional): model-dependent Codex CLI reasoning effort override passed via -c model_reasoning_effort=.... Use the levels declared for the selected model by \`codex debug models\`; the installed catalog exposes low|medium|high|xhigh for standard models, max for Luna, and max|ultra for Sol/Terra.
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional, defaults to true on new Codex agents): run codex with --search
 - countSubscriptionUsageAsCost (boolean, optional, defaults to true): when Codex uses local subscription auth, estimate API-equivalent spend from token usage instead of recording subscription runs as $0. Known-model estimates count toward Rudder spend and budget hard stops. Rates are stored per model from the OpenAI/Codex price table used by Vibe Usage; unknown models remain subscription usage until added.
