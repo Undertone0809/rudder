@@ -54,7 +54,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { redactEventPayload } from "../redaction.js";
+import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { listAgentRuntimeAvailability } from "../services/agent-runtime-availability.js";
 import { assetService } from "../services/assets.js";
 import {
@@ -593,7 +593,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       : false;
 
     return {
-      ...(options?.restricted ? redactForRestrictedAgentView(agent) : publicAgent),
+      ...(options?.restricted ? redactForRestrictedAgentView(agent) : redactAgentForResponse(publicAgent)),
       access: accessState,
       instructionsLibraryPath,
       ...(options?.restricted ? {} : {
@@ -1077,6 +1077,20 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     };
   }
 
+  function redactRuntimeConfigForResponse(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
+    const redacted = redactEventPayload(value ?? {}) ?? {};
+    return omitSecretPayloadFields(redacted) as Record<string, unknown>;
+  }
+
+  function redactAgentForResponse(agent: Awaited<ReturnType<typeof svc.getById>>) {
+    if (!agent) return null;
+    return {
+      ...agent,
+      agentRuntimeConfig: redactRuntimeConfigForResponse(agent.agentRuntimeConfig),
+      runtimeConfig: redactRuntimeConfigForResponse(agent.runtimeConfig),
+    };
+  }
+
   function redactAgentConfiguration(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
@@ -1087,8 +1101,8 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       title: agent.title,
       status: agent.status,
       agentRuntimeType: agent.agentRuntimeType,
-      agentRuntimeConfig: redactEventPayload(agent.agentRuntimeConfig),
-      runtimeConfig: redactEventPayload(agent.runtimeConfig),
+      agentRuntimeConfig: redactRuntimeConfigForResponse(agent.agentRuntimeConfig),
+      runtimeConfig: redactRuntimeConfigForResponse(agent.runtimeConfig),
       permissions: agent.permissions,
       updatedAt: agent.updatedAt,
     };
@@ -1420,7 +1434,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const result = await svc.list(orgId);
     const canReadConfigs = await actorCanReadConfigurationsForCompany(req, orgId);
     if (canReadConfigs || req.actor.type === "board") {
-      res.json(result);
+      res.json(result.map((agent) => redactAgentForResponse(agent)));
       return;
     }
     res.json(result.map((agent) => redactForRestrictedAgentView(agent)));
@@ -1908,7 +1922,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       details: { revisionId },
     });
 
-    res.json(updated);
+    res.json(redactAgentForResponse(updated));
   });
 
   router.get("/agents/:id/runtime-state", async (req, res) => {
@@ -2018,6 +2032,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     preserveInstructionsBundleConfig,
     summarizeAgentUpdateDetails,
     redactAgentConfiguration,
+    redactAgentForResponse,
     stripPersistedSkillSyncConfig,
     withRuntimeSkillEntries,
     DEFAULT_INSTRUCTIONS_PATH_KEYS,

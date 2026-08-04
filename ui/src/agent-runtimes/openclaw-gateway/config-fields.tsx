@@ -90,6 +90,10 @@ export function OpenClawGatewayConfigFields({
     mark("agentRuntimeConfig", "headers", Object.keys(nextHeaders).length > 0 ? nextHeaders : undefined);
   };
 
+  const createGatewayToken = (rawValue: string) => {
+    set?.({ authToken: rawValue });
+  };
+
   const sessionStrategy = eff(
     "agentRuntimeConfig",
     "sessionKeyStrategy",
@@ -115,6 +119,15 @@ export function OpenClawGatewayConfigFields({
           placeholder="ws://127.0.0.1:18789"
         />
       </Field>
+
+      {isCreate && (
+        <SecretField
+          label="Gateway auth token"
+          value={values!.authToken ?? ""}
+          onCommit={createGatewayToken}
+          placeholder="OpenClaw gateway token"
+        />
+      )}
 
       <PayloadTemplateJsonField
         isCreate={isCreate}
@@ -193,7 +206,7 @@ export function OpenClawGatewayConfigFields({
 
           <Field label="Scopes (comma-separated)">
             <DraftInput
-              value={eff("agentRuntimeConfig", "scopes", parseScopes(config.scopes ?? ["operator.admin"]))}
+              value={eff("agentRuntimeConfig", "scopes", parseScopes(config.scopes ?? ["operator.read", "operator.write"]))}
               onCommit={(v) => {
                 const parsed = v
                   .split(",")
@@ -203,7 +216,7 @@ export function OpenClawGatewayConfigFields({
               }}
               immediate
               className={inputClass}
-              placeholder="operator.admin"
+              placeholder="operator.read, operator.write"
             />
           </Field>
 

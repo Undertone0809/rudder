@@ -1,0 +1,28 @@
+{
+  "name": "@rudderhq/agent-runtime-hermes-gateway",
+  "version": "0.6.6",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rudderhq/agent-runtime-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.9.3"
+  }
+}

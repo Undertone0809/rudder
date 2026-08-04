@@ -432,6 +432,66 @@ describe("openclaw gateway adapter execute", () => {
     }
   });
 
+  it("does not send provider/model overrides for the default operator caller", async () => {
+    const gateway = await createMockGatewayServer();
+
+    try {
+      const result = await execute(
+        buildContext({
+          url: gateway.url,
+          model: "configured-model",
+          role: "operator",
+          scopes: ["operator.read", "operator.write"],
+          headers: {
+            "x-openclaw-token": "gateway-token",
+          },
+          payloadTemplate: {
+            provider: "configured-provider",
+            model: "template-model",
+          },
+          waitTimeoutMs: 2000,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(gateway.getAgentPayload()).not.toHaveProperty("provider");
+      expect(gateway.getAgentPayload()).not.toHaveProperty("model");
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("keeps provider/model overrides when the caller has operator.admin", async () => {
+    const gateway = await createMockGatewayServer();
+
+    try {
+      const result = await execute(
+        buildContext({
+          url: gateway.url,
+          model: "configured-model",
+          role: "operator",
+          scopes: ["operator.read", "operator.write", "operator.admin"],
+          headers: {
+            "x-openclaw-token": "gateway-token",
+          },
+          payloadTemplate: {
+            provider: "configured-provider",
+            model: "template-model",
+          },
+          waitTimeoutMs: 2000,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(gateway.getAgentPayload()).toMatchObject({
+        provider: "configured-provider",
+        model: "template-model",
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
+
   it("runs connect -> agent -> agent.wait and forwards wake payload", async () => {
     const gateway = await createMockGatewayServer();
     const logs: string[] = [];

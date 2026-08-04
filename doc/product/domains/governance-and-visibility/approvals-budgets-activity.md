@@ -47,6 +47,9 @@ Flow:
 
 1. A proposal creates an approval request with target entity, action payload,
    requester, status, and context.
+   Runtime-native provider requests use the `agent_runtime` approval type,
+   remain organization-scoped, and stay attached to the active run until the
+   provider's bounded native decision is acknowledged.
 2. Comments preserve approval discussion.
 3. Approver accepts/rejects or requests changes.
 4. Approved action is applied through the owning domain service.
@@ -57,6 +60,9 @@ Invariants:
 - Approval application must be idempotent.
 - Approval state must remain organization-scoped and tied to the governed
   action it permits.
+- Runtime-native approval decisions must not create a duplicate requester run
+  while the original provider run is waiting; unsupported or expired requests
+  fail closed.
 
 Evidence:
 

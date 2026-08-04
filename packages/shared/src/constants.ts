@@ -74,6 +74,7 @@ export const AGENT_RUNTIME_TYPES = [
   "pi_local",
   "cursor",
   "openclaw_gateway",
+  "hermes_gateway",
   "hermes_local",
 ] as const;
 export type AgentRuntimeType = (typeof AGENT_RUNTIME_TYPES)[number];
@@ -732,6 +733,7 @@ export const APPROVAL_TYPES = [
   "budget_override_required",
   "chat_issue_creation",
   "chat_operation",
+  "agent_runtime",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 

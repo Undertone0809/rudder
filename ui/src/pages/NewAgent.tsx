@@ -42,6 +42,7 @@ const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntim
   "pi_local",
   "cursor",
   "openclaw_gateway",
+  "hermes_gateway",
 ]);
 const DEFAULT_FIRST_AGENT_TITLE = "Operator Assistant";
 

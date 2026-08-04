@@ -94,7 +94,7 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
   async function persistRunningExecutionContext(
     runId: string,
@@ -857,6 +857,43 @@ export function createHeartbeatExecuteHandlers(context: any) {
       if (runBeforeAdapter?.status !== "running") {
         throw new Error("Run was finalized before adapter invocation");
       }
+      const requestApproval = async (request: { type: "agent_runtime"; payload: Record<string, unknown> }) => {
+        const approval = await approvalsSvc.create(agent.orgId, {
+          type: request.type,
+          requestedByAgentId: agent.id,
+          payload: {
+            ...request.payload,
+            runId: run.id,
+            agentId: agent.id,
+            agentRuntimeType: agent.agentRuntimeType,
+          },
+          status: "pending",
+          requestedByUserId: null,
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          updatedAt: new Date(),
+        });
+        await appendRunEvent(run, {
+          eventType: "approval.requested",
+          stream: "system",
+          level: "info",
+          message: "agent runtime approval requested",
+          payload: { approvalId: approval.id, type: request.type },
+        });
+        return { id: approval.id, status: approval.status };
+      };
+      const waitForApproval = async (approvalId: string, timeoutMs: number) => {
+        const deadline = Date.now() + Math.max(1_000, Math.min(timeoutMs, 30 * 60_000));
+        while (Date.now() < deadline) {
+          const approval = await approvalsSvc.getById(approvalId);
+          if (approval && approval.status !== "pending" && approval.status !== "revision_requested") {
+            return { id: approval.id, status: approval.status, decisionNote: approval.decisionNote };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        return { id: approvalId, status: "pending" as const, decisionNote: null };
+      };
       const adapterResult = await executeAdapterWithModelFallbacks(adapter, {
         runId: run.id,
         agent,
@@ -870,6 +907,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
         },
         abortSignal: executionAbortController.signal,
         authToken: authToken ?? undefined,
+        requestApproval,
+        waitForApproval,
       }, {
         resolveAdapter: findServerAdapter,
         createAuthToken: (agentRuntimeType) =>

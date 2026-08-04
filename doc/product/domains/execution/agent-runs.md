@@ -280,7 +280,10 @@ Flow:
     `session` and `always` grants are not ordinary approval responses; they
     require a separately named, audited runtime-policy change with explicit
     authorization. Unsupported or unsafe approval states fail closed rather
-    than silently enabling broader authority.
+    than silently enabling broader authority. A repeated decision for the same
+    runtime-native approval is rejected as a conflict and never re-sent
+    upstream; legacy non-runtime approval APIs retain their existing
+    idempotent retry behavior.
 
 Invariants:
 

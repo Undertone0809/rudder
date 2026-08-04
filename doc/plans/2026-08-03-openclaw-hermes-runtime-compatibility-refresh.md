@@ -38,7 +38,7 @@ than treating both products as local command-line tools.
 | Runtime | Product decision | Compatibility decision |
 | --- | --- | --- |
 | OpenClaw | Keep `openclaw_gateway` and upgrade the first-party adapter. | Support the current Gateway protocol, including protocol v4 handshake semantics, capability validation, device pairing, and run-scoped native cancellation. |
-| Hermes | Add `hermes_gateway` as the primary Hermes integration for the locked `0.19.1` API Server. | Use capability discovery, Runs, SSE events, approvals, Stop, and Sessions APIs. Rudder owns the canonical transcript and projects bounded tool/approval context into the text-only Runs surface; this is explicitly synthetic, not native or lossless. Do not make ACP or CLI output parsing the primary integration. |
+| Hermes | Add `hermes_gateway` as the primary Hermes integration for the supported `0.18.2` and `0.19.1` API Server matrix. | Use capability discovery, Runs, SSE events, approvals, Stop, and Sessions APIs. Rudder owns the canonical transcript and projects bounded tool/approval context into the text-only Runs surface; this is explicitly synthetic, not native or lossless. Do not make ACP or CLI output parsing the primary integration. |
 | Legacy Hermes | Keep `hermes_local` temporarily and label it `Legacy`. | Freeze its current configuration semantics. Do not silently reinterpret a CLI-backed Agent as an API Server connection. |
 
 The V1 user promise is deliberately narrow: a user who already has a
@@ -97,8 +97,8 @@ stdout with regular expressions, carries Paperclip-era prompt and environment
 names, and cannot reliably map Rudder Stop or approval semantics. Its published
 build also lacks later fixes for runtime config and Rudder auth-token injection.
 
-Hermes Agent `0.19.1`, released as `v2026.7.30` on 2026-07-30, exposes a
-machine-readable API Server intended for external clients. Its surface includes
+Hermes Agent `0.18.2` (the current local runtime) and `0.19.1` expose the
+machine-readable API Server contract intended for external clients. Its surface includes
 `GET /v1/capabilities`, asynchronous Runs, SSE run events, run approval and
 Stop endpoints, session resources, health, and model discovery. This is a
 better product boundary for connecting an already-running Hermes Agent than a
@@ -146,7 +146,7 @@ complete, and whether Stop reached a real terminal state."
   executable, port, or version-string checks.
 - Support Issue Runs and Chat turns with provider-proven per-workstream
   continuity: full mapped-session continuity for OpenClaw and bounded
-  `synthetic_tool_continuity` for Hermes `0.19.1`.
+  `synthetic_tool_continuity` for Hermes `0.18.2` and `0.19.1`.
 - Map provider-native approvals and Stop into Rudder's durable control model.
 - Normalize runtime identity, lifecycle, transcript, usage, and error evidence.
 - Preserve organization boundaries and prevent credential leakage or unsafe
@@ -178,7 +178,7 @@ The feature is ready when all of the following are true:
 - Preflight distinguishes ready, unreachable, authentication required, pairing
   required, permission/scope required, incompatible protocol, unsupported
   version, and unverified version states.
-- Stock OpenClaw `v2026.7.1` and stock Hermes Agent `0.19.1` each complete one
+- Stock OpenClaw `v2026.7.1` and stock Hermes Agent `0.18.2` or `0.19.1` each complete one
   Issue workflow and one Chat turn through the real UI and backend.
 - A second turn in the same Issue workstream or Chat conversation proves prior
   context was supplied. OpenClaw reuses its mapped provider session; Hermes
@@ -793,7 +793,7 @@ testing and execution use the same endpoint policy.
 4. Missing auth, unsupported versions, unsafe endpoints, or missing features
    produce one actionable remediation state.
 5. Agent Detail displays the `synthetic_tool_continuity` boundary for stock
-   `0.19.1` before the first Run.
+   `0.18.2` or `0.19.1` before the first Run.
 6. Issue and Chat work create or continue an isolated Hermes workstream. Each
    eligible Run projects the canonical Rudder transcript through bounded
    `RUDDER_TOOL_CONTEXT_V1` into the text-only Runs surface, records the source

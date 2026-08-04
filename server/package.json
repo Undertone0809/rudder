@@ -34,6 +34,8 @@
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
+    "collector": "tsx src/product-analytics-collector-server.ts",
+    "collector:dev": "tsx watch src/product-analytics-collector-server.ts",
     "dev:watch": "cross-env RUDDER_MIGRATION_PROMPT=never RUDDER_MIGRATION_AUTO_APPLY=true tsx watch --ignore ../ui/node_modules --ignore ../ui/.vite --ignore ../ui/dist src/index.ts",
     "prepare:ui-dist": "node ../scripts/prepare-server-ui-dist.mjs",
     "build": "pnpm --filter @rudderhq/plugin-sdk build && pnpm --filter @rudderhq/plugin-linear build && node ../scripts/build-tsc-copy-assets.mjs --copy src/onboarding-assets dist/onboarding-assets && node ../scripts/stage-bundled-plugins.mjs",
@@ -42,6 +44,7 @@
     "postpack": "rm -rf ui-dist",
     "clean": "rm -rf dist",
     "start": "node dist/index.js",
+    "collector:start": "node dist/product-analytics-collector-server.js",
     "typecheck": "pnpm --filter @rudderhq/plugin-sdk build && tsc --noEmit"
   },
   "dependencies": {
@@ -52,6 +55,7 @@
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
     "@rudderhq/agent-runtime-cursor-local": "workspace:*",
     "@rudderhq/agent-runtime-gemini-local": "workspace:*",
+    "@rudderhq/agent-runtime-hermes-gateway": "workspace:*",
     "@rudderhq/agent-runtime-openclaw-gateway": "workspace:*",
     "@rudderhq/agent-runtime-opencode-local": "workspace:*",
     "@rudderhq/agent-runtime-pi-local": "workspace:*",

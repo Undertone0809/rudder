@@ -56,7 +56,7 @@ require_cmd grep
 
 OPENCLAW_REPO_URL="${OPENCLAW_REPO_URL:-https://github.com/openclaw/openclaw.git}"
 OPENCLAW_DOCKER_DIR="${OPENCLAW_DOCKER_DIR:-/tmp/openclaw-docker}"
-OPENCLAW_REPO_REF="${OPENCLAW_REPO_REF:-v2026.3.2}"
+OPENCLAW_REPO_REF="${OPENCLAW_REPO_REF:-v2026.7.1}"
 OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-openclaw:local}"
 OPENCLAW_TMP_DIR="${OPENCLAW_TMP_DIR:-${TMPDIR:-/tmp}}"
 OPENCLAW_TMP_DIR="${OPENCLAW_TMP_DIR%/}"
@@ -72,7 +72,9 @@ OPENCLAW_WAIT_SECONDS="${OPENCLAW_WAIT_SECONDS:-45}"
 OPENCLAW_OPEN_BROWSER="${OPENCLAW_OPEN_BROWSER:-0}"
 OPENCLAW_SECRETS_FILE="${OPENCLAW_SECRETS_FILE:-$HOME/.secrets}"
 # Keep default one-command UX: local smoke run should not require manual pairing.
-OPENCLAW_DISABLE_DEVICE_AUTH="${OPENCLAW_DISABLE_DEVICE_AUTH:-1}"
+# Secure stock-runtime smoke is the default. Set this explicitly to 1 only
+# for a legacy local gateway that cannot pair a device.
+OPENCLAW_DISABLE_DEVICE_AUTH="${OPENCLAW_DISABLE_DEVICE_AUTH:-0}"
 OPENCLAW_MODEL_PRIMARY="${OPENCLAW_MODEL_PRIMARY:-openai/gpt-5.2}"
 OPENCLAW_MODEL_FALLBACK="${OPENCLAW_MODEL_FALLBACK:-openai/gpt-5.2-chat-latest}"
 OPENCLAW_RESET_STATE="${OPENCLAW_RESET_STATE:-1}"

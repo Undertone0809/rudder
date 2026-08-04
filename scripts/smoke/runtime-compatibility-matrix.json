@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "purpose": "stock-runtime compatibility evidence for external gateway adapters",
+  "runtimes": {
+    "openclaw_gateway": {
+      "stable": ["v2026.7.1"],
+      "protocol": 4,
+      "smokeCommand": "OPENCLAW_REPO_REF=v2026.7.1 ./scripts/smoke/openclaw-docker-ui.sh",
+      "deviceAuth": "enabled-by-default",
+      "requiredEvidence": ["authenticated_connect", "device_pairing", "agent_run", "sessions_abort_or_chat_abort", "terminal_reconciliation"]
+    },
+    "hermes_gateway": {
+      "stable": ["0.18.2", "0.19.1"],
+      "transport": "http+sse",
+      "requiredEndpoints": ["/health/detailed", "/v1/capabilities", "/v1/runs", "/v1/runs/{run_id}/events", "/v1/runs/{run_id}/approval", "/v1/runs/{run_id}/stop", "/api/sessions"],
+      "requiredEvidence": ["bearer_auth", "capability_endpoint_map", "run_session_continuity", "bounded_redacted_sse", "approval_once_or_deny", "terminal_reconciliation"]
+    }
+  }
+}
