@@ -28,6 +28,14 @@ test("fetches only the aggregate report contract", async () => {
 test("rejects non-aggregate or failed report responses", async () => {
   await assert.rejects(
     fetchProductAnalyticsReport({
+      baseUrl: "http://telemetry.example.test/api/analytics/v1/report",
+      secret: "report-secret",
+      fetchImpl: async () => { throw new Error("fetch must not be called"); },
+    }),
+    /HTTPS outside local development/,
+  );
+  await assert.rejects(
+    fetchProductAnalyticsReport({
       baseUrl: "http://127.0.0.1:4318/api/analytics/v1/report",
       secret: "report-secret",
       fetchImpl: async () => new Response(JSON.stringify({ errorCode: "unauthorized" }), { status: 401 }),
@@ -39,6 +47,14 @@ test("rejects non-aggregate or failed report responses", async () => {
       baseUrl: "http://127.0.0.1:4318/api/analytics/v1/report",
       secret: "report-secret",
       fetchImpl: async () => new Response(JSON.stringify({ window: {}, metrics: {} }), { status: 200 }),
+    }),
+    /invalid aggregate contract/,
+  );
+  await assert.rejects(
+    fetchProductAnalyticsReport({
+      baseUrl: "https://telemetry.example.test/api/analytics/v1/report",
+      secret: "report-secret",
+      fetchImpl: async () => new Response(JSON.stringify({ window: {}, metrics: {}, quality: {}, events: [{ installationId: "raw" }] }), { status: 200 }),
     }),
     /invalid aggregate contract/,
   );

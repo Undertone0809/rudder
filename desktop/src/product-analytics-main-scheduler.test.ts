@@ -6,6 +6,26 @@ import { deriveDesktopProductAnalyticsInstallationId, startDesktopProductAnalyti
 import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 
 describe("desktop product analytics main scheduler", () => {
+  it("does not initialize for a remote HTTP collector URL", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-main-scheduler-insecure-"));
+    const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    const fetchImpl = vi.fn(async () => { throw new Error("collector must not be contacted"); });
+    let scheduler: DesktopProductAnalyticsScheduler | null = null;
+    await startDesktopProductAnalyticsScheduler("http://127.0.0.1:3100", {
+      collectorUrl: "http://telemetry.example.test",
+      identityRuntime: {
+        telemetryStatePromise: Promise.resolve(telemetry),
+        recordProductAnalyticsConsent: vi.fn(async () => ({ consentEpoch: 1 })),
+        issueProductAnalyticsAssertion: vi.fn(async () => "assertion"),
+      },
+      scheduler: null,
+      setScheduler: (value) => { scheduler = value; },
+      fetchImpl,
+    });
+    expect(scheduler).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("uses the exporter HMAC and synchronizes anonymous settings through Identity", async () => {
     expect(deriveDesktopProductAnalyticsInstallationId("secret", "installation")).toBe(
       "8c22b33f5fc58cf412530b872b77c76601dbfcac57d7f76b3cf6aa106192591a",

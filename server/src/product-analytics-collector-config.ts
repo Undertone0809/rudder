@@ -8,9 +8,11 @@ const DEFAULT_ROLLUP_INTERVAL_MS = 15 * 60 * 1000;
 export type ProductAnalyticsCollectorConfig = {
   databaseUrl: string;
   maintenanceDatabaseUrl: string;
+  reportDatabaseUrl: string;
   databaseRole: string | null;
   expectedDatabaseRole: string | null;
   maintenanceDatabaseRole: string | null;
+  reportDatabaseRole: string | null;
   schema: "rudder_analytics";
   host: string;
   port: number;
@@ -54,9 +56,11 @@ export function parseProductAnalyticsCollectorConfig(env: NodeJS.ProcessEnv = pr
   return {
     databaseUrl: required(env, "RUDDER_TELEMETRY_COLLECTOR_DATABASE_URL"),
     maintenanceDatabaseUrl: required(env, "RUDDER_TELEMETRY_COLLECTOR_MAINTENANCE_DATABASE_URL"),
+    reportDatabaseUrl: required(env, "RUDDER_TELEMETRY_COLLECTOR_REPORT_DATABASE_URL"),
     databaseRole: env.RUDDER_TELEMETRY_COLLECTOR_DATABASE_ROLE?.trim() || null,
     expectedDatabaseRole: env.RUDDER_TELEMETRY_COLLECTOR_EXPECTED_DATABASE_ROLE?.trim() || env.RUDDER_TELEMETRY_COLLECTOR_DATABASE_ROLE?.trim() || null,
     maintenanceDatabaseRole: env.RUDDER_TELEMETRY_COLLECTOR_MAINTENANCE_DATABASE_ROLE?.trim() || null,
+    reportDatabaseRole: env.RUDDER_TELEMETRY_COLLECTOR_REPORT_DATABASE_ROLE?.trim() || null,
     schema,
     host,
     port,

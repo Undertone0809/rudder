@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { createDesktopProductAnalyticsScheduler, type DesktopProductAnalyticsScheduler } from "./product-analytics-scheduler.js";
 import { updateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.js";
+import { normalizeProductAnalyticsCollectorUrl } from "./product-analytics-url.js";
 
 type DesktopAnalyticsIdentityRuntime = {
   telemetryStatePromise: Promise<{
@@ -44,6 +45,13 @@ export async function startDesktopProductAnalyticsScheduler(
   },
 ): Promise<void> {
   if (!options.collectorUrl || options.scheduler) return;
+  let collectorUrl: string;
+  try {
+    collectorUrl = normalizeProductAnalyticsCollectorUrl(options.collectorUrl);
+  } catch (error) {
+    console.warn("[rudder-desktop] Product analytics collector URL rejected", error);
+    return;
+  }
   const fetchImpl = options.fetchImpl ?? fetch;
   const telemetry = await options.identityRuntime.telemetryStatePromise;
   let mode = telemetry.state.mode;
@@ -124,9 +132,9 @@ export async function startDesktopProductAnalyticsScheduler(
         "x-rudder-telemetry-pseudonymous-installation-id": pseudonymousInstallationId,
       }
     : undefined;
-  if (collectorHeaders && options.collectorUrl) {
+  if (collectorHeaders) {
     try {
-      await fetchImpl(`${options.collectorUrl.replace(/\/$/u, "")}/api/analytics/v1/internal/anonymous/consent`, {
+      await fetchImpl(`${collectorUrl}/api/analytics/v1/internal/anonymous/consent`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -150,7 +158,7 @@ export async function startDesktopProductAnalyticsScheduler(
     installationId: telemetry.installationId,
     installationSecret: telemetry.installationSecret,
     statePath: telemetry.statePath,
-    collectorUrl: options.collectorUrl,
+    collectorUrl,
     fetchImpl,
     deliveryMode,
     collectorAuthorization: async ({ consentedLocalUserId }: { consentedLocalUserId: string | null }) => {

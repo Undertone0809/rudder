@@ -31,8 +31,16 @@ function validIso(value, name) {
   return date.toISOString();
 }
 
+function hasOnlyKeys(value, allowed) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).every((key) => allowed.has(key));
+}
+
 export async function fetchProductAnalyticsReport({ baseUrl, secret, from, to, fetchImpl = fetch }) {
   const endpoint = new URL(baseUrl);
+  if (endpoint.protocol !== "https:" && !["127.0.0.1", "localhost", "::1"].includes(endpoint.hostname)) {
+    throw new Error("PRODUCT_ANALYTICS_REPORT_URL must use HTTPS outside local development");
+  }
   if (from) endpoint.searchParams.set("from", from);
   if (to) endpoint.searchParams.set("to", to);
   const response = await fetchImpl(endpoint, {
@@ -43,7 +51,13 @@ export async function fetchProductAnalyticsReport({ baseUrl, secret, from, to, f
     const code = typeof body?.errorCode === "string" ? body.errorCode : `http_${response.status}`;
     throw new Error(`Product analytics report failed: ${code}`);
   }
-  if (!body || typeof body !== "object" || !body.window || !body.metrics || !body.quality) {
+  const allowedTopLevel = new Set(["window", "metrics", "quality", "privacy", "coverage", "retention"]);
+  const validShape = body && typeof body === "object"
+    && Object.keys(body).every((key) => allowedTopLevel.has(key))
+    && hasOnlyKeys(body.window, new Set(["from", "to", "timezone"]))
+    && hasOnlyKeys(body.metrics, new Set(["meaningfulActiveInstallations1d", "meaningfulActiveInstallations7d", "productiveInstallations7d", "weeklyCompletedWorkLoops", "meaningfulDau", "productiveWau"]))
+    && hasOnlyKeys(body.quality, new Set(["receivedBatchCount", "acceptedEventCount", "lateEventCount", "duplicateEventCount", "rejectedEventCount", "aggregateRows"]));
+  if (!validShape) {
     throw new Error("Product analytics report returned an invalid aggregate contract");
   }
   return body;
@@ -66,8 +80,9 @@ async function main() {
   });
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   if (args.output) {
-    const { writeFile } = await import("node:fs/promises");
+    const { chmod, writeFile } = await import("node:fs/promises");
     await writeFile(args.output, serialized, { mode: 0o600 });
+    await chmod(args.output, 0o600);
     process.stdout.write(`Wrote aggregate report to ${args.output}\n`);
     return;
   }

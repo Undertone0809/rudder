@@ -10,10 +10,16 @@ not production authorization or evidence of a deployed `telemetry.rudderhq.dev`.
 Before starting the stack, provision the PostgreSQL roles in the target
 private database:
 
-- `telemetry_migrator`: runs the checked-in Rudder migrations;
+- `telemetry_migrator`: runs only the checked-in telemetry migrations;
 - `rudder_analytics_collector`: INSERT/SELECT/UPDATE only for ingest state;
 - `rudder_analytics_rollup`: SELECT raw events and maintain rollups/retention;
 - `rudder_analytics_reader`: SELECT aggregate-only report tables.
+
+The compose migration step applies only the three telemetry migrations in this
+deployment (`0140` through `0142`); it never bootstraps the application schema.
+The collector, rollup, and report connections are separate. The report route
+reads installation daily rollups and thresholded aggregates only, while raw
+events remain behind the maintenance role.
 
 The migrations grant capabilities when these roles exist but do not create,
 rotate, or delete roles. The collector startup checks `current_user`, schema

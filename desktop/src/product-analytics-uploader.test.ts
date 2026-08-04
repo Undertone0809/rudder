@@ -8,6 +8,26 @@ import { uploadDesktopProductAnalyticsOnce } from "./product-analytics-uploader.
 const eventId = "22222222-2222-4222-8222-222222222222";
 
 describe("desktop product analytics uploader", () => {
+  it("fails closed before claiming when the collector URL is remote HTTP", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-insecure-"));
+    const telemetry = await loadOrCreateDesktopTelemetryState(root);
+    await updateDesktopTelemetryState(telemetry.statePath, { mode: "anonymous" });
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 500 }));
+    const result = await uploadDesktopProductAnalyticsOnce({
+      localApiUrl: "http://127.0.0.1:3100",
+      orgId: "org-1",
+      installationId: telemetry.installationId,
+      installationSecret: telemetry.installationSecret,
+      deliveryMode: "anonymous",
+      statePath: telemetry.statePath,
+      collectorUrl: "http://telemetry.example.test",
+      collectorAuthorization: "Bearer collector-token",
+      fetchImpl,
+    });
+    expect(result).toMatchObject({ status: "failed_actionable", errorCode: "collector_transport_insecure" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("keeps the installation secret on the local claim request and ACKs a delivered batch", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-telemetry-uploader-"));
     const telemetry = await loadOrCreateDesktopTelemetryState(root);

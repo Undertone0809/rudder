@@ -14,6 +14,7 @@ export type ProductAnalyticsCollectorAppOptions = {
   config: ProductAnalyticsCollectorConfig;
   db: Db;
   maintenanceDb?: Db;
+  reportDb?: Db;
   maintenance?: boolean;
 };
 
@@ -36,10 +37,10 @@ export function createProductAnalyticsCollectorApp(options: ProductAnalyticsColl
     revokeSecret: options.config.revokeSecret,
     consentSyncSecret: options.config.consentSyncSecret,
   }));
-  // Reports use the maintenance/report connection rather than the ingest
-  // connection. In production this URL is provisioned with rollup/report
-  // privileges; the collector role never serves raw data to report callers.
-  app.use(productAnalyticsCollectorReportRoutes(options.maintenanceDb ?? options.db, {
+  // Reports use a distinct read-only connection. The reader role is granted
+  // only report rollups/aggregates; it never serves the ingest or maintenance
+  // connection to report callers.
+  app.use(productAnalyticsCollectorReportRoutes(options.reportDb ?? options.maintenanceDb ?? options.db, {
     reportSecret: options.config.reportSecret,
     privacyThreshold: options.config.privacyThreshold,
   }));
@@ -89,15 +90,17 @@ export async function startProductAnalyticsCollector(options: {
   const config = options.config ?? parseProductAnalyticsCollectorConfig();
   const db = options.db ?? createDb(config.databaseUrl);
   const maintenanceDb = options.db ? options.db : createDb(config.maintenanceDatabaseUrl);
+  const reportDb = options.db ? options.db : createDb(config.reportDatabaseUrl);
   await assertProductAnalyticsCollectorDatabaseBoundary(db, config.expectedDatabaseRole);
   await assertProductAnalyticsCollectorDatabaseBoundary(maintenanceDb, options.db ? config.expectedDatabaseRole : config.maintenanceDatabaseRole);
+  await assertProductAnalyticsCollectorDatabaseBoundary(reportDb, options.db ? config.expectedDatabaseRole : config.reportDatabaseRole);
   // Project once before accepting traffic so a restart cannot expose stale
   // rollups or leave retention cleanup waiting for the first interval tick.
   await runProductAnalyticsCollectorMaintenance(maintenanceDb, {
     retentionDays: config.retentionDays,
     privacyThreshold: config.privacyThreshold,
   });
-  const app = createProductAnalyticsCollectorApp({ config, db, maintenanceDb, maintenance: false });
+  const app = createProductAnalyticsCollectorApp({ config, db, maintenanceDb, reportDb, maintenance: false });
   const server = createServer(app);
   if (options.listen !== false) {
     await new Promise<void>((resolve, reject) => {
@@ -141,6 +144,10 @@ export async function startProductAnalyticsCollector(options: {
       if (maintenanceDb !== db) {
         const closableMaintenanceDb = maintenanceDb as Db & { $client?: { end?: (options?: { timeout?: number }) => Promise<void> } };
         await closableMaintenanceDb.$client?.end?.({ timeout: 5 }).catch(() => undefined);
+      }
+      if (reportDb !== db && reportDb !== maintenanceDb) {
+        const closableReportDb = reportDb as Db & { $client?: { end?: (options?: { timeout?: number }) => Promise<void> } };
+        await closableReportDb.$client?.end?.({ timeout: 5 }).catch(() => undefined);
       }
     },
   };

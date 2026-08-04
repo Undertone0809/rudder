@@ -140,12 +140,13 @@ async function rebuildDailyRollups(db: Db, now: Date, fromOverride?: Date): Prom
     installationId: privateProductAnalyticsCollectorEvents.installationId,
     eventName: privateProductAnalyticsCollectorEvents.eventName,
     origin: privateProductAnalyticsCollectorEvents.origin,
-    dimensions: sql<Record<string, string | number | boolean | null>>`jsonb_build_object(
-      'environment', ${privateProductAnalyticsCollectorEvents.environment},
-      'app_version', ${privateProductAnalyticsCollectorEvents.appVersion},
-      'release_channel', ${privateProductAnalyticsCollectorEvents.releaseChannel},
-      'deployment_mode', ${privateProductAnalyticsCollectorEvents.deploymentMode},
-      'confidence', ${privateProductAnalyticsCollectorEvents.confidence}
+      dimensions: sql<Record<string, string | number | boolean | null>>`jsonb_build_object(
+        'environment', ${privateProductAnalyticsCollectorEvents.environment},
+        'app_version', ${privateProductAnalyticsCollectorEvents.appVersion},
+        'release_channel', ${privateProductAnalyticsCollectorEvents.releaseChannel},
+        'deployment_mode', ${privateProductAnalyticsCollectorEvents.deploymentMode},
+        'confidence', ${privateProductAnalyticsCollectorEvents.confidence},
+        'analytics_mode', CASE WHEN ${privateProductAnalyticsCollectorEvents.analyticsSubject} IS NULL THEN 'anonymous' ELSE 'account_linked' END
     )`,
     eventCount: sql<number>`count(*)::int`,
     firstOccurredAt: sql<Date>`min(${privateProductAnalyticsCollectorEvents.occurredAt})`,
@@ -166,6 +167,7 @@ async function rebuildDailyRollups(db: Db, now: Date, fromOverride?: Date): Prom
       privateProductAnalyticsCollectorEvents.releaseChannel,
       privateProductAnalyticsCollectorEvents.deploymentMode,
       privateProductAnalyticsCollectorEvents.confidence,
+      privateProductAnalyticsCollectorEvents.analyticsSubject,
     );
   for (const row of rows) {
     const dimensions = row.dimensions ?? {};

@@ -16,4 +16,11 @@ SQL
 ensure_role "$TELEMETRY_MIGRATION_USER" "$TELEMETRY_MIGRATION_PASSWORD"
 ensure_role "$TELEMETRY_COLLECTOR_USER" "$TELEMETRY_COLLECTOR_PASSWORD"
 ensure_role "$TELEMETRY_ROLLUP_USER" "$TELEMETRY_ROLLUP_PASSWORD"
-ensure_role "${TELEMETRY_READER_USER:-rudder_analytics_reader}" "${TELEMETRY_READER_PASSWORD:-reader-placeholder}"
+ensure_role "${TELEMETRY_READER_USER:-rudder_analytics_reader}" "${TELEMETRY_READER_PASSWORD:?TELEMETRY_READER_PASSWORD is required}"
+
+# The migration role owns only the isolated telemetry schema it creates. It
+# needs database CREATE to bootstrap that schema, but never receives access to
+# the public application schema or the rest of Rudder's migrations.
+psql "${psql_args[@]}" -v ON_ERROR_STOP=1 -v db_name="$POSTGRES_DB" -v migration_user="$TELEMETRY_MIGRATION_USER" <<'SQL'
+GRANT CONNECT, CREATE ON DATABASE :"db_name" TO :"migration_user";
+SQL

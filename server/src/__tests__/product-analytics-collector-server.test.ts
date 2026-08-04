@@ -9,6 +9,7 @@ import { createProductAnalyticsAssertionAuthorizer } from "../routes/product-ana
 const baseEnv = {
   RUDDER_TELEMETRY_COLLECTOR_DATABASE_URL: "postgres://collector:secret@localhost/analytics",
   RUDDER_TELEMETRY_COLLECTOR_MAINTENANCE_DATABASE_URL: "postgres://rollup:secret@localhost/analytics",
+  RUDDER_TELEMETRY_COLLECTOR_REPORT_DATABASE_URL: "postgres://reader:secret@localhost/analytics",
   RUDDER_TELEMETRY_COLLECTOR_IDENTITY_PUBLIC_KEY: "-----BEGIN PUBLIC KEY-----\nfixture\n-----END PUBLIC KEY-----",
   RUDDER_TELEMETRY_COLLECTOR_IDENTITY_ISSUER: "https://identity.example.test",
   RUDDER_TELEMETRY_COLLECTOR_IDENTITY_KEY_ID: "telemetry-key-1",

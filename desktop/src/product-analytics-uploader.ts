@@ -1,5 +1,6 @@
 import path from "node:path";
 import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState, type DesktopTelemetryMode } from "./product-analytics-telemetry.js";
+import { normalizeProductAnalyticsCollectorUrl } from "./product-analytics-url.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -44,6 +45,13 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   if (persisted.state.mode === "off" || persisted.state.mode !== options.deliveryMode) {
     return { status: "idle", eventCount: 0, errorCode: null };
   }
+  let collectorUrl: string;
+  try {
+    collectorUrl = normalizeProductAnalyticsCollectorUrl(options.collectorUrl);
+  } catch {
+    await updateDesktopTelemetryState(options.statePath, { lastErrorCode: "collector_transport_insecure" });
+    return { status: "failed_actionable", eventCount: 0, errorCode: "collector_transport_insecure" };
+  }
   const attemptedAt = now().toISOString();
   await updateDesktopTelemetryState(options.statePath, { lastAttemptedAt: attemptedAt, lastErrorCode: null });
   const claimUrl = `${options.localApiUrl.replace(/\/$/, "")}/api/orgs/${encodeURIComponent(options.orgId)}/analytics/product/installation/${encodeURIComponent(options.installationId)}/outbox/claim`;
@@ -86,7 +94,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
       collectorResponse = new Response(null, { status: 503 });
       collectorBody = { errorCode: "collector_authorization_unavailable" };
     } else {
-      collectorResponse = await fetchImpl(`${options.collectorUrl.replace(/\/$/, "")}/api/analytics/v1/events:batch`, {
+      collectorResponse = await fetchImpl(`${collectorUrl}/api/analytics/v1/events:batch`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
