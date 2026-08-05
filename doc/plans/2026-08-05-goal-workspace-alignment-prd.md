@@ -14,9 +14,12 @@ related_plans:
   - 2026-08-04-goal-system-refactor.md
 supersedes: []
 related_code:
+  - packages/db/src/schema/goals.ts
+  - packages/shared/src/validators/goal.ts
   - ui/src/components/NewGoalDialog.tsx
   - ui/src/pages/Goals.tsx
   - ui/src/pages/GoalDetail.tsx
+  - server/src/routes/goals.ts
   - server/src/services/goals.ts
   - server/src/services/chat-assistant.ts
   - tests/e2e/goal-detail-lifecycle.spec.ts
@@ -302,7 +305,8 @@ creation pattern and asks for:
 
 - Goal: the desired change, in the user's words
 - Context: optional background or why it matters now
-- Agent: suggested by Rudder and editable by the user
+- Assignee: the same Agent picker used by Issue creation; Rudder may preselect
+  a capable suggestion and the user may assign or change it
 - Target time: optional
 
 As the user writes, Rudder shows a compact plain-language preview:
@@ -321,15 +325,21 @@ enabled only when the compiler has produced a complete candidate activation
 packet. The packet must contain a complete Contract, exactly one capable
 same-organization Agent Owner, an initial Plan, and continuation coverage, and
 must pass the existing activation validation. On confirmation, the system
-creates the Draft and invokes the canonical activation command idempotently.
-The user never sees a second Contract activation form.
+submits one durable Goal Start Request containing an organization-scoped
+idempotency key and immutable packet hash. The server validates the complete
+packet before mutation, then creates or reuses the Draft and commits activation,
+Owner assignment, initial Plan, continuation, activation Activity, and the
+completed Start Request atomically. The user never sees a second Contract
+activation form.
 
-The server returns `active` only after activation succeeds. If Draft creation
-succeeds but activation fails, the response identifies that same Draft and the
-failed validation; it never reports that work started. Retrying the immutable
-packet reuses the Draft and must not duplicate the Owner assignment, Plan, or
-activation Activity. Changing the preview creates a new packet and invalidates
-the prior confirmation token.
+The server returns `active` only after that transaction succeeds. The same key
+and packet hash replay returns the original Goal and effects; the same key with
+a different packet hash returns conflict. A validation failure creates no new
+Goal or activation side effect, while a separately saved Draft remains Draft.
+If the process or response fails during start, the transaction either rolls
+back completely or commits with the durable request; retry after restart cannot
+duplicate the Goal, Owner assignment, Plan, continuation, or Activity. Changing
+the preview creates a new packet and requires a new request key.
 
 When material information is missing or no suitable Owner exists, the primary
 action becomes `Save draft`; `Create and start` remains disabled. Saving opens
@@ -393,11 +403,11 @@ show a quiet version history or `Updated from evidence and feedback` label, but
 it should not ask the user to manage Contract revisions.
 
 The standard Goal Workspace uses a compact embedded feedback timeline and
-composer, not a full Messenger conversation. Slice 1 renders existing Activity
-and evidence as read-only history; Slice 2 adds the feedback composer and
-durable feedback handling. Related Messenger conversations may open through
-links. A primary conversation relation may be added later, but it is not a
-dependency for direct creation or Workspace continuity.
+composer, not a full Messenger conversation. Slice 1 includes this durable
+feedback loop alongside existing Activity and evidence history. Related
+Messenger conversations may open through links. A primary conversation
+relation may be added later, but it is not a dependency for direct creation or
+Workspace continuity.
 
 ### 5. Observe progress
 
@@ -441,6 +451,18 @@ current understanding, Plan, or next action as appropriate.
 
 Feedback is not automatically an approval. A consequential change caused by
 feedback still follows the Goal change rules below.
+
+Submitting feedback must preserve the original text, user identity, time,
+attachments, and idempotency key; make it visible in the timeline immediately;
+and route the Goal back to its Owner Agent for a response. The Agent's response
+and any resulting clarification, Plan revision, or pending change proposal stay
+in the same timeline. Feedback must not directly mutate the Contract, criteria,
+authority, evaluation input, or result state.
+
+Until the governed change flow in Slice 3 is available, consequential feedback
+is recorded and called out as requiring alignment, but the current Contract
+remains unchanged. The internal feature-flagged journey must not silently apply
+that request or misrepresent it as approved.
 
 ### 7. Evolve the Goal
 
@@ -541,29 +563,43 @@ The user chooses:
 Before the proposal becomes `Ready for acceptance`, the server preflights an
 evaluator-compatible candidate payload without mutating Goal lifecycle or
 writing Proof. The candidate maps every Contract criterion to `met`, `unmet`,
-`breached`, or `unknown`; resolves all declared `evidenceRequirements`; includes
-the referenced evidence; and includes `resultValue` for `maximize`, `decision`
-for `decide`, and the required human decision or approval for `human` criteria.
-Missing or invalid inputs keep the proposal with the Agent and return explicit
-criterion-level gaps. Narrative progress or an Agent assertion alone can never
-create Proof.
+`breached`, or `unknown`; reports missing declared `evidenceRequirements` and
+their resulting `unknown` criteria; includes the referenced evidence; and
+includes `resultValue` for `maximize`, `decision` for `decide`, and any
+criterion-specific human decision needed to make a `human` criterion
+non-unknown. Narrative progress or an Agent assertion alone can never create
+Proof.
+
+Readiness is determined by running the unchanged canonical reducer. A proposal
+enters `Ready for acceptance` only when that reducer returns a terminal outcome.
+This includes supported `target:not_achieved` and `maintain:breached` outcomes
+even when another criterion remains `unknown`; those unknowns stay visible in
+the proposal. `maximize` and `decide` outcomes that reduce to `inconclusive`
+remain active with explicit gaps. No Goal closes automatically: an authorized
+user must accept the proposed result as the final record first.
 
 The decision behavior is:
 
 | User or system result | Persisted behavior | Evaluator behavior |
 | --- | --- | --- |
-| preflight has evidence gaps | append an Agent-action Activity and show exact gaps | do not invoke canonical evaluation |
-| human judgment is required and preflight is valid | persist a `ready` Result Proposal with immutable candidate payload and base Contract revision | do not invoke canonical evaluation yet |
-| `Accept result` | record the organization-scoped human decision or approval, then consume the proposal idempotently | invoke canonical evaluation once with evidence, criteria, `resultValue`, `decision`, and human approval as applicable |
+| reducer returns `inconclusive` | append an Agent-action Activity and show exact evidence, value, decision, and unknown-criterion gaps | do not create a ready proposal or invoke canonical evaluation |
+| reducer returns a terminal result | persist a `ready` Result Proposal with immutable candidate payload, visible failed or unknown criteria, and base Contract revision | do not invoke canonical evaluation until user acceptance |
+| `Accept result` | require an authorized human board actor, record organization-scoped acceptance of the proposed final record, then consume the proposal idempotently | invoke canonical evaluation once with evidence, criteria, `resultValue`, `decision`, acceptance reference, and separately confirmed human-criterion inputs as applicable |
 | `Result is not sufficient` | require feedback, mark proposal `rejected`, append Activity, and create or revise continuation | do not terminally evaluate; Goal returns to Agent action |
 | evaluator returns `inconclusive` | preserve evaluation inputs and explicit gaps; keep the Goal active | allowed only where the current objective mode's canonical evaluation permits it |
 | evaluator returns a terminal positive or negative result | persist canonical evaluation and terminal lifecycle atomically | Proof is the canonical evaluation result, never the proposal narrative |
 
-Acceptance records human judgment; it does not force a positive outcome. If the
-canonical evaluation disagrees with the proposal because the Contract or
-evidence changed, the transaction fails closed and the Agent must regenerate
-the proposal against the current Contract revision. Rejecting preserves the
-rejected proposal, feedback, and rationale.
+Acceptance records that the user accepts this outcome as the final Goal record;
+it does not force a positive outcome or automatically mark a `human` criterion
+as met. A criterion-specific human decision is included only when the proposal
+shows that judgment separately and the user explicitly confirms it. The user
+may therefore accept a supported negative result without turning failed or
+unknown criteria into success. If the canonical evaluation disagrees with the
+proposal because the Contract or evidence changed, the transaction fails closed
+and the Agent must regenerate the proposal against the current Contract
+revision. Rejecting preserves the rejected proposal, feedback, and rationale.
+The Owner Agent may submit a proposal but may not accept its own result through
+an Agent API key.
 
 The user never enters evidence URIs, evaluator states, or a result payload in
 the standard completion path.
@@ -573,8 +609,9 @@ the standard completion path.
 ### Creation and alignment
 
 - `GW-001`: Goals must support compact direct creation from the Goals surface.
-- `GW-002`: Direct creation must show only Goal, context, suggested Owner, and
-  optional target time as editable inputs.
+- `GW-002`: Direct creation must show only Goal, context, the same assignable
+  Agent picker used by Issue creation, and optional target time as editable
+  inputs. Rudder may preselect a capable suggestion.
 - `GW-003`: The create surface must show the current plain-language
   understanding and first action before `Create and start`.
 - `GW-004`: `Create and start` must compile and explicitly confirm the initial
@@ -582,6 +619,12 @@ the standard completion path.
 - `GW-005`: `Create and start` must require a complete Contract, capable
   same-organization Owner, initial Plan, continuation, and successful canonical
   activation validation.
+- `GW-005A`: Goal start must persist an organization-scoped request key and
+  immutable activation-packet hash. Same-key/same-hash replay must return the
+  original Goal; same-key/different-hash replay must return conflict.
+- `GW-005B`: Draft creation or reuse, activation, Owner assignment, initial
+  Plan, continuation, activation Activity, and Start Request completion must
+  commit atomically so process failure cannot leave partial or duplicate effects.
 - `GW-006`: Missing material information must allow `Save draft`, produce one
   concrete attention question, and prohibit Runs, execution Issues,
   automations, external actions, and Goal-scoped discovery until activation.
@@ -611,6 +654,9 @@ the standard completion path.
   Issue count, Run count, or arbitrary percentage alone is insufficient.
 - `GW-014`: User feedback must remain attached to the Goal and be available to
   future Goal work.
+- `GW-014A`: Feedback submission must be organization-scoped and idempotent,
+  preserve the human actor and original content, route follow-up to the Owner
+  Agent, and never count as approval or directly mutate the Contract.
 - `GW-015`: Agent Plan and current understanding updates must record why they
   changed and which evidence or feedback caused the change.
 
@@ -628,13 +674,18 @@ the standard completion path.
 - `GW-019`: Completion must be proposed by the Agent with evidence and risks.
 - `GW-020`: User rejection of a result must preserve feedback and resume Agent
   action.
-- `GW-021`: User acceptance must record the authority required by the internal
-  evaluation policy and produce durable Proof.
+- `GW-021`: Every terminal Goal result, positive or negative, must receive
+  organization-scoped user acceptance before canonical evaluation may close the
+  Goal and produce durable Proof.
 - `GW-021A`: Result Proposal preflight must expose criterion-level evidence
   gaps without writing Proof or closing the Goal.
 - `GW-021B`: Rejecting a Result Proposal must not invoke terminal evaluation;
   accepting must invoke canonical evaluation idempotently against the immutable
-  candidate payload and matching Contract revision.
+  candidate payload and matching Contract revision without treating acceptance
+  itself as proof that a human criterion was met.
+- `GW-021C`: Canonical evaluation must reject any terminal close attempt that
+  lacks a matching accepted Result Proposal and organization-scoped human
+  acceptance reference; an Agent cannot accept its own Goal result.
 
 ### Responsive and accessible behavior
 
@@ -673,12 +724,21 @@ Outputs:
   selected Owner, key boundary, first action, and material target time
 - validation status and, when invalid, one highest-impact alignment question
 
-The candidate packet is immutable between preview and confirmation and carries
-an idempotency key. `Create and start` submits that exact packet to the existing
-Draft creation and activation boundary. A changed user input, organization
-policy, Agent capability, or preview invalidates the packet and requires
-recompilation. Activation must fail closed if the selected Agent is no longer
+The candidate packet is immutable between preview and confirmation. `Create and
+start` submits the exact packet hash plus a durable organization-scoped request
+key to the Goal Start command. A changed user input, organization policy, Agent
+capability, or preview invalidates the packet and requires recompilation and a
+new request key. Activation must fail closed if the selected Agent is no longer
 available, capable, or in the same organization.
+
+The Goal Start Request persists request key, organization ID, packet hash,
+optional existing Draft ID, resulting Goal ID, status, and timestamps. Its
+unique organization/key constraint is the retry boundary. The Start command
+validates before mutation and executes Draft creation or reuse, canonical
+activation, Owner assignment, initial Plan, continuation, activation Activity,
+and request completion in one database transaction. A committed request is the
+readback after a lost response or process restart; an uncommitted transaction
+leaves no partial activation to recover.
 
 Inference follows a field-level policy:
 
@@ -691,7 +751,7 @@ Inference follows a field-level policy:
 | human authorities | may preserve stricter organization defaults; must not remove a required human decision |
 | objective mode | may recommend a mode but the plain-language outcome and success judgment must be visibly confirmed |
 | outcome, target person or system, material success threshold, consequential deadline | require visible confirmation; ambiguity blocks activation |
-| Owner | may suggest from capability data; user-visible selection is required and activation requires one capable same-organization Agent |
+| Owner | may preselect from capability data; the user assigns or changes it through the same picker as Issue creation, and activation requires one capable same-organization Agent |
 
 The controller may inspect organization policy and same-organization Agent
 capability metadata to compile the packet. It may not call external systems,
@@ -744,25 +804,48 @@ The result service assembles an immutable candidate matching
 `evaluateGoalSchema`: `evidenceRefs`, one status per criterion, optional
 `resultValue`, optional `decision`, and evaluator-compatible `resultPayload`.
 It calls the same pure evaluation reduction as a non-mutating preflight and
-returns criterion-level evidence gaps. A proposal can become `ready` only when
-the preflight is valid and remaining human judgment is required.
+returns criterion-level evidence gaps. A candidate becomes `ready` for required
+user acceptance exactly when that reducer returns a terminal outcome. Failed
+and unknown criteria remain visible; they do not block a terminal negative
+`target` or `maintain` result that the existing reducer permits. `maximize` and
+`decide` candidates that reduce to `inconclusive` remain active. No objective
+mode auto-closes.
 
-Accept consumes the exact candidate once, records the required human decision
-or approval, rechecks the Contract revision, and calls the canonical evaluate
-command. Reject records feedback and continuation without calling evaluate.
-The service must preserve all attempts and must not translate proposal prose,
-Run success, Issue completion, or reviewer confidence directly into Proof.
+Accept consumes the exact candidate once, records acceptance of the final
+record, rechecks the Contract revision, and calls the canonical evaluate
+command with the acceptance reference. The acceptance record includes proposal
+ID, Goal ID, organization ID, human actor, accepted time, and base Contract
+revision. It adds criterion-specific human input only when separately
+confirmed. Evaluate validates that the reference belongs to the same Goal and
+organization, is accepted by an authorized human actor, matches the current
+Contract revision, and has not already been consumed. Reject records feedback
+and continuation without calling evaluate. The service must preserve all
+attempts and must not translate result acceptance, proposal prose, Run success,
+Issue completion, or reviewer confidence directly into criterion satisfaction
+or Proof.
 
-### Goal conversation context (later slice)
+### Goal feedback context and later conversation relation
 
-Slice 1 uses read-only Activity and evidence history plus existing linked work.
-Slice 2 adds the embedded feedback timeline. A later slice may add one primary
-durable conversation relation if user research shows that the timeline is
+Slice 1 includes an embedded Goal feedback timeline plus existing Activity,
+evidence, and linked work. A later slice may add one primary durable
+conversation relation if user research shows that the feedback timeline is
 insufficient. If added, directly created Goals may create a conversation
 context and Messenger-created Goals may reuse the originating conversation when
 organization and visibility boundaries match. This relation must remain
 optional in the read model; the user must not have to switch between Messenger
 and Goal configuration to preserve alignment.
+
+The Slice 1 feedback command is an append-only, organization-scoped mutation.
+It persists Goal ID, actor type and ID, original body and attachments, creation
+time, and idempotency key; links the resulting timeline event to its source; and
+routes a follow-up to the current Owner Agent through existing continuation or
+wake behavior. If existing Goal Activity cannot preserve the human actor and
+original feedback without overloading Agent-submitted evidence, add the
+smallest dedicated Goal Feedback record rather than discarding provenance.
+
+An accepted feedback command may update attention and trigger Agent work, but
+it cannot directly revise Contract, Plan, criteria, authority, evaluation, or
+Proof. Those changes still use their canonical commands and governed boundaries.
 
 ### Compatibility with current commands
 
@@ -778,11 +861,25 @@ The existing commands remain the canonical mutation boundary:
 The new controller calls these commands. The standard UI stops exposing them as
 manual forms.
 
+Goal Start is an additive orchestration command, not a competing lifecycle
+command. It places Draft creation or reuse and the existing canonical activation
+effects inside the durable Start Request transaction described above. The
+low-level activate command may remain available for governed diagnostics, but
+the standard `Create and start` path cannot assemble those side effects through
+separate client calls.
+
 Consequential Contract changes and pre-evaluation review require additive
 proposal commands because the current command set has no persisted stale-safe
 proposal boundary. These commands orchestrate existing Contract revision,
 approval, Activity, continuation, and evaluate behavior; they do not introduce
 a second lifecycle or evaluator.
+
+The existing evaluate command remains the canonical evaluator but gains one
+terminal authority invariant: it may close a Goal only when called with a valid
+accepted Result Proposal reference. Direct Agent evaluation without that human
+acceptance may preflight or remain inconclusive, but it cannot produce a
+terminal lifecycle transition. This is a required `ORG.GOAL.001` contract delta,
+not a UI-only hiding rule.
 
 ### Data impact
 
@@ -794,8 +891,20 @@ whether the existing records can support:
 - material-change proposal and approval linkage
 - result proposal state before terminal evaluation
 
-The first internal slice requires no conversation or proposal schema. It should
-prefer a versioned Workspace read model over duplicating canonical Goal state.
+The first internal slice requires durable feedback provenance but no full
+conversation or proposal schema. It should reuse Goal Activity only if the
+human actor, original input, attachments, source, and idempotency survive
+without pretending that feedback is Agent-submitted evidence; otherwise it adds
+the minimal Goal Feedback relation described above. The Workspace read model
+must not duplicate canonical Goal state.
+
+Slice 1 also requires a minimal Goal Start Request record because current Draft
+creation and activation commands do not share a durable idempotency boundary.
+The record carries the organization-scoped request key, immutable packet hash,
+optional Draft ID, resulting Goal ID, status, and timestamps. It is not a second
+Goal lifecycle; it exists only to make the composite start command atomic and
+restart-safe.
+
 Later slices may add Goal Change Proposal and Result Proposal tables because
 their immutable payload, base revision, idempotency, and status cannot be
 reconstructed reliably from narrative Activity. Add persisted fields or
@@ -911,6 +1020,8 @@ ownership or meaning.
 - zero positive progress claims based only on Issue or Run completion counts
 - zero terminal results without evaluator-valid evidence and required human
   authority
+- zero terminal Goal lifecycle transitions without explicit user acceptance of
+  the proposed final record
 - no cross-organization Owner, evidence, conversation, or approval links
 
 ## Rollout Plan
@@ -923,26 +1034,28 @@ This is the only authorized first implementation scope:
 - add direct compact creation and a deterministic Goal Authoring Controller
 - require visible Owner selection and a complete validated activation packet
   before enabling `Create and start`
+- add the durable Goal Start Request and atomic composite start command
 - support `Save draft` plus one alignment question without executing work
 - reorganize Goal Detail in the existing Issue workspace shell around current
   Goal, existing evidence-linked Activity, Agent action, next step, attention,
   and history
+- add the embedded feedback timeline and composer with durable human
+  provenance, idempotent submission, and Owner Agent follow-up
 - render existing Contract, Plan, continuation, Activity, evidence, and Proof
   through the new read model without changing evaluator semantics
 - keep low-level activation and command controls available only in developer or
   debug mode during migration
 
-This slice does not add a feedback composer, derived board facets, the mobile
-attention-sorted list, Messenger creation, a primary conversation relation,
-automatic progress claims from new sources, Goal Change Proposal persistence,
-Result Proposal persistence, or public rollout. Its acceptance target is a
-clear and safe vertical path over the existing backend, not the whole future
-journey.
+This slice does not add derived board facets, the mobile attention-sorted list,
+Messenger creation, a primary conversation relation, automatic progress claims
+from new sources, Goal Change Proposal persistence, Result Proposal persistence,
+or public rollout. Consequential feedback remains recorded but unapplied until
+the governed change flow exists. Its acceptance target is a clear and safe
+vertical path over the existing backend, not the whole future journey.
 
-### Slice 2: Evidence-backed progress, feedback, and board
+### Slice 2: Evidence-backed progress and board
 
 - Add the Progress Synthesizer with source attribution and precedence rules.
-- Add the embedded Goal feedback timeline and durable feedback handling.
 - Add derived attention facets on desktop and the attention-sorted mobile list.
 - Prove that Run and Issue completion alone cannot advance Goal progress.
 
@@ -1008,36 +1121,52 @@ Slice 1 release gate:
 3. Attempt activation with missing Contract, Owner, Plan, continuation,
    cross-organization Owner, incapable Owner, and stale preview; verify each
    fails without partial effects.
-4. Retry Draft creation and activation with the same idempotency key; verify one
-   Goal, one Owner assignment, one Plan, and one activation Activity.
-5. Refresh and restart after activation; verify Owner, Plan, current Goal,
+4. Retry `Create and start` with the same request key and packet hash before and
+   after API restart; verify the original Goal is returned with one Owner
+   assignment, one Plan, one continuation, and one activation Activity.
+5. Reuse a request key with a different packet hash; verify conflict and no
+   mutation. Inject failure and a lost response between Draft creation and
+   activation side effects; verify rollback or committed-request readback with
+   no partial or duplicate effects after retry.
+6. Refresh and restart after activation; verify Owner, Plan, current Goal,
    existing evidence-linked Activity, progress, and next action persist.
-6. Verify the normal Workspace contains no low-level activation, Plan mutation,
+7. Submit ordinary feedback; verify original content, human actor, attachments,
+   and one idempotent timeline entry persist across refresh and restart, the
+   Owner Agent receives follow-up, and the feedback does not become approval or
+   directly mutate Contract, Plan, evaluation, or Proof.
+8. Submit consequential feedback before Slice 3; verify it remains visible and
+   unapplied, with the current Contract unchanged.
+9. Verify the normal Workspace contains no low-level activation, Plan mutation,
    Activity submission, or Evaluate controls, while developer/debug mode still
    exposes governed diagnostics.
-7. Verify desktop and constrained-mobile Goal Detail, keyboard focus, long
+10. Verify desktop and constrained-mobile Goal Detail, keyboard focus, long
    content, dense read-only history, loading, error, retry, and empty states.
 
 Later-slice gates:
 
-8. Verify desktop derived facets and the attention-sorted mobile Goal list;
+11. Verify desktop derived facets and the attention-sorted mobile Goal list;
    verify Goal cards cannot be dragged or assigned Issue status.
-9. Generate progress from a successful Run with valid evidence, then complete
+12. Generate progress from a successful Run with valid evidence, then complete
    several Issues without moving the external outcome and verify Goal progress
    does not falsely advance.
-10. Record negative evidence; verify the Agent changes strategy without claiming
+13. Record negative evidence; verify the Agent changes strategy without claiming
    success. Add ordinary feedback and verify it does not become approval.
-11. Submit a consequential target-audience or success-threshold change; verify
+14. Submit a consequential target-audience or success-threshold change; verify
     persisted before/after approval, unchanged state before approval, stale
     proposal supersession, and idempotent application.
-12. Enter a waiting condition, end the Run, restart, and resume after the
+15. Enter a waiting condition, end the Run, restart, and resume after the
     condition becomes true.
-13. Submit a result proposal with missing evidence and verify no Proof; then
-    preflight a valid proposal, reject it with feedback, continue work, and
-    submit and accept a later result exactly once.
-14. Attempt cross-organization Goal, Owner, proposal, evidence, conversation,
-    and approval references; verify rejection.
-15. Create a Goal from Messenger and verify it uses the same preview,
+16. Submit a result proposal that reduces to `inconclusive` and verify no ready
+    proposal or Proof. Then preflight a terminal negative `target` or `maintain`
+    result with visible unknown criteria, reject it with feedback, continue
+    work, and submit and accept a later result exactly once. Verify an objective
+    metric result still waits for acceptance, and accepting a supported negative
+    result does not mark failed or unknown human criteria as met. Attempt
+    terminal evaluation from the Owner Agent without an accepted proposal
+    reference and verify rejection without lifecycle change.
+17. Attempt cross-organization Goal, Owner, proposal, evidence, conversation,
+    approval, and result-acceptance references; verify rejection.
+18. Create a Goal from Messenger and verify it uses the same preview,
     activation packet, Draft fallback, and Goal identity as direct creation.
 
 ### Expected results
@@ -1048,6 +1177,8 @@ Later-slice gates:
 - All internal activation and evaluation invariants remain enforced.
 - User-visible progress always names evidence and uncertainty.
 - Approval and acceptance actions survive refresh without duplication.
+- Every objective mode remains active until an authorized human accepts the
+  exact terminal Result Proposal, and Agent API keys cannot self-accept.
 - The same exact candidate passes real browser E2E and independent product
   acceptance verification.
 
@@ -1085,8 +1216,8 @@ Later-slice gates:
 
 ### Security and governance
 
-- All Goal, Owner, conversation, evidence, approval, and result operations stay
-  organization-scoped.
+- All Goal, Owner, conversation, evidence, approval, result, and acceptance
+  operations stay organization-scoped.
 - The compiler cannot expand external authority beyond organization policy or
   Agent capability.
 - Generated structure remains inspectable and auditable even when hidden from
@@ -1101,6 +1232,8 @@ Later-slice gates:
 - Record why the current understanding or Plan changed.
 - Distinguish generated proposals, user confirmations, Agent actions, and
   system-derived facets in audit data.
+- Distinguish acceptance of the final Goal record from criterion-specific human
+  judgments so audit consumers cannot interpret acceptance as success.
 
 ## Documentation Changes If Approved
 
@@ -1129,9 +1262,9 @@ must not choose differently on its own.
    selected, capable, same-organization Agent Owner.
 3. Ambiguous intent or missing Owner yields `Save draft` and one alignment
    question. Draft Goals execute nothing, including bounded discovery.
-4. Slice 1 shows existing Activity and evidence as read-only history. Slice 2
-   adds the embedded Goal feedback timeline and composer; it does not embed a
-   full Messenger conversation.
+4. Slice 1 includes the embedded Goal feedback timeline and composer with
+   durable human provenance and Owner Agent follow-up; it does not embed a full
+   Messenger conversation.
 5. Slice 2 introduces derived attention columns on desktop and one
    attention-sorted Goal list on mobile, not horizontal mobile columns.
 6. Low-level Contract and mutation controls are available only in developer or
@@ -1141,6 +1274,12 @@ must not choose differently on its own.
    drag-and-drop, or editable derived facets.
 8. The first implementation slice is the internal feature-flagged direct-create
    and primary Workspace vertical slice defined above.
+9. Only a change that materially alters the outcome commitment, success
+   judgment, authority, target, or consequential deadline requires Approval;
+   routine scheduling and bounded strategy adjustments do not.
+10. Every terminal Goal result requires explicit user acceptance. Acceptance
+    settles the final record but does not force a positive outcome or mark a
+    human criterion as met without a separate explicit judgment.
 
 ## Explicitly Deferred Decisions
 
