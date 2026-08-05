@@ -150,3 +150,9 @@ jobs:
           RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
           RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build
+
+      - name: Core work-loop smoke
+        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
+        env:
+          RUDDER_E2E_PRODUCTION_UI: "1"
+        run: pnpm test:smoke

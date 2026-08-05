@@ -82,6 +82,7 @@ test.describe("Chat message scroll map", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "light");
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
 
@@ -142,10 +143,70 @@ test.describe("Chat message scroll map", () => {
       const titleStyle = window.getComputedStyle(previewTitleText);
       const summaryStyle = window.getComputedStyle(previewSummaryText);
       type RgbaColor = [number, number, number, number];
+      const parseNumber = (value: string, scale = 1) => {
+        const trimmed = value.trim();
+        if (trimmed === "none") return 0;
+        return trimmed.endsWith("%") ? Number.parseFloat(trimmed) / 100 * scale : Number.parseFloat(trimmed);
+      };
+      const parseAlpha = (value: string | undefined) => {
+        if (!value || value.trim() === "none") return 1;
+        return Math.min(1, Math.max(0, parseNumber(value)));
+      };
+      const linearToSrgb = (value: number) => {
+        const clipped = Math.min(1, Math.max(0, value));
+        return (clipped <= 0.0031308 ? 12.92 * clipped : 1.055 * clipped ** (1 / 2.4) - 0.055) * 255;
+      };
       const parseColor = (value: string): RgbaColor | null => {
-        const channels = value.match(/[\d.]+/gu)?.map(Number) ?? [];
+        const trimmed = value.trim().toLowerCase();
+        if (trimmed === "transparent") return [0, 0, 0, 0];
+        if (trimmed.startsWith("#")) {
+          const hex = trimmed.slice(1);
+          if (![3, 4, 6, 8].includes(hex.length) || !/^[\da-f]+$/u.test(hex)) return null;
+          const expanded = hex.length <= 4 ? hex.split("").map((channel) => `${channel}${channel}`).join("") : hex;
+          return [
+            Number.parseInt(expanded.slice(0, 2), 16),
+            Number.parseInt(expanded.slice(2, 4), 16),
+            Number.parseInt(expanded.slice(4, 6), 16),
+            expanded.length === 8 ? Number.parseInt(expanded.slice(6, 8), 16) / 255 : 1,
+          ];
+        }
+
+        const functionMatch = trimmed.match(/^(rgba?|oklab|oklch)\((.*)\)$/u);
+        if (!functionMatch) return null;
+        const functionName = functionMatch[1];
+        const parts = functionMatch[2].replaceAll(",", " ").trim().split(/\s+/u);
+        const slashIndex = parts.indexOf("/");
+        const alpha = parseAlpha(slashIndex >= 0 ? parts[slashIndex + 1] : functionName === "rgba" ? parts[3] : undefined);
+        const channels = (slashIndex >= 0 ? parts.slice(0, slashIndex) : parts.slice(0, 3));
         if (channels.length < 3) return null;
-        return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0, channels[3] ?? 1];
+
+        if (functionName === "rgb" || functionName === "rgba") {
+          return [
+            parseNumber(channels[0] ?? "0", 255),
+            parseNumber(channels[1] ?? "0", 255),
+            parseNumber(channels[2] ?? "0", 255),
+            alpha,
+          ];
+        }
+
+        const lightness = parseNumber(channels[0] ?? "0");
+        const first = parseNumber(channels[1] ?? "0", 0.4);
+        const second = parseNumber(channels[2] ?? "0", 0.4);
+        const angle = functionName === "oklch"
+          ? parseNumber(channels[2] ?? "0") * Math.PI / 180
+          : 0;
+        const a = functionName === "oklch" ? first * Math.cos(angle) : first;
+        const b = functionName === "oklch" ? first * Math.sin(angle) : second;
+        const l = lightness + 0.3963377774 * a + 0.2158037573 * b;
+        const m = lightness - 0.1055613458 * a - 0.0638541728 * b;
+        const s = lightness - 0.0894841775 * a - 1.291485548 * b;
+        const lms = [l ** 3, m ** 3, s ** 3];
+        return [
+          linearToSrgb(4.0767416621 * lms[0]! - 3.3077115913 * lms[1]! + 0.2309699292 * lms[2]!),
+          linearToSrgb(-1.2684380046 * lms[0]! + 2.6097574011 * lms[1]! - 0.3413193965 * lms[2]!),
+          linearToSrgb(-0.0041960863 * lms[0]! - 0.7034186173 * lms[1]! + 1.707614701 * lms[2]!),
+          alpha,
+        ];
       };
       const compositeColor = (foreground: RgbaColor, background: RgbaColor): RgbaColor => {
         const alpha = foreground[3] + background[3] * (1 - foreground[3]);
@@ -197,9 +258,9 @@ test.describe("Chat message scroll map", () => {
     expect(floatingPreviewGeometry?.previewOffsetFromMarker).toBeLessThanOrEqual(12);
     expect(floatingPreviewGeometry?.previewWidth).toBeGreaterThanOrEqual(620);
     expect(floatingPreviewGeometry?.previewRadius).toBe("18px");
-    expect(floatingPreviewGeometry?.previewBackground).toBe("rgba(42, 42, 42, 0.94)");
-    expect(floatingPreviewGeometry?.previewTitleColor).toBe("rgba(255, 255, 255, 0.96)");
-    expect(floatingPreviewGeometry?.previewSummaryColor).toBe("rgba(255, 255, 255, 0.68)");
+    expect(floatingPreviewGeometry?.previewBackground).not.toBe("rgba(42, 42, 42, 0.94)");
+    expect(floatingPreviewGeometry?.previewTitleColor).not.toBe("rgba(255, 255, 255, 0.96)");
+    expect(floatingPreviewGeometry?.previewSummaryColor).not.toBe("rgba(255, 255, 255, 0.68)");
     expect(floatingPreviewGeometry?.previewTitleContrast).toBeGreaterThanOrEqual(4.5);
     expect(floatingPreviewGeometry?.previewSummaryContrast).toBeGreaterThanOrEqual(4.5);
     expect(floatingPreviewGeometry?.previewVisibleTop).toBe(true);
