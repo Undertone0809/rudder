@@ -13,6 +13,7 @@ import { IssueProperties } from "./IssueProperties";
 const openNewIssue = vi.hoisted(() => vi.fn());
 const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
 const mockProjects = vi.hoisted(() => ({ current: [] as Project[] }));
+const mockAgents = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
 const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -26,16 +27,17 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "agents" && queryKey.length === 2) {
       return {
-        data: [
-          {
-            id: "agent-1",
-            name: longAgentName,
-            role: "cto",
-            title: "Chief Technology Officer",
-            icon: null,
-            status: "active",
-          },
-        ],
+        data: mockAgents.current.length > 0 ? mockAgents.current : [{
+          id: "agent-1",
+          name: longAgentName,
+          role: "cto",
+          title: "Chief Technology Officer",
+          icon: null,
+          status: "active",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.6-codex" },
+          runtimeConfig: {},
+        }],
         isLoading: false,
         error: null,
       };
@@ -100,6 +102,7 @@ beforeEach(() => {
   openNewIssue.mockReset();
   mockIssues.current = [];
   mockProjects.current = [];
+  mockAgents.current = [];
 });
 
 afterEach(() => {
@@ -612,6 +615,158 @@ describe("IssueProperties", () => {
       },
       projectId: "project-1",
       goalId: "goal-1",
+    });
+  });
+
+  it("shows the runtime selector only for the selected Agent row", () => {
+    mockAgents.current = [
+      {
+        id: "agent-1",
+        name: longAgentName,
+        role: "cto",
+        title: "Chief Technology Officer",
+        icon: null,
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.6-codex" },
+        runtimeConfig: {},
+      },
+      {
+        id: "agent-2",
+        name: "Unselected Agent",
+        role: "general",
+        title: null,
+        icon: null,
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.6-codex" },
+        runtimeConfig: {},
+      },
+    ];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={baseIssue} onUpdate={vi.fn()} inline />);
+    });
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes(longAgentName))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.querySelectorAll('[data-testid="issue-runtime-selector"]')).toHaveLength(1);
+    expect(container.textContent).toContain("Unselected Agent");
+    const selectedRow = container.querySelector('[data-testid="issue-runtime-selector"]')?.closest("div");
+    expect(selectedRow?.textContent).toContain(longAgentName);
+  });
+
+  it("persists a selected model while preserving unrelated issue runtime override fields", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onUpdate = vi.fn();
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+      document.body.querySelector('[data-slot="popover-content"]')?.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{
+            ...baseIssue,
+            assigneeAgentRuntimeOverrides: {
+              agentRuntimeConfig: { chrome: true, model: "gpt-5.6-codex" },
+            },
+          }}
+          onUpdate={onUpdate}
+          inline
+        />,
+      );
+    });
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes(longAgentName))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-selector"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const modelOption = document.body.querySelector<HTMLButtonElement>('[data-testid^="issue-runtime-option-model-"]');
+    expect(modelOption).toBeTruthy();
+    act(() => modelOption?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-apply"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      assigneeAgentRuntimeOverrides: expect.objectContaining({
+        agentRuntimeConfig: expect.objectContaining({ chrome: true }),
+      }),
+    }));
+  });
+
+  it("clears an old runtime override when the Issue is reassigned", () => {
+    mockAgents.current = [
+      {
+        id: "agent-1",
+        name: longAgentName,
+        role: "cto",
+        title: "Chief Technology Officer",
+        icon: null,
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.6-codex" },
+        runtimeConfig: {},
+      },
+      {
+        id: "agent-2",
+        name: "Replacement Agent",
+        role: "general",
+        title: null,
+        icon: null,
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.6-codex" },
+        runtimeConfig: {},
+      },
+    ];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onUpdate = vi.fn();
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={{ ...baseIssue, assigneeAgentRuntimeOverrides: { agentRuntimeConfig: { model: "old-model" } } }} onUpdate={onUpdate} inline />);
+    });
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes(longAgentName))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes("Replacement Agent"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assigneeAgentId: "agent-2",
+      assigneeUserId: null,
+      assigneeAgentRuntimeOverrides: null,
     });
   });
 });

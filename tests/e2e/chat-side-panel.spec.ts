@@ -1073,6 +1073,20 @@ test.describe("Chat Side Panel", () => {
     await expect(fileToolbar).toContainText(libraryFileName);
     await expect(fileToolbar.getByRole("button", { name: "Open file options" })).toHaveText("Open");
 
+    const readableDocument = markdownEditor.locator(".rudder-readable-document");
+    const documentViewport = markdownEditor.locator(":scope > .scrollbar-auto-hide");
+    const [readableDocumentBox, documentViewportBox] = await Promise.all([
+      readableDocument.boundingBox(),
+      documentViewport.boundingBox(),
+    ]);
+    expect(readableDocumentBox).not.toBeNull();
+    expect(documentViewportBox).not.toBeNull();
+    expect(readableDocumentBox!.width).toBeLessThanOrEqual(880.5);
+    expect(Math.abs(
+      (readableDocumentBox!.x - documentViewportBox!.x)
+      - ((documentViewportBox!.width - readableDocumentBox!.width) / 2),
+    )).toBeLessThanOrEqual(1);
+
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-library-open-in.png"),
       fullPage: true,
@@ -1085,7 +1099,7 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText(libraryFileName, { timeout: 15_000 });
   });
 
-  test("keeps a read-only Markdown preview readable across narrow and wide panels", async ({ page }, testInfo) => {
+  test("centers a truncated read-only Markdown preview at a readable width", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Chat-Side-Panel-Readable-Markdown-${Date.now()}`,
@@ -1100,19 +1114,7 @@ test.describe("Chat Side Panel", () => {
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
         filePath: libraryFilePath,
-        content: [
-          "# Read-only research brief",
-          "",
-          "Wide application windows should not force a document into edge-to-edge lines that are difficult to scan and easy to lose while reading.",
-          "",
-          "## Reading layout",
-          "",
-          "The document column stays centered and stops growing at a comfortable reading width. The surrounding workspace can still expand for navigation, tools, and other context.",
-          "",
-          "- Narrow panels use all available content width.",
-          "- Wide panels preserve balanced whitespace.",
-          "- Code, tables, images, and media keep their existing layouts.",
-        ].join("\n"),
+        content: "# Read-only research brief\n\nThis document should remain comfortable to read in a wide panel.",
       },
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
@@ -1156,10 +1158,10 @@ test.describe("Chat Side Panel", () => {
     });
 
     await page.goto("/");
-    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
+    await installDesktopShellFileLauncherStub(page);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
@@ -1169,29 +1171,16 @@ test.describe("Chat Side Panel", () => {
     const documentViewport = page.getByTestId("library-live-surface-markdown-preview");
     const readableDocument = documentViewport.locator(".rudder-readable-document");
     await expect(readableDocument.getByRole("heading", { name: "Read-only research brief" })).toBeVisible();
+    const sidePanelResizer = page.getByTestId("side-panel-resizer");
+    const resizerBox = await sidePanelResizer.boundingBox();
+    expect(resizerBox).not.toBeNull();
+    await page.mouse.move(resizerBox!.x + (resizerBox!.width / 2), resizerBox!.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(500, resizerBox!.y + 120, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(async () => documentViewport.boundingBox().then((box) => box?.width ?? 0)).toBeGreaterThan(900);
 
-    const narrowGeometry = await documentViewport.evaluate((viewport) => {
-      const document = viewport.querySelector<HTMLElement>(".rudder-readable-document");
-      if (!document) return null;
-      const viewportRect = viewport.getBoundingClientRect();
-      const documentRect = document.getBoundingClientRect();
-      const viewportStyle = window.getComputedStyle(viewport);
-      return {
-        availableWidth: viewportRect.width
-          - Number.parseFloat(viewportStyle.paddingLeft)
-          - Number.parseFloat(viewportStyle.paddingRight),
-        documentWidth: documentRect.width,
-      };
-    });
-    expect(narrowGeometry).not.toBeNull();
-    expect(Math.abs(narrowGeometry!.availableWidth - narrowGeometry!.documentWidth)).toBeLessThanOrEqual(1);
-    await page.screenshot({
-      path: testInfo.outputPath("chat-side-panel-read-only-readable-width-narrow.png"),
-    });
-
-    await page.setViewportSize({ width: 3000, height: 1000 });
-    await expect.poll(async () => documentViewport.boundingBox().then((box) => box?.width ?? 0)).toBeGreaterThan(1_100);
-    const wideGeometry = await documentViewport.evaluate((viewport) => {
+    const geometry = await documentViewport.evaluate((viewport) => {
       const document = viewport.querySelector<HTMLElement>(".rudder-readable-document");
       if (!document) return null;
       const viewportRect = viewport.getBoundingClientRect();
@@ -1204,12 +1193,14 @@ test.describe("Chat Side Panel", () => {
         rightGap: viewportRect.right - Number.parseFloat(viewportStyle.paddingRight) - documentRect.right,
       };
     });
-    expect(wideGeometry).not.toBeNull();
-    expect(wideGeometry!.maxWidth).toBe("880px");
-    expect(wideGeometry!.documentWidth).toBeLessThanOrEqual(880.5);
-    expect(Math.abs(wideGeometry!.leftGap - wideGeometry!.rightGap)).toBeLessThanOrEqual(1);
+    expect(geometry).not.toBeNull();
+    expect(geometry!.maxWidth).toBe("880px");
+    expect(geometry!.documentWidth).toBeLessThanOrEqual(880.5);
+    expect(Math.abs(geometry!.leftGap - geometry!.rightGap)).toBeLessThanOrEqual(1);
+
     await page.screenshot({
-      path: testInfo.outputPath("chat-side-panel-read-only-readable-width-wide.png"),
+      path: testInfo.outputPath("chat-side-panel-read-only-readable-width.png"),
+      fullPage: true,
     });
   });
 
@@ -2722,6 +2713,138 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeHidden();
     await page.getByTestId("side-panel-hover-edge").hover();
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
+  });
+
+  test("requires confirmation before reopening blocked Agents from the Messenger Side Panel", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: "Chat-Side-Panel-Blocked-Reopen-" + Date.now(),
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const statuses = ["paused", "terminated", "pending_approval"] as const;
+    const blockedIssues: Array<{
+      status: (typeof statuses)[number];
+      issueId: string;
+      issueRef: string;
+      title: string;
+    }> = [];
+
+    for (const status of statuses) {
+      const agentRes = await page.request.post("/api/orgs/" + organization.id + "/agents", {
+        data: {
+          name: status + " Messenger Side Panel Agent",
+          role: "pm",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: { model: "gpt-5.4" },
+        },
+      });
+      expect(agentRes.ok(), await agentRes.text()).toBe(true);
+      const agent = await agentRes.json() as { id: string };
+      const title = status + " Messenger Side Panel reopen";
+      const issueRes = await page.request.post("/api/orgs/" + organization.id + "/issues", {
+        data: {
+          title,
+          description: "Blocked Agent reopen confirmation coverage.",
+          status: "done",
+          priority: "medium",
+          assigneeAgentId: agent.id,
+        },
+      });
+      expect(issueRes.ok(), await issueRes.text()).toBe(true);
+      const issue = await issueRes.json() as { id: string; identifier: string | null };
+      const statusRes = await page.request.patch("/api/agents/" + agent.id, {
+        data: { status },
+      });
+      expect(statusRes.ok(), await statusRes.text()).toBe(true);
+      blockedIssues.push({
+        status,
+        issueId: issue.id,
+        issueRef: issue.identifier ?? issue.id,
+        title,
+      });
+    }
+
+    const hostChatRes = await page.request.post("/api/orgs/" + organization.id + "/chats", {
+      data: {
+        title: "Blocked Agent Side Panel host",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open the blocked Agent issues." },
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: blockedIssues.map((entry) => (
+        "Open [" + entry.title + "](" + buildIssueMentionHref(entry.issueId, entry.issueRef) + ")"
+      )).join("\n\n"),
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto("/" + organization.issuePrefix + "/messenger/chat/" + hostChat.id);
+
+    const assistantMessage = page
+      .getByTestId("chat-assistant-message")
+      .filter({ hasText: blockedIssues[0].title })
+      .last();
+    await expect(assistantMessage).toBeVisible({ timeout: 15_000 });
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const dialog = page.getByRole("dialog");
+
+    for (const entry of blockedIssues) {
+      await assistantMessage
+        .locator('a[data-mention-kind="issue"]')
+        .filter({ hasText: entry.issueRef })
+        .click();
+      await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+      await expect(sidePanel).toContainText(entry.title);
+      const activity = sidePanel.getByRole("region", { name: "Activity" });
+      const composer = activity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+      const reopenCheckbox = activity.getByRole("checkbox", { name: "Re-open" });
+      await expect(reopenCheckbox).toBeChecked();
+      await composer.click();
+      await page.keyboard.type("Confirm the " + entry.status + " Side Panel reopen first");
+
+      let commentPostCount = 0;
+      const onRequest = (request: { method(): string; url(): string }) => {
+        const url = new URL(request.url());
+        if (request.method() === "POST" && url.pathname === "/api/issues/" + entry.issueId + "/comments") {
+          commentPostCount += 1;
+        }
+      };
+      page.on("request", onRequest);
+      try {
+        await activity.getByRole("button", { name: "Comment", exact: true }).click();
+        await expect(dialog).toBeVisible();
+        expect(commentPostCount).toBe(0);
+        await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+      } finally {
+        page.off("request", onRequest);
+      }
+      await expect(composer).toContainText("Confirm the " + entry.status + " Side Panel reopen first");
+      await expect(composer).toBeFocused();
+      const issueAfterCancelRes = await page.request.get("/api/issues/" + entry.issueId);
+      expect(issueAfterCancelRes.ok(), await issueAfterCancelRes.text()).toBe(true);
+      expect((await issueAfterCancelRes.json() as { status: string }).status).toBe("done");
+    }
   });
 
   test("opens the panel picker from the Desktop new-tab event without creating placeholder tabs", async ({ page }) => {

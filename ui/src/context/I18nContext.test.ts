@@ -10,6 +10,13 @@ describe("translateMessage", () => {
     expect(translateMessage("zh-CN", "common.systemSettings")).toBe("系统设置");
   });
 
+  it("localizes the unmentioned Agent comment confirmation", () => {
+    expect(translateMessage("en", "comments.unmentionedConfirm.title")).toBe("No Agent mentioned");
+    expect(translateMessage("en", "comments.unmentionedConfirm.confirm")).toBe("Send anyway");
+    expect(translateMessage("zh-CN", "comments.unmentionedConfirm.title")).toBe("未 @ 任何 Agent");
+    expect(translateMessage("zh-CN", "comments.unmentionedConfirm.confirm")).toBe("直接发送");
+  });
+
   it("interpolates dynamic values", () => {
     expect(translateMessage("en", "app.addAnotherAgentToOrganization", { name: "Acme" })).toBe(
       "Add another agent to Acme",
@@ -126,6 +133,42 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Codex (local)")).toBe("Codex (local)");
     expect(translateLegacyString("zh-CN", "Replacing existing Rudder Desktop if needed...")).toBe(
       "如有需要，正在替换现有 Rudder Desktop...",
+    );
+  });
+
+  it("translates reasoning controls and dynamic runtime labels for zh-CN", () => {
+    expect(translateLegacyString("zh-CN", "Thinking effort")).toBe("推理程度");
+    expect(translateLegacyString("zh-CN", "Thinking")).toBe("推理");
+    expect(translateLegacyString("zh-CN", "Extra High")).toBe("超高");
+    expect(translateLegacyString("zh-CN", "Max")).toBe("最大");
+    expect(translateLegacyString("zh-CN", "Minimal")).toBe("最低");
+    expect(translateLegacyString("zh-CN", "Execution mode")).toBe("执行模式");
+    expect(translateLegacyString("zh-CN", "Runtime default")).toBe("运行时默认");
+    expect(translateLegacyString("zh-CN", "Loading models...")).toBe("正在加载模型...");
+    expect(translateLegacyString("zh-CN", "Models unavailable")).toBe("模型不可用");
+    expect(translateLegacyString("zh-CN", "Select or enter provider/model")).toBe("选择或输入 provider/model");
+    expect(translateLegacyString("zh-CN", "Runtime chain environment test failed")).toBe("运行时链路环境测试失败");
+    expect(translateLegacyString("zh-CN", "Passed")).toBe("通过");
+    expect(translateLegacyString("zh-CN", "Needs setup")).toBe("需要设置");
+    expect(translateLegacyString("zh-CN", "Hint: ")).toBe("提示： ");
+    expect(translateLegacyString("zh-CN", "Test now")).toBe("立即测试");
+    expect(translateLegacyString("zh-CN", "Run profile")).toBe("运行档案");
+    expect(translateLegacyString("zh-CN", "Agent default · gpt-5.6-sol · Extra High")).toBe(
+      "智能体默认 · gpt-5.6-sol · 超高",
+    );
+    expect(translateLegacyString("zh-CN", "Custom profile · claude-opus-4-6 · High")).toBe(
+      "自定义配置 · claude-opus-4-6 · 高",
+    );
+    expect(translateLegacyString("zh-CN", "Configure model and thinking for Builder")).toBe(
+      "配置 Builder 的模型和推理",
+    );
+    expect(translateLegacyString("zh-CN", "Run profile for Builder")).toBe("为 Builder 配置运行档案");
+    expect(translateLegacyString("zh-CN", "Paste DEEPSEEK_API_KEY")).toBe("粘贴 DEEPSEEK_API_KEY");
+    expect(translateLegacyString("zh-CN", "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.")).toBe(
+      "Cursor CLI 执行模式会通过 --mode 传入。规划模式只进行规划，询问模式只进行问答。日常自主运行请保持运行时默认值。",
+    );
+    expect(translateLegacyString("zh-CN", "Applies to runs that have not started.")).toBe(
+      "仅应用于尚未开始的运行。",
     );
   });
 });

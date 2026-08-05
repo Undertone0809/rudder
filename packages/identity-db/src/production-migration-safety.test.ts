@@ -18,6 +18,23 @@ const baseline = [
 ];
 
 describe("production migration safety", () => {
+  it("keeps the first session verifier fail-closed without managed Auth", () => {
+    const migration = readFileSync(
+      new URL(
+        "./migrations/0004_auth_session_verifier.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(migration).toContain(
+      "IF to_regclass('auth.sessions') IS NULL THEN",
+    );
+    expect(migration).toContain("SELECT false");
+    expect(migration).toContain("WHERE rolname = 'anon'");
+    expect(migration).toContain("WHERE rolname = 'authenticated'");
+  });
+
   it("removes direct Auth traversal before granting the session verifier", () => {
     const migration = readFileSync(
       new URL(

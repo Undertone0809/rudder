@@ -506,7 +506,7 @@ const zhExactPhrases: Record<string, string> = {
   "Threads": "话题",
   "Sub Goal": "子目标",
   "planned": "计划中",
-  "Thinking effort": "思考强度",
+  "Thinking effort": "推理程度",
   "to": "至",
   "Unknown": "未知",
   "Unknown manager (stale ID)": "未知上级（过期 ID）",
@@ -954,6 +954,62 @@ const zhExactPhrases: Record<string, string> = {
   "Enabled automatically for CEO agents.": "CEO 智能体会自动启用。",
   "Enabled via explicit organization permission grant.": "已通过显式组织权限授予启用。",
   "Lets this agent import, scan, and maintain organization skill packages.": "允许这个智能体导入、扫描并维护组织技能包。",
+  "Agent default": "智能体默认",
+  "Agent options": "智能体选项",
+  "Applies to runs that have not started.": "仅应用于尚未开始的运行。",
+  "Apply": "应用",
+  "Ask": "询问",
+  "Automation model": "自动化模型",
+  "Automation thinking effort": "自动化推理程度",
+  "Claude options": "Claude 选项",
+  "Codex options": "Codex 选项",
+  "Configure model and thinking": "配置模型和推理",
+  "Cursor options": "Cursor 选项",
+  "Custom profile": "自定义配置",
+  "Environment test failed": "环境测试失败",
+  "Env failed": "环境失败",
+  "Env needs setup": "环境需要设置",
+  "Env passed": "环境通过",
+  "Execution mode": "执行模式",
+  "Extra High": "超高",
+  "Failed": "失败",
+  "Failed to load runtime models.": "加载运行时模型失败。",
+  "Hint:": "提示：",
+  "Issue thinking effort": "任务推理程度",
+  "Light": "轻量",
+  "Loading models...": "正在加载模型...",
+  "Loading runtime": "正在加载运行时",
+  "Max": "最大",
+  "Minimal": "最低",
+  "Models unavailable": "模型不可用",
+  "No models discovered. Run `pi --list-models`, authenticate the provider, or enter provider/model such as deepseek/deepseek-chat and run Test now.": "未发现模型。运行 `pi --list-models`，认证提供商，或输入 provider/model（例如 deepseek/deepseek-chat），然后运行“立即测试”。",
+  "No models discovered. Run `opencode models --verbose`, authenticate the provider, or enter provider/model and run Test now.": "未发现模型。运行 `opencode models --verbose`，认证提供商，或输入 provider/model，然后运行“立即测试”。",
+  "OpenCode options": "OpenCode 选项",
+  "Pi options": "Pi 选项",
+  "Plan": "规划",
+  "Plan mode": "规划模式",
+  "Passed": "通过",
+  "Needs setup": "需要设置",
+  "Pi requires provider/model, for example kimi-coding/kimi-for-coding.": "Pi 要求使用 provider/model，例如 kimi-coding/kimi-for-coding。",
+  "OpenCode requires provider/model, for example opencode/deepseek-v4-flash-free.": "OpenCode 要求使用 provider/model，例如 opencode/deepseek-v4-flash-free。",
+  "This runtime requires provider/model.": "此运行时要求使用 provider/model。",
+  "Run profile": "运行档案",
+  "Runtime environment check": "运行时环境检查",
+  "Runtime chain environment": "运行时链路环境",
+  "Runtime chain environment test failed": "运行时链路环境测试失败",
+  "Runtime default": "运行时默认",
+  "Runs a live probe that asks the runtime CLI to respond with hello.": "运行实时探测，让运行时 CLI 回复 hello。",
+  "Search or enter provider/model...": "搜索或输入 provider/model...",
+  "Select or enter provider/model": "选择或输入 provider/model",
+  "Select model": "选择模型",
+  "Test": "测试",
+  "Test now": "立即测试",
+  "Testing": "测试中",
+  "Testing env": "正在测试环境",
+  "Thinking": "推理",
+  "Ultra": "极高",
+  "Stored as a Rudder secret and referenced by this agent runtime for Test now and future runs.": "将作为 Rudder 密钥存储，并供此智能体运行时用于“立即测试”和后续运行。",
+  "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.": "Cursor CLI 执行模式会通过 --mode 传入。规划模式只进行规划，询问模式只进行问答。日常自主运行请保持运行时默认值。",
   "Unlimited": "无限制",
 };
 
@@ -976,6 +1032,21 @@ function translatePriority(priority: string) {
   if (normalized === "medium") return "中";
   if (normalized === "low") return "低";
   return priority;
+}
+
+function translateThinkingEffort(value: string) {
+  const translations: Record<string, string> = {
+    auto: "自动",
+    minimal: "最低",
+    light: "轻量",
+    low: "低",
+    medium: "中",
+    high: "高",
+    "extra high": "超高",
+    max: "最大",
+    ultra: "极高",
+  };
+  return translations[value.trim().toLowerCase()] ?? value;
 }
 
 const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any[]) => string)]> = [
@@ -1048,6 +1119,12 @@ const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any
   [/^View details\s+→$/i, "查看详情 →"],
   [/^(\d+)% success rate$/i, "成功率 $1%"],
   [/^\+(\d+)\s+more issues$/i, "+$1 个更多任务"],
+  [/^Agent default\s+·\s+/i, "智能体默认 · "],
+  [/^Custom profile\s+·\s+/i, "自定义配置 · "],
+  [/^((?:智能体默认|自定义配置)\s+·\s+.+?\s+·\s+)(Auto|Minimal|Light|Low|Medium|High|Extra High|Max|Ultra)$/i, (_match, prefix: string, effort: string) => `${prefix}${translateThinkingEffort(effort)}`],
+  [/^Configure model and thinking for\s+(.+)$/i, "配置 $1 的模型和推理"],
+  [/^Run profile for\s+(.+)$/i, "为 $1 配置运行档案"],
+  [/^Paste\s+([A-Z0-9_]+)$/i, "粘贴 $1"],
 ];
 
 function preserveWhitespace(input: string, transform: (core: string) => string) {

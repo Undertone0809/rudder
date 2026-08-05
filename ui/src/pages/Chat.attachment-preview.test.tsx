@@ -361,6 +361,18 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: { user: { id: "local-board" }, userId: "local-board" }, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "agents") {
+      if (queryKey[2] === "adapter-models") {
+        return {
+          data: [{
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+            variants: ["low", "medium", "high", "xhigh"],
+          }],
+          isPending: false,
+          isLoading: false,
+          error: null,
+        };
+      }
       if (mockState.failAgents) {
         return { data: undefined, isPending: false, isLoading: false, error: new Error("Internal server error") };
       }
@@ -1922,8 +1934,18 @@ describe("Chat Side Panel link handling", () => {
 
   it("lets a provisional Side Chat choose an Agent and configure its Model and Thinking", async () => {
     mockState.agents = [
-      agent({ id: "agent-1", name: "Wesley" }),
-      agent({ id: "agent-2", name: "Rowan" }),
+      agent({
+        id: "agent-1",
+        name: "Wesley",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+        runtimeConfig: { model: "gpt-5.4" },
+      }),
+      agent({
+        id: "agent-2",
+        name: "Rowan",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+        runtimeConfig: { model: "gpt-5.4" },
+      }),
     ];
     mockState.conversations = [
       chat({ id: "chat-1", title: "Source chat", preferredAgentId: "agent-1" }),
@@ -3023,6 +3045,7 @@ describe("Chat Side Panel link handling", () => {
       issueId: "issue-1",
       data: {
         assigneeAgentId: "agent-2",
+        assigneeAgentRuntimeOverrides: null,
         assigneeUserId: null,
       },
     });

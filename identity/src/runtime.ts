@@ -20,6 +20,13 @@ export type IdentityRuntime = {
     privateKey: KeyObject;
     publicKeySpki: string;
   } | null;
+  telemetryAssertionSigning: {
+    keyId: string;
+    privateKey: KeyObject;
+    publicKeySpki: string;
+    subjectSecret: string;
+    revokeSecret: string;
+  } | null;
   close: () => Promise<void>;
 };
 
@@ -55,12 +62,33 @@ export function getIdentityRuntime(options?: {
         };
       })()
     : null;
+  const telemetryAssertionSigning = config.telemetry
+    ? (() => {
+        const privateKey = createPrivateKey({
+          key: Buffer.from(config.telemetry.privateKeyPkcs8, "base64url"),
+          format: "der",
+          type: "pkcs8",
+        });
+        const publicKey = createPublicKey(privateKey);
+        if (publicKey.asymmetricKeyType !== "ed25519") {
+          throw new Error("IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY must be an Ed25519 PKCS8 key");
+        }
+        return {
+          keyId: config.telemetry.keyId,
+          privateKey,
+          publicKeySpki: publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+          subjectSecret: config.telemetry.subjectSecret,
+          revokeSecret: config.telemetry.revokeSecret,
+        };
+      })()
+    : null;
   singleton = {
     config,
     db: connection.db,
     close: connection.close,
     capturedMail,
     offlineGrantSigning,
+    telemetryAssertionSigning,
     rootIdentity:
       options?.rootIdentityAdapter ??
       (rootIdentityConfig.environment === "fixture"

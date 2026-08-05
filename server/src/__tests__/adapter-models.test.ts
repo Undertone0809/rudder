@@ -9,7 +9,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCodexModelsCacheForTests } from "../agent-runtimes/codex-models.js";
 import { resetCursorModelsCacheForTests, setCursorModelsRunnerForTests } from "../agent-runtimes/cursor-models.js";
-import { listAgentRuntimeModels } from "../agent-runtimes/index.js";
+import { discoverAgentRuntimeModels, listAgentRuntimeModels } from "../agent-runtimes/index.js";
 
 async function writeFakeCommand(
   name: string,
@@ -29,8 +29,10 @@ async function writeFakeCommand(
 describe("adapter model listing", () => {
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
+    delete process.env.RUDDER_CODEX_COMMAND;
     delete process.env.RUDDER_OPENCODE_COMMAND;
     delete process.env.RUDDER_PI_COMMAND;
+    delete process.env.PI_CODING_AGENT_DIR;
     resetCodexModelsCacheForTests();
     resetCursorModelsCacheForTests();
     setCursorModelsRunnerForTests(null);
@@ -44,54 +46,64 @@ describe("adapter model listing", () => {
     expect(models).toEqual([]);
   });
 
-  it("returns codex fallback models when no OpenAI key is available", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+  it("returns codex fallback models when the CLI is unavailable", async () => {
+    process.env.RUDDER_CODEX_COMMAND = "__paperclip_missing_codex_command__";
     const models = await listAgentRuntimeModels("codex_local");
 
     expect(models).toEqual(codexFallbackModels);
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps codex local model options aligned with the Codex app menu", async () => {
-    process.env.OPENAI_API_KEY = "sk-test";
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: "gpt-5-pro" },
-          { id: "gpt-5" },
-          { id: "o3" },
-        ],
-      }),
-    } as Response);
+  it("discovers official per-model reasoning levels from the Codex CLI", async () => {
+    const catalog = JSON.stringify({
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          display_name: "GPT-5.6 Sol",
+          visibility: "list",
+          supported_reasoning_levels: [{ effort: "low" }, { effort: "max" }, { effort: "ultra" }],
+        },
+        {
+          slug: "hidden-model",
+          display_name: "Hidden",
+          visibility: "hide",
+          supported_reasoning_levels: [{ effort: "high" }],
+        },
+      ],
+    });
+    const { command, root } = await writeFakeCommand(
+      "codex",
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(catalog)});\n`,
+    );
+    process.env.RUDDER_CODEX_COMMAND = command;
 
     const first = await listAgentRuntimeModels("codex_local");
     const second = await listAgentRuntimeModels("codex_local");
 
-    expect(fetchSpy).not.toHaveBeenCalled();
     expect(first).toEqual(second);
-    expect(first).toEqual(codexFallbackModels);
     expect(first).toEqual([
-      { id: "gpt-5.6-sol", label: "GPT-5.6-sol" },
-      { id: "gpt-5.6-terra", label: "GPT-5.6-terra" },
-      { id: "gpt-5.6-luna", label: "GPT-5.6-luna" },
-      { id: "gpt-5.5", label: "GPT-5.5" },
-      { id: "gpt-5.4", label: "GPT-5.4" },
-      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-      { id: "gpt-5.2", label: "GPT-5.2" },
+      {
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6 Sol",
+        variants: ["low", "max", "ultra"],
+      },
     ]);
+
+    await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("falls back to static codex models when OpenAI model discovery fails", async () => {
-    process.env.OPENAI_API_KEY = "sk-test";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({}),
-    } as Response);
+  it("falls back to static codex models when CLI model discovery fails", async () => {
+    process.env.RUDDER_CODEX_COMMAND = "__paperclip_missing_codex_command__";
 
     const models = await listAgentRuntimeModels("codex_local");
     expect(models).toEqual(codexFallbackModels);
+  });
+
+  it("does not treat unavailable OpenCode or Pi discovery as an authoritative catalog", async () => {
+    process.env.RUDDER_OPENCODE_COMMAND = "__paperclip_missing_opencode_command__";
+    process.env.RUDDER_PI_COMMAND = "__paperclip_missing_pi_command__";
+
+    await expect(discoverAgentRuntimeModels("opencode_local")).resolves.toBeUndefined();
+    await expect(discoverAgentRuntimeModels("pi_local")).resolves.toBeUndefined();
   });
 
 
@@ -105,6 +117,11 @@ describe("adapter model listing", () => {
 
     const models = await listAgentRuntimeModels("cursor");
     expect(models).toEqual(cursorFallbackModels);
+    expect(models.find((model) => model.id === "gpt-5.3-codex")).toMatchObject({
+      variants: ["low", "medium", "high", "xhigh", "max"],
+      capabilities: { reasoning: true },
+    });
+    expect(models.find((model) => model.id === "auto")).not.toHaveProperty("variants");
   });
 
   it("loads cursor models dynamically and caches them", async () => {
@@ -124,6 +141,11 @@ describe("adapter model listing", () => {
     expect(first.some((model) => model.id === "auto")).toBe(true);
     expect(first.some((model) => model.id === "gpt-5.3-codex-high")).toBe(true);
     expect(first.some((model) => model.id === "composer-1")).toBe(true);
+    expect(first.find((model) => model.id === "gpt-5.3-codex")).toMatchObject({
+      variants: ["low", "medium", "high", "xhigh", "max"],
+      capabilities: { reasoning: true },
+    });
+    expect(first.find((model) => model.id === "sonnet-4.6")).not.toHaveProperty("variants");
   });
 
   it("returns no opencode models when opencode command is unavailable", async () => {

@@ -294,6 +294,7 @@ export async function resolveDeviceAccessToken(db: IdentityDb, accessToken: stri
     .select({
       userId: identityDevices.userId,
       deviceId: identityDevices.id,
+      installationId: identityDevices.installationId,
     })
     .from(deviceAccessCredentials)
     .innerJoin(identityDevices, eq(deviceAccessCredentials.deviceId, identityDevices.id))

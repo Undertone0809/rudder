@@ -43,6 +43,15 @@ function parseEventName(req: Request): ProductAnalyticsEventName | undefined {
   return value as ProductAnalyticsEventName;
 }
 
+function sanitizeInstallationState(state: unknown) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+  const { lastPayload, lastPayloadAt, lastPayloadMode, ...safeState } = state as Record<string, unknown>;
+  void lastPayload;
+  void lastPayloadAt;
+  void lastPayloadMode;
+  return safeState;
+}
+
 export function productAnalyticsRoutes(db: Db) {
   const router = Router();
   const service = productAnalyticsService(db);
@@ -101,7 +110,15 @@ export function productAnalyticsRoutes(db: Db) {
       res.status(404).json({ error: "Product analytics installation not found" });
       return;
     }
-    res.json({ installation: { id: state.installation.installationId, mode: state.installation.mode, state: state.installation.state }, consent: state.consent, pendingCount: state.pendingCount });
+    res.json({
+      installation: {
+        id: state.installation.installationId,
+        mode: state.installation.mode,
+        state: sanitizeInstallationState(state.installation.state),
+      },
+      consent: state.consent,
+      pendingCount: state.pendingCount,
+    });
   });
 
   router.post("/orgs/:orgId/analytics/product/installation/:installationId/outbox/claim", async (req, res) => {
@@ -114,10 +131,17 @@ export function productAnalyticsRoutes(db: Db) {
     if (deliveryMode !== "anonymous" && deliveryMode !== "account_linked") {
       throw unprocessable("Product analytics delivery mode is invalid");
     }
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
+    if (deliveryMode === "account_linked" && !accountLinkedUserId) {
+      throw unprocessable("Account-linked product analytics requires a signed-in user");
+    }
     const result = await claimProductAnalyticsOutboxBatch(db, {
       installationId,
       installationSecret,
       deliveryMode,
+      consentedLocalUserId: deliveryMode === "account_linked" ? accountLinkedUserId : null,
       limit: typeof req.body?.limit === "number" ? req.body.limit : undefined,
       leaseSeconds: typeof req.body?.leaseSeconds === "number" ? req.body.leaseSeconds : undefined,
     });
@@ -130,15 +154,26 @@ export function productAnalyticsRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
     const installationId = req.params.installationId as string;
     const installationSecret = typeof req.body?.installationSecret === "string" ? req.body.installationSecret : "";
+    const deliveryMode = req.body?.deliveryMode;
+    if (deliveryMode !== "anonymous" && deliveryMode !== "account_linked") {
+      throw unprocessable("Product analytics delivery mode is invalid");
+    }
     const eventIds = req.body?.eventIds;
     const claimToken = typeof req.body?.claimToken === "string" ? req.body.claimToken : "";
     if (!Array.isArray(eventIds) || eventIds.length < 1 || eventIds.length > 100 || !eventIds.every((id) => typeof id === "string" && isUuidLike(id))) {
       throw unprocessable("Product analytics event ids are invalid");
     }
     if (!claimToken) throw unprocessable("Product analytics claim token is required");
+    const accountLinkedUserId = deliveryMode === "account_linked" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
+    if (deliveryMode === "account_linked" && !accountLinkedUserId) {
+      throw unprocessable("Account-linked product analytics requires a signed-in user");
+    }
     const result = await acknowledgeProductAnalyticsOutboxClaim(db, {
       installationId,
       installationSecret,
+      consentedLocalUserId: deliveryMode === "account_linked" ? accountLinkedUserId : null,
       eventIds,
       claimToken,
       delivered: req.body?.delivered !== false,
@@ -158,7 +193,9 @@ export function productAnalyticsRoutes(db: Db) {
     const installationSecret = typeof req.body?.installationSecret === "string" ? req.body.installationSecret : "";
     await assertProductAnalyticsInstallationSecret(db, req.params.installationId as string, installationSecret);
     const actor = getActorInfo(req);
-    const localUserId = scope === "account_linked_user" ? (actor.actorType === "user" ? actor.actorId : null) : null;
+    const localUserId = scope === "account_linked_user" && req.actor.type === "board" && req.actor.source !== "local_implicit" && typeof req.actor.userId === "string"
+      ? req.actor.userId
+      : null;
     if (scope === "account_linked_user" && !localUserId) throw unprocessable("Account-linked consent requires a human user");
     const consent = await recordProductAnalyticsConsent(db, {
       installationId: req.params.installationId as string,
@@ -168,7 +205,11 @@ export function productAnalyticsRoutes(db: Db) {
       policyVersion: typeof req.body?.policyVersion === "string" ? req.body.policyVersion : "v1",
       decidedByLocalUserId: actor.actorType === "user" ? actor.actorId : null,
     });
-    await reconcileProductAnalyticsInstallationMode(db, req.params.installationId as string);
+    await reconcileProductAnalyticsInstallationMode(
+      db,
+      req.params.installationId as string,
+      decision === "granted" ? (scope === "account_linked_user" ? "account_linked" : "anonymous") : undefined,
+    );
     res.status(201).json(consent);
   });
 

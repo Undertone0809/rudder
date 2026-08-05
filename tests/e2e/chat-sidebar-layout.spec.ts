@@ -365,4 +365,81 @@ test.describe("Chat sidebar layout", () => {
     await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
     await expect(page.getByTestId("chat-desktop-toolbar-actions")).toHaveCSS("position", "relative");
   });
+
+  test("keeps the collapsed workspace sidebar trigger at the chat top-left", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      });
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          setBadgeCount: async () => {},
+        },
+      });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Sidebar-Trigger-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Sidebar Trigger Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Sidebar trigger position",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Verify the collapsed sidebar trigger position." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
+
+    const mainCard = page.getByTestId("chat-main-workspace-card");
+    const collapseButton = page.getByRole("button", { name: "Collapse workspace sidebar" });
+    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
+    const reopenButton = page.getByTestId("workspace-sidebar-reopen-button");
+    await expect(mainCard).toBeVisible();
+    await expect(collapseButton).toBeVisible();
+    await collapseButton.click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
+    await expect(reopenButton).toHaveCount(1);
+
+    await expect(reopenButton).toHaveCSS("opacity", "0");
+    await expect(reopenButton).toHaveCSS("pointer-events", "none");
+
+    const mainCardBox = await mainCard.boundingBox();
+    const reopenZoneBox = await reopenZone.boundingBox();
+    expect(mainCardBox).not.toBeNull();
+    expect(reopenZoneBox).not.toBeNull();
+    expect(Math.abs(reopenZoneBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(2);
+    expect(reopenZoneBox!.height).toBeLessThanOrEqual(48);
+
+    await reopenZone.hover();
+    await expect(reopenButton).toHaveCSS("opacity", "1");
+    await expect(reopenButton).toHaveCSS("pointer-events", "auto");
+    const reopenButtonBox = await reopenButton.boundingBox();
+    expect(reopenButtonBox).not.toBeNull();
+    expect(Math.abs(reopenButtonBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(4);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-sidebar-reopen-top-left.png"),
+      fullPage: true,
+    });
+
+    await reopenButton.click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "false");
+    await expect(reopenButton).toHaveCount(0);
+  });
 });

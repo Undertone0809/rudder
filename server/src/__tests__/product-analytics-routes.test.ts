@@ -12,12 +12,14 @@ const mockOutbox = vi.hoisted(() => ({
   acknowledge: vi.fn(),
   assertSecret: vi.fn(),
   claim: vi.fn(),
+  getState: vi.fn(),
 }));
 
 vi.mock("../services/product-analytics.js", () => ({
   acknowledgeProductAnalyticsOutboxClaim: mockOutbox.acknowledge,
   assertProductAnalyticsInstallationSecret: mockOutbox.assertSecret,
   claimProductAnalyticsOutboxBatch: mockOutbox.claim,
+  getProductAnalyticsInstallationState: mockOutbox.getState,
   PRODUCT_ANALYTICS_EVENT_NAMES: [
     "organization_created",
     "human_work_started",
@@ -52,6 +54,7 @@ beforeEach(() => {
   mockOutbox.acknowledge.mockResolvedValue({ updatedCount: 1, state: "delivered" });
   mockOutbox.assertSecret.mockResolvedValue(undefined);
   mockOutbox.claim.mockResolvedValue(null);
+  mockOutbox.getState.mockResolvedValue(null);
 });
 
 describe("product analytics routes", () => {
@@ -84,6 +87,32 @@ describe("product analytics routes", () => {
     expect(mockService.summary).not.toHaveBeenCalled();
   });
 
+  it("does not expose installation payload previews through the organization API", async () => {
+    mockOutbox.getState.mockResolvedValue({
+      installation: {
+        installationId: "installation-1",
+        mode: "account_linked",
+        state: {
+          pendingCount: 1,
+          lastPayloadAt: "2026-08-04T09:00:00.000Z",
+          lastPayload: [{ eventName: "work_loop_completed", pseudonymousOrgId: "org-hash-a" }],
+        },
+      },
+      consent: null,
+      pendingCount: 1,
+    });
+
+    const response = await request(createApp({
+      type: "board",
+      source: "session",
+      userId: "user-b",
+      orgIds: [ORG_ID],
+    })).get(`/api/orgs/${ORG_ID}/analytics/product/installation/installation-1`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.installation.state).toEqual({ pendingCount: 1 });
+  });
+
   it("forwards the installation secret when acknowledging an outbox claim", async () => {
     const installationId = "installation-1";
     const eventId = "22222222-2222-4222-8222-222222222222";
@@ -93,6 +122,7 @@ describe("product analytics routes", () => {
       isInstanceAdmin: true,
     })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/${installationId}/outbox/ack`).send({
       installationSecret: "secret-1",
+      deliveryMode: "anonymous",
       eventIds: [eventId],
       claimToken: "claim-1",
       delivered: true,
@@ -104,6 +134,43 @@ describe("product analytics routes", () => {
       installationSecret: "secret-1",
       eventIds: [eventId],
       claimToken: "claim-1",
+      consentedLocalUserId: null,
     }));
+  });
+
+  it("binds account-linked outbox claims to the signed-in local user", async () => {
+    const installationId = "installation-1";
+    const response = await request(createApp({
+      type: "board",
+      source: "session",
+      userId: "user-a",
+      orgIds: [ORG_ID],
+    })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/${installationId}/outbox/claim`).send({
+      installationSecret: "secret-1",
+      deliveryMode: "account_linked",
+      limit: 100,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockOutbox.claim).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      installationId,
+      deliveryMode: "account_linked",
+      consentedLocalUserId: "user-a",
+    }));
+  });
+
+  it("rejects account-linked claims from the synthetic local actor", async () => {
+    const response = await request(createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "local-board",
+      isInstanceAdmin: true,
+    })).post(`/api/orgs/${ORG_ID}/analytics/product/installation/installation-1/outbox/claim`).send({
+      installationSecret: "secret-1",
+      deliveryMode: "account_linked",
+    });
+
+    expect(response.status).toBe(422);
+    expect(mockOutbox.claim).not.toHaveBeenCalled();
   });
 });

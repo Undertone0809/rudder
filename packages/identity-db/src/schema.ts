@@ -180,6 +180,35 @@ export const identityDevices = identitySchema.table(
   ],
 );
 
+/**
+ * Identity-owned telemetry consent. This is intentionally append-only: the
+ * latest row for a user, installation, and mode is the only authority that
+ * can authorize an account-linked telemetry assertion.
+ */
+export const identityProductAnalyticsConsent = identitySchema.table(
+  "product_analytics_consent",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    mode: text("mode").notNull(),
+    decision: text("decision").notNull(),
+    consentVersion: text("consent_version").notNull(),
+    consentEpoch: integer("consent_epoch").notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("identity_product_analytics_consent_lookup_idx").on(
+      table.userId,
+      table.installationId,
+      table.mode,
+      table.consentEpoch,
+    ),
+  ],
+);
+
 export const deviceRefreshCredentials = identitySchema.table(
   "device_refresh_credential",
   {

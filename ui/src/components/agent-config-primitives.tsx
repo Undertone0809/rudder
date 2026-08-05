@@ -21,6 +21,7 @@ export const help: Record<string, string> = {
   model: "Override the default model used by the runtime.",
   modelFallbacks: "Fallback runtime/model attempts tried in order when the primary invocation fails. Each fallback can use its own provider and advanced config.",
   thinkingEffort: "Control model reasoning depth. Supported values vary by runtime/model.",
+  cursorMode: "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.",
   chrome: "Enable Claude's Chrome integration by passing --chrome.",
   dangerouslySkipPermissions: "Run Claude with the dangerous permission bypass. Leave off unless a trusted local agent explicitly needs unrestricted tool execution.",
   dangerouslyBypassSandbox: "Run Codex without sandbox restrictions. Required for filesystem/network access.",

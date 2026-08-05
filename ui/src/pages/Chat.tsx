@@ -2370,6 +2370,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     agent: activeSkillAgent,
     runtime: selectedConversation?.chatRuntime ?? draftPreflightQuery.data ?? null,
     overrides: activeRuntimeOverrides,
+    adapterModels: adapterModelsQuery.data,
   }); const agentPillLabel = activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : activeSkillAgent ? formatChatAgentLabel(activeSkillAgent) : "Unknown agent"; const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
     if (!activeProject) return [];
     return [...(projectConversationsQuery.data ?? [])]

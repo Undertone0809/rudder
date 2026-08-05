@@ -9,6 +9,7 @@ export const defaultCreateValues: CreateConfigValues = {
   model: "",
   modelFallbacks: [],
   thinkingEffort: "",
+  mode: "",
   chrome: false,
   dangerouslySkipPermissions: false,
   permissionMode: "auto",

@@ -9,7 +9,7 @@ import {
 import { useDialog } from "@/context/DialogContext";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizationRelativePath } from "@/lib/organization-routes";
 import { PluginSlotOutlet } from "@/plugins/slots";
-import type { Agent, IssueComment } from "@rudderhq/shared";
+import type { Agent, InstanceLocale, IssueComment } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
 import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
@@ -21,6 +21,7 @@ import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from 
 import { formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { commentThreadTranscriptRuns, type LinkedRunItem } from "./CommentThread.runs";
+import { useCommentSubmit } from "./CommentThread.submit";
 import { Identity } from "./Identity";
 import type { MarkdownAgentMentionPreview, MarkdownLinkClickHandler } from "./MarkdownBody";
 import { MarkdownBody } from "./MarkdownBody";
@@ -58,6 +59,8 @@ interface CommentThreadProps {
   onDelete?: (commentId: string) => Promise<void>;
   currentUserId?: string | null;
   issueStatus?: string;
+  locale?: InstanceLocale;
+  reopenWillWakeAgent?: boolean;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
   /** Fallback callback for consumers that upload files without inserting a markdown link. */
@@ -113,14 +116,6 @@ function shouldForwardComposerFocus(target: EventTarget | null) {
     "[role='menuitem']",
     "[data-chat-composer-menu-item]",
   ].join(","));
-}
-
-function clearDraft(draftKey: string) {
-  try {
-    localStorage.removeItem(draftKey);
-  } catch {
-    // Ignore localStorage failures.
-  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1045,6 +1040,8 @@ export function CommentThread({
   onDelete,
   currentUserId,
   issueStatus,
+  locale = "en",
+  reopenWillWakeAgent = false,
   agentMap,
   imageUploadHandler,
   onAttachImage,
@@ -1064,7 +1061,6 @@ export function CommentThread({
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
-  const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
@@ -1175,6 +1171,20 @@ export function CommentThread({
     setBody(nextBody);
     if (draftKey) saveDraft(draftKey, nextBody);
   }, [draftKey]);
+  const { canSubmit, handleSubmit, submitting } = useCommentSubmit({
+    agentMap,
+    body,
+    canReopen,
+    composerSurfaceRef,
+    draftKey,
+    editorRef,
+    locale,
+    onAdd,
+    reopen,
+    reopenWillWakeAgent,
+    setReopen,
+    updateBody,
+  });
 
   const agentMentions = useMemo<MarkdownAgentMentionPreview[]>(() => (
     mentions
@@ -1378,23 +1388,6 @@ export function CommentThread({
     setReserveHashScrollEndSpace(false);
   }, [location.hash, location.key, scrollToComment]);
 
-  async function handleSubmit() {
-    const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
-    const trimmed = currentMarkdown.trim();
-    if (!trimmed) return;
-    const reopenRequested = canReopen && reopen ? true : undefined;
-
-    setSubmitting(true);
-    try {
-      await onAdd(trimmed, reopenRequested);
-      updateBody("");
-      if (draftKey) clearDraft(draftKey);
-      setReopen(canReopen);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   async function handleAttachFile(evt: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(evt.target.files ?? []);
     if (files.length === 0) return;
@@ -1426,7 +1419,6 @@ export function CommentThread({
     }
   }
 
-  const canSubmit = !submitting && !!body.trim();
   const focusComposerEditor = (event: MouseEvent<HTMLDivElement>) => {
     if (!shouldForwardComposerFocus(event.target)) return;
     event.preventDefault();
@@ -1463,9 +1455,11 @@ export function CommentThread({
   const composerNode = (
     <div
       ref={composerSurfaceRef}
+      aria-label="Comment composer"
       className="chat-composer rounded-[var(--radius-lg)] p-3"
       data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
       onMouseDown={focusComposerEditor}
+      tabIndex={-1}
     >
       <div
         data-testid="issue-comment-composer-editor-scroll"

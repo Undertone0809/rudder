@@ -5,8 +5,11 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
 import {
+  claudeLocalThinkingEffortOptionsForModel,
   codexLocalReasoningEffortOptionsForModel,
-  withDefaultThinkingEffortOption,
+  cursorLocalThinkingEffortOptionsForModel,
+  openCodeLocalVariantOptionsForModel,
+  piLocalThinkingEffortOptionsForModel,
 } from "@/lib/runtime-thinking-effort";
 import { cn } from "@/lib/utils";
 import type { Agent, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
@@ -15,7 +18,7 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, SlidersHorizont
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
-const ISSUE_OVERRIDE_RUNTIME_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
+const ISSUE_OVERRIDE_RUNTIME_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 
 export function supportsIssueRuntimeOverrides(agent: Agent | null | undefined): boolean {
   return Boolean(agent && ISSUE_OVERRIDE_RUNTIME_TYPES.has(agent.agentRuntimeType));
@@ -41,6 +44,8 @@ function runtimeEffortKey(runtimeType: string): string | null {
   if (runtimeType === "codex_local") return "modelReasoningEffort";
   if (runtimeType === "opencode_local") return "variant";
   if (runtimeType === "claude_local") return "effort";
+  if (runtimeType === "pi_local") return "thinking";
+  if (runtimeType === "cursor") return "effort";
   return null;
 }
 
@@ -101,28 +106,23 @@ function modelOptions(
   return [...models, { id: currentModel, label: currentModel }];
 }
 
-function effortOptions(agent: Agent, model: string): EffortOption[] {
-  if (agent.agentRuntimeType === "codex_local") {
-    return withDefaultThinkingEffortOption(
-      "Agent default",
-      codexLocalReasoningEffortOptionsForModel(model),
-    ).map((option) => ({ id: option.value || null, label: option.label }));
-  }
-  if (agent.agentRuntimeType === "opencode_local") {
-    return [
-      { id: null, label: "Agent default" },
-      { id: "minimal", label: "Minimal" },
-      { id: "low", label: "Low" },
-      { id: "medium", label: "Medium" },
-      { id: "high", label: "High" },
-      { id: "max", label: "Max" },
-    ];
-  }
+function effortOptions(agent: Agent, model: string, metadata?: AgentRuntimeModel): EffortOption[] {
+  const options = agent.agentRuntimeType === "claude_local"
+    ? claudeLocalThinkingEffortOptionsForModel(model, metadata)
+    : agent.agentRuntimeType === "codex_local"
+      ? codexLocalReasoningEffortOptionsForModel(model, metadata)
+      : agent.agentRuntimeType === "opencode_local"
+        ? openCodeLocalVariantOptionsForModel(model, metadata)
+          : agent.agentRuntimeType === "pi_local"
+            ? piLocalThinkingEffortOptionsForModel(model, metadata)
+            : agent.agentRuntimeType === "cursor"
+              ? cursorLocalThinkingEffortOptionsForModel(model, metadata)
+            : [];
   return [
     { id: null, label: "Agent default" },
-    { id: "low", label: "Low" },
-    { id: "medium", label: "Medium" },
-    { id: "high", label: "High" },
+    ...options
+      .filter((option) => option.value.length > 0)
+      .map((option) => ({ id: option.value, label: option.label })),
   ];
 }
 
@@ -196,7 +196,9 @@ export function IssueRuntimeSelector({
   const selectedEffort = draftInitialized ? draftEffort : currentEffort;
   const effectiveModel = selectedModel ?? configuredModel(agent);
   const options = modelOptions(agent, adapterModelsQuery.data, selectedModel);
-  const thinkingOptions = effortOptions(agent, effectiveModel);
+  const effectiveModelMetadata = options.find((candidate) => candidate.id === effectiveModel);
+  const thinkingOptions = effortOptions(agent, effectiveModel, effectiveModelMetadata);
+  const hasThinkingOptions = thinkingOptions.length > 1;
   const effectiveEffort = selectedEffort;
   const summary = issueRuntimeSelectorSummary(agent, overrides);
 
@@ -346,14 +348,23 @@ export function IssueRuntimeSelector({
       return;
     }
     const nextEffectiveModel = nextModel ?? configuredModel(agent);
-    const nextEfforts = effortOptions(agent, nextEffectiveModel);
+    const nextEfforts = effortOptions(
+      agent,
+      nextEffectiveModel,
+      options.find((candidate) => candidate.id === nextEffectiveModel),
+    );
     if (draftEffort && !nextEfforts.some((option) => option.id === draftEffort)) {
       setDraftEffort(null);
     }
   };
 
   const selectMenuModel = (nextModel: string | null) => {
-    const nextEfforts = effortOptions(agent, nextModel ?? configuredModel(agent));
+    const nextEffectiveModel = nextModel ?? configuredModel(agent);
+    const nextEfforts = effortOptions(
+      agent,
+      nextEffectiveModel,
+      options.find((candidate) => candidate.id === nextEffectiveModel),
+    );
     const nextEffort = draftEffort && nextEfforts.some((option) => option.id === draftEffort)
       ? draftEffort
       : null;
@@ -427,25 +438,27 @@ export function IssueRuntimeSelector({
             <span className="min-w-0 truncate text-right text-muted-foreground">{effectiveModel}</span>
             <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           </button>
-          <button
-            ref={effortTriggerRef}
-            type="button"
-            data-testid="issue-runtime-effort-trigger"
-            aria-haspopup="listbox"
-            aria-expanded={activeSubmenu === "effort"}
-            className="chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"
-            onClick={() => openSubmenu("effort", effortTriggerRef.current)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                event.preventDefault();
-                openSubmenu("effort", effortTriggerRef.current);
-              }
-            }}
-          >
-            <span className="font-medium text-foreground">Thinking</span>
-            <span className="min-w-0 truncate text-right text-muted-foreground">{effortLabel(effectiveEffort)}</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-          </button>
+          {hasThinkingOptions ? (
+            <button
+              ref={effortTriggerRef}
+              type="button"
+              data-testid="issue-runtime-effort-trigger"
+              aria-haspopup="listbox"
+              aria-expanded={activeSubmenu === "effort"}
+              className="chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"
+              onClick={() => openSubmenu("effort", effortTriggerRef.current)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  openSubmenu("effort", effortTriggerRef.current);
+                }
+              }}
+            >
+              <span className="font-medium text-foreground">Thinking</span>
+              <span className="min-w-0 truncate text-right text-muted-foreground">{effortLabel(effectiveEffort)}</span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       </div>,
       document.body,
@@ -489,7 +502,7 @@ export function IssueRuntimeSelector({
           </div>
         )}
       </>
-    ) : thinkingOptions.map((option) => (
+    ) : hasThinkingOptions ? thinkingOptions.map((option) => (
       <button
         key={option.id ?? "default"}
         ref={option.id == null ? firstEffortOptionRef : undefined}
@@ -503,7 +516,7 @@ export function IssueRuntimeSelector({
         <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
         {effectiveEffort === option.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
       </button>
-    ));
+    )) : null;
 
     const submenu = menuOpen && activeSubmenu && submenuPosition && typeof document !== "undefined" ? createPortal(
       <div
@@ -628,23 +641,25 @@ export function IssueRuntimeSelector({
             <p className="px-2 py-2 text-xs text-muted-foreground">No models found.</p>
           )}
         </div>
-        <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Issue thinking effort">
-          <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Thinking</p>
-          {thinkingOptions.map((option) => (
-            <button
-              key={option.id ?? "default"}
-              type="button"
-              role="option"
-              aria-selected={effectiveEffort === option.id}
-              data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-              onClick={() => setDraftEffort(option.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
-              {effectiveEffort === option.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-            </button>
-          ))}
-        </div>
+        {hasThinkingOptions ? (
+          <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Issue thinking effort">
+            <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Thinking</p>
+            {thinkingOptions.map((option) => (
+              <button
+                key={option.id ?? "default"}
+                type="button"
+                role="option"
+                aria-selected={effectiveEffort === option.id}
+                data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
+                onClick={() => setDraftEffort(option.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
+                {effectiveEffort === option.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="mt-2 flex justify-end gap-2 border-t border-border pt-2">
           <button type="button" className="rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60" onClick={() => setOpen(false)}>
             Cancel

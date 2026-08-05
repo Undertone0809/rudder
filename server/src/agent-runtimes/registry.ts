@@ -57,6 +57,7 @@ import {
   agentConfigurationDoc as openCodeAgentConfigurationDoc,
 } from "@rudderhq/agent-runtime-opencode-local";
 import {
+  discoverOpenCodeModelsCached,
   listOpenCodeModels,
   listOpenCodeSkills,
   execute as openCodeExecute,
@@ -70,6 +71,7 @@ import {
   models as piModels,
 } from "@rudderhq/agent-runtime-pi-local";
 import {
+  discoverPiModelsCached,
   listPiModels,
   listPiSkills,
   execute as piExecute,
@@ -78,7 +80,7 @@ import {
   syncPiSkills,
 } from "@rudderhq/agent-runtime-pi-local/server";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
-import { getAgentRuntimeSessionManagement } from "@rudderhq/agent-runtime-utils";
+import { getAgentRuntimeSessionManagement, type AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
 import {
   agentConfigurationDoc as hermesAgentConfigurationDoc,
   models as hermesModels,
@@ -273,15 +275,24 @@ const adaptersByType = new Map<string, ServerAgentRuntimeModule>(
 );
 
 function mergeRuntimeModels(
-  ...modelLists: Array<readonly { id: string; label: string }[] | null | undefined>
-): { id: string; label: string }[] {
+  ...modelLists: Array<readonly AgentRuntimeModel[] | null | undefined>
+): AgentRuntimeModel[] {
   const seen = new Set<string>();
-  const merged: { id: string; label: string }[] = [];
+  const merged: AgentRuntimeModel[] = [];
   for (const model of modelLists.flatMap((models) => models ?? [])) {
     const id = model.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    merged.push({ id, label: model.label.trim() || id });
+    const variants = Array.isArray(model.variants)
+      ? [...new Set(model.variants.filter((variant): variant is string => typeof variant === "string" && variant.trim().length > 0))]
+      : undefined;
+    const reasoning = model.capabilities?.reasoning;
+    merged.push({
+      id,
+      label: model.label.trim() || id,
+      ...(variants ? { variants } : {}),
+      ...(typeof reasoning === "boolean" ? { capabilities: { reasoning } } : {}),
+    });
   }
   return merged;
 }
@@ -295,7 +306,7 @@ export function getServerAdapter(type: string): ServerAgentRuntimeModule {
   return adapter;
 }
 
-export async function listAgentRuntimeModels(type: string): Promise<{ id: string; label: string }[]> {
+export async function listAgentRuntimeModels(type: string): Promise<AgentRuntimeModel[]> {
   const adapter = adaptersByType.get(type);
   if (!adapter) return [];
   if (adapter.listModels) {
@@ -306,6 +317,34 @@ export async function listAgentRuntimeModels(type: string): Promise<{ id: string
     if (discovered.length > 0) return discovered;
   }
   return adapter.models ?? [];
+}
+
+/**
+ * Return only runtime discovery evidence for chat effort validation.
+ *
+ * UI model lists may use bundled fallback models when a local CLI is missing,
+ * but those fallbacks are not authoritative per-model capability evidence.
+ * Treat an unavailable or empty discovery as unknown so chat hydration keeps a
+ * saved effort instead of silently rewriting it away.
+ */
+export async function discoverAgentRuntimeModels(type: string): Promise<AgentRuntimeModel[] | undefined> {
+  if (type === "opencode_local") {
+    try {
+      const models = await discoverOpenCodeModelsCached();
+      return models.length > 0 ? models : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (type === "pi_local") {
+    try {
+      const models = await discoverPiModelsCached();
+      return models.length > 0 ? models : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return listAgentRuntimeModels(type);
 }
 
 export function listServerAdapters(): ServerAgentRuntimeModule[] {

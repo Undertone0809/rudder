@@ -287,7 +287,7 @@ export class MarkdownPortalWidget extends WidgetType {
       host.dataset.sourceLineEnd = String(block.endLine);
       host.tabIndex = -1;
       host.addEventListener("mousedown", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
+        const target = event.target instanceof Element ? event.target : null;
         const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
         if (
           tokenElement
@@ -301,12 +301,19 @@ export class MarkdownPortalWidget extends WidgetType {
           event.stopPropagation();
           return;
         }
+        if (target?.closest(".rudder-inspectable-image-trigger")) {
+          // Keep the image DOM stable so InspectableImage can receive the
+          // click and open the global preview instead of revealing source.
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (!isPrimaryPlainMouseEvent(event)) return;
         event.preventDefault();
         this.activateBlock(block, view);
       });
       host.addEventListener("click", (event) => {
-        const target = event.target instanceof HTMLElement ? event.target : null;
+        const target = event.target instanceof Element ? event.target : null;
         const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
         if (tokenElement) {
           const reference = sourceReferenceForTarget(block, tokenElement);
@@ -334,10 +341,10 @@ export class MarkdownPortalWidget extends WidgetType {
       });
       host.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || event.metaKey || event.ctrlKey || event.altKey) return;
-        const target = event.target instanceof HTMLElement ? event.target : null;
+        const target = event.target instanceof Element ? event.target : null;
         if (
           target?.closest(
-            "a, [data-mention-kind], [data-skill-token='true'], .rudder-code-block-copy-button",
+            "a, [data-mention-kind], [data-skill-token='true'], .rudder-code-block-copy-button, .rudder-inspectable-image-trigger",
           )
         ) {
           return;

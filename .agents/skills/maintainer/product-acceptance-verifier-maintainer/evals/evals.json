@@ -92,6 +92,40 @@
         "The result checks camelCase and snake_case identity/state metadata required to open the correct child.",
         "The result fails if raw protocol names leak into the terminal UI or legacy metadata is silently discarded."
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "An old verifier PASS covered commit abc123 and build A. The implementer then changed a UI submenu and rebuilt as build B. Verify whether the task can keep the old PASS without rerunning the interaction.",
+      "expected_output": "Locks the candidate identity, detects that build B is outside the old verification lease, refuses to reuse the PASS, and returns QUESTION until targeted black-box evidence is produced for the current candidate.",
+      "files": [],
+      "expectations": [
+        "The result identifies commit/build drift between the old PASS and the current candidate.",
+        "The result does not reuse build A observations as terminal proof for build B.",
+        "The result requests the smallest relevant rerun and returns QUESTION rather than PASS."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Black-box verify a new Rudder settings panel. The happy-path E2E passes and one desktop screenshot exists. The change touches popover keyboard behavior, error retry, long account names, responsive layout, and light/dark tokens.",
+      "expected_output": "Builds a risk-based UI state matrix, exercises the public journey with production-shaped content, checks keyboard/error/overflow/responsive/theme states, captures current evidence, and maps every acceptance criterion to terminal observations.",
+      "files": [],
+      "expectations": [
+        "The result treats the happy-path E2E and one screenshot as supporting rather than complete terminal evidence.",
+        "The result includes keyboard focus, error/retry, long-content overflow, responsive or constrained viewport, and light/dark checks.",
+        "The result maps criteria to public actions, terminal observations, and evidence artifacts.",
+        "The result records and rechecks candidate, build/runtime, organization/data, and acceptance-packet identity."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "The UI implementation is complete, but nobody can identify which local process serves the changed source, the screenshot predates the last edit, and the acceptance packet only says 'make it feel better.' Give the verifier verdict.",
+      "expected_output": "Returns QUESTION because both candidate identity and observable visual criteria are missing, names the exact missing lease fields and acceptance decisions, and does not substitute code inspection or the stale screenshot.",
+      "files": [],
+      "expectations": [
+        "The result does not return PASS from an unidentified runtime or stale screenshot.",
+        "The result names the missing candidate/runtime identity and the missing observable visual bar.",
+        "The result returns QUESTION without editing the implementation."
+      ]
     }
   ]
 }

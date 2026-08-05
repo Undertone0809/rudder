@@ -1,5 +1,6 @@
 import path from "node:path";
 import { loadOrCreateDesktopTelemetryState, updateDesktopTelemetryState, type DesktopTelemetryMode } from "./product-analytics-telemetry.js";
+import { normalizeProductAnalyticsCollectorUrl } from "./product-analytics-url.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -11,7 +12,8 @@ export type DesktopProductAnalyticsUploaderOptions = {
   deliveryMode: Exclude<DesktopTelemetryMode, "off">;
   statePath: string;
   collectorUrl: string;
-  collectorAuthorization: string;
+  collectorAuthorization?: string | ((context: { consentedLocalUserId: string | null }) => Promise<string> | string);
+  collectorHeaders?: HeadersInit;
   localHeaders?: HeadersInit;
   fetchImpl?: FetchLike;
   now?: () => Date;
@@ -43,6 +45,13 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   if (persisted.state.mode === "off" || persisted.state.mode !== options.deliveryMode) {
     return { status: "idle", eventCount: 0, errorCode: null };
   }
+  let collectorUrl: string;
+  try {
+    collectorUrl = normalizeProductAnalyticsCollectorUrl(options.collectorUrl);
+  } catch {
+    await updateDesktopTelemetryState(options.statePath, { lastErrorCode: "collector_transport_insecure" });
+    return { status: "failed_actionable", eventCount: 0, errorCode: "collector_transport_insecure" };
+  }
   const attemptedAt = now().toISOString();
   await updateDesktopTelemetryState(options.statePath, { lastAttemptedAt: attemptedAt, lastErrorCode: null });
   const claimUrl = `${options.localApiUrl.replace(/\/$/, "")}/api/orgs/${encodeURIComponent(options.orgId)}/analytics/product/installation/${encodeURIComponent(options.installationId)}/outbox/claim`;
@@ -64,6 +73,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
     return { status: "failed_actionable", eventCount: 0, errorCode };
   }
   const claimToken = typeof claimBody.claimToken === "string" ? claimBody.claimToken : null;
+  const consentedLocalUserId = typeof claimBody.consentedLocalUserId === "string" ? claimBody.consentedLocalUserId : null;
   const events = Array.isArray(claimBody.events) ? claimBody.events.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object") : [];
   await updateDesktopTelemetryState(options.statePath, {
     lastPayloadEventIds: events.map((event) => typeof event.eventId === "string" ? event.eventId : "").filter(Boolean),
@@ -77,16 +87,25 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
   let collectorResponse: Response;
   let collectorBody: Record<string, unknown> = {};
   try {
-    collectorResponse = await fetchImpl(`${options.collectorUrl.replace(/\/$/, "")}/api/analytics/v1/events:batch`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-rudder-installation-id": options.installationId,
-        authorization: options.collectorAuthorization,
-      },
-      body: JSON.stringify({ events }),
-    });
-    collectorBody = await readJson(collectorResponse);
+    const collectorAuthorization = typeof options.collectorAuthorization === "function"
+      ? await options.collectorAuthorization({ consentedLocalUserId })
+      : options.collectorAuthorization;
+    if (!collectorAuthorization) {
+      collectorResponse = new Response(null, { status: 503 });
+      collectorBody = { errorCode: "collector_authorization_unavailable" };
+    } else {
+      collectorResponse = await fetchImpl(`${collectorUrl}/api/analytics/v1/events:batch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-rudder-installation-id": options.installationId,
+          ...(options.collectorHeaders ?? {}),
+          authorization: collectorAuthorization,
+        },
+        body: JSON.stringify({ events }),
+      });
+      collectorBody = await readJson(collectorResponse);
+    }
   } catch {
     collectorResponse = new Response(null, { status: 503 });
   }
@@ -100,7 +119,7 @@ export async function uploadDesktopProductAnalyticsOnce(options: DesktopProductA
     ackResponse = await fetchImpl(`${options.localApiUrl.replace(/\/$/, "")}/api/orgs/${encodeURIComponent(options.orgId)}/analytics/product/installation/${encodeURIComponent(options.installationId)}/outbox/ack`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(options.localHeaders ?? {}) },
-      body: JSON.stringify({ installationSecret: options.installationSecret, claimToken, eventIds, delivered, errorCode }),
+      body: JSON.stringify({ installationSecret: options.installationSecret, deliveryMode: options.deliveryMode, claimToken, eventIds, delivered, errorCode }),
     });
   } catch {
     await updateDesktopTelemetryState(options.statePath, { lastErrorCode: "local_ack_network" });

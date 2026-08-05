@@ -1141,14 +1141,13 @@ export function issueService(db: Db) {
         patch.executionAgentNameKey = null;
         patch.executionLockedAt = null;
       }
-      if (
-        (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId) ||
-        (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId)
-      ) {
-        patch.checkoutRunId = null;
-        patch.executionRunId = null;
-        patch.executionAgentNameKey = null;
-        patch.executionLockedAt = null;
+      const assigneeChanged = (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId)
+        || (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId);
+      if (assigneeChanged) {
+        patch.checkoutRunId = null; patch.executionRunId = null; patch.executionAgentNameKey = null; patch.executionLockedAt = null;
+        if (issueData.assigneeAgentRuntimeOverrides === undefined) {
+          patch.assigneeAgentRuntimeOverrides = null;
+        }
       }
 
       return db.transaction(async (tx) => {

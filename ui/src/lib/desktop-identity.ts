@@ -6,6 +6,8 @@ export type DesktopIdentityState =
       account: {
         id: string;
         email: string | null;
+        name: string;
+        image: string | null;
       };
       deviceId: string;
     }
@@ -30,6 +32,13 @@ export type DesktopIdentityApi = {
   signOut(): Promise<DesktopIdentityState>;
   listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
   revokeDeviceSession(sessionId: string): Promise<void>;
+  getProfile(): Promise<{ id: string; email: string; name: string; image: string | null }>;
+  updateProfile(input: { image: string | null }): Promise<{
+    id: string;
+    email: string;
+    name: string;
+    image: string | null;
+  }>;
   onStateChanged(listener: (state: DesktopIdentityState) => void): () => void;
 };
 

@@ -1,11 +1,14 @@
 import {
+  deriveProductAnalyticsSubject,
   hashOpaqueSecret,
   issueOfflineGrant,
+  issueProductAnalyticsAssertion,
   normalizeVerifiedEmail,
   opaqueSecretMatches,
 } from "@rudderhq/identity-core";
 import {
   approveDeviceAuthorization,
+  assertIdentityProductAnalyticsConsent,
   beginCredentialRevocationIntent,
   beginSupabaseAuthMigration,
   bindSupabaseAuthUser,
@@ -14,6 +17,7 @@ import {
   consumeIdentityOperationRateLimit,
   consumeServerExchangeCode,
   denyDeviceAuthorization,
+  getIdentityAccountProfile,
   getSupabaseAuthUserBinding,
   issueDesktopAuthorizationCode,
   issueDeviceAuthorization,
@@ -21,6 +25,7 @@ import {
   listIdentityDevices,
   markCredentialProviderMutationComplete,
   markCredentialRevocationFailed,
+  recordIdentityProductAnalyticsConsent,
   recordSecurityEvent,
   recordSupabaseAuthUserCreated,
   recoverCredentialRevocationIntents,
@@ -31,6 +36,7 @@ import {
   revokeAllIdentityDevices,
   revokeIdentityDevice,
   rotateDeviceRefreshToken,
+  updateIdentityAccountProfile,
   verifyDeviceAuthorization,
 } from "@rudderhq/identity-db";
 import { randomUUID } from "node:crypto";
@@ -57,8 +63,18 @@ import {
   type RootIdentityRequestContext,
 } from "./root-identity-adapter.js";
 import { getIdentityRuntime } from "./runtime.js";
+import { syncProductAnalyticsConsent } from "./telemetry-sync.js";
 
 const credentialRecoveryWorkerId = `identity-${randomUUID()}`;
+const MAX_ACCOUNT_PROFILE_BODY_BYTES = 512 * 1024;
+const MAX_ACCOUNT_AVATAR_DATA_URL_LENGTH = 480 * 1024;
+
+class TelemetryConsentSyncUnavailableError extends Error {
+  constructor() {
+    super("telemetry_consent_sync_unavailable");
+    this.name = "TelemetryConsentSyncUnavailableError";
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status;
@@ -154,15 +170,45 @@ function nativeDesktopRootIdentityContext(req: IncomingMessage): RootIdentityReq
   };
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(
+  req: IncomingMessage,
+  maxBodyBytes = 32_768,
+): Promise<Record<string, unknown>> {
   let body = "";
   for await (const chunk of req) {
     body += String(chunk);
-    if (body.length > 32_768) throw new Error("request_too_large");
+    if (body.length > maxBodyBytes) throw new Error("request_too_large");
   }
-  const parsed: unknown = JSON.parse(body);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error("invalid_request");
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_request");
   return parsed as Record<string, unknown>;
+}
+
+function accountAvatarValue(value: unknown): string | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > MAX_ACCOUNT_AVATAR_DATA_URL_LENGTH
+    || !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/u.test(value)
+  ) {
+    throw new Error("invalid_avatar");
+  }
+  const bytes = Buffer.from(value.slice(value.indexOf(",") + 1), "base64");
+  const isPng = value.startsWith("data:image/png;")
+    && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = value.startsWith("data:image/jpeg;")
+    && bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
+  const isWebp = value.startsWith("data:image/webp;")
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!isPng && !isJpeg && !isWebp) throw new Error("invalid_avatar");
+  return value;
 }
 
 function browserMutationError(
@@ -476,6 +522,21 @@ async function bindRootPrincipal(
         status: 409,
       });
     }
+    const resolved = await resolveVerifiedIdentity(runtime.db, {
+      provider: "email",
+      providerSubject: principal.id,
+      email: principal.email,
+      emailVerified: true,
+      name: principal.displayName,
+      image: principal.avatarUrl,
+    });
+    if (resolved.userId !== existing.rudderUserId) {
+      throw new RootIdentityError({
+        code: "identity_binding_conflict",
+        message: "The authenticated identity does not match its Rudder Account binding",
+        status: 409,
+      });
+    }
     return { userId: existing.rudderUserId, deviceId: null };
   }
 
@@ -524,8 +585,7 @@ async function resolveAccountPrincipal(
 ): Promise<{ userId: string; deviceId: string | null } | null> {
   const authorization = req.headers.authorization;
   if (authorization?.startsWith("Bearer ")) {
-    const access = await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length));
-    if (access) return access;
+    return await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length));
   }
   return resolveWebPrincipal(runtime, req, res, {
     requireActiveSession: options?.requireActiveWebSession,
@@ -2019,6 +2079,154 @@ export async function identityHandler(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/assertion") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    if (!runtime.telemetryAssertionSigning) {
+      sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const consentVersion = stringField(body, "consent_version");
+      const pseudonymousInstallationId = stringField(body, "pseudonymous_installation_id");
+      const consentedLocalUserId = body.consented_local_user_id;
+      if (
+        installationId !== access.installationId
+        || (mode !== "anonymous" && mode !== "account_linked")
+        || !/^[0-9a-f]{64}$/u.test(pseudonymousInstallationId)
+        || (consentedLocalUserId !== undefined && (typeof consentedLocalUserId !== "string" || consentedLocalUserId !== access.userId))
+      ) throw new Error("invalid_request");
+      const consent = await assertIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        consentVersion,
+      });
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning.subjectSecret, access.userId)
+        : null;
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      if (collectorConsentSync) {
+        try {
+          await syncProductAnalyticsConsent({
+            config: collectorConsentSync,
+            consent: {
+              installationId,
+              analyticsSubject,
+              consentVersion: consent.consentVersion,
+              consentEpoch: consent.consentEpoch,
+              revoked: false,
+            },
+          });
+        } catch {
+          sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+          return;
+        }
+      }
+      const nowMs = Date.now();
+      const assertion = issueProductAnalyticsAssertion({
+        signingPrivateKey: runtime.telemetryAssertionSigning.privateKey,
+        keyId: runtime.telemetryAssertionSigning.keyId,
+        issuer: runtime.config.baseUrl,
+        installationId,
+        pseudonymousInstallationId,
+        analyticsSubject,
+        consentVersion,
+        consentEpoch: consent.consentEpoch,
+        nowMs,
+        jti: randomUUID(),
+      });
+      sendJson(res, 200, {
+        assertion,
+        expires_at: new Date(nowMs + 15 * 60 * 1000).toISOString(),
+        audience: "telemetry-collector",
+        analytics_subject: analyticsSubject,
+      });
+    } catch {
+      sendJson(res, 400, { error: "invalid_request" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/desktop/telemetry/consent") {
+    const authorization = req.headers.authorization;
+    const access = authorization?.startsWith("Bearer ")
+      ? await resolveDeviceAccessToken(runtime.db, authorization.slice("Bearer ".length))
+      : null;
+    if (!access) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    try {
+      const body = await readJson(req);
+      const installationId = stringField(body, "installation_id");
+      const mode = body.mode;
+      const decision = body.decision;
+      const consentVersion = stringField(body, "consent_version");
+      if (
+        installationId !== access.installationId
+        || (mode !== "anonymous" && mode !== "account_linked")
+        || (decision !== "granted" && decision !== "revoked")
+      ) throw new Error("invalid_request");
+      if (mode === "account_linked" && !runtime.telemetryAssertionSigning) {
+        sendJson(res, 503, { error: "telemetry_issuer_unavailable", retryable: true });
+        return;
+      }
+      const collectorConsentSync = runtime.config.telemetry?.collectorConsentSync;
+      const analyticsSubject = mode === "account_linked"
+        ? deriveProductAnalyticsSubject(runtime.telemetryAssertionSigning!.subjectSecret, access.userId)
+        : null;
+      const consent = await recordIdentityProductAnalyticsConsent(runtime.db, {
+        userId: access.userId,
+        installationId,
+        mode,
+        decision,
+        consentVersion,
+        beforePersist: collectorConsentSync
+          ? async (next) => {
+              try {
+                await syncProductAnalyticsConsent({
+                  config: collectorConsentSync,
+                  consent: {
+                    installationId,
+                    analyticsSubject,
+                    consentVersion: next.consentVersion,
+                    consentEpoch: next.consentEpoch,
+                    revoked: next.revoked,
+                  },
+                });
+              } catch {
+                throw new TelemetryConsentSyncUnavailableError();
+              }
+            }
+          : undefined,
+      });
+      sendJson(res, 201, {
+        mode: consent.mode,
+        decision: consent.decision,
+        consentVersion: consent.consentVersion,
+        consentEpoch: consent.consentEpoch,
+        decidedAt: consent.decidedAt.toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof TelemetryConsentSyncUnavailableError) {
+        sendJson(res, 503, { error: "telemetry_consent_sync_unavailable", retryable: true });
+        return;
+      }
+      sendJson(res, 422, { error: "invalid_request" });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/account/devices") {
     const principal = await resolveAccountPrincipal(runtime, req, res);
     if (!principal) {
@@ -2032,6 +2240,82 @@ export async function identityHandler(
         current: device.id === principal.deviceId,
       })),
     });
+    return;
+  }
+
+  if (
+    (req.method === "GET" || req.method === "PATCH")
+    && url.pathname === "/api/account/profile"
+  ) {
+    const cookieAuthenticated = !req.headers.authorization?.startsWith("Bearer ");
+    if (req.method === "PATCH" && cookieAuthenticated) {
+      const browserError = browserMutationError(req, runtime.config.allowedOrigins, {
+        requireJson: true,
+      });
+      if (browserError) {
+        sendJson(res, 403, { error: browserError });
+        return;
+      }
+    }
+    let principal: { userId: string; deviceId: string | null } | null;
+    try {
+      principal = await resolveAccountPrincipal(runtime, req, res, {
+        requireActiveWebSession: cookieAuthenticated,
+      });
+    } catch (error) {
+      if (error instanceof RootIdentityError) {
+        sendRootIdentityError(res, error);
+        return;
+      }
+      throw error;
+    }
+    if (!principal) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET") {
+      const profile = await getIdentityAccountProfile(runtime.db, principal.userId);
+      if (!profile) {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+      sendJson(res, 200, profile);
+      return;
+    }
+
+    try {
+      const body = await readJson(req, MAX_ACCOUNT_PROFILE_BODY_BYTES);
+      const keys = Object.keys(body);
+      if (keys.length !== 1 || keys[0] !== "image") throw new Error("invalid_request");
+      const image = accountAvatarValue(body.image);
+      const profile = await updateIdentityAccountProfile(runtime.db, {
+        userId: principal.userId,
+        image,
+      });
+      if (!profile) {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+      await recordSecurityEvent(runtime.db, {
+        userId: principal.userId,
+        deviceId: principal.deviceId,
+        eventType: "account.profile.updated",
+        ...securityRequestMetadata(req, runtime.config.secret),
+        metadata: { changed: "image" },
+      });
+      sendJson(res, 200, profile);
+    } catch (error) {
+      if (error instanceof Error && (error.message === "invalid_avatar" || error.message === "invalid_request")) {
+        sendJson(res, 422, { error: error.message });
+        return;
+      }
+      if (error instanceof Error && error.message === "request_too_large") {
+        sendJson(res, 413, { error: "request_too_large" });
+        return;
+      }
+      throw error;
+    }
     return;
   }
 

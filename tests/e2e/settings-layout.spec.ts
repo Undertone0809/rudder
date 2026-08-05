@@ -177,6 +177,7 @@ test.describe("Settings layout", () => {
     const destinations = [
       { href: "/instance/settings/profile", heading: "Profile & account" },
       { href: "/instance/settings/notifications", heading: "System permissions" },
+      { href: "/instance/settings/privacy", heading: "Privacy & Telemetry" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
       { href: "/instance/settings/plugins", heading: "Plugin Manager" },
     ];

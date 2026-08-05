@@ -12,6 +12,7 @@ import {
   type FileTextSelection,
 } from "@/components/chat/FileAnnotationSelectionToolbar";
 import { CommentThread } from "@/components/CommentThread";
+import { isAgentWakeEligible } from "@/components/CommentThread.submit";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
@@ -47,6 +48,7 @@ import {
 } from "@/components/WorkspaceFilePreview";
 import { WorkspaceHtmlPreviewToolbar } from "@/components/WorkspaceHtmlPreview";
 import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaunchControls";
+import { useI18n } from "@/context/I18nContext";
 import {
   createLiveSurfaceRuntimeId,
   LiveSurfaceAnchor,
@@ -510,6 +512,7 @@ function ChatIssueSidePanelView({
   expanded?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useI18n();
   const issueRef = issue.identifier ?? issue.id.slice(0, 8);
   const projectName = issue.project?.name ?? null;
 
@@ -619,6 +622,11 @@ function ChatIssueSidePanelView({
               orgId={issue.orgId}
               projectId={issue.projectId}
               issueStatus={issue.status}
+              locale={locale}
+              reopenWillWakeAgent={Boolean(
+                issue.assigneeAgentId
+                && isAgentWakeEligible(agentMap.get(issue.assigneeAgentId)?.status),
+              )}
               agentMap={agentMap}
               currentUserId={currentUserId}
               operatorDisplayName={operatorDisplayName}

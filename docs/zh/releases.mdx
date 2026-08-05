@@ -18,32 +18,34 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
-## v0.6.6
+## v0.7.0
 
 发布时间：2026-08-03
 
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.6)
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.0)
 
-这个版本带来 Rudder Account 登录与设备安全能力，同时确保 Local Workspace 隐私数据继续留在本机；还增加了 App Builder、更完整的文件审阅能力，以及更清晰的 Agent 工作状态。
+这个版本把 Rudder 的账号、本地工作区、Agent 运行环境和工作审阅流程整合成更可靠的端到端工作台。
 
 ### 新功能
 
-- 增加 Rudder Account 登录：Stable Desktop 现在要求先完成一次账号登录才能进入 Board。可在系统浏览器中使用 Google 或 GitHub OAuth，也可使用 Rudder Desktop 原生的邮箱 OTP 验证码、密码登录和密码重置流程。
-- 增加设备会话管理，可以查看并撤销已登录的 Desktop 设备。设备凭据保存在操作系统安全存储中，已授权的 Local Workspace 在完成在线验证后最多可离线使用 30 天。
-- 增加实验性的 App Builder 工作区，可从 Chat 创建、验证并预览本地全栈应用。应用源码保留在设备上，预览仅在当前电脑本地可用。
-- 侧边面板支持编辑兼容的文本文件并添加行级批注；Chat 工作清单可查看进行中和已完成的子 Agent。
+- 增加 Rudder Account 登录和设备会话管理，并支持原生邮箱验证、密码流程以及 Google 和 GitHub 登录。
+- 增加实验性的 App Builder 工作区和本地项目入口，可从 Chat 创建、验证并预览本地应用。
+- 增加面向记录的 Chat 运行反馈与批注，支持链接到 Agent 运行证据，并提供更清晰的进行中和已完成子 Agent 工作清单。
+- 为 Library、Issue、Project、Goal、Automation 和文件审阅等支持的界面增加 CodeMirror Markdown 实时预览。
+- 增加按范围隔离的 Smart Model 搜索回退，以及用于衡量完成工作周期的本地隐私分析记录。
 
 ### 改进
 
-- 合并个人资料与账号设置，在 Chat 标题中显示 Agent 身份，并在现有 Local Workspace 连接账号时保留 Messenger 分组、已保存视图、已读状态和本地偏好。
-- 改进 Apps 工作区，支持直接打开更多常见前端项目、加强本地进程安全，并在应用启动失败时提供“询问 AI”入口。
-- 提升持续活跃场景下 Messenger 滚动和分组展开的流畅度。
-- 移除项目级预算控制。升级时，待处理的项目预算审批会被拒绝，未关闭的预算事件会被解决，项目预算策略会被停用，仅因这些策略暂停的项目会恢复运行。
+- 改进 Messenger 分组、已保存视图、Side Chat 连续性、滚动和活动投影，让高活跃工作区更容易扫描。
+- 改进 Chat 与 Automation 的运行环境选择、Agent 身份、技能加载、本地运行环境兼容性，以及 heartbeat/run 投影。
+- 改进 Desktop 启动、账号恢复、本地应用进程所有权、浏览器注册、更新检查、重启行为，以及 macOS、Windows 和 Linux 的打包验证。
+- 改进文件审阅、Markdown 编辑、工作区导航、移动端 Messenger 入口、组织引导和账号/个人资料设置。
 
 ### 问题修复
 
-- 修复历史 Chat 操作、子 Agent 终止状态、Side Chat 用户消息可见性、图片文件预览，以及添加 Library 引用后 Chat 输入框不可编辑的问题。
-- 修复无实际修改时 Issue 活动时间变化的问题，并修复多项 Desktop 启动、应用重启、品牌图标和本地文件桥接问题。
+- 修复账号 OAuth 与设备审批收敛、原生邮箱认证恢复、安全本地会话处理，以及在缺少预期会话时仍执行更新检查的问题。
+- 修复历史 Chat 操作、Side Chat 用户消息可见性、响应批注范围处理、文件链接与预览、Markdown 光标移动，以及添加 Library 引用后的输入框状态。
+- 修复本地应用就绪与清理竞争、运行时所有权检查、平台相关的打包启动行为、Issue 无实际修改时的活动时间，以及多项品牌和文件桥接边界问题。
 
 ## v0.6.5
 

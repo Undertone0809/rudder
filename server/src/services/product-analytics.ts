@@ -344,6 +344,16 @@ export async function completeProductAnalyticsWorkCycle(
     if (lockedCycle.state === "completed" && lockedCycle.invalidatedAt === null) {
       return { event: null, revision: lockedCycle.completionRevision };
     }
+    const rootRunRows = await tx.select({ rootRunId: productAnalyticsEvents.rootRunId }).from(productAnalyticsEvents).where(and(
+      eq(productAnalyticsEvents.orgId, input.orgId),
+      eq(productAnalyticsEvents.workCycleId, input.workCycleId),
+      sql`${productAnalyticsEvents.rootRunId} is not null`,
+    ));
+    const rootRunIds = [...new Set([
+      ...(lockedCycle.rootRunIds ?? []),
+      ...rootRunRows.map((row) => row.rootRunId).filter((value): value is string => Boolean(value)),
+      ...(input.rootRunId ? [input.rootRunId] : []),
+    ])];
     const revision = (lockedCycle.completionRevision ?? 0) + 1;
     const event = await recordProductAnalyticsEvent(tx as unknown as Db, {
       orgId: input.orgId,
@@ -366,7 +376,7 @@ export async function completeProductAnalyticsWorkCycle(
     });
     await tx
       .update(productAnalyticsWorkCycles)
-      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, rootRunIds: input.rootRunId ? [...new Set([...(lockedCycle.rootRunIds ?? []), input.rootRunId])] : lockedCycle.rootRunIds, updatedAt: new Date() })
+      .set({ state: "completed", completionRevision: revision, completedAt: new Date(), invalidatedAt: null, rootRunIds, updatedAt: new Date() })
       .where(and(eq(productAnalyticsWorkCycles.orgId, input.orgId), eq(productAnalyticsWorkCycles.workCycleId, input.workCycleId)));
     await tx.insert(productAnalyticsWorkCycleRevisions).values({
       orgId: input.orgId,
@@ -459,7 +469,11 @@ export async function setProductAnalyticsInstallationMode(db: Db, installationId
   return row ?? null;
 }
 
-export async function reconcileProductAnalyticsInstallationMode(db: Db, installationId: string) {
+export async function reconcileProductAnalyticsInstallationMode(
+  db: Db,
+  installationId: string,
+  preferredMode?: "off" | "anonymous" | "account_linked",
+) {
   const consent = await db.select({ scope: productAnalyticsConsentLedger.scope, decision: productAnalyticsConsentLedger.decision })
     .from(productAnalyticsConsentLedger)
     .where(eq(productAnalyticsConsentLedger.installationId, installationId))
@@ -468,9 +482,9 @@ export async function reconcileProductAnalyticsInstallationMode(db: Db, installa
   for (const row of consent) {
     if (!latestByScope.has(row.scope)) latestByScope.set(row.scope, row.decision);
   }
-  const mode = latestByScope.get("account_linked_user") === "granted"
+  const mode = preferredMode ?? (latestByScope.get("account_linked_user") === "granted"
     ? "account_linked"
-    : latestByScope.get("anonymous_installation") === "granted" ? "anonymous" : "off";
+    : latestByScope.get("anonymous_installation") === "granted" ? "anonymous" : "off");
   return setProductAnalyticsInstallationMode(db, installationId, mode);
 }
 
@@ -606,6 +620,29 @@ export async function claimProductAnalyticsOutboxBatch(
     });
     throw error;
   }
+  // Keep anonymous exporter output available to the local Privacy & Telemetry page.
+  // Account-linked payloads are deliberately never retained in installation-wide
+  // state because another signed-in user may later read the settings page.
+  const [installation] = await db.select({ state: productAnalyticsInstallations.state })
+    .from(productAnalyticsInstallations)
+    .where(eq(productAnalyticsInstallations.installationId, input.installationId))
+    .limit(1);
+  if (installation) {
+    const nextState = { ...((installation.state ?? {}) as Record<string, unknown>) };
+    if (input.deliveryMode === "anonymous") {
+      nextState.lastPayloadAt = new Date().toISOString();
+      nextState.lastPayload = payloads.slice(-20);
+      nextState.lastPayloadMode = "anonymous";
+    } else {
+      delete nextState.lastPayloadAt;
+      delete nextState.lastPayload;
+      delete nextState.lastPayloadMode;
+    }
+    await db.update(productAnalyticsInstallations).set({
+      state: nextState as typeof installation.state,
+      updatedAt: new Date(),
+    }).where(eq(productAnalyticsInstallations.installationId, input.installationId));
+  }
   const first = rows[0];
   if (!first.claimToken) throw unprocessable("Product analytics outbox claim token is missing");
   return {
@@ -613,6 +650,7 @@ export async function claimProductAnalyticsOutboxBatch(
     installationId: first.installationId,
     deliveryMode: first.deliveryMode,
     consentScope: first.consentScope,
+    consentedLocalUserId: first.consentedLocalUserId,
     consentEpoch: first.consentEpoch,
     events: payloads,
   };
@@ -649,7 +687,7 @@ export async function acknowledgeProductAnalyticsOutbox(db: Db, input: { install
 
 export async function acknowledgeProductAnalyticsOutboxClaim(
   db: Db,
-  input: { installationId: string; installationSecret: string; eventIds: string[]; claimToken: string; delivered?: boolean; errorCode?: string },
+  input: { installationId: string; installationSecret: string; eventIds: string[]; claimToken: string; consentedLocalUserId?: string | null; delivered?: boolean; errorCode?: string },
 ) {
   await assertProductAnalyticsInstallationSecret(db, input.installationId, input.installationSecret);
   const rows = await db.select({
@@ -661,6 +699,11 @@ export async function acknowledgeProductAnalyticsOutboxClaim(
     eq(productAnalyticsOutbox.installationId, input.installationId),
     eq(productAnalyticsOutbox.claimToken, input.claimToken),
     inArray(productAnalyticsOutbox.eventId, input.eventIds),
+    input.consentedLocalUserId === undefined
+      ? undefined
+      : input.consentedLocalUserId
+        ? eq(productAnalyticsOutbox.consentedLocalUserId, input.consentedLocalUserId)
+        : isNull(productAnalyticsOutbox.consentedLocalUserId),
   ));
   if (rows.length === 0) return { updatedCount: 0, state: input.delivered === false ? "retry_wait" : "delivered" };
   const first = rows[0];

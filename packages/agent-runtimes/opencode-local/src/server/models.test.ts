@@ -68,4 +68,42 @@ describe("openCode models", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("preserves OpenCode's official per-model variants from verbose discovery", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-opencode-models-"));
+    const command = path.join(tempDir, "opencode-fixture.mjs");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(`opencode/deepseek-v4-flash-free\\n{\\n  \\\"name\\\": \\\"DeepSeek V4 Flash Free\\\",\\n  \\\"variants\\\": {\\n    \\\"low\\\": {\\\"reasoningEffort\\\": \\\"low\\\"},\\n    \\\"medium\\\": {\\\"reasoningEffort\\\": \\\"medium\\\"},\\n    \\\"high\\\": {\\\"reasoningEffort\\\": \\\"high\\\"},\\n    \\\"max\\\": {\\\"reasoningEffort\\\": \\\"max\\\"}\\n  }\\n}\\nopencode/big-pickle\\n{\\n  \\\"name\\\": \\\"Big Pickle\\\",\\n  \\\"variants\\\": {}\\n}\\n`);",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+
+    try {
+      await expect(
+        ensureOpenCodeModelConfiguredAndAvailable({
+          model: "opencode/deepseek-v4-flash-free",
+          command,
+          cwd: process.cwd(),
+          env: {},
+        }),
+      ).resolves.toEqual([
+        {
+          id: "opencode/big-pickle",
+          label: "Big Pickle",
+          variants: [],
+        },
+        {
+          id: "opencode/deepseek-v4-flash-free",
+          label: "DeepSeek V4 Flash Free",
+          variants: ["low", "medium", "high", "max"],
+        },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

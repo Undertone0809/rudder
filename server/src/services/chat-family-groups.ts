@@ -7,7 +7,6 @@ import {
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
-  deleteEmptyMessengerCustomGroup,
   lockMessengerCustomGroupPlacement,
   lockMessengerOwnerPlacement,
 } from "./messenger-saved-views.js";
@@ -172,11 +171,6 @@ export async function ensureChatFamilyGroup(
   ]);
   for (const conversationId of familyConversationIds) {
     await assignChatToFamilyGroup(client, input.orgId, input.userId, group.id, conversationId);
-  }
-  for (const groupId of existingGroupIds) {
-    if (groupId !== group.id) {
-      await deleteEmptyMessengerCustomGroup(client, input.orgId, input.userId, groupId);
-    }
   }
   return group;
 }

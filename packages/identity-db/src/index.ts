@@ -1,4 +1,5 @@
 export * from "./account-linking.js";
+export * from "./account-profile.js";
 export * from "./auth-epochs.js";
 export * from "./client.js";
 export * from "./credential-revocation.js";
@@ -6,6 +7,7 @@ export * from "./desktop-authorization.js";
 export * from "./device-authorization.js";
 export * from "./email-rate-limit.js";
 export * from "./operation-rate-limit.js";
+export * from "./product-analytics-consent.js";
 export * from "./production-migration-safety.js";
 export * from "./schema.js";
 export * from "./security-events.js";

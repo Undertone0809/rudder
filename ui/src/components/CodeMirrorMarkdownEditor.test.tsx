@@ -55,6 +55,19 @@ vi.mock("./MarkdownBody", () => ({
     }>;
   }) => {
     const renderedSource = children.replace(/^#{1,6}\s+/u, "");
+    const imageMatch = renderedSource.match(/^!\[([^\]]*)\]\(([^)]+)\)$/u);
+    if (imageMatch) {
+      return (
+        <div className={className} data-rendered-markdown={children}>
+          <button type="button" className="rudder-inspectable-image-trigger">
+            <img src={imageMatch[2]} alt={imageMatch[1]} />
+            <span className="rudder-inspectable-image-overlay" aria-hidden="true">
+              <svg aria-hidden="true" />
+            </span>
+          </button>
+        </div>
+      );
+    }
     const parts: ReactNode[] = [];
     const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/gu;
     let cursor = 0;
@@ -279,6 +292,50 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(container?.querySelector('[data-markdown-preview-state="preview"][data-source-line-start="1"]')).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps image previews clickable without revealing their Markdown source", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="![Screenshot](/api/assets/image/content)"
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const imageTrigger = container?.querySelector<HTMLButtonElement>(
+      ".rudder-inspectable-image-trigger",
+    );
+    expect(imageTrigger).toBeTruthy();
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+
+    const imageOverlayIcon = imageTrigger?.querySelector("svg");
+    act(() => {
+      imageOverlayIcon?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+
+    act(() => {
+      imageTrigger?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
   });
 
   it("marks fenced source lines so the active block keeps its visual container", async () => {
@@ -2024,6 +2081,99 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(editorView().state.doc.line(3).text).toBe("X## Three");
     expect(editorView().state.selection.main.head).toBe(revealPosition + 1);
+  });
+
+  it("restores the line hover menu and applies its action to the source block", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"# Heading\n\nParagraph"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const paragraph = editorView().dom.querySelector<HTMLElement>(
+      '[data-source-line-start="3"]',
+    );
+    expect(paragraph).toBeTruthy();
+    act(() => {
+      paragraph?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await flushReact();
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="markdown-block-menu-trigger"]',
+    );
+    expect(trigger).toBeTruthy();
+    expect(trigger?.getAttribute("aria-label")).toBe("Open block actions for line 3");
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+
+    const menu = document.body.querySelector<HTMLElement>(
+      '[data-testid="markdown-block-menu"]',
+    );
+    expect(menu).toBeTruthy();
+    expect(menu?.querySelectorAll("[role='menuitem']")).toHaveLength(8);
+    expect(menu?.querySelector<HTMLButtonElement>(
+      '[data-markdown-block-action="headline"]',
+    )?.disabled).toBe(false);
+    act(() => {
+      menu?.querySelector<HTMLButtonElement>(
+        '[data-markdown-block-action="headline"]',
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.toString()).toBe("# Heading\n\n## Paragraph");
+    expect(document.body.querySelector('[data-testid="markdown-block-menu"]')).toBeNull();
+  });
+
+  it("formats the whole list block when hovering an inner line", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"- first\n1. second\n\n```ts\nconst value = 1;\n```"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const hoverAndClick = async (lineNumber: string, action: string) => {
+      const line = editorView().dom.querySelector<HTMLElement>(
+        `[data-source-line-start="${lineNumber}"]`,
+      );
+      expect(line).toBeTruthy();
+      act(() => {
+        line?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      await flushReact();
+      const trigger = document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="markdown-block-menu-trigger"]',
+      );
+      expect(trigger).toBeTruthy();
+      act(() => {
+        trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flushReact();
+      const option = document.body.querySelector<HTMLButtonElement>(
+        `[data-markdown-block-action="${action}"]`,
+      );
+      expect(option?.disabled).toBe(false);
+      act(() => {
+        option?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flushReact();
+    };
+
+    await hoverAndClick("2", "number-list");
+    expect(editorView().state.doc.toString()).toBe(
+      "1. first\n1. second\n\n```ts\nconst value = 1;\n```",
+    );
   });
 
   it("clamps vertical cursor movement when preview widgets skip source lines", async () => {

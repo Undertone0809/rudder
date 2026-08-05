@@ -541,7 +541,6 @@ function SessionBrowserKeepControl({
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [newGroupName, setNewGroupName] = useState("Saved views");
   const mutationIdsRef = useRef(new Map<string, string>());
-  const createdGroupsRef = useRef(new Map<string, { id: string; name: string }>());
   const groupsQuery = useQuery({
     queryKey: queryKeys.messenger.customGroups(organizationId),
     queryFn: () => messengerApi.listCustomGroups(organizationId),
@@ -577,22 +576,15 @@ function SessionBrowserKeepControl({
       let destination: { id: string; name: string } | null = (
         groups.find((group) => group.id === selectedGroupId) ?? null
       );
+      let newGroupNameForMutation: string | null = null;
       if (createMode) {
         const name = newGroupName.trim();
         if (!name) throw new Error("Enter a name for the new Messenger group.");
-        const createKey = `${tab.viewInstanceId}\u0000${name}`;
-        destination = createdGroupsRef.current.get(createKey) ?? null;
-        if (!destination) {
-          const created = await messengerApi.createCustomGroup(
-            organizationId,
-            { name, icon: null },
-          );
-          destination = { id: created.id, name: created.name };
-          createdGroupsRef.current.set(createKey, destination);
-        }
+        newGroupNameForMutation = name;
+        destination = null;
       }
-      if (!destination && !loosePlacement) throw new Error("Choose a Messenger destination.");
-      const intentKey = `${tab.viewInstanceId}\u0000${destination?.id ?? "loose"}`;
+      if (!destination && !loosePlacement && !createMode) throw new Error("Choose a Messenger destination.");
+      const intentKey = `${tab.viewInstanceId}\u0000${createMode ? `create:${newGroupNameForMutation}` : destination?.id ?? "loose"}`;
       const clientMutationId = mutationIdsRef.current.get(intentKey)
         ?? newClientMutationId();
       mutationIdsRef.current.set(intentKey, clientMutationId);
@@ -604,6 +596,20 @@ function SessionBrowserKeepControl({
       });
       if (!input) throw new Error("This Browser tab cannot be kept in Messenger.");
       const result = await messengerApi.keepSavedView(organizationId, input);
+      if (createMode && newGroupNameForMutation) {
+        const savedViewItemKey = `saved-view:${result.savedView.id}`;
+        const grouped = await messengerApi.createCustomGroupWithEntries(organizationId, {
+          autoGenerateName: false,
+          icon: null,
+          itemKeys: [savedViewItemKey],
+          name: newGroupNameForMutation,
+        });
+        const groupedEntry = grouped.groups.find((group) =>
+          group.entries.some((entry) => entry.itemKey === savedViewItemKey),
+        );
+        if (!groupedEntry) throw new Error("The Saved View group was not created.");
+        destination = { id: groupedEntry.id, name: groupedEntry.name };
+      }
       return { destination, intentKey, result };
     },
     onSuccess: ({ destination, intentKey, result }) => {
@@ -615,8 +621,8 @@ function SessionBrowserKeepControl({
       workbench.bindSavedView(tab.viewInstanceId, result.savedView.id);
       if (destination) rememberSavedViewGroup(organizationId, destination.id);
       setOpen(false);
-      onAnnounce(result.group
-        ? `Kept in ${result.group.name}.`
+      onAnnounce(destination
+        ? `Kept in ${destination.name}.`
         : "Kept in Messenger sidebar.");
       navigate(messengerSavedViewRoute(result.savedView.id), { replace: true });
       void queryClient.invalidateQueries({

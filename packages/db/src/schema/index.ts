@@ -98,6 +98,16 @@ export { productAnalyticsCollectorDailyRollups } from "./product_analytics_colle
 export { productAnalyticsCollectorEvents } from "./product_analytics_collector_events.js";
 export { productAnalyticsCollectorInstallations } from "./product_analytics_collector_installations.js";
 export { productAnalyticsCollectorPrivacyAggregates } from "./product_analytics_collector_privacy_aggregates.js";
+export {
+  privateProductAnalyticsCollectorDailyRollups,
+  privateProductAnalyticsCollectorEvents,
+  privateProductAnalyticsCollectorInstallations,
+  privateProductAnalyticsCollectorPrivacyAggregates,
+  privateProductAnalyticsCollectorQualityCounters,
+  privateProductAnalyticsCollectorSubjects,
+  privateProductAnalyticsCollectorWorkLoopRevisions,
+  rudderAnalyticsSchema
+} from "./product_analytics_collector_private.js";
 export { productAnalyticsCollectorSubjects } from "./product_analytics_collector_subjects.js";
 export { productAnalyticsCollectorWorkLoopRevisions } from "./product_analytics_collector_work_loop_revisions.js";
 export { productAnalyticsConsentLedger } from "./product_analytics_consent.js";

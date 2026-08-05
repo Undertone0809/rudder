@@ -527,9 +527,10 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(copyText).toHaveBeenLastCalledWith(
       "[HEARTBEAT.md](library-file://file?p=agents%2FAsher%2Finstructions%2FHEARTBEAT.md)",
     );
-    expect(mockState.pushToast).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(mockState.pushToast).toHaveBeenLastCalledWith({
       title: "Library link copied",
-    }));
+      tone: "info",
+    });
 
     openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
     const copyAbsolutePathItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
@@ -543,6 +544,21 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(mockState.pushToast).toHaveBeenLastCalledWith(expect.objectContaining({
       title: "Absolute path copied",
     }));
+
+    copyText.mockRejectedValueOnce(new Error("Clipboard denied"));
+    openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
+    const failingCopyLinkItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((item) => item.textContent?.includes("Copy link"));
+    expect(failingCopyLinkItem).toBeTruthy();
+    await act(async () => {
+      failingCopyLinkItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockState.pushToast).toHaveBeenLastCalledWith({
+      title: "Failed to copy Library link",
+      body: "Clipboard denied",
+      tone: "error",
+    });
   });
 
   it("copies directory Library links with the directory query", async () => {

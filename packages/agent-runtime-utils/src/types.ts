@@ -325,6 +325,12 @@ export interface AgentRuntimeMediaAttachment {
 export interface AgentRuntimeModel {
   id: string;
   label: string;
+  /** Runtime-native model variants, when the adapter can discover them. */
+  variants?: string[];
+  /** Runtime-native model capabilities, when the adapter can discover them. */
+  capabilities?: {
+    reasoning?: boolean;
+  };
 }
 
 export type AgentRuntimeEnvironmentCheckLevel = "info" | "warn" | "error";
@@ -498,8 +504,9 @@ export type TranscriptEntry =
       delta?: boolean;
       phase?: "commentary" | "final_answer";
       segmentId?: string;
+      sourceEntryId?: string;
     }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean; segmentId?: string }
+  | { kind: "thinking"; ts: string; text: string; delta?: boolean; segmentId?: string; sourceEntryId?: string }
   | {
       kind: "user";
       ts: string;
@@ -507,15 +514,16 @@ export type TranscriptEntry =
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
+      sourceEntryId?: string;
     }
-  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
-  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
-  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[] }
-  | { kind: "init"; ts: string; model: string; sessionId: string }
-  | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[] }
-  | { kind: "stderr"; ts: string; text: string }
-  | { kind: "system"; ts: string; text: string }
-  | { kind: "stdout"; ts: string; text: string };
+  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string }
+  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string }
+  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string }
+  | { kind: "init"; ts: string; model: string; sessionId: string; sourceEntryId?: string }
+  | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[]; sourceEntryId?: string }
+  | { kind: "stderr"; ts: string; text: string; sourceEntryId?: string }
+  | { kind: "system"; ts: string; text: string; sourceEntryId?: string }
+  | { kind: "stdout"; ts: string; text: string; sourceEntryId?: string };
 
 export type TranscriptTodoItemStatus = "pending" | "in_progress" | "completed";
 
@@ -553,6 +561,8 @@ export interface CreateConfigValues {
   model: string;
   modelFallbacks: ModelFallbackConfig[];
   thinkingEffort: string;
+  /** Cursor CLI's independent --mode setting (plan|ask). */
+  mode?: string;
   chrome: boolean;
   dangerouslySkipPermissions: boolean;
   permissionMode?: string;

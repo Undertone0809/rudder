@@ -13,12 +13,22 @@ related_code:
   - packages/db/src/schema/product_analytics_outbox.ts
   - packages/db/src/schema/product_analytics_work_cycles.ts
   - packages/identity-db/src/product-analytics.ts
+  - packages/identity-db/src/product-analytics-consent.ts
+  - packages/identity-db/src/schema.ts
   - server/src/services/product-analytics.ts
   - server/src/services/product-analytics-collector.ts
   - server/src/routes/product-analytics.ts
   - server/src/routes/product-analytics-collector.ts
+  - server/src/product-analytics-collector-config.ts
+  - server/src/routes/product-analytics-collector-report.ts
+  - server/src/services/product-analytics-collector-maintenance.ts
+  - server/src/routes/instance-settings.ts
   - desktop/src/product-analytics-telemetry.ts
   - desktop/src/product-analytics-uploader.ts
+  - desktop/src/product-analytics-main-scheduler.ts
+  - ui/src/pages/InstancePrivacyTelemetrySettings.tsx
+  - ui/src/api/instanceSettings.ts
+  - ui/src/lib/settings-prefetch.ts
 related_tests:
   - server/src/services/product-analytics.test.ts
   - server/src/services/product-analytics-collector.test.ts
@@ -26,7 +36,9 @@ related_tests:
   - server/src/__tests__/product-analytics-collector-routes.test.ts
   - desktop/src/product-analytics-telemetry.test.ts
   - desktop/src/product-analytics-uploader.test.ts
+  - ui/src/pages/InstancePrivacyTelemetrySettings.test.tsx
   - tests/e2e/product-analytics.spec.ts
+  - tests/e2e/settings-layout.spec.ts
 related_plans:
   - doc/plans/2026-08-03-product-analytics-telemetry-full-implementation.md
 edit_policy: user_confirmed_only
@@ -74,7 +86,8 @@ revocable and retryable without losing the local evidence ledger.
 - Identity read-only funnel queries for account-created, verified,
   desktop-authorized, and local-connected counts.
 - Installation registration, consent grant/revoke, outbox claim/ack, and the
-  private collector batch/revoke boundaries.
+  private collector batch/revoke boundaries, including the explicitly
+  provisioned anonymous deployment-consent boundary.
 - Desktop local telemetry state creation and one-shot upload orchestration.
 
 ### Product Logic Flow
@@ -88,12 +101,17 @@ revocable and retryable without losing the local evidence ledger.
    approved review when the work requires review. Reopen/invalidation records a
    revision-specific invalidation fact.
 4. Installation registration starts in `off`. A consent ledger decision, not a
-   registration flag, changes the effective mode. Revocation advances the
-   consent epoch and removes unsent older-epoch outbox rows.
+   registration flag, changes the effective mode. Account-linked consent is
+   also recorded in the Identity-owned append-only ledger; the latest granted
+   Identity row is required before an upload assertion is issued. Revocation
+   advances the consent epoch and removes unsent older-epoch outbox rows.
 5. A consent-matched event is copied to the local outbox. Desktop claims a
    homogeneous batch with a lease, sends pseudonymized payloads to the private
-   collector, and acknowledges delivery or retry/dead-letter state using the
-   installation secret.
+   collector using an Identity-issued subject-free telemetry assertion for an
+   authenticated anonymous session, an explicitly provisioned anonymous
+   deployment credential plus consent epoch headers for a no-session deployment,
+   or a subject-bound assertion for account-linked mode, and acknowledges
+   delivery or retry/dead-letter state using the installation secret.
 6. The summary endpoint exposes local human activity, meaningful/productive
    installations, completed loops, invalidations, run/output/review facts, and
    data-quality context.
@@ -104,6 +122,7 @@ revocable and retryable without losing the local evidence ledger.
 | --- | --- | --- | --- | --- |
 | Default installation | No consent ledger grant | Persist locally; effective mode is `off` | Upload telemetry implicitly | Desktop state and E2E |
 | Anonymous grant | Anonymous scope granted at current epoch | Queue installation-scoped pseudonymous events | Attach a local account identity | Consent/outbox tests |
+| Anonymous deployment credential | Deployment explicitly provisions the collector credential and installation consent state | Register the installation epoch, then accept only matching pseudonymous batches | Treat the deployment credential as an account identity or send the installation secret | Collector route and Desktop scheduler tests |
 | Account-linked grant | Human local user grants account scope | Queue events for that user and epoch | Use an agent ID as the human identity | Route/service tests |
 | Consent revoke | Revoke decision creates a newer epoch | Drop unsent older-epoch rows and reject stale collector batches | Replay an equal/older epoch to un-revoke | Collector tests |
 | Duplicate event | Same event ID and identical payload | Return duplicate acknowledgement | Store a second fact or accept a conflicting payload | Collector tests |
@@ -129,9 +148,15 @@ properties only.
 The local database stores the event ledger, work-cycle state, consent decisions
 and epochs, installation secret hash, and outbox delivery state. Identity
 funnel reads return aggregate counts without email, provider subject, or device
-identifiers. The collector contract is currently an in-memory deterministic
-boundary fixture; a central SQL store and signed analytics assertion are not
-part of this contract yet.
+identifiers. The private collector stores raw facts, subject consent state,
+quality counters, daily rollups, revision projections, and thresholded privacy
+aggregates in the isolated `rudder_analytics` schema. Authenticated anonymous
+and account-linked uploads use signed short-lived `aud=telemetry-collector`
+assertions; account-linked assertions include only the collector-scoped subject.
+Authenticated sessions require the corresponding current Identity consent grant
+and epoch. A no-session anonymous deployment may use only its separately
+provisioned deployment credential and explicit installation consent registration;
+it never receives an account subject.
 
 ### Canonical Scenarios
 
@@ -151,9 +176,11 @@ part of this contract yet.
   pseudonymization; they are not sent to the renderer or collector payload.
 - Analytics is organization-scoped for local product facts and never exposes
   raw prompts, transcripts, titles, descriptions, URLs, email, or credentials.
-- This contract does not claim a production central SQL collector, signed
-  assertion, background scheduler, or Privacy & Telemetry settings UI; those
-  are deferred implementation surfaces.
+- This contract does not claim a configured public telemetry deployment or a
+  self-hosted uploader without Desktop Main. The central SQL collector, signed
+  assertion, explicit anonymous deployment credential path, Desktop scheduler,
+  and Privacy & Telemetry controls are implemented surfaces that still require
+  private deployment credentials and rollout gates.
 - Presence, device sessions, raw runs, and issue `done` status are not DAU or
   north-star completion definitions.
 
@@ -167,6 +194,10 @@ controls.
 ### Traceability
 
 The local analytics service, DB migrations, collector contract tests, Desktop
-telemetry tests, and privacy E2E cover the current behavior. The implementation
-plan records deferred production collector, assertion, scheduler, and settings
-UI work.
+telemetry tests, identity consent tests, report/retention checks, and privacy E2E
+cover the current behavior. Browser E2E covers the local consent/revocation
+workflow; the private central collector/report surface is covered by server
+integration tests and deterministic fixtures because it requires an isolated
+deployment database. Deployment role provisioning, anonymous authorization,
+network redaction, and real signed-in assertion gates remain operational rollout
+work.

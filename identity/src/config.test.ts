@@ -68,6 +68,52 @@ describe("readIdentityConfig", () => {
     ).toThrow("must be configured together");
   });
 
+  it("requires a complete private collector sync configuration", () => {
+    expect(() => readIdentityConfig({
+      ...baseEnv,
+      IDENTITY_TELEMETRY_COLLECTOR_URL: "https://telemetry.rudderhq.dev",
+    })).toThrow("must be configured together");
+
+    const config = readIdentityConfig({
+      ...baseEnv,
+      IDENTITY_TELEMETRY_COLLECTOR_URL: "https://telemetry.rudderhq.dev",
+      IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "c".repeat(32),
+      IDENTITY_TELEMETRY_ASSERTION_KEY_ID: "telemetry-key",
+      IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY: "private-key",
+      IDENTITY_TELEMETRY_SUBJECT_SECRET: "s".repeat(32),
+      IDENTITY_TELEMETRY_REVOKE_SECRET: "r".repeat(32),
+    });
+    expect(config.telemetry?.collectorConsentSync).toEqual({
+      collectorUrl: "https://telemetry.rudderhq.dev",
+      syncSecret: "c".repeat(32),
+    });
+  });
+
+  it("requires HTTPS for collector sync outside local development", () => {
+    expect(() => readIdentityConfig({
+      ...baseEnv,
+      IDENTITY_TELEMETRY_COLLECTOR_URL: "ftp://telemetry.rudderhq.dev",
+      IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "c".repeat(32),
+      IDENTITY_TELEMETRY_ASSERTION_KEY_ID: "telemetry-key",
+      IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY: "private-key",
+      IDENTITY_TELEMETRY_SUBJECT_SECRET: "s".repeat(32),
+      IDENTITY_TELEMETRY_REVOKE_SECRET: "r".repeat(32),
+    })).toThrow("must be a valid origin");
+
+    expect(() => readIdentityConfig({
+      ...baseEnv,
+      IDENTITY_RELEASE_CHANNEL: "preview",
+      IDENTITY_BASE_URL: "https://preview-identity.rudderhq.dev",
+      IDENTITY_MAIL_MODE: "supabase_smtp",
+      IDENTITY_TELEMETRY_COLLECTOR_URL: "http://telemetry.rudderhq.dev",
+      IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "c".repeat(32),
+      IDENTITY_TELEMETRY_ASSERTION_KEY_ID: "telemetry-key",
+      IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY: "private-key",
+      IDENTITY_TELEMETRY_SUBJECT_SECRET: "s".repeat(32),
+      IDENTITY_TELEMETRY_REVOKE_SECRET: "r".repeat(32),
+    })).toThrow("must use HTTPS");
+  });
+
   it("rejects production captured mail before any request is served", () => {
     expect(() =>
       readIdentityConfig({

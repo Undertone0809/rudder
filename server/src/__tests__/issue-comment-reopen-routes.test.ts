@@ -59,6 +59,15 @@ vi.mock("../services/index.js", () => ({
 
 function createApp() {
   const app = express();
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => [],
+        }),
+      }),
+    }),
+  } as any;
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = {
@@ -70,7 +79,7 @@ function createApp() {
     };
     next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any));
+  app.use("/api", issueRoutes(db, {} as any));
   app.use(errorHandler);
   return app;
 }

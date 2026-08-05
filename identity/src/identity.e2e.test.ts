@@ -42,6 +42,7 @@ import { getIdentityRuntime, resetIdentityRuntimeForTests } from "./runtime.js";
 const TEST_SECRET = "identity-e2e-secret-with-at-least-thirty-two-characters";
 const CAPTURE_MAILBOX_SECRET = "identity-e2e-capture-mailbox-secret";
 const OFFLINE_SIGNING_KEYS = generateKeyPairSync("ed25519");
+const TELEMETRY_SIGNING_KEYS = generateKeyPairSync("ed25519");
 const FIXTURE_COOKIE = "rudder_root_fixture";
 
 type FixtureUser = RootIdentityPrincipal & {
@@ -64,6 +65,13 @@ class FixtureRootIdentityAdapter implements RootIdentityAdapter {
     const user = this.users.get(email.trim().toLowerCase());
     if (!user) throw new Error(`No root-auth user for ${email}`);
     return user.id;
+  }
+
+  updateProfile(email: string, profile: { displayName: string | null; avatarUrl: string | null }): void {
+    const user = this.users.get(email.trim().toLowerCase());
+    if (!user) throw new Error(`No root-auth user for ${email}`);
+    user.displayName = profile.displayName;
+    user.avatarUrl = profile.avatarUrl;
   }
 
   failNextPasswordResetRequest(error: Error): void {
@@ -358,8 +366,11 @@ function cookieFrom(response: Response): string {
 describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
   let postgres: EmbeddedPostgres | undefined;
   let httpServer: Server | undefined;
+  let collectorServer: Server | undefined;
   let tempDirectory: string;
   let baseUrl: string;
+  const collectorRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  let collectorResponseStatus = 200;
   const rootIdentity = new FixtureRootIdentityAdapter();
 
   async function availablePort(): Promise<number> {
@@ -510,6 +521,28 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     ]);
     await migrationConnection.close();
 
+    collectorServer = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        let body: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
+        } catch {
+          // The identity sync helper always sends JSON; keep the fixture tolerant
+          // of unrelated probes so they cannot take down the HTTP journey.
+        }
+        collectorRequests.push({ path: req.url ?? "", body });
+        res.statusCode = collectorResponseStatus;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    await new Promise<void>((resolve) => collectorServer?.listen(0, "127.0.0.1", resolve));
+    const collectorAddress = collectorServer.address();
+    if (!collectorAddress || typeof collectorAddress === "string") throw new Error("Collector E2E server failed");
+
     Object.assign(process.env, {
       IDENTITY_RELEASE_CHANNEL: "test",
       IDENTITY_BASE_URL: "http://127.0.0.1",
@@ -527,6 +560,13 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       IDENTITY_OFFLINE_GRANT_KEY_ID: "identity-e2e-key",
       IDENTITY_OFFLINE_GRANT_PRIVATE_KEY: OFFLINE_SIGNING_KEYS.privateKey
         .export({ format: "der", type: "pkcs8" }).toString("base64url"),
+      IDENTITY_TELEMETRY_ASSERTION_KEY_ID: "identity-e2e-telemetry-key",
+      IDENTITY_TELEMETRY_ASSERTION_PRIVATE_KEY: TELEMETRY_SIGNING_KEYS.privateKey
+        .export({ format: "der", type: "pkcs8" }).toString("base64url"),
+      IDENTITY_TELEMETRY_SUBJECT_SECRET: "identity-e2e-telemetry-subject-secret-32-chars",
+      IDENTITY_TELEMETRY_REVOKE_SECRET: "identity-e2e-telemetry-revoke-secret-32-chars",
+      IDENTITY_TELEMETRY_COLLECTOR_URL: `http://127.0.0.1:${collectorAddress.port}`,
+      IDENTITY_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET: "identity-e2e-collector-sync-secret-32-chars",
     });
 
     const server = createServer((req, res) => {
@@ -549,6 +589,11 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     if (httpServer) {
       await new Promise<void>((resolve, reject) => {
         httpServer?.close((error) => error ? reject(error) : resolve());
+      });
+    }
+    if (collectorServer) {
+      await new Promise<void>((resolve, reject) => {
+        collectorServer?.close((error) => error ? reject(error) : resolve());
       });
     }
     if (postgres) await postgres.stop();
@@ -845,6 +890,77 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
     }
   });
 
+  it("fills missing account profile fields when linking an OAuth identity", async () => {
+    const runtime = getIdentityRuntime();
+    const email = "oauth-profile-backfill@example.com";
+    const emailIdentity = await resolveVerifiedIdentity(runtime.db, {
+      provider: "email",
+      providerSubject: "email-profile-backfill",
+      email,
+      emailVerified: true,
+    });
+    await resolveVerifiedIdentity(runtime.db, {
+      provider: "google",
+      providerSubject: "google-profile-backfill",
+      email,
+      emailVerified: true,
+      name: "OAuth Profile Owner",
+      image: "https://avatars.example.test/oauth-profile.png",
+    });
+
+    const [profile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, emailIdentity.userId));
+    expect(profile).toEqual({
+      name: "OAuth Profile Owner",
+      image: "https://avatars.example.test/oauth-profile.png",
+    });
+
+    await resolveVerifiedIdentity(runtime.db, {
+      provider: "github",
+      providerSubject: "github-profile-backfill",
+      email,
+      emailVerified: true,
+      name: "Later Provider Name",
+      image: "https://avatars.example.test/later-provider.png",
+    });
+    const [preservedProfile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.id, emailIdentity.userId));
+    expect(preservedProfile).toEqual(profile);
+  });
+
+  it("refreshes OAuth profile fields for an existing Supabase binding", async () => {
+    const email = "oauth-bound-profile-refresh@example.com";
+    const firstLogin = await fetch(
+      `${baseUrl}/auth/callback?code=${encodeURIComponent(email)}&next=%2Faccount`,
+      { redirect: "manual" },
+    );
+    expect(firstLogin.status).toBe(302);
+
+    rootIdentity.updateProfile(email, {
+      displayName: "Refreshed OAuth Owner",
+      avatarUrl: "https://avatars.example.test/refreshed-oauth-profile.png",
+    });
+    const secondLogin = await fetch(
+      `${baseUrl}/auth/callback?code=${encodeURIComponent(email)}&next=%2Faccount`,
+      { redirect: "manual" },
+    );
+    expect(secondLogin.status).toBe(302);
+
+    const runtime = getIdentityRuntime();
+    const [profile] = await runtime.db
+      .select({ name: identityUsers.name, image: identityUsers.image })
+      .from(identityUsers)
+      .where(eq(identityUsers.email, email));
+    expect(profile).toEqual({
+      name: "Refreshed OAuth Owner",
+      image: "https://avatars.example.test/refreshed-oauth-profile.png",
+    });
+  });
+
   it("fails closed on login CSRF and completes the recovery-link page journey", async () => {
     const crossOrigin = await fetch(`${baseUrl}/api/root-auth/password/sign-in`, {
       method: "POST",
@@ -1032,6 +1148,7 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
   });
 
   it("uses Supabase browser identity only to issue Rudder Desktop PKCE credentials", async () => {
+    collectorRequests.length = 0;
     const email = "desktop-pkce@example.com";
     const cookie = await otpSignIn(email);
     const verifier = randomBytes(48).toString("base64url");
@@ -1077,6 +1194,208 @@ describe("Rudder Identity HTTP journey with Supabase root-auth fixture", () => {
       refresh_token: expect.any(String),
       offline_grant: expect.any(String),
     });
+
+    const unauthenticatedProfile = await fetch(`${baseUrl}/api/account/profile`);
+    expect(unauthenticatedProfile.status).toBe(401);
+
+    const invalidBearerProfile = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: "Bearer invalid-profile-token" },
+    });
+    expect(invalidBearerProfile.status).toBe(401);
+
+    const profileBefore = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: `Bearer ${tokens.access_token}` },
+    });
+    expect(profileBefore.status).toBe(200);
+    expect(await profileBefore.json()).toMatchObject({
+      id: tokens.account.id,
+      email,
+      name: "desktop-pkce",
+      image: null,
+    });
+
+    const malformedProfile = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+    expect(malformedProfile.status).toBe(422);
+
+    const invalidAvatar = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: "data:image/png;base64,AA==" }),
+    });
+    expect(invalidAvatar.status).toBe(422);
+
+    const avatar = "data:image/png;base64,iVBORw0KGgo=";
+    const profileUpdated = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: avatar }),
+    });
+    expect(profileUpdated.status).toBe(200);
+    expect(await profileUpdated.json()).toMatchObject({
+      id: tokens.account.id,
+      image: avatar,
+    });
+
+    const profileAfter = await fetch(`${baseUrl}/api/account/profile`, {
+      headers: { authorization: `Bearer ${tokens.access_token}` },
+    });
+    expect(await profileAfter.json()).toMatchObject({ image: avatar });
+
+    const profileCleared = await fetch(`${baseUrl}/api/account/profile`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ image: null }),
+    });
+    expect(profileCleared.status).toBe(200);
+    expect(await profileCleared.json()).toMatchObject({ image: null });
+
+    const telemetryHeaders = {
+      authorization: `Bearer ${tokens.access_token}`,
+      "content-type": "application/json",
+    };
+    const telemetryRequest = (path: string, body: Record<string, unknown>) => fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: telemetryHeaders,
+      body: JSON.stringify(body),
+    });
+    const pseudonymousInstallationId = "a".repeat(64);
+    const beforeConsent = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(beforeConsent.status).toBe(400);
+    expect(collectorRequests).toHaveLength(0);
+    const consent = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(consent.status).toBe(201);
+    expect(await consent.json()).toMatchObject({ mode: "account_linked", decision: "granted", consentEpoch: 1 });
+    expect(collectorRequests).toHaveLength(1);
+    expect(collectorRequests[0]).toMatchObject({
+      path: "/api/analytics/v1/internal/consent/sync",
+      body: {
+        installationId: "desktop-pkce-installation",
+        analyticsSubject: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        consentVersion: "v1",
+        consentEpoch: 1,
+        revoked: false,
+      },
+    });
+    const assertionResponse = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+      consent_epoch: 999,
+      consent_granted: false,
+      consented_local_user_id: tokens.account.id,
+    });
+    expect(assertionResponse.status).toBe(200);
+    const assertion = await assertionResponse.json() as { assertion?: string };
+    expect(assertion.assertion).toEqual(expect.any(String));
+    expect(collectorRequests).toHaveLength(2);
+
+    const wrongUserAssertion = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+      consented_local_user_id: "another-user",
+    });
+    expect(wrongUserAssertion.status).toBe(400);
+    expect(collectorRequests).toHaveLength(2);
+
+    const anonymousConsent = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "anonymous",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(anonymousConsent.status).toBe(201);
+    expect(await anonymousConsent.json()).toMatchObject({ mode: "anonymous", decision: "granted", consentEpoch: 1 });
+    const anonymousAssertionResponse = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "anonymous",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(anonymousAssertionResponse.status).toBe(200);
+    expect(await anonymousAssertionResponse.json()).toMatchObject({ analytics_subject: null, audience: "telemetry-collector" });
+    expect(collectorRequests).toHaveLength(4);
+    expect(collectorRequests[2]).toMatchObject({
+      path: "/api/analytics/v1/internal/consent/sync",
+      body: {
+        installationId: "desktop-pkce-installation",
+        analyticsSubject: null,
+        consentVersion: "v1",
+        consentEpoch: 1,
+        revoked: false,
+      },
+    });
+    const revoked = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "revoked",
+      consent_version: "v1",
+    });
+    expect(revoked.status).toBe(201);
+    expect(await revoked.json()).toMatchObject({ decision: "revoked", consentEpoch: 2 });
+    expect(collectorRequests).toHaveLength(5);
+    expect(collectorRequests[4]).toMatchObject({
+      path: "/api/analytics/v1/internal/consent/sync",
+      body: {
+        installationId: "desktop-pkce-installation",
+        consentVersion: "v1",
+        consentEpoch: 2,
+        revoked: true,
+      },
+    });
+    const afterRevoke = await telemetryRequest("/api/desktop/telemetry/assertion", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      consent_version: "v1",
+      pseudonymous_installation_id: pseudonymousInstallationId,
+    });
+    expect(afterRevoke.status).toBe(400);
+
+    collectorResponseStatus = 503;
+    const failedGrant = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(failedGrant.status).toBe(503);
+    collectorResponseStatus = 200;
+    const retriedGrant = await telemetryRequest("/api/desktop/telemetry/consent", {
+      installation_id: "desktop-pkce-installation",
+      mode: "account_linked",
+      decision: "granted",
+      consent_version: "v1",
+    });
+    expect(retriedGrant.status).toBe(201);
+    expect(await retriedGrant.json()).toMatchObject({ decision: "granted", consentEpoch: 3 });
 
     const exchange = await post("/api/server/exchange", {
       installation_id: "desktop-pkce-installation",

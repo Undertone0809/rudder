@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/cli",
-  "version": "0.6.6",
+  "version": "0.7.1",
   "description": "Rudder CLI — orchestrate AI agent teams to run a business",
   "type": "module",
   "bin": {

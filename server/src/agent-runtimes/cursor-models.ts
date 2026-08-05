@@ -1,4 +1,4 @@
-import { models as cursorFallbackModels } from "@rudderhq/agent-runtime-cursor-local";
+import { models as cursorFallbackModels, withCursorModelMetadata } from "@rudderhq/agent-runtime-cursor-local";
 import { spawnSync } from "node:child_process";
 import type { AgentRuntimeModel } from "./types.js";
 
@@ -16,15 +16,24 @@ type CursorModelsCommandResult = {
 };
 
 function dedupeModels(models: AgentRuntimeModel[]): AgentRuntimeModel[] {
-  const seen = new Set<string>();
   const deduped: AgentRuntimeModel[] = [];
   for (const model of models) {
     const id = model.id.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    deduped.push({ id, label: model.label.trim() || id });
+    if (!id) continue;
+    const existing = deduped.find((candidate) => candidate.id === id);
+    if (existing) {
+      existing.variants = [...new Set([...(existing.variants ?? []), ...(model.variants ?? [])])];
+      if (model.capabilities?.reasoning === true) existing.capabilities = { reasoning: true };
+      continue;
+    }
+    deduped.push({
+      id,
+      label: model.label.trim() || id,
+      ...(model.variants ? { variants: [...model.variants] } : {}),
+      ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+    });
   }
-  return deduped;
+  return withCursorModelMetadata(deduped);
 }
 
 function sanitizeModelId(raw: string): string {
@@ -60,9 +69,21 @@ function collectFromJsonValue(value: unknown, target: AgentRuntimeModel[]) {
       continue;
     }
     if (typeof item !== "object" || item === null) continue;
-    const id = (item as { id?: unknown }).id;
+    const record = item as { id?: unknown; variants?: unknown; capabilities?: unknown };
+    const id = record.id;
     if (typeof id === "string") {
-      pushModelId(target, id);
+      const variants = Array.isArray(record.variants)
+        ? record.variants.filter((variant): variant is string => typeof variant === "string")
+        : undefined;
+      const reasoning = typeof record.capabilities === "object"
+        && record.capabilities !== null
+        && (record.capabilities as { reasoning?: unknown }).reasoning === true;
+      target.push({
+        id: sanitizeModelId(id),
+        label: sanitizeModelId(id),
+        ...(variants ? { variants } : {}),
+        ...(reasoning ? { capabilities: { reasoning: true } } : {}),
+      });
     }
   }
 }
@@ -110,7 +131,7 @@ function mergedWithFallback(models: AgentRuntimeModel[]): AgentRuntimeModel[] {
 }
 
 function defaultCursorModelsRunner(): CursorModelsCommandResult {
-  const result = spawnSync("agent", ["models"], {
+  const result = spawnSync("cursor-agent", ["models"], {
     encoding: "utf8",
     timeout: CURSOR_MODELS_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER_BYTES,

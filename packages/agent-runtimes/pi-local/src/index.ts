@@ -1,7 +1,18 @@
+import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
+
 export const type = "pi_local";
 export const label = "Pi (local)";
 
-export const models: Array<{ id: string; label: string }> = [
+export const PI_LOCAL_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+
+export const models: AgentRuntimeModel[] = [
   { id: "kimi-coding/kimi-for-coding", label: "Kimi for Coding" },
   { id: "kimi-coding/kimi-k2-thinking", label: "Kimi K2 Thinking" },
   { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
@@ -29,7 +40,7 @@ Core fields:
 - promptTemplate (string, optional): user prompt template passed as the headless --print message
 - model (string, required): Pi model id in provider/model format (for example kimi-coding/kimi-for-coding or deepseek/deepseek-chat)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- thinking (string, optional): thinking level (off, minimal, low, medium, high, xhigh)
+- thinking (string, optional): thinking level passed via --thinking. Pi supports off|minimal|low|medium|high|xhigh; model-specific thinkingLevelMap entries can remove unsupported levels or map levels to provider values.
 - command (string, optional): defaults to "pi"
 - env (object, optional): KEY=VALUE environment variables
 

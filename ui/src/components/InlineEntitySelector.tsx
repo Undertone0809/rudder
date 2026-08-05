@@ -22,6 +22,8 @@ interface InlineEntitySelectorProps {
   ariaLabel?: string;
   renderTriggerValue?: (option: InlineEntityOption | null) => ReactNode;
   renderOption?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
+  renderOptionAccessory?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
+  keepOpenOnOptionChange?: boolean;
   /** Skip the Portal so the popover stays in the DOM tree (fixes scroll inside Dialogs). */
   disablePortal?: boolean;
   side?: "top" | "right" | "bottom" | "left";
@@ -45,6 +47,8 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       ariaLabel,
       renderTriggerValue,
       renderOption,
+      renderOptionAccessory,
+      keepOpenOnOptionChange = false,
       disablePortal,
       side = "bottom",
       sideOffset,
@@ -56,7 +60,9 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [highlightedIndex, setHighlightedIndex] = useState(0);
+    const [shouldFocusSelectedOption, setShouldFocusSelectedOption] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const selectedOptionButtonRef = useRef<HTMLButtonElement | null>(null);
     const shouldPreventCloseAutoFocusRef = useRef(false);
     const isPointerDownRef = useRef(false);
 
@@ -75,6 +81,9 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     }, [allOptions, query]);
 
     const currentOption = options.find((option) => option.id === value) ?? null;
+    const collisionPadding = typeof window !== "undefined" && window.innerWidth < 640
+      ? { top: 16, right: 16, bottom: 88, left: 16 }
+      : 16;
 
     useEffect(() => {
       if (!open) return;
@@ -82,9 +91,24 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
     }, [filteredOptions, open, value]);
 
-    const commitSelection = (index: number, moveNext: boolean) => {
+    useEffect(() => {
+      if (!open || !shouldFocusSelectedOption) return;
+      const frame = requestAnimationFrame(() => {
+        selectedOptionButtonRef.current?.focus();
+        setShouldFocusSelectedOption(false);
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [open, shouldFocusSelectedOption]);
+
+    const commitSelection = (index: number, moveNext: boolean, keepOpen = false) => {
       const option = filteredOptions[index] ?? filteredOptions[0];
       if (option) onChange(option.id);
+      if (keepOpen) {
+        setShouldFocusSelectedOption(true);
+        setQuery("");
+        setOpen(true);
+        return;
+      }
       shouldPreventCloseAutoFocusRef.current = moveNext;
       setOpen(false);
       setQuery("");
@@ -136,7 +160,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
           align="start"
           side={side}
           sideOffset={sideOffset}
-          collisionPadding={16}
+          collisionPadding={collisionPadding}
           className={cn(
             "motion-inline-selector-pop z-[70] flex max-h-[min(18rem,var(--radix-popover-content-available-height))] flex-col overflow-hidden p-1",
             variant === "field"
@@ -159,6 +183,13 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             if (!shouldPreventCloseAutoFocusRef.current) return;
             event.preventDefault();
             shouldPreventCloseAutoFocusRef.current = false;
+          }}
+          onInteractOutside={(event) => {
+            const target = event.target;
+            if (target instanceof Element && target.closest("[data-issue-runtime-portal]")) {
+              // Keep the Agent menu open while its selected-row runtime panel is active.
+              event.preventDefault();
+            }
           }}
         >
           <input
@@ -187,7 +218,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               }
               if (event.key === "Enter") {
                 event.preventDefault();
-                commitSelection(highlightedIndex, true);
+                commitSelection(highlightedIndex, false, keepOpenOnOptionChange);
                 return;
               }
               if (event.key === "Tab" && !event.shiftKey) {
@@ -208,6 +239,35 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               filteredOptions.map((option, index) => {
                 const isSelected = option.id === value;
                 const isHighlighted = index === highlightedIndex;
+                const optionContent = renderOption
+                  ? renderOption(option, isSelected)
+                  : <span className="truncate">{option.label}</span>;
+                const accessory = renderOptionAccessory?.(option, isSelected);
+                if (accessory) {
+                  return (
+                    <div
+                      key={option.id || "__none__"}
+                      data-inline-entity-option
+                      className={cn(
+                        "flex w-full items-center gap-1 rounded text-left text-sm transition-colors",
+                        isHighlighted && "bg-accent",
+                      )}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <button
+                        type="button"
+                        ref={isSelected ? selectedOptionButtonRef : undefined}
+                        aria-pressed={isSelected}
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors touch-manipulation hover:bg-accent/80"
+                        onClick={() => commitSelection(index, false, keepOpenOnOptionChange)}
+                      >
+                        {optionContent}
+                        <Check className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
+                      </button>
+                      <div className="min-w-0 shrink-0">{accessory}</div>
+                    </div>
+                  );
+                }
                 return (
                   <button
                     key={option.id || "__none__"}
@@ -218,9 +278,13 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
                       isHighlighted && "bg-accent",
                     )}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    onClick={() => commitSelection(index, true)}
+                    onClick={() => commitSelection(
+                      index,
+                      keepOpenOnOptionChange ? false : true,
+                      keepOpenOnOptionChange,
+                    )}
                   >
-                    {renderOption ? renderOption(option, isSelected) : <span className="truncate">{option.label}</span>}
+                    {optionContent}
                     <Check className={cn("ml-auto h-3.5 w-3.5 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
                   </button>
                 );

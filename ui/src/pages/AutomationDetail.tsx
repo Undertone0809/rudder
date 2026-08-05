@@ -1281,7 +1281,7 @@ export function AutomationDetail({
                       )}
                     </span>
                     <span data-testid="automation-activity-time" className="col-start-2 shrink-0 text-muted-foreground/70 sm:col-start-auto">
-                      {timeAgo(item.createdAt)}
+                      {timeAgo(item.createdAt, { absoluteAfterDays: 2 })}
                     </span>
                   </div>
                 ))}
@@ -1313,6 +1313,7 @@ export function AutomationDetail({
                     searchPlaceholder="Search assignees..."
                     emptyMessage="No assignees found."
                     className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
+                    keepOpenOnOptionChange
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setEditDraft((current) => ({
@@ -1358,18 +1359,20 @@ export function AutomationDetail({
                         </>
                       );
                     }}
+                    renderOptionAccessory={(option, isSelected) => (
+                      option.id && isSelected && currentAssignee && selectedOrganizationId ? (
+                        <IssueRuntimeSelector
+                          agent={currentAssignee}
+                          orgId={selectedOrganizationId}
+                          overrides={editDraft.assigneeAgentRuntimeOverrides}
+                          variant="menu"
+                          onApply={(assigneeAgentRuntimeOverrides) => {
+                            setEditDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
+                          }}
+                        />
+                      ) : null
+                    )}
                   />
-                  {currentAssignee && selectedOrganizationId ? (
-                    <IssueRuntimeSelector
-                      agent={currentAssignee}
-                      orgId={selectedOrganizationId}
-                      overrides={editDraft.assigneeAgentRuntimeOverrides}
-                      variant="menu"
-                      onApply={(assigneeAgentRuntimeOverrides) => {
-                        setEditDraft((current) => ({ ...current, assigneeAgentRuntimeOverrides }));
-                      }}
-                    />
-                  ) : null}
                 </div>
               </SidebarPropertyRow>
 
@@ -1601,7 +1604,7 @@ export function AutomationDetail({
             {!embedded ? (
               <SidebarSection title="Run status">
                 <SidebarRow label="Last ran">
-                  <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
+                  <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt, { absoluteAfterDays: 2 }) : "-"}</span>
                 </SidebarRow>
                 <SidebarRow label="Edits">
                   <span className={editSyncClassName}>{editSyncLabel}</span>

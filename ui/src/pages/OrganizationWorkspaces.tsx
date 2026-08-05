@@ -1838,7 +1838,6 @@ function OrganizationWorkspaceBrowserForOrganization({
       await copyWorkspaceText(copyValue);
       pushToast({
         title: "Library link copied",
-        body: copyValue,
         tone: "info",
       });
     } catch (error) {
@@ -1874,7 +1873,6 @@ function OrganizationWorkspaceBrowserForOrganization({
       await copyWorkspaceText(copyValue);
       pushToast({
         title: "Library link copied",
-        body: copyValue,
         tone: "info",
       });
     } catch (error) {
