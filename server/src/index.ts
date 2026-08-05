@@ -16,7 +16,9 @@ import {
   normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
+  readPostmasterPidFile,
   reconcilePendingMigrationHistory,
+  removeStalePostmasterPidFile,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
   type Db,
   type LocalPostgresInstance,
@@ -30,7 +32,7 @@ import {
 import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -661,23 +663,12 @@ async function startServerRuntime(
     const clusterVersionFile = resolve(dataDir, "PG_VERSION");
     const clusterAlreadyInitialized = existsSync(clusterVersionFile);
     const postmasterPidFile = resolve(dataDir, "postmaster.pid");
-    const isPidRunning = (pid: number): boolean => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-  
     const getRunningPid = (): number | null => {
-      if (!existsSync(postmasterPidFile)) return null;
+      const postmaster = readPostmasterPidFile(postmasterPidFile);
+      if (!postmaster?.pid) return null;
       try {
-        const pidLine = readFileSync(postmasterPidFile, "utf8").split("\n")[0]?.trim();
-        const pid = Number(pidLine);
-        if (!Number.isInteger(pid) || pid <= 0) return null;
-        if (!isPidRunning(pid)) return null;
-        return pid;
+        process.kill(postmaster.pid, 0);
+        return postmaster.pid;
       } catch {
         return null;
       }
@@ -719,9 +710,19 @@ async function startServerRuntime(
           logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
         }
 
-        if (existsSync(postmasterPidFile)) {
-          logger.warn("Removing stale embedded PostgreSQL lock file");
-          rmSync(postmasterPidFile, { force: true });
+        const removedPostmaster = removeStalePostmasterPidFile({
+          postmasterPidFile,
+          expectedDataDir: dataDir,
+        });
+        if (removedPostmaster) {
+          logger.warn(
+            {
+              stalePid: removedPostmaster.pid,
+              stalePort: removedPostmaster.port,
+              dataDir,
+            },
+            "Removed stale embedded PostgreSQL pid file before startup",
+          );
         }
         try {
           await embeddedPostgres.start();

@@ -367,7 +367,15 @@ async function main() {
 
   const sourceManifestSnapshots = await snapshotSourcePackageManifests();
   try {
-    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot, {
+    const deployTarget = path.relative(repoRoot, targetDir);
+    await run(pnpmBin, [
+      "--config.node-linker=hoisted",
+      "--filter",
+      "@rudderhq/server",
+      "--prod",
+      "deploy",
+      deployTarget,
+    ], repoRoot, {
       env: {
         PNPM_CONFIG_FORCE_LEGACY_DEPLOY: "true",
       },

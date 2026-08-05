@@ -7,6 +7,19 @@ export type LocalEnvProfile = {
   embeddedPostgresPort: string;
 };
 
+export function resolveDesktopOwnedPorts(
+  profile: LocalEnvProfile,
+  env: NodeJS.ProcessEnv = process.env,
+): Pick<LocalEnvProfile, "port" | "embeddedPostgresPort"> {
+  const smokeRun = env.RUDDER_DESKTOP_APP_NAME?.startsWith("Rudder-smoke-") === true;
+  return {
+    port: smokeRun ? (env.PORT?.trim() || profile.port) : profile.port,
+    embeddedPostgresPort: smokeRun
+      ? (env.RUDDER_EMBEDDED_POSTGRES_PORT?.trim() || profile.embeddedPostgresPort)
+      : profile.embeddedPostgresPort,
+  };
+}
+
 const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
   dev: { name: "dev", instanceId: "dev", port: "3100", embeddedPostgresPort: "54329" },
   prod_local: { name: "prod_local", instanceId: "default", port: "3200", embeddedPostgresPort: "54339" },

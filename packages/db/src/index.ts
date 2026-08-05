@@ -19,7 +19,10 @@ export {
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
   parseSysvSharedMemorySegments,
+  readPostmasterPidFile,
+  removeStalePostmasterPidFile,
   type CleanupStaleSysvSharedMemoryResult,
+  type PostmasterPidFile,
   type SysvSharedMemorySegment
 } from "./embedded-postgres-recovery.js";
 export {

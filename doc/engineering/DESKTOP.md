@@ -64,7 +64,7 @@ Low-frequency escape hatches:
 Smoke scenarios:
 
 - `pnpm --filter @rudderhq/desktop smoke` runs the development Desktop scenarios, authenticated update-session fetch smoke, and App Builder smoke.
-- `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema before relaunching.
+- `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema, simulates an interrupted shutdown by leaving a stale PostgreSQL pid file, and verifies that the next packaged launch reaches the board.
 - Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
 ## Local profiles
@@ -80,6 +80,13 @@ That means:
 - `pnpm dev` and `pnpm dev:watch` share `~/.rudder/instances/dev/`
 - `pnpm rudder run`, default local CLI usage, and packaged Desktop share `~/.rudder/instances/default/`
 
+Packaged Desktop owns the `prod_local` API and embedded PostgreSQL ports. It does
+not inherit `PORT` or `RUDDER_EMBEDDED_POSTGRES_PORT` from an updater, shell, or
+development process; smoke runs may override those ports only through their
+isolated `Rudder-smoke-*` app name. This prevents a stale development port from
+making a healthy database look like a startup compatibility failure.
+
+## Rudder Account boundary
 ## Rudder Account boundary
 
 Desktop keeps provider OAuth and native credential entry on deliberately
@@ -401,6 +408,12 @@ version. That means canary builds report `0.1.0-canary.N` from the app shell,
 the bundled local server, and the packaged `rudder --version` path instead of
 falling back to the committed stable base version.
 
+The package verification step also requires the shell, bundled server, bundled
+CLI, and first-party `@rudderhq/*` dependencies to agree on that release
+version. The Desktop release workflow then runs the packaged `upgrade` smoke
+before collecting an asset, including a real database restart and stale-pid
+recovery check.
+
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
@@ -481,13 +494,15 @@ Settings > General. With canary enabled, startup, menu, and About-page checks
 compare against the latest canary release. Beta prereleases are ignored; if a
 newer matching release exists, the app prompts the user to update.
 When the operator chooses Update, Desktop starts the bundled CLI
-`start --no-cli` replacement flow for the discovered version. That flow prepares
-the matching server runtime cache, downloads the preferred shell asset when
-available or the full portable fallback otherwise, verifies `SHASUMS256.txt`,
-requests the running Desktop shell to quit, replaces the per-user app, refreshes
-launchers, and reopens Rudder. Running Agent Runs across every organization in
-the local instance delay replacement; queued or terminal close-out records do
-not require a destructive Stop Runs decision.
+`start --no-cli --no-runtime` replacement flow for the discovered version. The
+update flow deliberately downloads the full portable asset instead of running a
+separate npm server-runtime install first: this keeps replacement independent of
+registry availability and prevents a stalled runtime install from leaving an
+updater child behind. It verifies `SHASUMS256.txt`, requests the running Desktop
+shell to quit, replaces the per-user app, refreshes launchers, and reopens Rudder.
+Running Agent Runs across every organization in the local instance delay
+replacement; queued or terminal close-out records do not require a destructive
+Stop Runs decision.
 
 The main process performs the initial and final running-work checks through
 Electron's session-backed `defaultSession.fetch`, including credentials. The
@@ -541,7 +556,6 @@ Fresh-install smoke proves the target installer only; it is not a substitute
 for the old updater executing the migration.
 
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
-installs still download the server runtime and a Desktop app, but routine
-macOS/Windows Desktop updates avoid redownloading the server runtime when the
-release provides a shell asset and the matching runtime cache has already been
-prepared.
+installs may use the smaller shell asset when the matching runtime cache is
+prepared; in-app macOS/Windows updates use the full portable asset so the
+replacement path does not depend on a second registry-backed runtime install.

@@ -5507,6 +5507,26 @@ async function runUpgradeScenario(mode) {
   await degradeIssueSchema(runtimeUrls.databaseUrl);
   await closeDesktop(firstRun.electronApp);
 
+  // Simulate the exact interrupted-shutdown state that users can carry across
+  // a Desktop update. The cluster remains valid; only PostgreSQL's pid file
+  // points at a process that no longer exists. A release must recover this
+  // state before it reaches the authenticated board.
+  await writeFile(
+    paths.postmasterPidPath,
+    [
+      String(Number.MAX_SAFE_INTEGER),
+      path.join(paths.instanceRoot, "db"),
+      "0",
+      String(ports.dbPort),
+      "",
+      "127.0.0.1",
+      "",
+      "ready",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
   const secondRun = await launchDesktop(scenarioRoot, mode, ports);
   const company = await createCompany(secondRun.baseUrl);
   await verifyBundledSkills(secondRun.baseUrl, company.id);
