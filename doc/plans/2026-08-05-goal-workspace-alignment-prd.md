@@ -392,8 +392,10 @@ The current Goal is explicitly an evolving understanding. The Workspace may
 show a quiet version history or `Updated from evidence and feedback` label, but
 it should not ask the user to manage Contract revisions.
 
-The first delivery embeds a compact feedback timeline and composer, not a full
-Messenger conversation. Related Messenger conversations may open through
+The standard Goal Workspace uses a compact embedded feedback timeline and
+composer, not a full Messenger conversation. Slice 1 renders existing Activity
+and evidence as read-only history; Slice 2 adds the feedback composer and
+durable feedback handling. Related Messenger conversations may open through
 links. A primary conversation relation may be added later, but it is not a
 dependency for direct creation or Workspace continuity.
 
@@ -753,13 +755,14 @@ Run success, Issue completion, or reviewer confidence directly into Proof.
 
 ### Goal conversation context (later slice)
 
-The first Workspace uses its own embedded feedback timeline and existing linked
-work. A later slice may add one primary durable conversation relation if user
-research shows that the timeline is insufficient. If added, directly created
-Goals may create a conversation context and Messenger-created Goals may reuse
-the originating conversation when organization and visibility boundaries match.
-This relation must remain optional in the read model; the user must not have to
-switch between Messenger and Goal configuration to preserve alignment.
+Slice 1 uses read-only Activity and evidence history plus existing linked work.
+Slice 2 adds the embedded feedback timeline. A later slice may add one primary
+durable conversation relation if user research shows that the timeline is
+insufficient. If added, directly created Goals may create a conversation
+context and Messenger-created Goals may reuse the originating conversation when
+organization and visibility boundaries match. This relation must remain
+optional in the read model; the user must not have to switch between Messenger
+and Goal configuration to preserve alignment.
 
 ### Compatibility with current commands
 
@@ -929,7 +932,8 @@ This is the only authorized first implementation scope:
 - keep low-level activation and command controls available only in developer or
   debug mode during migration
 
-This slice does not add Messenger creation, a primary conversation relation,
+This slice does not add a feedback composer, derived board facets, the mobile
+attention-sorted list, Messenger creation, a primary conversation relation,
 automatic progress claims from new sources, Goal Change Proposal persistence,
 Result Proposal persistence, or public rollout. Its acceptance target is a
 clear and safe vertical path over the existing backend, not the whole future
@@ -1011,28 +1015,29 @@ Slice 1 release gate:
 6. Verify the normal Workspace contains no low-level activation, Plan mutation,
    Activity submission, or Evaluate controls, while developer/debug mode still
    exposes governed diagnostics.
-7. Verify desktop and mobile detail, keyboard focus, long content, dense
-   history, loading, error, retry, and empty states. Verify the mobile Goal list
-   is attention-sorted and Goal cards cannot be dragged or assigned Issue status.
+7. Verify desktop and constrained-mobile Goal Detail, keyboard focus, long
+   content, dense read-only history, loading, error, retry, and empty states.
 
 Later-slice gates:
 
-8. Generate progress from a successful Run with valid evidence, then complete
+8. Verify desktop derived facets and the attention-sorted mobile Goal list;
+   verify Goal cards cannot be dragged or assigned Issue status.
+9. Generate progress from a successful Run with valid evidence, then complete
    several Issues without moving the external outcome and verify Goal progress
    does not falsely advance.
-9. Record negative evidence; verify the Agent changes strategy without claiming
+10. Record negative evidence; verify the Agent changes strategy without claiming
    success. Add ordinary feedback and verify it does not become approval.
-10. Submit a consequential target-audience or success-threshold change; verify
+11. Submit a consequential target-audience or success-threshold change; verify
     persisted before/after approval, unchanged state before approval, stale
     proposal supersession, and idempotent application.
-11. Enter a waiting condition, end the Run, restart, and resume after the
+12. Enter a waiting condition, end the Run, restart, and resume after the
     condition becomes true.
-12. Submit a result proposal with missing evidence and verify no Proof; then
+13. Submit a result proposal with missing evidence and verify no Proof; then
     preflight a valid proposal, reject it with feedback, continue work, and
     submit and accept a later result exactly once.
-13. Attempt cross-organization Goal, Owner, proposal, evidence, conversation,
+14. Attempt cross-organization Goal, Owner, proposal, evidence, conversation,
     and approval references; verify rejection.
-14. Create a Goal from Messenger and verify it uses the same preview,
+15. Create a Goal from Messenger and verify it uses the same preview,
     activation packet, Draft fallback, and Goal identity as direct creation.
 
 ### Expected results
@@ -1124,10 +1129,11 @@ must not choose differently on its own.
    selected, capable, same-organization Agent Owner.
 3. Ambiguous intent or missing Owner yields `Save draft` and one alignment
    question. Draft Goals execute nothing, including bounded discovery.
-4. The first Goal Workspace contains an embedded progress and feedback timeline,
-   not a full Messenger conversation.
-5. Desktop may use derived attention columns. Mobile uses one attention-sorted
-   Goal list, not horizontal columns.
+4. Slice 1 shows existing Activity and evidence as read-only history. Slice 2
+   adds the embedded Goal feedback timeline and composer; it does not embed a
+   full Messenger conversation.
+5. Slice 2 introduces derived attention columns on desktop and one
+   attention-sorted Goal list on mobile, not horizontal mobile columns.
 6. Low-level Contract and mutation controls are available only in developer or
    debug mode during migration. Standard users do not receive an `Advanced`
    escape hatch that recreates the operator workflow.
