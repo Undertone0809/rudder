@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import {
   buildRunIssueDiagnostics,
@@ -41,6 +42,7 @@ export function RunIssueReportDialog({
 }) {
   const [diagnostics, setDiagnostics] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
+  const diagnosticsScrollRef = useScrollbarActivityRef();
 
   useEffect(() => {
     if (!open) return;
@@ -79,16 +81,17 @@ export function RunIssueReportDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <label htmlFor="run-issue-diagnostics" className="text-sm font-medium">
             Diagnostics to include
           </label>
           <Textarea
             id="run-issue-diagnostics"
             data-testid="run-issue-diagnostics"
+            ref={diagnosticsScrollRef}
             value={diagnostics}
             onChange={(event) => setDiagnostics(event.target.value)}
-            className="min-h-72 resize-y font-mono text-xs leading-5"
+            className="field-sizing-fixed scrollbar-auto-hide min-h-[min(18rem,45dvh)] min-w-0 max-h-[min(22rem,45dvh)] resize-y overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-all font-mono text-xs leading-5"
             spellCheck={false}
           />
           <p className="text-xs text-muted-foreground">

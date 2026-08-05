@@ -224,6 +224,15 @@ test.describe("Agent runs filter menu", () => {
     const reportDialog = page.getByRole("dialog", { name: "Report this run failure" });
     await expect(reportDialog).toBeVisible();
     const diagnostics = reportDialog.getByTestId("run-issue-diagnostics");
+    await expect(diagnostics).toHaveClass(/field-sizing-fixed/);
+    await expect(diagnostics).toHaveClass(/min-h-\[min\(18rem,45dvh\)\]/);
+    await expect(diagnostics).toHaveClass(/max-h-\[min\(22rem,45dvh\)\]/);
+    await expect(diagnostics).toHaveClass(/overflow-x-hidden/);
+    await expect(diagnostics).toHaveClass(/overflow-y-auto/);
+    await expect(diagnostics).toHaveClass(/whitespace-pre-wrap/);
+    await expect(diagnostics).toHaveClass(/break-all/);
+    expect(await diagnostics.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    expect(await diagnostics.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     const diagnosticValue = await diagnostics.inputValue();
     expect(diagnosticValue).toContain(`Run ID: ${failedRunId}`);
     expect(diagnosticValue).toContain("Error code: process_lost");
