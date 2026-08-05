@@ -219,6 +219,7 @@ interface ActivityRowProps {
   entityTitleMap?: Map<string, string>;
   className?: string;
   currentBoardUserId?: string | null;
+  currentBoardUserAvatarUrl?: string | null;
   operatorDisplayName?: string | null;
 }
 
@@ -229,6 +230,7 @@ export function ActivityRow({
   entityTitleMap,
   className,
   currentBoardUserId,
+  currentBoardUserAvatarUrl,
   operatorDisplayName,
 }: ActivityRowProps) {
   const parentChange = event.action === "issue.updated" ? issueParentChange(event.details) : null;
@@ -252,6 +254,9 @@ export function ActivityRow({
 
   const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
   const actorName = actor?.name ?? resolveActivityActorName(event, agentMap, currentBoardUserId, operatorDisplayName);
+  const actorAvatarUrl = event.actorType === "user" && event.actorId === currentBoardUserId
+    ? currentBoardUserAvatarUrl
+    : undefined;
   const entityLabel = activityEntityLabel(event.entityType);
 
   const entityLinkNode = name && link ? (
@@ -276,6 +281,7 @@ export function ActivityRow({
         ) : (
           <Identity
             name={actorName}
+            avatarUrl={actorAvatarUrl}
             size="xs"
             className="items-center align-middle [&_[data-slot=avatar]]:top-0"
           />
