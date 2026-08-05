@@ -2503,19 +2503,19 @@
   }
 
   .chat-scroll-map-preview {
-    --foreground: rgb(255 255 255 / 0.96);
-    --muted-foreground: rgb(255 255 255 / 0.68);
-    --accent: rgb(255 255 255 / 0.12);
-    --border: rgb(255 255 255 / 0.18);
+    --foreground: var(--ink-strong);
+    --muted-foreground: var(--ink-muted);
+    --accent: var(--surface-active);
+    --border: var(--border-base);
   }
 
   .chat-scroll-map-preview-title {
-    --foreground: rgb(255 255 255 / 0.96);
+    --foreground: var(--ink-strong);
     color: var(--foreground);
   }
 
   .chat-scroll-map-preview-summary {
-    --foreground: rgb(255 255 255 / 0.68);
+    --foreground: var(--ink-muted);
     color: var(--foreground);
   }
 
