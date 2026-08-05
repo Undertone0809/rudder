@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createDesktopBrowserApiClient } from "../dist/browser-broker-registration.js";
 import { createDesktopQuitFlow } from "../dist/desktop-quit-flow.js";
 
 const sessionCookieName = "better-auth.session_token";
@@ -56,6 +57,24 @@ async function run() {
       json(response, 200, []);
       return;
     }
+    if (request.url === "/api/instance/settings/browser") {
+      json(response, 200, { enabled: true, openLinksIn: "built_in" });
+      return;
+    }
+    if (request.url === "/api/instance/browser/broker") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (request.url === "/api/heartbeat-runs/run-smoke") {
+      json(response, 200, {
+        id: "run-smoke",
+        orgId: "org-smoke",
+        agentId: "agent-smoke",
+        status: "running",
+      });
+      return;
+    }
     json(response, 404, { error: "Not found" });
   });
   await new Promise((resolve, reject) => {
@@ -69,6 +88,8 @@ async function run() {
 
   const anonymousResponse = await fetch(`${baseUrl}/api/orgs`, { credentials: "include" });
   assert.equal(anonymousResponse.status, 401, "anonymous main-process fetch must reproduce the updater auth failure");
+  const anonymousBrowserResponse = await fetch(`${baseUrl}/api/instance/settings/browser`, { credentials: "include" });
+  assert.equal(anonymousBrowserResponse.status, 401, "anonymous main-process Browser fetch must be rejected");
   console.log("[update-session-smoke] anonymous request rejected");
 
   await session.defaultSession.cookies.set({
@@ -78,6 +99,18 @@ async function run() {
     httpOnly: true,
   });
   console.log("[update-session-smoke] session cookie installed");
+  const browserApi = createDesktopBrowserApiClient(
+    (input, init) => session.defaultSession.fetch(input, init),
+  );
+  assert.deepEqual(await browserApi.readSettings(baseUrl), { enabled: true, openLinksIn: "built_in" });
+  const broker = { endpoint: "http://127.0.0.1:43123/browser", token: "b".repeat(64) };
+  await browserApi.registerBroker(baseUrl, broker);
+  await browserApi.unregisterBroker(baseUrl, broker.token);
+  assert.equal(await browserApi.isRunActive(baseUrl, {
+    orgId: "org-smoke",
+    agentId: "agent-smoke",
+    runId: "run-smoke",
+  }), true);
   const quitFlow = createDesktopQuitFlow({
     appName: "Rudder",
     getMainWindow: () => null,
@@ -93,7 +126,14 @@ async function run() {
     organizations: [],
     blockers: [],
   });
-  assert.deepEqual(authenticatedPaths, ["/api/orgs", "/api/orgs/org-smoke/live-runs"]);
+  assert.deepEqual([...authenticatedPaths].sort(), [
+    "/api/orgs",
+    "/api/instance/settings/browser",
+    "/api/instance/browser/broker",
+    "/api/instance/browser/broker",
+    "/api/heartbeat-runs/run-smoke",
+    "/api/orgs/org-smoke/live-runs",
+  ].sort());
   console.log("Desktop update session fetch smoke passed.");
 }
 
