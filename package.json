@@ -45,6 +45,7 @@
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "test:e2e": "npx playwright test --config tests/e2e/playwright.config.ts",
+    "test:smoke": "npx playwright test --config tests/e2e/playwright.config.ts --grep @smoke",
     "test:identity-ui": "playwright test --config tests/identity-ui/playwright.config.ts",
     "test:e2e:headed": "npx playwright test --config tests/e2e/playwright.config.ts --headed",
     "test:docs-search": "playwright test --config tests/docs-search/playwright.config.ts",
