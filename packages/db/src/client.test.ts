@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import { afterEach, describe, expect, it } from "vitest";
+import { runDatabaseBackup, runDatabaseRestore } from "./backup-lib.js";
 import {
   applyPendingMigrations,
   ensurePostgresDatabase,
@@ -501,6 +502,205 @@ describe("applyPendingMigrations", () => {
       }
     },
     migrationTestTimeout(20_000),
+  );
+
+  it(
+    "preserves dormant legacy plugin storage across restart, upgrade, and backup restore",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const pluginId = "00000000-0000-0000-0000-000000000202";
+      const jobId = "00000000-0000-0000-0000-000000000206";
+      const legacyTables = [
+        "plugin_config",
+        "plugin_entities",
+        "plugin_job_runs",
+        "plugin_jobs",
+        "plugin_logs",
+        "plugin_organization_settings",
+        "plugin_state",
+        "plugin_webhook_deliveries",
+        "plugins",
+      ];
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES ('00000000-0000-0000-0000-000000000201', 'legacy-plugin-storage', 'Legacy Plugin Storage', 'LPS')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugins" (
+            "id", "plugin_key", "package_name", "version", "categories",
+            "manifest_json", "status", "package_path"
+          ) VALUES (
+            '${pluginId}', 'legacy-linear', '@legacy/linear', '1.2.3',
+            '["integration"]'::jsonb, '{"name":"Linear","apiVersion":1}'::jsonb,
+            'active', '/legacy/plugins/linear'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_config" ("id", "plugin_id", "config_json", "last_error")
+          VALUES (
+            '00000000-0000-0000-0000-000000000203', '${pluginId}',
+            '{"token":"preserved","team":"ENG"}'::jsonb, 'historical config error'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_state" (
+            "id", "plugin_id", "scope_kind", "scope_id", "namespace", "state_key", "value_json"
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000204', '${pluginId}',
+            'organization', '00000000-0000-0000-0000-000000000201',
+            'sync', 'cursor', '{"after":"LIN-42"}'::jsonb
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_entities" (
+            "id", "plugin_id", "entity_type", "scope_kind", "scope_id",
+            "external_id", "title", "status", "data"
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000205', '${pluginId}', 'issue',
+            'organization', '00000000-0000-0000-0000-000000000201',
+            'LIN-42', 'Preserved issue', 'closed', '{"priority":2}'::jsonb
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_jobs" ("id", "plugin_id", "job_key", "schedule", "status")
+          VALUES ('${jobId}', '${pluginId}', 'sync', '0 * * * *', 'paused')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_job_runs" (
+            "id", "job_id", "plugin_id", "trigger", "status", "duration_ms", "logs"
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000207', '${jobId}', '${pluginId}',
+            'scheduled', 'succeeded', 1250, '["legacy run complete"]'::jsonb
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_webhook_deliveries" (
+            "id", "plugin_id", "webhook_key", "external_id", "status",
+            "duration_ms", "payload", "headers"
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000208', '${pluginId}', 'linear-event',
+            'delivery-42', 'succeeded', 25, '{"type":"Issue"}'::jsonb,
+            '{"x-delivery-id":"delivery-42"}'::jsonb
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_organization_settings" (
+            "id", "org_id", "plugin_id", "enabled", "settings_json", "last_error"
+          ) VALUES (
+            '00000000-0000-0000-0000-000000000209',
+            '00000000-0000-0000-0000-000000000201', '${pluginId}', false,
+            '{"project":"ENG"}'::jsonb, 'disabled before removal'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "plugin_logs" ("id", "plugin_id", "level", "message", "meta")
+          VALUES (
+            '00000000-0000-0000-0000-000000000210', '${pluginId}', 'warn',
+            'legacy log preserved', '{"attempt":3}'::jsonb
+          )
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const readSnapshot = async (databaseUrl: string) => {
+        const readSql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+        try {
+          const tables = await readSql.unsafe<{ table_name: string }[]>(`
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name LIKE 'plugin%'
+            ORDER BY table_name
+          `);
+          const [data] = await readSql.unsafe<{
+            counts: Record<string, number>;
+            config: Record<string, unknown>;
+            entity: Record<string, unknown>;
+            job: Record<string, unknown>;
+            job_logs: string[];
+            log_entry: Record<string, unknown>;
+            manifest: Record<string, unknown>;
+            org_settings: Record<string, unknown>;
+            state: Record<string, unknown>;
+            webhook: Record<string, unknown>;
+          }[]>(`
+            SELECT
+              jsonb_build_object(
+                'plugin_config', (SELECT count(*)::int FROM "plugin_config" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_entities', (SELECT count(*)::int FROM "plugin_entities" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_job_runs', (SELECT count(*)::int FROM "plugin_job_runs" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_jobs', (SELECT count(*)::int FROM "plugin_jobs" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_logs', (SELECT count(*)::int FROM "plugin_logs" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_organization_settings', (SELECT count(*)::int FROM "plugin_organization_settings" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_state', (SELECT count(*)::int FROM "plugin_state" WHERE "plugin_id" = '${pluginId}'),
+                'plugin_webhook_deliveries', (SELECT count(*)::int FROM "plugin_webhook_deliveries" WHERE "plugin_id" = '${pluginId}'),
+                'plugins', (SELECT count(*)::int FROM "plugins" WHERE "id" = '${pluginId}')
+              ) AS counts,
+              (SELECT "manifest_json" FROM "plugins" WHERE "id" = '${pluginId}') AS manifest,
+              (SELECT "config_json" FROM "plugin_config" WHERE "plugin_id" = '${pluginId}') AS config,
+              (SELECT "value_json" FROM "plugin_state" WHERE "plugin_id" = '${pluginId}') AS state,
+              (SELECT "data" FROM "plugin_entities" WHERE "plugin_id" = '${pluginId}') AS entity,
+              (SELECT jsonb_build_object('schedule', "schedule", 'status', "status") FROM "plugin_jobs" WHERE "id" = '${jobId}') AS job,
+              (SELECT "logs" FROM "plugin_job_runs" WHERE "plugin_id" = '${pluginId}') AS job_logs,
+              (SELECT jsonb_build_object('payload', "payload", 'headers', "headers") FROM "plugin_webhook_deliveries" WHERE "plugin_id" = '${pluginId}') AS webhook,
+              (SELECT "settings_json" FROM "plugin_organization_settings" WHERE "plugin_id" = '${pluginId}') AS org_settings,
+              (SELECT jsonb_build_object('message', "message", 'meta', "meta") FROM "plugin_logs" WHERE "plugin_id" = '${pluginId}') AS log_entry
+          `);
+          const foreignKeys = await readSql.unsafe<{ conname: string }[]>(`
+            SELECT conname
+            FROM pg_constraint
+            WHERE contype = 'f'
+              AND conrelid::regclass::text LIKE 'plugin%'
+            ORDER BY conname
+          `);
+          return {
+            tables: tables.map((row) => row.table_name),
+            data,
+            foreignKeys: foreignKeys.map((row) => row.conname),
+          };
+        } finally {
+          await readSql.end();
+        }
+      };
+
+      const beforeRestart = await readSnapshot(connectionString);
+      expect(beforeRestart.tables).toEqual(legacyTables);
+      expect(beforeRestart.data?.counts).toEqual(Object.fromEntries(legacyTables.map((table) => [table, 1])));
+      expect(beforeRestart.foreignKeys).toHaveLength(10);
+
+      const instance = runningInstances.at(-1);
+      expect(instance).toBeDefined();
+      await instance!.stop();
+      await instance!.start();
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+      expect(await readSnapshot(connectionString)).toEqual(beforeRestart);
+
+      const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-legacy-plugin-backup-"));
+      tempPaths.push(backupDir);
+      const backup = await runDatabaseBackup({
+        connectionString,
+        backupDir,
+        retentionDays: 1,
+        includeMigrationJournal: true,
+      });
+
+      const restoreAdminUrl = new URL(connectionString);
+      restoreAdminUrl.pathname = "/postgres";
+      await ensurePostgresDatabase(restoreAdminUrl.toString(), "rudder_restore");
+      const restoreUrl = new URL(connectionString);
+      restoreUrl.pathname = "/rudder_restore";
+      await runDatabaseRestore({ connectionString: restoreUrl.toString(), backupFile: backup.backupFile });
+
+      expect((await inspectMigrations(restoreUrl.toString())).status).toBe("upToDate");
+      expect(await readSnapshot(restoreUrl.toString())).toEqual(beforeRestart);
+    },
+    60_000,
   );
 
   it(
