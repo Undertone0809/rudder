@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -669,7 +669,7 @@ test.describe("Chat streaming", () => {
     });
   });
 
-  test("highlights the chat composer boundary while an agent response is streaming", async ({ page }) => {
+  test("keeps the chat composer boundary static while an agent response is streaming", async ({ page }, testInfo: TestInfo) => {
     const organization = await createStreamingOrg(page, `Ring-Chat-${Date.now()}`);
 
     await page.goto("/");
@@ -688,8 +688,51 @@ test.describe("Chat streaming", () => {
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
     await expect(composerSurface).toHaveClass(/chat-composer--streaming/, { timeout: 15_000 });
 
-    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
+    const streamingBoundary = await composerSurface.evaluate((element) => {
+      const before = getComputedStyle(element, "::before");
+      return {
+        animationName: before.animationName,
+        animationDuration: before.animationDuration,
+        backgroundImage: before.backgroundImage,
+      };
+    });
+    expect(streamingBoundary.animationName).toBe("none");
+    expect(streamingBoundary.animationDuration).toBe("0s");
+    expect(streamingBoundary.backgroundImage).not.toContain("conic-gradient");
+
+    const frameSamples = await composerSurface.evaluate(async (element) => {
+      const samples: Array<{ animationName: string; backgroundImage: string }> = [];
+      for (let index = 0; index < 90; index += 1) {
+        const before = getComputedStyle(element, "::before");
+        samples.push({
+          animationName: before.animationName,
+          backgroundImage: before.backgroundImage,
+        });
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      return samples;
+    });
+    expect(new Set(frameSamples.map((sample) => sample.animationName))).toEqual(new Set(["none"]));
+    expect(new Set(frameSamples.map((sample) => sample.backgroundImage)).size).toBe(1);
+
+    await composerSurface.screenshot({ path: testInfo.outputPath("chat-composer-streaming-light.png") });
+
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+      document.documentElement.classList.add("dark");
+    });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await composerSurface.screenshot({ path: testInfo.outputPath("chat-composer-streaming-dark.png") });
+    const darkStreamingAnimation = await composerSurface.evaluate((element) =>
+      getComputedStyle(element, "::before").animationName,
+    );
+    expect(darkStreamingAnimation).toBe("none");
+
+    await page.getByRole("button", { name: "Stop streaming" }).click();
+    await expect(page.getByText("Response stopped")).toBeVisible({ timeout: 15_000 });
     await expect(composerSurface).not.toHaveClass(/chat-composer--streaming/, { timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
+    await composerSurface.screenshot({ path: testInfo.outputPath("chat-composer-idle-after-stop.png") });
   });
 
   test("keeps generating when the operator leaves the chat page", async ({ page }) => {

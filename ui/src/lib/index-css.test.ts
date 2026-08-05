@@ -191,7 +191,7 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain("animation: none");
   });
 
-  it("keeps the chat composer streaming ring integrated with the input surface", () => {
+  it("keeps the chat composer streaming boundary static and integrated with the input surface", () => {
     const composerStreaming =
       indexCss.match(/\n\s*\.chat-composer\.chat-composer--streaming \{\s*\n\s*--active-surface-ring-width: 2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const composerRing =
@@ -203,8 +203,10 @@ describe("index.css motion rules", () => {
     expect(composerStreaming).toContain("inset 0 1px 0");
     expect(composerRing).toContain("inset: -2px");
     expect(composerRing).toContain("border-radius: calc(var(--radius-lg) + 2px)");
-    expect(composerRing).toContain("opacity: 0.88");
-    expect(composerRing).toContain("var(--ring) 78%");
+    expect(composerRing).toContain("background: color-mix(in oklab, var(--accent-base) 26%, transparent)");
+    expect(composerRing).toContain("opacity: 0.55");
+    expect(composerRing).toContain("animation: none");
+    expect(composerRing).not.toContain("var(--command-palette-search-angle)");
     expect(composerRing).toContain("filter: drop-shadow");
   });
 
