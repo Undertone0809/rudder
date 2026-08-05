@@ -1699,18 +1699,10 @@
   .chat-composer--streaming::before {
     inset: -2px;
     border-radius: calc(var(--radius-lg) + 2px);
-    background:
-      conic-gradient(
-          from var(--command-palette-search-angle),
-          transparent 0deg 46deg,
-          color-mix(in oklab, var(--accent-base) 28%, transparent) 78deg,
-          color-mix(in oklab, var(--ring) 78%, white) 118deg,
-          color-mix(in oklab, var(--accent-base) 30%, transparent) 164deg,
-          transparent 218deg 360deg
-        )
-        border-box;
-    opacity: 0.88;
-    filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent-base) 26%, transparent));
+    background: color-mix(in oklab, var(--accent-base) 26%, transparent);
+    opacity: 0.55;
+    animation: none;
+    filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent-base) 16%, transparent));
   }
 
   .active-surface-ring::after,
