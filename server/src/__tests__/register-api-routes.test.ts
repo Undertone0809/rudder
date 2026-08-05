@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { registerApiRoutes } from "../bootstrap/register-api-routes.js";
 
 describe("registerApiRoutes", () => {
-  it("builds the API router without bootstrapping the plugin host", () => {
+  it("builds the API router from the current server dependencies", () => {
     const router = registerApiRoutes(
       {} as never,
       {
@@ -15,15 +15,6 @@ describe("registerApiRoutes", () => {
         bindHost: "127.0.0.1",
         authReady: true,
         companyDeletionEnabled: false,
-      },
-      {
-        loader: {} as never,
-        scheduler: {} as never,
-        jobStore: {} as never,
-        workerManager: {} as never,
-        toolDispatcher: {} as never,
-        start: async () => undefined,
-        close: async () => undefined,
       },
     );
 
