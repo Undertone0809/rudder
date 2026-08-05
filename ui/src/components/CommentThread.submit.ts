@@ -74,6 +74,24 @@ export function useCommentSubmit({
   const submissionInFlightRef = useRef(false);
   const validAgentIds = useMemo(() => new Set(agentMap?.keys() ?? []), [agentMap]);
 
+  function restoreEditorFocus() {
+    editorRef.current?.focus();
+    if (typeof window !== "undefined") {
+      const retry = () => {
+        const activeElement = document.activeElement;
+        if (
+          !activeElement
+          || activeElement === document.body
+          || activeElement instanceof HTMLElement && activeElement.closest('[role="dialog"]')
+        ) {
+          editorRef.current?.focus();
+        }
+      };
+      window.requestAnimationFrame(retry);
+      window.setTimeout(retry, 250);
+    }
+  }
+
   async function handleSubmit() {
     if (submissionInFlightRef.current) return;
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
@@ -96,11 +114,14 @@ export function useCommentSubmit({
           confirmLabel: translateMessage(locale, "comments.unmentionedConfirm.confirm"),
           restoreFocus: (confirmed) => {
             if (confirmed) composerSurfaceRef.current?.focus({ preventScroll: true });
-            else editorRef.current?.focus();
+            else restoreEditorFocus();
           },
         });
         setConfirmingUnmentioned(false);
-        if (!confirmed) return;
+        if (!confirmed) {
+          restoreEditorFocus();
+          return;
+        }
       }
 
       setSubmitting(true);

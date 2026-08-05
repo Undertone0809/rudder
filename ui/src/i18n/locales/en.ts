@@ -40,9 +40,10 @@ export const en = {
   "common.unknown": "unknown",
   "common.cancel": "Cancel",
   "comments.unmentionedConfirm.title": "No Agent mentioned",
-  "comments.unmentionedConfirm.description": "You didn't mention an Agent. Send this comment anyway? It won't wake an Agent and may not be handled promptly.",
-  "comments.unmentionedConfirm.cancel": "Return and mention an Agent",
-  "comments.unmentionedConfirm.confirm": "Send directly",
+  "comments.unmentionedConfirm.description":
+    "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",
+  "comments.unmentionedConfirm.cancel": "Add an @ mention",
+  "comments.unmentionedConfirm.confirm": "Send anyway",
   "common.privacyTelemetry": "Privacy & Telemetry",
   "privacyTelemetry.title": "Privacy & Telemetry",
   "privacyTelemetry.description": "Choose whether Rudder may send privacy-bounded product milestones. The default keeps facts on this installation.",

@@ -11,6 +11,7 @@ related_code:
   - server/src/routes/issues.mutations.ts
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
   - server/src/services/issue-review-wakeup.ts
+  - ui/src/components/CommentThread.submit.ts
 related_tests:
   - server/src/__tests__/issue-lifecycle-routes.test.ts
   - tests/e2e/issue-comment-mentions.spec.ts
@@ -99,20 +100,24 @@ Flow:
 
 1. Comment creation or editing emits issue-local evidence under
    `ISSUE.COMMENTS.001`.
-2. Routing parses explicit wake mentions such as agent links with wake intent.
+2. The issue-comment composer may require explicit operator confirmation before
+   posting a comment with no valid Agent wake mention. This is a localized
+   submission guard only; it does not add a wake target or alter routing.
+3. Routing parses explicit wake mentions such as agent links with wake intent.
    For an edit, it compares the persisted old body with the canonical updated
    body under a row lock and considers only newly added target agents.
    The route then asks heartbeat execution to wake those newly added targets.
-3. Ordinary comments without wake mentions do not enqueue agent wakeups.
-4. Reopen comment wake uses `issue_reopened_via_comment`. If the assignee is
+4. Ordinary comments without wake mentions do not enqueue agent wakeups after
+   the operator confirms submission.
+5. Reopen comment wake uses `issue_reopened_via_comment`. If the assignee is
    eligible to wake and was not mentioned by the author, Rudder appends a wake
    mention for the assignee to the persisted comment before enqueueing.
-5. Mention wake uses `issue_comment_mentioned` and is scoped to the source
+6. Mention wake uses `issue_comment_mentioned` and is scoped to the source
    comment by `wakeCommentId`. Its context records the target's current issue
    relationship.
-6. Self-wakes are skipped so an agent does not immediately wake because of its
+7. Self-wakes are skipped so an agent does not immediately wake because of its
    own comment.
-7. Per-comment target wakes are merged before heartbeat wakeup is called.
+8. Per-comment target wakes are merged before heartbeat wakeup is called.
 
 Invariants:
 
@@ -125,6 +130,9 @@ Invariants:
   not gain issue ownership.
 - A plain issue comment does not wake the assignee unless the assignee is also
   a wake-mentioned target.
+- The composer warning for an unmentioned comment does not convert a plain
+  comment into a wake request; the operator may still explicitly confirm and
+  post it as ordinary collaboration evidence.
 - A reopen comment that auto-appends the assignee mention still records the
   assignee wake as `issue_reopened_via_comment`; the appended mention is
   user-visible evidence, not a separate reason.

@@ -4,6 +4,13 @@ import { E2E_CODEX_STUB } from "./support/e2e-env";
 test("issue comments require confirmation unless they direct a real Agent mention", async ({ page }) => {
   test.setTimeout(90_000);
 
+  let forcedLocale: "en" | "zh-CN" = "en";
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, uiLocale: forcedLocale } });
+  });
+
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Issue-Comment-Send-Confirmation-${Date.now()}` },
   });
@@ -44,7 +51,7 @@ test("issue comments require confirmation unless they direct a real Agent mentio
 
   const activity = page.getByRole("region", { name: "Activity" });
   await expect(activity).toBeVisible();
-  const composer = activity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+  const composer = activity.getByTestId("issue-comment-composer-editor-scroll").locator("[contenteditable='true']").last();
   const commentButton = activity.getByRole("button", { name: "Comment" }).last();
   await expect(composer).toBeVisible();
 
@@ -64,10 +71,10 @@ test("issue comments require confirmation unless they direct a real Agent mentio
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("You didn't mention an Agent. Send this comment anyway?");
+  await expect(dialog).toContainText("You did not @ any Agent. Send this comment anyway?");
   expect(commentPostCount).toBe(0);
 
-  await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+  await dialog.getByRole("button", { name: "Add an @ mention" }).click();
   await expect(dialog).toBeHidden();
   await expect(composer).toContainText("General project note");
   await expect(composer).toBeFocused();
@@ -79,7 +86,7 @@ test("issue comments require confirmation unless they direct a real Agent mentio
     response.request().method() === "POST"
     && new URL(response.url()).pathname === `/api/issues/${issueRef}/comments`
   );
-  await dialog.getByRole("button", { name: "Send directly" }).click();
+  await dialog.getByRole("button", { name: "Send anyway" }).click();
   const ordinaryCommentResponse = await ordinaryCommentResponsePromise;
   expect(ordinaryCommentResponse.ok()).toBe(true);
   await expect(dialog).toBeHidden();
@@ -91,7 +98,7 @@ test("issue comments require confirmation unless they direct a real Agent mentio
   await commentButton.click();
   await expect(dialog).toBeVisible();
   expect(commentPostCount).toBe(1);
-  await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+  await dialog.getByRole("button", { name: "Add an @ mention" }).click();
   await expect(composer).toBeFocused();
 
   await composer.fill("");
@@ -156,7 +163,7 @@ test("issue comments require confirmation unless they direct a real Agent mentio
 
   await page.goto(`/${organization.issuePrefix}/issues/${agentReopenIssueRef}`);
   const agentReopenActivity = page.getByRole("region", { name: "Activity" });
-  const agentReopenComposer = agentReopenActivity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+  const agentReopenComposer = agentReopenActivity.getByTestId("issue-comment-composer-editor-scroll").locator("[contenteditable='true']").last();
   const agentReopenButton = agentReopenActivity.getByRole("button", { name: "Comment" }).last();
   await expect(agentReopenActivity.getByRole("checkbox", { name: "Re-open" })).toBeChecked();
   await agentReopenComposer.click();
@@ -199,14 +206,14 @@ test("issue comments require confirmation unless they direct a real Agent mentio
 
   await page.goto(`/${organization.issuePrefix}/issues/${userReopenIssueRef}`);
   const userReopenActivity = page.getByRole("region", { name: "Activity" });
-  const userReopenComposer = userReopenActivity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+  const userReopenComposer = userReopenActivity.getByTestId("issue-comment-composer-editor-scroll").locator("[contenteditable='true']").last();
   const userReopenButton = userReopenActivity.getByRole("button", { name: "Comment" }).last();
   await expect(userReopenActivity.getByRole("checkbox", { name: "Re-open" })).toBeChecked();
   await userReopenComposer.click();
   await page.keyboard.type("This reopen still needs an Agent");
   await userReopenButton.click();
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+  await dialog.getByRole("button", { name: "Add an @ mention" }).click();
   await expect(userReopenComposer).toContainText("This reopen still needs an Agent");
   await expect(userReopenComposer).toBeFocused();
 
@@ -250,10 +257,25 @@ test("issue comments require confirmation unless they direct a real Agent mentio
     const commentPostsBeforeBlockedReopen = commentPostCount;
     await blockedCommentButton.click();
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("You didn't mention an Agent. Send this comment anyway?");
+    await expect(dialog).toContainText("You did not @ any Agent. Send this comment anyway?");
     expect(commentPostCount).toBe(commentPostsBeforeBlockedReopen);
-    await dialog.getByRole("button", { name: "Return and mention an Agent" }).click();
+    await dialog.getByRole("button", { name: "Add an @ mention" }).click();
     await expect(blockedComposer).toContainText(`Confirm the ${status} reopen first`);
     await expect(blockedComposer).toBeFocused();
   }
+
+  forcedLocale = "zh-CN";
+  await page.reload();
+  const localizedActivity = page.getByRole("region", { name: "活动" });
+  await expect(localizedActivity).toBeVisible();
+  const localizedComposer = localizedActivity.getByTestId("issue-comment-composer-editor-scroll").locator("[contenteditable='true']").last();
+  await expect(localizedComposer).toBeVisible();
+  await localizedComposer.click();
+  await page.keyboard.type("这条评论用于验证中文确认提示");
+  await localizedActivity.getByRole("button", { name: "Comment" }).last().click();
+  await expect(dialog).toContainText("您未 @ 任何 Agent，是否确认直接发送评论？");
+  await expect(dialog.getByRole("button", { name: "返回并 @ Agent" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "直接发送" })).toBeVisible();
+  await dialog.getByRole("button", { name: "返回并 @ Agent" }).click();
+  await expect(localizedComposer).toContainText("这条评论用于验证中文确认提示");
 });

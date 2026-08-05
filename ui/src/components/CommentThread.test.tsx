@@ -742,9 +742,9 @@ describe("CommentThread", () => {
 
     await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
       title: "No Agent mentioned",
-      description: "You didn't mention an Agent. Send this comment anyway? It won't wake an Agent and may not be handled promptly.",
-      cancelLabel: "Return and mention an Agent",
-      confirmLabel: "Send directly",
+      description: "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",
+      cancelLabel: "Add an @ mention",
+      confirmLabel: "Send anyway",
       restoreFocus: expect.any(Function),
     })));
     expect(onAdd).not.toHaveBeenCalled();
