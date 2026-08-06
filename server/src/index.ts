@@ -14,6 +14,7 @@ import {
   instanceUserRoles,
   invites,
   isEmbeddedPostgresSharedMemoryError,
+  listLegacyColumnRenames,
   normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
@@ -513,6 +514,19 @@ async function startServerRuntime(
     label: string,
     opts?: EnsureMigrationsOptions,
   ): Promise<MigrationSummary> {
+    // Drift detection is read-only. The recovery point must be captured before
+    // normalization, journal reconciliation, or SQL migrations can mutate the
+    // schema or migration history.
+    const legacyColumnRenames = await listLegacyColumnRenames(connectionString);
+    const initialState = await inspectMigrations(connectionString);
+    let recoveryPoint: string | null = null;
+    if (
+      initialState.tableCount > 0
+      && (legacyColumnRenames.length > 0 || initialState.status === "needsMigrations")
+    ) {
+      recoveryPoint = await createMigrationRecoveryPoint(connectionString, label, opts ?? {});
+    }
+
     const normalizedLegacyColumns = await normalizeLegacyColumnNames(connectionString);
     if (normalizedLegacyColumns.length > 0) {
       logger.warn(
@@ -523,13 +537,6 @@ async function startServerRuntime(
 
     const autoApply = opts?.autoApply === true;
     let state = await inspectMigrations(connectionString);
-    // Journal reconciliation can write history rows. Capture the database before
-    // that repair as well as before SQL migrations so every upgrade mutation has
-    // one recoverable pre-change state.
-    let recoveryPoint: string | null = null;
-    if (state.status === "needsMigrations" && state.reason === "pending-migrations" && state.tableCount > 0) {
-      recoveryPoint = await createMigrationRecoveryPoint(connectionString, label, opts ?? {});
-    }
     if (state.status === "needsMigrations" && state.reason === "pending-migrations") {
       const repair = await reconcilePendingMigrationHistory(connectionString);
       if (repair.repairedMigrations.length > 0) {

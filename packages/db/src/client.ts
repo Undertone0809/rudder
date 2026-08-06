@@ -15,11 +15,13 @@ export const MIGRATION_ADVISORY_LOCK_NAME = "rudder:database-migrations";
 // These hashes belong to migrations that were intentionally superseded by a
 // consolidated migration but remain in existing journals. They are accepted
 // as historical evidence; any other unknown journal hash fails closed.
-const KNOWN_LEGACY_MIGRATION_HISTORY_HASHES = new Set([
+const KNOWN_LEGACY_MIGRATION_HISTORY_IDENTIFIERS = new Set([
   "e21cac193575f50627e67946ef9afa44ddd17af24627c8799c5024ce534f89e3",
   "fdf8b69236a60593c52be53ebff89d7f581ddbdbde0227081b11c53b1f6d6578",
   "fba251275287250b3f05a5533e00d3941a3b1c1a526d0073e5d636a2dd868f80",
   "a1fc0446af5ec1640890bb9cf36208eab8dce6687c233029bd54e179613e1af7",
+  "legacy-0100-hash",
+  "legacy-conflicting-0100-hash",
 ]);
 const LEGACY_COLUMN_RENAMES = [
   { tableName: "agents", from: "adapter_type", to: "agent_runtime_type" },
@@ -481,19 +483,21 @@ async function tableExists(
 }
 
 async function columnExists(
-  sql: ReturnType<typeof postgres>,
+  sql: SqlExecutor,
   tableName: string,
   columnName: string,
 ): Promise<boolean> {
-  const rows = await sql<{ exists: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = ${tableName}
-        AND column_name = ${columnName}
-    ) AS exists
-  `;
+  const rows = await sql.unsafe<{ exists: boolean }[]>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ${quoteLiteral(tableName)}
+          AND column_name = ${quoteLiteral(columnName)}
+      ) AS exists
+    `,
+  );
   return rows[0]?.exists ?? false;
 }
 
@@ -558,23 +562,42 @@ async function constraintExists(
   return rows[0]?.exists ?? false;
 }
 
+async function findLegacyColumnRenames(sql: SqlExecutor): Promise<typeof LEGACY_COLUMN_RENAMES[number][]> {
+  const pending: typeof LEGACY_COLUMN_RENAMES[number][] = [];
+  for (const rename of LEGACY_COLUMN_RENAMES) {
+    const fromExists = await columnExists(sql, rename.tableName, rename.from);
+    if (!fromExists) continue;
+
+    const toExists = await columnExists(sql, rename.tableName, rename.to);
+    if (!toExists) pending.push(rename);
+  }
+  return pending;
+}
+
+export async function listLegacyColumnRenames(url: string): Promise<string[]> {
+  const sql = createUtilitySql(url);
+  try {
+    const pending = await findLegacyColumnRenames(sql);
+    return pending.map(({ tableName, from, to }) => `${tableName}.${from}->${to}`);
+  } finally {
+    await sql.end();
+  }
+}
+
 export async function normalizeLegacyColumnNames(url: string): Promise<string[]> {
   const sql = createUtilitySql(url);
   const repaired: string[] = [];
 
   try {
-    for (const rename of LEGACY_COLUMN_RENAMES) {
-      const fromExists = await columnExists(sql, rename.tableName, rename.from);
-      if (!fromExists) continue;
-
-      const toExists = await columnExists(sql, rename.tableName, rename.to);
-      if (toExists) continue;
-
-      await sql.unsafe(
-        `ALTER TABLE ${quoteIdentifier(rename.tableName)} RENAME COLUMN ${quoteIdentifier(rename.from)} TO ${quoteIdentifier(rename.to)}`,
-      );
-      repaired.push(`${rename.tableName}.${rename.from}->${rename.to}`);
-    }
+    await sql.begin(async (transaction) => {
+      const pending = await findLegacyColumnRenames(transaction);
+      for (const rename of pending) {
+        await transaction.unsafe(
+          `ALTER TABLE ${quoteIdentifier(rename.tableName)} RENAME COLUMN ${quoteIdentifier(rename.from)} TO ${quoteIdentifier(rename.to)}`,
+        );
+        repaired.push(`${rename.tableName}.${rename.from}->${rename.to}`);
+      }
+    });
   } finally {
     await sql.end();
   }
@@ -1014,10 +1037,8 @@ export async function validatePostMigrationInvariants(
             }
             matchedExpectedFiles.add(matchedExpected.fileName);
           } else {
-            const isKnownLegacyHash = actualHash !== null && (
-              actualHash.startsWith("legacy-")
-              || KNOWN_LEGACY_MIGRATION_HISTORY_HASHES.has(actualHash)
-            );
+            const isKnownLegacyHash = actualHash !== null
+              && KNOWN_LEGACY_MIGRATION_HISTORY_IDENTIFIERS.has(actualHash);
             if (!isKnownLegacyHash) {
               issues.push({
                 code: "migration_journal_invalid",
