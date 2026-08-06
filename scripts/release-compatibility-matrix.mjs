@@ -12,26 +12,6 @@ const journalPath = "packages/db/src/migrations/meta/_journal.json";
 const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
-  "0.7.1": {
-    candidateFingerprint: "f53112040470403b8f1b29ad7c8048b4e6da09c5293bb72dad1bfde4f1cd008e",
-    fixtures: [
-      {
-        version: "0.7.1",
-        ref: "v0.7.1",
-        fingerprint: "a30e16cfafac9884e9239af03f0c9c4200b958f0ae0c14f31a5b5198f65a9444",
-      },
-      {
-        version: "0.7.0",
-        ref: "v0.7.0",
-        fingerprint: "2efffbc9abd94c1a29818e11086119978c9385cf250e44c42eb4901083307fc6",
-      },
-      {
-        version: "0.6.5",
-        ref: "v0.6.5",
-        fingerprint: "0328b4ffb5dcc557b50072e449ee2d5ab8b8770b24010e664f9ae86ecd86366b",
-      },
-    ],
-  },
   "0.7.2": {
     candidateFingerprint: "f53112040470403b8f1b29ad7c8048b4e6da09c5293bb72dad1bfde4f1cd008e",
     fixtures: [
@@ -286,6 +266,15 @@ function normalizeCandidateVersion(candidateVersion, channel) {
   return baseVersion;
 }
 
+function compareBaseVersions(left, right) {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
 export function validateCompatibilityMatrix({
   candidateManifest,
   candidateVersion,
@@ -319,6 +308,15 @@ export function validateCompatibilityMatrix({
   for (const fixture of declaration.fixtures) {
     if (typeof fixture?.version !== "string" || typeof fixture.ref !== "string") {
       fail(`candidate ${baseVersion} has an invalid fixture declaration.`);
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(fixture.version)) {
+      fail(`candidate ${baseVersion} has an invalid fixture version ${fixture.version}.`);
+    }
+    if (compareBaseVersions(baseVersion, fixture.version) <= 0) {
+      fail(
+        `candidate ${baseVersion} must be newer than fixture ${fixture.version}; `
+        + "a release cannot reuse its own schema identity as an old-version fixture.",
+      );
     }
     if (seenVersions.has(fixture.version)) {
       fail(`candidate ${baseVersion} declares fixture ${fixture.version} more than once.`);
