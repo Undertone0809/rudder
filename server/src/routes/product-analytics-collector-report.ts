@@ -4,7 +4,7 @@ import {
   privateProductAnalyticsCollectorPrivacyAggregates,
   privateProductAnalyticsCollectorQualityCounters,
 } from "@rudderhq/db";
-import { and, gte, lte, sql } from "drizzle-orm";
+import { and, gte, inArray, lte, sql } from "drizzle-orm";
 import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
 
@@ -28,6 +28,73 @@ function window(req: { query: Record<string, unknown> }) {
   const to = new Date(Date.UTC(toInput.getUTCFullYear(), toInput.getUTCMonth(), toInput.getUTCDate() + 1) - 1);
   if (from >= to) throw new Error("invalid_window");
   return { from, to };
+}
+
+export type ProductAnalyticsCreationRollup = {
+  day: string;
+  installationId: string;
+  eventName: string;
+  origin: string;
+  eventCount: number;
+};
+
+type DailyCreationValue = {
+  count: number | null;
+  status: "available" | "threshold_blocked" | "not_observed";
+};
+
+const CREATION_EVENT_FIELDS = {
+  issue_created: "issuesCreated",
+  chat_created: "chatsCreated",
+} as const;
+
+type CreationEventName = keyof typeof CREATION_EVENT_FIELDS;
+
+/** Build a complete UTC-day series without exposing installation identifiers. */
+export function buildProductAnalyticsCreationSeries(
+  rows: readonly ProductAnalyticsCreationRollup[],
+  range: { from: Date; to: Date },
+  privacyThreshold: number,
+  observedFromByEvent: Partial<Record<CreationEventName, string>> = {},
+) {
+  const creationRows = rows.filter((row) => row.eventName in CREATION_EVENT_FIELDS);
+  const firstObserved = new Map<string, string>(Object.entries(observedFromByEvent));
+  const groups = new Map<string, { count: number; installations: Set<string> }>();
+  for (const row of creationRows) {
+    const day = String(row.day).slice(0, 10);
+    const first = firstObserved.get(row.eventName);
+    if (!first || day < first) firstObserved.set(row.eventName, day);
+    if (row.origin !== "human") continue;
+    const key = `${day}\u0000${row.eventName}`;
+    const group = groups.get(key) ?? { count: 0, installations: new Set<string>() };
+    group.count += Number(row.eventCount);
+    group.installations.add(row.installationId);
+    groups.set(key, group);
+  }
+
+  const valueFor = (day: string, eventName: CreationEventName): DailyCreationValue => {
+    const observedFrom = firstObserved.get(eventName);
+    if (!observedFrom || day < observedFrom) return { count: null, status: "not_observed" };
+    const group = groups.get(`${day}\u0000${eventName}`);
+    if (!group) return { count: 0, status: "available" };
+    if (group.installations.size < privacyThreshold) return { count: null, status: "threshold_blocked" };
+    return { count: group.count, status: "available" };
+  };
+
+  const days = [];
+  for (
+    let cursor = new Date(Date.UTC(range.from.getUTCFullYear(), range.from.getUTCMonth(), range.from.getUTCDate()));
+    cursor <= range.to;
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)
+  ) {
+    const day = cursor.toISOString().slice(0, 10);
+    days.push({
+      day,
+      issuesCreated: valueFor(day, "issue_created"),
+      chatsCreated: valueFor(day, "chat_created"),
+    });
+  }
+  return { privacyThreshold, days };
 }
 
 /** Read-only, aggregate-only central reporting surface. It never returns IDs or raw properties. */
@@ -64,6 +131,13 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
       gte(privateProductAnalyticsCollectorDailyRollups.day, range.from.toISOString().slice(0, 10)),
       lte(privateProductAnalyticsCollectorDailyRollups.day, retentionEventTo.toISOString().slice(0, 10)),
     ));
+    const creationObservationRows = await db.select({
+      eventName: privateProductAnalyticsCollectorDailyRollups.eventName,
+      firstObservedDay: sql<string>`min(${privateProductAnalyticsCollectorDailyRollups.day})::text`,
+    }).from(privateProductAnalyticsCollectorDailyRollups).where(and(
+      inArray(privateProductAnalyticsCollectorDailyRollups.eventName, Object.keys(CREATION_EVENT_FIELDS)),
+      sql`${privateProductAnalyticsCollectorDailyRollups.dimensions}->>'environment' = 'production'`,
+    )).groupBy(privateProductAnalyticsCollectorDailyRollups.eventName);
     const production = rollupRows.filter((event) => event.dimensions?.environment === "production");
     const reportProduction = production.filter((event) => new Date(event.firstOccurredAt) <= range.to);
     const retentionProduction = production.filter((event) => new Date(event.lastOccurredAt) <= retentionEventTo);
@@ -94,6 +168,18 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
     const loops = aggregateRows
       .filter((row) => row.metricName === "weekly_completed_work_loops")
       .reduce((sum, row) => sum + Number(row.metricValue), 0);
+    const dailyCreation = buildProductAnalyticsCreationSeries(
+      reportProduction.map((row) => ({
+        day: String(row.day),
+        installationId: row.installationId,
+        eventName: row.eventName,
+        origin: row.origin,
+        eventCount: Number(row.eventCount),
+      })),
+      range,
+      privacyThreshold,
+      Object.fromEntries(creationObservationRows.map((row) => [row.eventName, row.firstObservedDay])),
+    );
     const firstSeenByInstallation = new Map<string, Date>();
     for (const event of retentionProduction) {
       const firstSeen = firstSeenByInstallation.get(event.installationId);
@@ -152,6 +238,7 @@ export function productAnalyticsCollectorReportRoutes(db: Db, options: { reportS
         accountLinkedEventCount: reportProduction.filter((event) => event.dimensions?.analytics_mode === "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
         anonymousEventCount: reportProduction.filter((event) => event.dimensions?.analytics_mode !== "account_linked").reduce((sum, event) => sum + Number(event.eventCount), 0),
       },
+      dailyCreation,
       retention: [...cohorts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([cohortDay, row]) => {
         const suppressed = row.eligibleInstallations < privacyThreshold;
         return suppressed

@@ -37,6 +37,7 @@ import {
   organizations,
   organizationSecrets,
   projects,
+  productAnalyticsEvents,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -223,6 +224,7 @@ describe("messengerService and issue follows", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(productAnalyticsEvents);
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
@@ -260,6 +262,48 @@ describe("messengerService and issue follows", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("records human chat creation separately from the initial work start", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat creation analytics",
+      urlKey: deriveOrganizationUrlKey("Chat creation analytics"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await chatSvc.createWithInitialMessage(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: true,
+      createdByUserId: "analytics-user",
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Trace this new chat",
+      },
+      activity: {
+        actorType: "user",
+        actorId: "analytics-user",
+      },
+    });
+    const events = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, created.conversation.id));
+
+    expect(events.map((event) => event.eventName).sort()).toEqual(["chat_created", "human_work_started"]);
+    expect(events.find((event) => event.eventName === "chat_created")).toMatchObject({
+      actorType: "human",
+      actorId: "analytics-user",
+      origin: "human",
+      sourceTransition: "chat.initial_message.create",
+      properties: {
+        creation_path: "manual",
+        initial_role: "user",
+        plan_mode: true,
+      },
+    });
   });
 
   async function createQueuedAnnotationFixture(input: {

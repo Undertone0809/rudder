@@ -22,6 +22,8 @@ vi.mock("../services/product-analytics.js", () => ({
   getProductAnalyticsInstallationState: mockOutbox.getState,
   PRODUCT_ANALYTICS_EVENT_NAMES: [
     "organization_created",
+    "issue_created",
+    "chat_created",
     "human_work_started",
     "run_started",
     "run_succeeded",

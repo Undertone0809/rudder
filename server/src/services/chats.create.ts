@@ -10,6 +10,15 @@ import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 
+function chatCreationPath(data: Pick<CreateChatWithInitialMessageInput, "activity" | "contextLinks" | "initialMessage">) {
+  const eventType = data.initialMessage.structuredPayload?.eventType;
+  if (typeof eventType === "string" && eventType.startsWith("automation_")) return "automation";
+  if (data.contextLinks?.some((link) => link.metadata?.source === "agent_integration")) return "integration";
+  if (data.activity?.actorType === "agent") return "agent";
+  if (data.activity?.actorType === "user") return "manual";
+  return "system";
+}
+
 export type CreateChatInput = {
   title?: string;
   summary?: string | null;
@@ -207,6 +216,40 @@ export async function createChatWithInitialMessage(
       })
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
+
+    const creationPath = chatCreationPath(data);
+    const creationActorType = data.createdByUserId
+      ? "human"
+      : creationPath === "automation"
+        ? "automation"
+        : data.activity?.actorType === "agent"
+          ? "agent"
+          : "system";
+    const creationOrigin = creationActorType === "human"
+      ? "human"
+      : creationActorType === "automation"
+        ? "automation"
+        : "system";
+    await recordProductAnalyticsEvent(client, {
+      orgId,
+      eventName: "chat_created",
+      occurredAt: conversationRow.createdAt,
+      sourceTransition: "chat.initial_message.create",
+      confidence: "exact",
+      actorType: creationActorType,
+      actorId: data.createdByUserId ?? data.activity?.actorId ?? null,
+      entityType: "chat",
+      entityId: conversationRow.id,
+      workSurface: "chat",
+      workId: conversationRow.id,
+      origin: creationOrigin,
+      dedupeKey: `chat_created:${conversationRow.id}`,
+      properties: {
+        creation_path: creationPath,
+        initial_role: data.initialMessage.role,
+        plan_mode: data.planMode,
+      },
+    });
 
     if (data.initialMessage.role === "user" && data.createdByUserId) {
       const workCycleId = `chat:${conversationRow.id}`;
