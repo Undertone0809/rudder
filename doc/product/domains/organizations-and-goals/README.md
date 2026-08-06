@@ -22,8 +22,7 @@ edit_policy: user_confirmed_only
 - Organization mission and lifecycle as the top-level operating boundary.
 - Local installation account claims and compatibility-preserving operator-state
   recovery across identity upgrades.
-- Goal Contract, Agent Owner, Plan, continuation, Activity, Proof, and legacy
-  dependency protection.
+- Goal hierarchy, status, owner, and dependency protection.
 - Project identity, project-goal links, lead agent, status, and grouping of
   chats/issues/resources/workspaces.
 
@@ -38,10 +37,7 @@ edit_policy: user_confirmed_only
 
 - `ORG.IDENTITY.001`: organization UUID, stable URL key, display name, and Issue
   Key have separate responsibilities with compatibility-preserving migration.
-- `ORG.GOAL.001`: Goals explain why work exists through an explicit Contract,
-  Owner, Plan, continuation, Activity, and evidence-backed Proof. Legacy
-  hierarchy fields remain readable for compatibility but do not create a new
-  parent/child Goal scheduler.
+- `ORG.GOAL.001`: goals explain why work exists and preserve hierarchy.
 - `ORG.PROJECT.001`: projects group goal-directed chats, issues, resources, and
   workspaces.
 - `ORG.SETTINGS.001`: settings persist instance/operator/organization behavior
