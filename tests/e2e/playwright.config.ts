@@ -91,7 +91,6 @@ const CLEAR_INHERITED_RUNTIME_ENV_COMMAND =
 export default defineConfig({
   testDir: ".",
   testMatch: "**/*.spec.ts",
-  globalTeardown: "./support/global-teardown.ts",
   timeout: 60_000,
   retries: 0,
   use: {
@@ -100,6 +99,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
+  globalSetup: "./support/global-setup.ts",
+  globalTeardown: "./support/global-teardown.ts",
   projects: [
     {
       name: "chromium",
@@ -116,7 +117,7 @@ export default defineConfig({
   webServer: USE_EXISTING_SERVER
     ? undefined
     : {
-    command: `bash -lc 'set -euo pipefail; rm -rf "${E2E_HOME}"; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
+    command: `bash -lc 'set -euo pipefail; "${SERVER_DIR}/node_modules/.bin/tsx" "${E2E_ROOT}/support/e2e-preflight.ts"; rm -rf "${E2E_HOME}"; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
 #!/usr/bin/env node
 let prompt = "";
 process.stdin.setEncoding("utf8");
