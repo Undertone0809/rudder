@@ -14,7 +14,7 @@ function exportedSchema(name: string): RuntimeSchema | null {
 describe("managed MCP shared contracts", () => {
   it("exports the complete provider, transport, access, and lifecycle catalogs", () => {
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_PROVIDERS)
-      .toEqual(["supabase", "linear", "notion", "custom"]);
+      .toEqual(["supabase", "linear", "notion", "github", "custom"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_TRANSPORTS)
       .toEqual(["stdio", "streamable_http", "legacy_manual"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_ACCESS_MODES)
@@ -25,6 +25,8 @@ describe("managed MCP shared contracts", () => {
       .toEqual(["canonical", "superseded"]);
     expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_SCOPE_MODES)
       .toEqual(["account", "workspace", "legacy_project"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_CREDENTIAL_MODES)
+      .toEqual(["oauth", "pat", "custom"]);
     expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_ORGANIZATION_STATES)
       .toEqual(["not_connected", "connecting", "connected", "needs_attention", "disconnected"]);
     expect((shared as unknown as Record<string, unknown>).MCP_TOOL_CAPABILITY_CLASSES)
@@ -57,6 +59,12 @@ describe("managed MCP shared contracts", () => {
         id: "notion",
         accessModes: ["provider_default"],
         defaultAccessMode: "provider_default",
+      }),
+      expect.objectContaining({
+        id: "github",
+        credentialMode: "pat",
+        accessModes: ["read_only", "read_write"],
+        defaultAccessMode: "read_only",
       }),
       expect.objectContaining({
         id: "custom",
@@ -104,6 +112,43 @@ describe("managed MCP shared contracts", () => {
       enabled: true,
       required: true,
     }).success).toBe(true);
+  });
+
+  it("accepts GitHub PAT connections while keeping endpoint and credentials managed", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    const base = {
+      name: "github-account",
+      displayName: "GitHub account",
+      provider: "github",
+      scope: "organization",
+      transport: "streamable_http",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+      secrets: { bearerToken: `github_pat_${"a".repeat(30)}` },
+    };
+
+    expect(schema.safeParse(base).success).toBe(true);
+    const defaultAccess = schema.safeParse(base);
+    if (defaultAccess.success) {
+      expect((defaultAccess.data as { accessMode?: string }).accessMode).toBe("read_only");
+    }
+    expect(schema.safeParse({ ...base, accessMode: "read_write" }).success).toBe(true);
+    expect(schema.safeParse({
+      ...base,
+      safeConfig: { endpoint: "https://github.com/mcp", scopeMode: "account" },
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...base,
+      secrets: { bearerToken: "not-a-github-pat" },
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...base,
+      secrets: { headers: { Authorization: "Bearer raw-token" } },
+    }).success).toBe(false);
   });
 
   it("rejects internal runtime server names when creating external MCP connections", () => {

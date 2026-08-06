@@ -10,6 +10,7 @@ import {
   MCP_CONNECTION_TRANSPORTS,
   MCP_OAUTH_GRANT_STATUSES,
   MCP_PROVIDER_CATALOG,
+  MCP_PROVIDER_CREDENTIAL_MODES,
   MCP_PROVIDER_ORGANIZATION_STATES,
   MCP_PROVIDER_SCOPE_MODES,
   MCP_TOOL_CAPABILITY_CLASSES,
@@ -39,6 +40,7 @@ export const mcpConnectionAccessModeSchema = z.enum(MCP_CONNECTION_ACCESS_MODES)
 export const mcpAgentAccessModeSchema = z.enum(MCP_AGENT_ACCESS_MODES);
 export const mcpConnectionCanonicalStateSchema = z.enum(MCP_CONNECTION_CANONICAL_STATES);
 export const mcpProviderScopeModeSchema = z.enum(MCP_PROVIDER_SCOPE_MODES);
+export const mcpProviderCredentialModeSchema = z.enum(MCP_PROVIDER_CREDENTIAL_MODES);
 export const mcpProviderOrganizationStateSchema = z.enum(MCP_PROVIDER_ORGANIZATION_STATES);
 export const mcpToolCapabilityClassSchema = z.enum(MCP_TOOL_CAPABILITY_CLASSES);
 export const mcpProviderMaxAccessSchema = z.enum(["read_only", "read_write", "provider_granted"]);
@@ -149,10 +151,26 @@ export const mcpCuratedSafeConfigSchema = z.object({
   }).strict(),
 }).strict();
 
+export const mcpGitHubSafeConfigSchema = z.object({
+  endpoint: z.literal("https://api.githubcopilot.com/mcp/"),
+  scopeMode: z.literal("account"),
+}).strict();
+
+export const mcpGitHubPatSchema = z.string()
+  .trim()
+  .min(20)
+  .max(255)
+  .regex(/^(?:github_pat_|ghp_)[A-Za-z0-9_]+$/, "Use a GitHub fine-grained or legacy PAT");
+
+export const mcpGitHubSecretsMutationSchema = z.object({
+  bearerToken: mcpGitHubPatSchema,
+}).strict();
+
 export const mcpConnectionSafeConfigSchema = z.union([
   mcpStdioSafeConfigSchema,
   mcpStreamableHttpSafeConfigSchema,
   mcpLegacyManualSafeConfigSchema,
+  mcpGitHubSafeConfigSchema,
   mcpCuratedSafeConfigSchema,
 ]);
 
@@ -177,12 +195,14 @@ const providerAccessModes = {
   supabase: ["read_only", "read_write"],
   linear: ["read_only", "read_write"],
   notion: ["provider_default"],
+  github: ["read_only", "read_write"],
   custom: ["provider_default", "read_only", "read_write"],
 } as const;
 
 function defaultAccessMode(provider: string | undefined) {
   if (provider === "supabase") return "read_write";
   if (provider === "linear") return "read_write";
+  if (provider === "github") return "read_only";
   return "provider_default";
 }
 
@@ -216,6 +236,24 @@ function validateSafeConnectionConfig(
       path: ["accessMode"],
       message: `${value.provider ?? "Unknown"} does not support ${accessMode}`,
     });
+  }
+
+  if (value.provider === "github") {
+    if (value.transport !== "streamable_http") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transport"],
+        message: "GitHub MCP uses Rudder-managed Streamable HTTP",
+      });
+    }
+    if (!mcpGitHubSafeConfigSchema.safeParse(value.safeConfig).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["safeConfig"],
+        message: "GitHub connections require the managed GitHub account configuration",
+      });
+    }
+    return;
   }
 
   if (value.provider !== "custom") {
@@ -332,6 +370,17 @@ function validateConnectionSecretMutation(
   },
   ctx: z.RefinementCtx,
 ) {
+  if (value.provider === "github") {
+    if (value.secrets && !mcpGitHubSecretsMutationSchema.safeParse(value.secrets).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["secrets"],
+        message: "GitHub connections accept only a fine-grained or legacy PAT",
+      });
+    }
+    return;
+  }
+
   if (value.provider !== "custom") return;
 
   if (value.transport === "stdio") {
@@ -495,6 +544,7 @@ export const mcpProviderCatalogEntrySchema = z.object({
   label: z.string().min(1),
   curated: z.boolean(),
   requiresOAuth: z.boolean(),
+  credentialMode: mcpProviderCredentialModeSchema,
   requiresScopeSelection: z.boolean(),
   scopeLabel: z.string().min(1),
   transports: z.array(mcpConnectionTransportSchema).min(1),
@@ -627,7 +677,7 @@ export const managedExternalMcpBindingSchema = z.object({
 export const managedExternalMcpBindingsSchema = z.array(managedExternalMcpBindingSchema).max(100);
 
 export const mcpProviderAvailabilitySchema = z.object({
-  provider: z.enum(["supabase", "linear", "notion"]),
+  provider: z.enum(["supabase", "linear", "notion", "github"]),
   organization: z.object({
     state: mcpProviderOrganizationStateSchema,
     connectionId: uuidSchema.nullable(),

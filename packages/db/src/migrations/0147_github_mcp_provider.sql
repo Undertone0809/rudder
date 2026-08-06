@@ -1,0 +1,4 @@
+DROP INDEX "mcp_connections_org_official_canonical_uq";--> statement-breakpoint
+DROP INDEX "mcp_connections_agent_official_canonical_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "mcp_connections_org_official_canonical_uq" ON "mcp_connections" USING btree ("org_id","provider") WHERE "mcp_connections"."provider" in ('supabase', 'linear', 'notion', 'github') and "mcp_connections"."canonical_state" = 'canonical' and "mcp_connections"."scope" = 'organization';--> statement-breakpoint
+CREATE UNIQUE INDEX "mcp_connections_agent_official_canonical_uq" ON "mcp_connections" USING btree ("org_id","owner_agent_id","provider") WHERE "mcp_connections"."provider" in ('supabase', 'linear', 'notion', 'github') and "mcp_connections"."canonical_state" = 'canonical' and "mcp_connections"."scope" = 'agent';

@@ -1,6 +1,9 @@
 import type {
   McpConnectionAccessMode,
   McpConnectionProvider,
+  McpConnectionSafeConfig,
+  McpProviderCredentialMode,
+  McpProviderScopeMode,
 } from "@rudderhq/shared";
 
 export type McpProviderScopeSelection = "none" | "project" | "workspace";
@@ -10,8 +13,11 @@ export interface McpProviderDefinition {
   readOnlyEndpoint?: string;
   oauthOrigins: readonly string[];
   requiresOAuth: boolean;
+  credentialMode: McpProviderCredentialMode;
+  scopeMode?: McpProviderScopeMode;
   scopeSelection: McpProviderScopeSelection;
   defaultAccessMode: McpConnectionAccessMode;
+  safeConfig?: McpConnectionSafeConfig;
   featureGroups?: {
     mode: "provider_default";
     excluded: string[];
@@ -32,6 +38,8 @@ export const MCP_PROVIDER_REGISTRY = {
     endpoint: "https://mcp.supabase.com/mcp",
     oauthOrigins: ["https://mcp.supabase.com", "https://api.supabase.com"],
     requiresOAuth: true,
+    credentialMode: "oauth",
+    scopeMode: "account",
     scopeSelection: "none",
     defaultAccessMode: "read_only",
     featureGroups: {
@@ -44,6 +52,8 @@ export const MCP_PROVIDER_REGISTRY = {
     readOnlyEndpoint: "https://mcp.linear.app/mcp/readonly",
     oauthOrigins: ["https://mcp.linear.app"],
     requiresOAuth: true,
+    credentialMode: "oauth",
+    scopeMode: "workspace",
     scopeSelection: "workspace",
     defaultAccessMode: "read_write",
     scopeIdentity: {
@@ -56,6 +66,8 @@ export const MCP_PROVIDER_REGISTRY = {
     endpoint: "https://mcp.notion.com/mcp",
     oauthOrigins: ["https://mcp.notion.com"],
     requiresOAuth: true,
+    credentialMode: "oauth",
+    scopeMode: "workspace",
     scopeSelection: "workspace",
     defaultAccessMode: "provider_default",
     scopeIdentity: {
@@ -64,10 +76,24 @@ export const MCP_PROVIDER_REGISTRY = {
       containers: ["workspace", "organization"],
     },
   },
+  github: {
+    endpoint: "https://api.githubcopilot.com/mcp/",
+    oauthOrigins: [],
+    requiresOAuth: false,
+    credentialMode: "pat",
+    scopeMode: "account",
+    scopeSelection: "none",
+    defaultAccessMode: "read_only",
+    safeConfig: {
+      endpoint: "https://api.githubcopilot.com/mcp/",
+      scopeMode: "account",
+    },
+  },
   custom: {
     endpoint: null,
     oauthOrigins: [],
     requiresOAuth: false,
+    credentialMode: "custom",
     scopeSelection: "none",
     defaultAccessMode: "provider_default",
   },
@@ -114,6 +140,13 @@ export function resolveCuratedMcpEndpoint(input: {
         : MCP_PROVIDER_REGISTRY.linear.endpoint,
       transport: "streamable_http",
     };
+  }
+
+  if (input.provider === "github") {
+    if (input.accessMode !== "read_only" && input.accessMode !== "read_write") {
+      throw new Error("GitHub MCP connections require read_only or read_write access");
+    }
+    return { href: definition.endpoint, transport: "streamable_http" };
   }
 
   if (input.accessMode !== "provider_default") {
