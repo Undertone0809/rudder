@@ -14,6 +14,7 @@ const registryLockPath = `${registryPath}.lock`;
 
 type PostgresProcess = {
   pid: number;
+  parentPid: number;
   dataDirectory: string;
 };
 
@@ -104,19 +105,26 @@ function postgresDataDirectory(command: string): string | null {
 async function listOwnedPostgresProcesses(): Promise<PostgresProcess[]> {
   let stdout = "";
   try {
-    ({ stdout } = await execFile("ps", ["-axo", "pid=,command="], { timeout: 2_000 }));
+    ({ stdout } = await execFile("ps", ["-axo", "pid=,ppid=,command="], { timeout: 2_000 }));
   } catch {
     return [];
   }
 
   return stdout
     .split(/\r?\n/)
-    .map((line) => line.match(/^\s*(\d+)\s+(.+)$/))
+    .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/))
     .flatMap((match) => {
       if (!match) return [];
       const pid = Number(match[1]);
-      const dataDirectory = postgresDataDirectory(match[2]);
-      return dataDirectory && Number.isInteger(pid) && pid > 0 ? [{ pid, dataDirectory }] : [];
+      const parentPid = Number(match[2]);
+      const dataDirectory = postgresDataDirectory(match[3]);
+      return dataDirectory
+        && Number.isInteger(pid)
+        && pid > 0
+        && Number.isInteger(parentPid)
+        && parentPid >= 0
+        ? [{ pid, parentPid, dataDirectory }]
+        : [];
     });
 }
 
@@ -129,70 +137,106 @@ async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
   return !isRunning(pid);
 }
 
+async function listProcessTree(rootPid: number): Promise<number[]> {
+  let stdout = "";
+  try {
+    ({ stdout } = await execFile("ps", ["-axo", "pid=,ppid="], { timeout: 2_000 }));
+  } catch {
+    return [rootPid];
+  }
+
+  const parents = new Map<number, number[]>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s*$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
+    const children = parents.get(parentPid) ?? [];
+    children.push(pid);
+    parents.set(parentPid, children);
+  }
+
+  const descendants: number[] = [];
+  const queue = [rootPid];
+  const visited = new Set(queue);
+  while (queue.length > 0) {
+    const parentPid = queue.shift();
+    if (parentPid === undefined) continue;
+    for (const childPid of parents.get(parentPid) ?? []) {
+      if (visited.has(childPid)) continue;
+      visited.add(childPid);
+      descendants.push(childPid);
+      queue.push(childPid);
+    }
+  }
+  return [rootPid, ...descendants.reverse()];
+}
+
 async function stopProcess(processInfo: PostgresProcess): Promise<boolean> {
   if (!isRunning(processInfo.pid)) return true;
-  try {
-    process.kill(processInfo.pid, "SIGTERM");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
-    throw error;
+  const processTree = await listProcessTree(processInfo.pid);
+  for (const pid of processTree) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
   }
   if (await waitForExit(processInfo.pid, 5_000)) return true;
 
-  process.kill(processInfo.pid, "SIGKILL");
+  for (const pid of processTree) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
   return waitForExit(processInfo.pid, 2_000);
 }
 
 async function cleanupOwnedPostgres(): Promise<void> {
   const processes = await listOwnedPostgresProcesses();
-  if (processes.length === 0) return;
-
   const results = await Promise.allSettled(processes.map(stopProcess));
   const stopped = results.filter((result) => result.status === "fulfilled" && result.value).length;
   const survivors = results.length - stopped;
   if (stopped > 0) {
     console.log(`Stopped ${stopped} orphaned test PostgreSQL process(es).`);
-    await cleanupStaleSysvSharedMemorySegments()
-      .then(({ removedIds, skippedIds }) => {
-        if (removedIds.length > 0) {
-          console.log(`Removed ${removedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
-        }
-        if (skippedIds.length > 0) {
-          console.warn(`Could not remove ${skippedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
-        }
-      })
-      .catch((error) => {
-        console.warn(
-          `Vitest SysV shared-memory cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
   }
   if (survivors > 0) {
-    console.warn(`Could not stop ${survivors} test PostgreSQL process(es) during Vitest teardown.`);
+    throw new Error(`Could not stop ${survivors} test PostgreSQL process(es) during Vitest teardown.`);
+  }
+
+  const remaining = await listOwnedPostgresProcesses();
+  if (remaining.length > 0) {
+    throw new Error(
+      `Vitest teardown left ${remaining.length} owned PostgreSQL process(es) running: ${remaining.map(({ pid, dataDirectory }) => `${pid} (${dataDirectory})`).join(", ")}`,
+    );
+  }
+
+  const { removedIds, skippedIds } = await cleanupStaleSysvSharedMemorySegments();
+  if (removedIds.length > 0) {
+    console.log(`Removed ${removedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
+  }
+  if (skippedIds.length > 0) {
+    throw new Error(`Could not remove ${skippedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
   }
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
   const token = `${process.pid}-${randomUUID()}`;
-  let shouldCleanBeforeRun = false;
   await withRegistryLock(async () => {
     const runs = await readRuns();
-    shouldCleanBeforeRun = runs.length === 0;
+    if (runs.length === 0) await cleanupOwnedPostgres();
     runs.push({ token, pid: process.pid });
     await writeRuns(runs);
   });
 
-  // Recover residue from an interrupted or failed previous Vitest run before
-  // starting more embedded clusters.
-  if (shouldCleanBeforeRun) await cleanupOwnedPostgres();
-
   return async () => {
-    let shouldCleanAfterRun = false;
     await withRegistryLock(async () => {
       const runs = (await readRuns()).filter((run) => run.token !== token);
-      shouldCleanAfterRun = runs.length === 0;
       await writeRuns(runs);
+      if (runs.length === 0) await cleanupOwnedPostgres();
     });
-    if (shouldCleanAfterRun) await cleanupOwnedPostgres();
   };
 }
