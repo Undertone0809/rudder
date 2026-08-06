@@ -12,6 +12,13 @@ type ProcessInfo = {
   command: string;
 };
 
+type ServerLease = {
+  pid: number;
+  configPath: string;
+  instanceRoot: string;
+  port: number;
+};
+
 export type E2EPostgresCleanupResult = {
   stopped: number;
   skipped: string[];
@@ -40,6 +47,38 @@ async function readPid(filePath: string): Promise<number | null> {
   }
 }
 
+async function readServerLease(
+  filePath: string,
+  expectedInstanceRoot: string,
+  expectedConfigPath: string,
+  expectedPort: number | null,
+): Promise<ServerLease | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as Record<string, unknown>;
+    const pid = Number(record.pid);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    if (typeof record.instanceRoot !== "string" || path.resolve(record.instanceRoot) !== path.resolve(expectedInstanceRoot)) {
+      return null;
+    }
+    if (typeof record.configPath !== "string" || path.resolve(record.configPath) !== path.resolve(expectedConfigPath)) {
+      return null;
+    }
+    const leasePort = Number(record.port);
+    if (expectedPort === null || !Number.isInteger(leasePort) || leasePort !== expectedPort) return null;
+    return {
+      pid,
+      configPath: path.resolve(record.configPath),
+      instanceRoot: path.resolve(record.instanceRoot),
+      port: leasePort,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function commandLine(pid: number): Promise<string> {
   try {
     const result = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { timeout: 2_000 });
@@ -61,7 +100,7 @@ async function listeningPids(port: number): Promise<number[]> {
   }
 }
 
-async function listProcesses(): Promise<ProcessInfo[]> {
+async function listProcesses(): Promise<ProcessInfo[] | null> {
   try {
     const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], { timeout: 2_000 });
     return stdout
@@ -76,7 +115,7 @@ async function listProcesses(): Promise<ProcessInfo[]> {
           : [];
       });
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -91,8 +130,11 @@ function commandOwnsPostgresData(command: string, dataDirectory: string): boolea
 }
 
 function commandOwnsServer(command: string, repositoryRoot: string): boolean {
-  const serverDirectory = `${path.resolve(repositoryRoot, "server")}/`;
-  return command.includes(serverDirectory) || command.includes(`--dir ${serverDirectory.slice(0, -1)}`);
+  const serverDirectory = path.resolve(repositoryRoot, "server");
+  const serverPathPrefix = `${serverDirectory}${path.sep}`;
+  const tokens = command.split(/\s+/).map((token) => token.replace(/^['"]|['"]$/g, ""));
+  return tokens.some((token) => token === serverDirectory || token.startsWith(serverPathPrefix))
+    || command.split(/\s+/).some((token, index, all) => token === serverDirectory && all[index - 1] === "--dir");
 }
 
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -128,24 +170,38 @@ async function processTree(rootPid: number, processes: ProcessInfo[]): Promise<n
   return [rootPid, ...result.reverse()];
 }
 
-async function stopProcess(pid: number, processes: ProcessInfo[]): Promise<boolean> {
+async function signalMatchingProcesses(
+  pids: number[],
+  processes: ProcessInfo[],
+  signal: NodeJS.Signals,
+  rootMatcher?: (command: string) => boolean,
+): Promise<void> {
+  const byPid = new Map(processes.map((processInfo) => [processInfo.pid, processInfo]));
+  for (const pid of pids) {
+    const expected = byPid.get(pid);
+    if (!expected) continue;
+    const currentCommand = await commandLine(pid);
+    const matchesExpectedCommand = currentCommand === expected.command;
+    const matchesRootOwnership = pid === pids[0] && rootMatcher?.(currentCommand) === true;
+    if (!currentCommand || (!matchesExpectedCommand && !matchesRootOwnership)) continue;
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+}
+
+async function stopProcess(
+  pid: number,
+  processes: ProcessInfo[],
+  rootMatcher?: (command: string) => boolean,
+): Promise<boolean> {
   if (!isRunning(pid)) return true;
   const pids = await processTree(pid, processes);
-  for (const processPid of pids) {
-    try {
-      process.kill(processPid, "SIGTERM");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  }
+  await signalMatchingProcesses(pids, processes, "SIGTERM", rootMatcher);
   if (await waitForExit(pid, 5_000)) return true;
-  for (const processPid of pids) {
-    try {
-      process.kill(processPid, "SIGKILL");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  }
+  await signalMatchingProcesses(pids, processes, "SIGKILL", rootMatcher);
   return waitForExit(pid, 2_000);
 }
 
@@ -212,21 +268,22 @@ async function instanceHasLiveServer(
   processes?: ProcessInfo[],
 ): Promise<boolean> {
   const processSnapshot = processes ?? await listProcesses();
+  if (!processSnapshot) return true;
   const instanceRepositoryRoot = repositoryRootForInstance(instanceRoot, repositoryRoot);
+  const configPath = path.join(instanceRoot, "config.json");
+  let port: number | null = null;
+  try {
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as { server?: { port?: unknown } };
+    const parsedPort = Number(config.server?.port);
+    port = Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : null;
+  } catch {
+    // A missing config cannot identify an E2E server by port.
+  }
   const pids = [
-    await readPid(path.join(instanceRoot, "server.pid")),
+    await readServerLease(path.join(instanceRoot, "server.pid"), instanceRoot, configPath, port)
+      .then((lease) => lease?.pid ?? null),
     await readPid(path.join(instanceRoot, "runtime", "server.json")),
-    ...await (async () => {
-      try {
-        const config = JSON.parse(await fs.readFile(path.join(instanceRoot, "config.json"), "utf8")) as {
-          server?: { port?: unknown };
-        };
-        const port = Number(config.server?.port);
-        return Number.isInteger(port) && port > 0 ? await listeningPids(port) : [];
-      } catch {
-        return [];
-      }
-    })(),
+    ...(port === null ? [] : await listeningPids(port)),
   ].filter((pid): pid is number => pid !== null && isRunning(pid));
   for (const pid of new Set(pids)) {
     const command = await commandLine(pid);
@@ -245,6 +302,9 @@ async function instanceHasLiveServer(
 
 async function cleanupDatabase(dataDirectory: string): Promise<{ stopped: number; skipped: string | null }> {
   const processes = await listProcesses();
+  if (!processes) {
+    return { stopped: 0, skipped: `${dataDirectory}: process listing unavailable; cleanup skipped` };
+  }
   const owned = processes.filter((processInfo) => commandOwnsPostgresData(processInfo.command, dataDirectory));
   if (owned.length === 0) {
     await fs.rm(path.join(dataDirectory, "postmaster.pid"), { force: true }).catch(() => undefined);
@@ -255,7 +315,11 @@ async function cleanupDatabase(dataDirectory: string): Promise<{ stopped: number
   const targets = roots.length > 0 ? roots : owned;
   const results = await Promise.allSettled(targets.map((processInfo) => stopProcess(processInfo.pid, processes)));
   const stopped = results.filter((result) => result.status === "fulfilled" && result.value).length;
-  const remaining = (await listProcesses()).filter((processInfo) => commandOwnsPostgresData(processInfo.command, dataDirectory));
+  const remainingProcesses = await listProcesses();
+  if (!remainingProcesses) {
+    return { stopped, skipped: `${dataDirectory}: final process listing unavailable; cleanup not confirmed` };
+  }
+  const remaining = remainingProcesses.filter((processInfo) => commandOwnsPostgresData(processInfo.command, dataDirectory));
   if (remaining.length > 0) {
     return {
       stopped,
@@ -284,13 +348,28 @@ export async function cleanupE2EPostgres(options: {
     ? [...new Set(allDirectories)]
     : [...new Set(allDirectories)].filter((dataDirectory) => dataDirectory !== currentDb);
   const initialProcesses = await listProcesses();
+  if (!initialProcesses) {
+    return {
+      stopped: 0,
+      skipped: ["process listing unavailable; E2E PostgreSQL cleanup skipped"],
+      sharedMemory: await cleanupStaleSysvSharedMemorySegments(),
+    };
+  }
   let stopped = 0;
   const skipped: string[] = [];
   for (const dataDirectory of directories) {
-    if (dataDirectory !== currentDb) {
-      const hasPostgres = initialProcesses.some((processInfo) => commandOwnsPostgresData(processInfo.command, dataDirectory));
-      if (!hasPostgres) continue;
-      if (await instanceHasLiveServer(path.dirname(dataDirectory), options.repositoryRoot, initialProcesses)) continue;
+    const instanceRoot = path.dirname(dataDirectory);
+    const hasPostgres = initialProcesses.some((processInfo) => commandOwnsPostgresData(processInfo.command, dataDirectory));
+    if (!hasPostgres) {
+      const result = await cleanupDatabase(dataDirectory);
+      if (result.skipped) skipped.push(result.skipped);
+      continue;
+    }
+    if (await instanceHasLiveServer(instanceRoot, options.repositoryRoot, initialProcesses)) {
+      if (dataDirectory === currentDb) {
+        skipped.push(`${dataDirectory}: active or unidentified E2E server; cleanup skipped`);
+      }
+      continue;
     }
     const result = await cleanupDatabase(dataDirectory);
     stopped += result.stopped;
@@ -305,27 +384,38 @@ export async function stopOwnedE2EServer(options: {
   instanceRoot: string;
   repositoryRoot: string;
 }): Promise<string[]> {
+  const configPath = path.join(options.instanceRoot, "config.json");
+  let port: number | null = null;
+  try {
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as { server?: { port?: unknown } };
+    const parsedPort = Number(config.server?.port);
+    port = Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : null;
+  } catch {
+    // A missing config cannot identify a server by its listening port.
+  }
   const candidatePids = [
-    await readPid(path.join(options.instanceRoot, "server.pid")),
-    await readPid(path.join(options.instanceRoot, "runtime", "server.json")),
-    ...await (async () => {
-      try {
-        const config = JSON.parse(await fs.readFile(path.join(options.instanceRoot, "config.json"), "utf8")) as {
-          server?: { port?: unknown };
-        };
-        const port = Number(config.server?.port);
-        return Number.isInteger(port) && port > 0 ? await listeningPids(port) : [];
-      } catch {
-        return [];
-      }
-    })(),
+    await readServerLease(path.join(options.instanceRoot, "server.pid"), options.instanceRoot, configPath, port)
+      .then((lease) => lease?.pid ?? null),
   ].filter((pid): pid is number => pid !== null && isRunning(pid));
   const processes = await listProcesses();
+  if (!processes) throw new Error("E2E server cleanup could not list processes");
   const stopped: string[] = [];
   for (const pid of new Set(candidatePids)) {
     const command = processes.find((processInfo) => processInfo.pid === pid)?.command ?? await commandLine(pid);
     if (!commandOwnsServer(command, options.repositoryRoot)) continue;
-    if (await stopProcess(pid, processes)) stopped.push(String(pid));
+    if (await stopProcess(pid, processes, (currentCommand) => commandOwnsServer(currentCommand, options.repositoryRoot))) {
+      stopped.push(String(pid));
+    }
+  }
+  for (const pid of new Set(candidatePids)) {
+    if (!isRunning(pid)) continue;
+    const command = await commandLine(pid);
+    if (commandOwnsServer(command, options.repositoryRoot)) {
+      throw new Error(`E2E server process ${pid} remained after cleanup`);
+    }
+  }
+  if (await instanceHasLiveServer(options.instanceRoot, options.repositoryRoot)) {
+    throw new Error(`E2E server for ${options.instanceRoot} remained after cleanup`);
   }
   return stopped;
 }
