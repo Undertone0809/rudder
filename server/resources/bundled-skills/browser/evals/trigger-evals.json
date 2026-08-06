@@ -1,0 +1,22 @@
+[
+  {
+    "query": "Use Rudder's built-in Browser to open https://example.com and report the page heading.",
+    "should_trigger": true
+  },
+  {
+    "query": "Use $browser to inspect the page already open in Rudder and take a screenshot.",
+    "should_trigger": true
+  },
+  {
+    "query": "Please browse https://example.com and report the page heading.",
+    "should_trigger": false
+  },
+  {
+    "query": "Open the local app at http://localhost:4173 and test its login form.",
+    "should_trigger": false
+  },
+  {
+    "query": "Take a screenshot of the current webpage and check whether the layout overlaps.",
+    "should_trigger": false
+  }
+]
