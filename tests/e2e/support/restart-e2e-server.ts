@@ -12,6 +12,7 @@ import {
 } from "./e2e-env";
 
 const REPO_ROOT = path.resolve(E2E_ROOT, "../..");
+const SERVER_DIR = path.join(REPO_ROOT, "server");
 let restartedServer: ChildProcess | null = null;
 
 async function isHealthy() {
@@ -46,6 +47,9 @@ function serverEnvironment(): NodeJS.ProcessEnv {
   ]) delete environment[name];
   return {
     ...environment,
+    ...(environment.RUDDER_E2E_DATABASE_URL?.trim()
+      ? { DATABASE_URL: environment.RUDDER_E2E_DATABASE_URL.trim() }
+      : {}),
     PATH: `${E2E_BIN_DIR}:${environment.PATH ?? ""}`,
     RUDDER_HOME: E2E_HOME,
     RUDDER_CONFIG: E2E_CONFIG_PATH,
@@ -71,8 +75,9 @@ export async function restartE2eServer() {
   }
   await waitForHealth(false, 30_000);
 
-  restartedServer = spawn("pnpm", ["--filter", "@rudderhq/server", "dev"], {
+  restartedServer = spawn("pnpm", ["--dir", SERVER_DIR, "dev"], {
     cwd: REPO_ROOT,
+    detached: process.platform !== "win32",
     env: serverEnvironment(),
     stdio: "ignore",
   });
@@ -84,7 +89,12 @@ export async function stopRestartedE2eServer() {
   const child = restartedServer;
   restartedServer = null;
   if (!child || child.killed || child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  try {
+    if (process.platform === "win32" || !child.pid) child.kill("SIGTERM");
+    else process.kill(-child.pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
   await new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, 10_000);
     child.once("exit", () => {
@@ -92,4 +102,5 @@ export async function stopRestartedE2eServer() {
       resolve();
     });
   });
+  await waitForHealth(false, 30_000);
 }

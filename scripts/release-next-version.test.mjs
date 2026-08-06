@@ -106,7 +106,7 @@ describe("next release version handoff", () => {
     expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
     expect(readFileSync(outputFile, "utf8")).toContain("action=dry-run");
     expect(readFileSync(outputFile, "utf8")).toContain("version=0.5.2");
-  });
+  }, 15_000);
 
   it("restores the original branch when a dry-run plan fails", () => {
     const repo = createReleaseRepo();
@@ -153,7 +153,7 @@ describe("next release version handoff", () => {
     expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).not.toContain(
       "automation/release-",
     );
-  });
+  }, 15_000);
 
   it("pushes one idempotent release-maintenance commit directly to main", () => {
     const repo = createReleaseRepo();

@@ -12,6 +12,7 @@ import {
   E2E_INSTANCE_ID,
   E2E_INSTANCE_ROOT,
   E2E_PORT,
+  E2E_ROOT,
   E2E_SERVER_PID_PATH,
 } from "./support/e2e-env";
 
@@ -22,6 +23,8 @@ const PRODUCTION_UI = process.env.RUDDER_E2E_PRODUCTION_UI === "1";
 const CHROMIUM_EXECUTABLE_PATH = process.env.RUDDER_E2E_CHROMIUM_EXECUTABLE?.trim() || undefined;
 const E2E_CONFIG = path.join(E2E_INSTANCE_ROOT, "config.json");
 const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || null;
+const REPO_ROOT = path.resolve(E2E_ROOT, "../..");
+const SERVER_DIR = path.join(REPO_ROOT, "server");
 
 const e2eConfigJson = JSON.stringify(
   {
@@ -209,7 +212,7 @@ ${e2eConfigJson}
 EOF
 ${CLEAR_INHERITED_RUNTIME_ENV_COMMAND}
 echo "$$" > "${E2E_SERVER_PID_PATH}"
-exec env ${SERVER_ENV_PREFIX} pnpm --filter @rudderhq/server dev'`,
+exec env ${SERVER_ENV_PREFIX} pnpm --dir "${SERVER_DIR}" dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

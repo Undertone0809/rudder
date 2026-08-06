@@ -145,8 +145,12 @@ describe("claude hello probe classification", () => {
     process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ""}`;
     const previousHome = process.env.HOME;
     const previousRudderHome = process.env.RUDDER_HOME;
+    const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousRudderOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = tempDir;
     process.env.RUDDER_HOME = path.join(tempDir, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    process.env.RUDDER_OPERATOR_HOME = tempDir;
 
     try {
       const result = await testEnvironment({
@@ -189,6 +193,10 @@ describe("claude hello probe classification", () => {
       else process.env.HOME = previousHome;
       if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
       else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
+      if (previousRudderOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousRudderOperatorHome;
       await rm(tempDir, { recursive: true, force: true });
     }
   });
@@ -209,6 +217,12 @@ describe("claude hello probe classification", () => {
     );
     await chmod(command, 0o755);
     process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ""}`;
+    const previousHome = process.env.HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+    process.env.HOME = tempDir;
+    process.env.RUDDER_HOME = path.join(tempDir, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
 
     try {
       const result = await testEnvironment({
@@ -262,6 +276,12 @@ describe("claude hello probe classification", () => {
       expect(argv).not.toContain(path.join(tempDir, "hostile-mcp.json"));
       expect(argv.some((arg) => arg.startsWith("--plugin-url="))).toBe(false);
     } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
       await rm(tempDir, { recursive: true, force: true });
     }
   });
