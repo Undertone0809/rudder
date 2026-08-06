@@ -239,7 +239,7 @@ describe("codex_local ui stdout parser", () => {
     ]);
   });
 
-  it("parses command execution and structured file-change evidence", () => {
+  it("parses command execution and file changes", () => {
     const ts = "2026-02-20T00:00:00.000Z";
 
     expect(
@@ -295,257 +295,26 @@ describe("codex_local ui stdout parser", () => {
       },
     ]);
 
-    const fileChange = {
-      id: "item_52",
-      type: "file_change",
-      changes: [{
-        path: "/Users/paperclipuser/project/ui/src/pages/AgentDetail.tsx",
-        kind: { type: "update", move_path: "/Users/paperclipuser/project/ui/src/pages/RunDetail.tsx" },
-        diff: "@@ -1 +1 @@\n-old\n+new",
-      }],
-      status: "completed",
-    };
-
     expect(
       parseCodexStdoutLine(
-        JSON.stringify({ type: "item.started", item: fileChange }),
-        ts,
-      ),
-    ).toEqual([
-      {
-        kind: "tool_call",
-        ts,
-        name: "file_change",
-        toolUseId: "item_52",
-        input: {
-          id: "item_52",
-          status: "completed",
-          changes: [{
-            path: "/Users/paperclipuser/project/ui/src/pages/AgentDetail.tsx",
-            kind: {
-              type: "update",
-              move_path: "/Users/paperclipuser/project/ui/src/pages/RunDetail.tsx",
-            },
-            diff: "@@ -1 +1 @@\n-old\n+new",
-          }],
-        },
-      },
-    ]);
-
-    expect(
-      parseCodexStdoutLine(
-        JSON.stringify({ type: "item.completed", item: fileChange }),
-        ts,
-      ),
-    ).toEqual([
-      {
-        kind: "tool_result",
-        ts,
-        toolUseId: "item_52",
-        toolName: "file_change",
-        content: JSON.stringify({
-          id: "item_52",
-          status: "completed",
-          changes: [{
-            path: "/Users/paperclipuser/project/ui/src/pages/AgentDetail.tsx",
-            kind: {
-              type: "update",
-              move_path: "/Users/paperclipuser/project/ui/src/pages/RunDetail.tsx",
-            },
-            diff: "@@ -1 +1 @@\n-old\n+new",
-          }],
-        }),
-        isError: false,
-      },
-    ]);
-  });
-
-  it("projects Codex imageView evidence as a paired image_view tool", () => {
-    const ts = "2026-07-24T00:00:00.000Z";
-    const item = {
-      id: "image-1",
-      type: "imageView",
-      path: "/workspace/rudder/tmp/preview.png",
-      status: "completed",
-    };
-    const evidence = {
-      id: "image-1",
-      status: "completed",
-      path: "/workspace/rudder/tmp/preview.png",
-    };
-
-    expect(
-      parseCodexStdoutLine(JSON.stringify({ type: "item.started", item }), ts),
-    ).toEqual([
-      {
-        kind: "tool_call",
-        ts,
-        name: "image_view",
-        toolUseId: "image-1",
-        input: evidence,
-      },
-    ]);
-    expect(
-      parseCodexStdoutLine(JSON.stringify({ type: "item.completed", item }), ts),
-    ).toEqual([
-      {
-        kind: "tool_result",
-        ts,
-        toolUseId: "image-1",
-        toolName: "image_view",
-        content: JSON.stringify(evidence),
-        isError: false,
-      },
-    ]);
-  });
-
-  it.each([
-    ["fileChange", "file_change", {
-      id: "nested-file-change",
-      type: "fileChange",
-      status: "completed",
-      changes: [{
-        path: "/workspace/nested.ts",
-        kind: "update",
-        diff: "@@ -1 +1 @@\n-old\n+new",
-      }],
-    }],
-    ["imageView", "image_view", {
-      id: "nested-image-view",
-      type: "imageView",
-      status: "completed",
-      path: "/workspace/nested.png",
-    }],
-  ])("keeps nested collaboration %s evidence paired", (_providerType, toolName, nestedItem) => {
-    const ts = "2026-07-24T00:00:00.000Z";
-    const [result] = parseCodexStdoutLine(JSON.stringify({
-      type: "item.completed",
-      item: {
-        id: "collab-parent",
-        type: "collab_agent_tool_call",
-        tool: "spawnAgent",
-        status: "completed",
-        agentTranscripts: {
-          "thread-child": {
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_52",
+            type: "file_change",
+            changes: [{ path: "/Users/paperclipuser/project/ui/src/pages/AgentDetail.tsx", kind: "update" }],
             status: "completed",
-            items: [nestedItem],
           },
-        },
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "system",
+        ts,
+        text: "file changes: update /Users/paperclipuser/project/ui/src/pages/AgentDetail.tsx",
       },
-    }), ts);
-
-    expect(result).toMatchObject({
-      kind: "tool_result",
-      toolUseId: "collab-parent",
-      toolName: "spawn_agent",
-    });
-    if (result?.kind !== "tool_result") throw new Error("expected a collaboration tool result");
-    const payload = JSON.parse(result.content) as {
-      agent_transcripts: Record<string, { entries: Array<Record<string, unknown>> }>;
-    };
-    expect(payload.agent_transcripts["thread-child"].entries).toEqual([
-      expect.objectContaining({
-        kind: "tool_call",
-        name: toolName,
-        toolUseId: nestedItem.id,
-      }),
-      expect.objectContaining({
-        kind: "tool_result",
-        toolName,
-        toolUseId: nestedItem.id,
-      }),
     ]);
-  });
-
-  it("preserves string and object file-change kinds without inventing missing diffs", () => {
-    const ts = "2026-07-24T00:00:00.000Z";
-    const item = {
-      id: "file-change-kinds",
-      type: "fileChange",
-      status: "failed",
-      changes: [
-        { path: "/workspace/add.ts", kind: "add", diff: "@@ -0,0 +1 @@\n+added" },
-        { path: "/workspace/delete.ts", kind: { type: "delete" }, diff: "@@ -1 +0,0 @@\n-deleted" },
-        {
-          path: "/workspace/old.ts",
-          kind: { type: "update", move_path: "/workspace/new.ts" },
-        },
-        {
-          path: "/workspace/stay.ts",
-          kind: { type: "update", move_path: null },
-          diff: "@@ -1 +1 @@\n-before\n+after",
-        },
-      ],
-    };
-
-    const [result] = parseCodexStdoutLine(
-      JSON.stringify({ type: "item.completed", item }),
-      ts,
-    );
-    expect(result).toMatchObject({
-      kind: "tool_result",
-      toolUseId: "file-change-kinds",
-      toolName: "file_change",
-      isError: true,
-    });
-    if (result?.kind !== "tool_result") throw new Error("expected a tool result");
-    expect(JSON.parse(result.content)).toEqual({
-      id: "file-change-kinds",
-      status: "failed",
-      changes: [
-        { path: "/workspace/add.ts", kind: "add", diff: "@@ -0,0 +1 @@\n+added" },
-        { path: "/workspace/delete.ts", kind: { type: "delete" }, diff: "@@ -1 +0,0 @@\n-deleted" },
-        {
-          path: "/workspace/old.ts",
-          kind: { type: "update", move_path: "/workspace/new.ts" },
-        },
-        {
-          path: "/workspace/stay.ts",
-          kind: { type: "update", move_path: null },
-          diff: "@@ -1 +1 @@\n-before\n+after",
-        },
-      ],
-    });
-  });
-
-  it("bounds structured file-change evidence by file count and UTF-8 byte size", () => {
-    const ts = "2026-07-24T00:00:00.000Z";
-    const changes = Array.from({ length: 120 }, (_, index) => ({
-      path: `/workspace/文件-${index}.ts`,
-      kind: "update",
-      diff: `@@ -1 +1 @@\n-${"旧".repeat(4_000)}\n+${"新".repeat(4_000)}`,
-    }));
-    const entries = parseCodexStdoutLine(
-      JSON.stringify({
-        type: "item.started",
-        item: {
-          id: "large-file-change",
-          type: "file_change",
-          status: "completed",
-          changes,
-        },
-      }),
-      ts,
-    );
-
-    expect(entries).toHaveLength(1);
-    const call = entries[0];
-    if (call?.kind !== "tool_call") throw new Error("expected a tool call");
-    const evidence = call.input as {
-      changes: Array<Record<string, unknown>>;
-      truncation?: Record<string, unknown>;
-    };
-    expect(evidence.changes.length).toBeLessThanOrEqual(100);
-    expect(evidence.truncation).toMatchObject({
-      truncated: true,
-      original_file_count: 120,
-      max_files: 100,
-      max_bytes: 256 * 1024,
-    });
-    expect(evidence.truncation?.message).toMatch(/truncated/i);
-    expect(Buffer.byteLength(JSON.stringify(evidence), "utf8")).toBeLessThanOrEqual(256 * 1024);
-    expect(JSON.parse(JSON.stringify(evidence))).toEqual(evidence);
-    expect(JSON.stringify(evidence)).not.toContain("\uFFFD");
   });
 
   it("parses error items and failed turns", () => {

@@ -75,6 +75,11 @@ function isToolError(item: Record<string, unknown>): boolean {
   );
 }
 
+function isImageViewErrorStatus(status: string): boolean {
+  return ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
+    .includes(status.trim().toLowerCase());
+}
+
 function normalizeTodoStatus(item: Record<string, unknown>): TranscriptTodoItemStatus {
   const rawStatus = asString(item.status) || asString(item.state);
   const normalizedStatus = rawStatus.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -189,368 +194,24 @@ function parseCommandExecutionItem(
   }];
 }
 
-const FILE_CHANGE_FILE_LIMIT = 100;
-const FILE_CHANGE_EVIDENCE_BYTE_LIMIT = 256 * 1024;
-const FILE_CHANGE_HEADER_BYTE_LIMIT = 4 * 1024;
-
-interface FileChangeEvidenceChange {
-  path: string;
-  kind: string | {
-    type: string;
-    move_path?: string | null;
-  };
-  diff?: string;
-  diff_truncated?: true;
-  diff_original_bytes?: number;
-}
-
-interface FileChangeEvidenceTruncation {
-  truncated: true;
-  original_file_count: number;
-  retained_file_count: number;
-  omitted_file_count: number;
-  max_files: number;
-  max_bytes: number;
-  file_count_limited: boolean;
-  byte_limited: boolean;
-  truncated_diff_count: number;
-  metadata_truncated: boolean;
-  message: string;
-}
-
-interface FileChangeEvidence {
-  id: string;
-  status: string;
-  changes: FileChangeEvidenceChange[];
-  truncation?: FileChangeEvidenceTruncation;
-}
-
-function utf8ByteLength(value: string): number {
-  let bytes = 0;
-  for (const char of value) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    bytes += codePoint <= 0x7f
-      ? 1
-      : codePoint <= 0x7ff
-        ? 2
-        : codePoint <= 0xffff
-          ? 3
-          : 4;
-  }
-  return bytes;
-}
-
-function jsonByteLength(value: unknown): number {
-  return utf8ByteLength(JSON.stringify(value));
-}
-
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (maxBytes <= 0) return "";
-  if (utf8ByteLength(value) <= maxBytes) return value;
-
-  let usedBytes = 0;
-  let endIndex = 0;
-  for (const char of value) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    const charBytes =
-      codePoint <= 0x7f
-        ? 1
-        : codePoint <= 0x7ff
-          ? 2
-          : codePoint <= 0xffff
-            ? 3
-            : 4;
-    if (usedBytes + charBytes > maxBytes) break;
-    usedBytes += charBytes;
-    endIndex += char.length;
-  }
-  return value.slice(0, endIndex);
-}
-
-function normalizeFileChangeKind(value: unknown): FileChangeEvidenceChange["kind"] {
-  if (typeof value === "string") return value || "update";
-  const record = asRecord(value);
-  if (!record) return "update";
-
-  const type = firstString(record.type, record.kind) || "update";
-  const hasMovePath =
-    Object.prototype.hasOwnProperty.call(record, "move_path")
-    || Object.prototype.hasOwnProperty.call(record, "movePath");
-  const rawMovePath = Object.prototype.hasOwnProperty.call(record, "move_path")
-    ? record.move_path
-    : record.movePath;
-  return {
-    type,
-    ...(hasMovePath && (typeof rawMovePath === "string" || rawMovePath === null)
-      ? { move_path: rawMovePath }
-      : {}),
-  };
-}
-
-function normalizeFileChange(
-  value: unknown,
-): FileChangeEvidenceChange | null {
-  const record = asRecord(value);
-  if (!record) return null;
-
-  const change: FileChangeEvidenceChange = {
-    path: asString(record.path),
-    kind: normalizeFileChangeKind(record.kind),
-  };
-  if (typeof record.diff === "string") {
-    const originalBytes = utf8ByteLength(record.diff);
-    const boundedDiff = truncateUtf8(record.diff, FILE_CHANGE_EVIDENCE_BYTE_LIMIT);
-    change.diff = boundedDiff;
-    if (boundedDiff !== record.diff) {
-      change.diff_truncated = true;
-      change.diff_original_bytes = originalBytes;
-    }
-  }
-  return change;
-}
-
-function createFileChangeTruncation(
-  originalFileCount: number,
-  retainedFileCount: number,
-  options: {
-    fileCountLimited: boolean;
-    byteLimited: boolean;
-    truncatedDiffCount: number;
-    metadataTruncated: boolean;
-  },
-): FileChangeEvidenceTruncation {
-  return {
-    truncated: true,
-    original_file_count: originalFileCount,
-    retained_file_count: retainedFileCount,
-    omitted_file_count: Math.max(0, originalFileCount - retainedFileCount),
-    max_files: FILE_CHANGE_FILE_LIMIT,
-    max_bytes: FILE_CHANGE_EVIDENCE_BYTE_LIMIT,
-    file_count_limited: options.fileCountLimited,
-    byte_limited: options.byteLimited,
-    truncated_diff_count: options.truncatedDiffCount,
-    metadata_truncated: options.metadataTruncated,
-    message:
-      "File-change evidence was truncated to at most 100 files and 262144 bytes. "
-      + "Raw provider logs may contain omitted paths or diff content.",
-  };
-}
-
-function fitFileChangeWithTruncatedDiff(
-  baseEvidence: Omit<FileChangeEvidence, "changes" | "truncation">,
-  retainedChanges: FileChangeEvidenceChange[],
-  change: FileChangeEvidenceChange,
-  originalFileCount: number,
-  fileCountLimited: boolean,
-  metadataTruncated: boolean,
-  existingTruncatedDiffCount: number,
-): FileChangeEvidenceChange | null {
-  if (typeof change.diff !== "string") return null;
-
-  const originalDiffBytes = change.diff_original_bytes ?? utf8ByteLength(change.diff);
-  const withoutDiff: FileChangeEvidenceChange = {
-    path: change.path,
-    kind: change.kind,
-    diff_truncated: true,
-    diff_original_bytes: originalDiffBytes,
-  };
-  const changesWithoutDiff = [...retainedChanges, withoutDiff];
-  const evidenceWithoutDiff: FileChangeEvidence = {
-    ...baseEvidence,
-    changes: changesWithoutDiff,
-    truncation: createFileChangeTruncation(originalFileCount, changesWithoutDiff.length, {
-      fileCountLimited,
-      byteLimited: true,
-      truncatedDiffCount: existingTruncatedDiffCount + 1,
-      metadataTruncated,
-    }),
-  };
-  if (jsonByteLength(evidenceWithoutDiff) > FILE_CHANGE_EVIDENCE_BYTE_LIMIT) {
-    return null;
-  }
-
-  const diffCharacters = Array.from(change.diff);
-  if (diffCharacters.length === 0) return withoutDiff;
-  const firstCharacterCandidate: FileChangeEvidenceChange = {
-    ...withoutDiff,
-    diff: diffCharacters[0],
-  };
-  const evidenceWithFirstCharacter: FileChangeEvidence = {
-    ...baseEvidence,
-    changes: [...retainedChanges, firstCharacterCandidate],
-    truncation: evidenceWithoutDiff.truncation,
-  };
-  if (jsonByteLength(evidenceWithFirstCharacter) > FILE_CHANGE_EVIDENCE_BYTE_LIMIT) {
-    return withoutDiff;
-  }
-
-  let low = 0;
-  let high = diffCharacters.length;
-  let best: FileChangeEvidenceChange = firstCharacterCandidate;
-
-  while (low <= high) {
-    const midpoint = Math.floor((low + high) / 2);
-    const candidate: FileChangeEvidenceChange = {
-      path: change.path,
-      kind: change.kind,
-      ...(midpoint > 0 ? { diff: diffCharacters.slice(0, midpoint).join("") } : {}),
-      diff_truncated: true,
-      diff_original_bytes: originalDiffBytes,
-    };
-    const changes = [...retainedChanges, candidate];
-    const evidence: FileChangeEvidence = {
-      ...baseEvidence,
-      changes,
-      truncation: createFileChangeTruncation(originalFileCount, changes.length, {
-        fileCountLimited,
-        byteLimited: true,
-        truncatedDiffCount: existingTruncatedDiffCount + 1,
-        metadataTruncated,
-      }),
-    };
-    if (jsonByteLength(evidence) <= FILE_CHANGE_EVIDENCE_BYTE_LIMIT) {
-      best = candidate;
-      low = midpoint + 1;
-    } else {
-      high = midpoint - 1;
-    }
-  }
-
-  return best;
-}
-
-function createFileChangeEvidence(
-  item: Record<string, unknown>,
-  phase: "started" | "completed",
-): FileChangeEvidence {
-  const rawId = asString(item.id);
-  const rawStatus = asString(item.status, phase === "started" ? "in_progress" : "completed");
-  const id = truncateUtf8(rawId, FILE_CHANGE_HEADER_BYTE_LIMIT);
-  const status = truncateUtf8(rawStatus, FILE_CHANGE_HEADER_BYTE_LIMIT);
-  const metadataTruncated = id !== rawId || status !== rawStatus;
-  const baseEvidence = { id, status };
-  const rawChanges = Array.isArray(item.changes) ? item.changes : [];
-  const normalizedChanges = rawChanges
-    .map(normalizeFileChange)
-    .filter((change): change is FileChangeEvidenceChange => Boolean(change));
-  const invalidChangeCount = rawChanges.length - normalizedChanges.length;
-  const fileCountLimited = normalizedChanges.length > FILE_CHANGE_FILE_LIMIT;
-  const candidateChanges = normalizedChanges.slice(0, FILE_CHANGE_FILE_LIMIT);
-  const completeEvidence: FileChangeEvidence = {
-    ...baseEvidence,
-    changes: candidateChanges,
-  };
-
-  if (
-    !fileCountLimited
-    && invalidChangeCount === 0
-    && !metadataTruncated
-    && jsonByteLength(completeEvidence) <= FILE_CHANGE_EVIDENCE_BYTE_LIMIT
-  ) {
-    return completeEvidence;
-  }
-
-  const retainedChanges: FileChangeEvidenceChange[] = [];
-  let byteLimited = metadataTruncated;
-  let truncatedDiffCount = 0;
-
-  for (const change of candidateChanges) {
-    const changes = [...retainedChanges, change];
-    const nextTruncatedDiffCount = truncatedDiffCount + (change.diff_truncated ? 1 : 0);
-    const provisionalEvidence: FileChangeEvidence = {
-      ...baseEvidence,
-      changes,
-      truncation: createFileChangeTruncation(rawChanges.length, changes.length, {
-        fileCountLimited,
-        byteLimited: true,
-        truncatedDiffCount: nextTruncatedDiffCount,
-        metadataTruncated,
-      }),
-    };
-    if (jsonByteLength(provisionalEvidence) <= FILE_CHANGE_EVIDENCE_BYTE_LIMIT) {
-      retainedChanges.push(change);
-      truncatedDiffCount = nextTruncatedDiffCount;
-      continue;
-    }
-
-    byteLimited = true;
-    const fittedChange = fitFileChangeWithTruncatedDiff(
-      baseEvidence,
-      retainedChanges,
-      change,
-      rawChanges.length,
-      fileCountLimited,
-      metadataTruncated,
-      truncatedDiffCount,
-    );
-    if (fittedChange) {
-      retainedChanges.push(fittedChange);
-      truncatedDiffCount += 1;
-    }
-  }
-
-  const evidence: FileChangeEvidence = {
-    ...baseEvidence,
-    changes: retainedChanges,
-    truncation: createFileChangeTruncation(rawChanges.length, retainedChanges.length, {
-      fileCountLimited,
-      byteLimited: byteLimited || retainedChanges.length < candidateChanges.length,
-      truncatedDiffCount,
-      metadataTruncated,
-    }),
-  };
-
-  while (evidence.changes.length > 0 && jsonByteLength(evidence) > FILE_CHANGE_EVIDENCE_BYTE_LIMIT) {
-    evidence.changes.pop();
-    evidence.truncation = createFileChangeTruncation(rawChanges.length, evidence.changes.length, {
-      fileCountLimited,
-      byteLimited: true,
-      truncatedDiffCount: evidence.changes.filter((change) => change.diff_truncated).length,
-      metadataTruncated,
+function parseFileChangeItem(item: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const changes = Array.isArray(item.changes) ? item.changes : [];
+  const entries = changes
+    .map((changeRaw) => asRecord(changeRaw))
+    .filter((change): change is Record<string, unknown> => Boolean(change))
+    .map((change) => {
+      const kind = asString(change.kind, "update");
+      const path = asString(change.path, "unknown");
+      return `${kind} ${path}`;
     });
+
+  if (entries.length === 0) {
+    return [{ kind: "system", ts, text: "file changes applied" }];
   }
 
-  return evidence;
-}
-
-function isArtifactErrorStatus(status: string): boolean {
-  return ["error", "errored", "failed", "cancelled", "canceled", "denied", "rejected"]
-    .includes(status.trim().toLowerCase());
-}
-
-function fileChangeToolUseId(
-  item: Record<string, unknown>,
-  evidence: FileChangeEvidence,
-): string {
-  return asString(item.id)
-    || (evidence.changes[0]?.path ? `file_change:${evidence.changes[0].path}` : "file_change");
-}
-
-function parseFileChangeItem(
-  item: Record<string, unknown>,
-  ts: string,
-  phase: "started" | "completed",
-): TranscriptEntry[] {
-  const evidence = createFileChangeEvidence(item, phase);
-  const toolUseId = fileChangeToolUseId(item, evidence);
-  if (phase === "started") {
-    return [{
-      kind: "tool_call",
-      ts,
-      name: "file_change",
-      toolUseId,
-      input: evidence,
-    }];
-  }
-
-  return [{
-    kind: "tool_result",
-    ts,
-    toolUseId,
-    toolName: "file_change",
-    content: JSON.stringify(evidence),
-    isError: isToolError(item) || isArtifactErrorStatus(evidence.status),
-  }];
+  const preview = entries.slice(0, 6).join(", ");
+  const more = entries.length > 6 ? ` (+${entries.length - 6} more)` : "";
+  return [{ kind: "system", ts, text: `file changes: ${preview}${more}` }];
 }
 
 function parseImageViewItem(
@@ -563,6 +224,7 @@ function parseImageViewItem(
   const id = asString(item.id);
   const toolUseId = id || (path ? `image_view:${path}` : "image_view");
   const evidence = { id, status, path };
+
   if (phase === "started") {
     return [{
       kind: "tool_call",
@@ -579,7 +241,7 @@ function parseImageViewItem(
     toolUseId,
     toolName: "image_view",
     content: JSON.stringify(evidence),
-    isError: isToolError(item) || isArtifactErrorStatus(status),
+    isError: isToolError(item) || isImageViewErrorStatus(status),
   }];
 }
 
@@ -695,10 +357,9 @@ function parseCollabAgentTranscriptItems(items: unknown[], fallbackTs: string): 
       || type === "web_search"
       || type === "mcp_tool_call"
       || type === "collab_agent_tool_call"
-      || type === "file_change"
-      || type === "fileChange"
-      || type === "image_view"
-      || type === "imageView"
+      || type === "collab_tool_call"
+      || type === "subAgentActivity"
+      || type === "sub_agent_activity"
     ) {
       return [
         ...parseCodexItem(item, ts, "started"),
@@ -727,6 +388,57 @@ function parseCollabAgentTranscripts(item: Record<string, unknown>, ts: string) 
   return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
+function subAgentActivityThreadId(item: Record<string, unknown>): string {
+  return firstString(item.agentThreadId, item.agent_thread_id);
+}
+
+function parseSubAgentActivityItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  if (phase === "started") return [];
+
+  const id = asString(item.id) || "sub_agent_activity";
+  const threadId = subAgentActivityThreadId(item);
+  const agentPath = firstString(item.agentPath, item.agent_path);
+  const activityKind = asString(item.kind, "updated");
+  const agentTranscripts = parseCollabAgentTranscripts(item, ts);
+  const receiverThreadIds = threadId ? [threadId] : [];
+  const input = {
+    id,
+    activity_kind: activityKind,
+    ...(agentPath ? { agent_path: agentPath } : {}),
+    receiver_thread_ids: receiverThreadIds,
+    ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+  };
+  const status = activityKind === "interrupted" ? "failed" : "completed";
+
+  return [
+    {
+      kind: "tool_call",
+      ts,
+      name: "subagent_activity",
+      toolUseId: id,
+      input,
+    },
+    {
+      kind: "tool_result",
+      ts,
+      toolUseId: id,
+      toolName: "subagent_activity",
+      content: JSON.stringify({
+        status,
+        activity_kind: activityKind,
+        ...(agentPath ? { agent_path: agentPath } : {}),
+        receiver_thread_ids: receiverThreadIds,
+        ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+      }),
+      isError: activityKind === "interrupted",
+    },
+  ];
+}
+
 function parseCollabAgentToolCallItem(
   item: Record<string, unknown>,
   ts: string,
@@ -734,10 +446,17 @@ function parseCollabAgentToolCallItem(
 ): TranscriptEntry[] {
   const id = asString(item.id) || "collab_agent_tool_call";
   const name = normalizeCollabAgentToolName(asString(item.tool));
-  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
-    ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+  const rawReceiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds
+    : Array.isArray(item.receiver_thread_ids)
+      ? item.receiver_thread_ids
+      : [];
+  const receiverThreadIds = rawReceiverThreadIds.length > 0
+    ? rawReceiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
     : [];
-  const agentsStates = asRecord(item.agentsStates) ?? {};
+  const agentsStates = asRecord(item.agentsStates) ?? asRecord(item.agents_states) ?? {};
+  const reasoningEffort = firstString(item.reasoningEffort, item.reasoning_effort);
+  const senderThreadId = firstString(item.senderThreadId, item.sender_thread_id);
 
   if (phase === "started") {
     return [{
@@ -749,8 +468,8 @@ function parseCollabAgentToolCallItem(
         id,
         ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
         ...(asString(item.model) ? { model: asString(item.model) } : {}),
-        ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-        ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
         receiver_thread_ids: receiverThreadIds,
         agents_states: agentsStates,
       },
@@ -768,8 +487,8 @@ function parseCollabAgentToolCallItem(
       status,
       ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
       ...(asString(item.model) ? { model: asString(item.model) } : {}),
-      ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-      ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
       receiver_thread_ids: receiverThreadIds,
       agents_states: agentsStates,
       ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
@@ -795,13 +514,33 @@ function parseCodexItem(
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
-    if (text) return [{ kind: "assistant", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    const messagePhase = item.phase === "commentary" || item.phase === "final_answer"
+      ? item.phase
+      : null;
+    if (text) {
+      return [{
+        kind: "assistant",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(messagePhase ? { phase: messagePhase } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [];
   }
 
   if (itemType === "reasoning") {
     const text = asString(item.text);
-    if (text) return [{ kind: "thinking", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    if (text) {
+      return [{
+        kind: "thinking",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [{ kind: "system", ts, text: phase === "started" ? "reasoning started" : "reasoning completed" }];
   }
 
@@ -817,12 +556,21 @@ function parseCodexItem(
     return parseMcpToolCallItem(item, ts, phase);
   }
 
-  if (itemType === "collab_agent_tool_call" || itemType === "collabAgentToolCall") {
+  if (
+    itemType === "collab_agent_tool_call"
+    || itemType === "collabAgentToolCall"
+    || itemType === "collab_tool_call"
+    || itemType === "collabToolCall"
+  ) {
     return parseCollabAgentToolCallItem(item, ts, phase);
   }
 
-  if (itemType === "file_change" || itemType === "fileChange") {
-    return parseFileChangeItem(item, ts, phase);
+  if (itemType === "sub_agent_activity" || itemType === "subAgentActivity") {
+    return parseSubAgentActivityItem(item, ts, phase);
+  }
+
+  if (itemType === "file_change" && phase === "completed") {
+    return parseFileChangeItem(item, ts);
   }
 
   if (itemType === "imageView" || itemType === "image_view") {

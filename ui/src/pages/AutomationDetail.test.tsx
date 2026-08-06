@@ -13,7 +13,10 @@ import { AutomationDetail } from "./AutomationDetail";
 const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
 const mockConfirm = vi.fn(async () => true);
-const markdownEditorProps = vi.hoisted(() => [] as Array<{ mentions?: Array<{ id: string; kind?: string; name: string }> }>);
+const markdownEditorProps = vi.hoisted(() => [] as Array<{
+  engine?: string;
+  mentions?: Array<{ id: string; kind?: string; name: string }>;
+}>);
 const mutationCalls = vi.hoisted(() => [] as Array<unknown>);
 
 const automation = {
@@ -312,15 +315,17 @@ vi.mock("../components/MarkdownEditor", () => ({
       onChange,
       placeholder,
       mentions,
+      engine,
     }: {
       value: string;
       onChange: (value: string) => void;
       placeholder?: string;
       mentions?: Array<{ id: string; kind?: string; name: string }>;
+      engine?: string;
     },
     ref,
   ) {
-    markdownEditorProps.push({ mentions });
+    markdownEditorProps.push({ engine, mentions });
     useImperativeHandle(ref, () => ({
       focus: vi.fn(),
     }));
@@ -513,6 +518,7 @@ describe("AutomationDetail", () => {
       ?.getAttribute("data-surface")).toBe("workbench");
     expect(container.querySelector('[data-testid="automation-detail-panel-header"]'))
       .toBeNull();
+    expect(container.querySelector('button[aria-label="Run now"]')).toBeTruthy();
     expect(container.textContent).toContain("Details");
     expect(mockSetHeaderActions.mock.calls.some(([actions]) => actions !== null))
       .toBe(false);
@@ -734,6 +740,7 @@ describe("AutomationDetail", () => {
     });
 
     const mentionIds = markdownEditorProps.at(-1)?.mentions?.map((mention) => mention.id) ?? [];
+    expect(markdownEditorProps.at(-1)?.engine).toBe("codemirror");
     expect(mentionIds).toEqual(expect.arrayContaining([
       "agent:agent-1",
       "project:project-1",

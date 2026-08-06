@@ -7,7 +7,6 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Tabs } from "@/components/ui/tabs";
-import { Link } from "@/lib/router";
 import {
   type HeartbeatRun,
   type HeartbeatRunEvent,
@@ -28,56 +27,61 @@ import {
 } from "react";
 import { buildTranscript, getUIAdapter } from "../agent-runtimes";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
-import { ApiError } from "../api/client";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
-import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
-import { useSidePanel } from "../context/SidePanelContext";
-import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
+import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { queryKeys } from "../lib/queryKeys";
-import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
-import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+
+export function mergeRunEvents(
+  currentEvents: HeartbeatRunEvent[],
+  incomingEvents: HeartbeatRunEvent[],
+): HeartbeatRunEvent[] {
+  const eventsBySeq = new Map(
+    [...currentEvents, ...incomingEvents].map((event) => [event.seq, event]),
+  );
+  return [...eventsBySeq.values()].sort((left, right) => left.seq - right.seq);
+}
+
+export function advancePersistedRunEventCursor(
+  currentCursor: number,
+  persistedEvents: HeartbeatRunEvent[],
+): number {
+  return persistedEvents.reduce(
+    (maxSeq, event) => Math.max(maxSeq, event.seq),
+    currentCursor,
+  );
+}
 
 export function runDateToIso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   return typeof value === "string" ? value : value.toISOString();
 }
 
-export function openRunTranscriptLocalFile(
-  openTarget: (target: SidePanelTarget) => unknown,
-  closeTranscriptDialog: () => void,
-  targetPath: string,
-  label: string,
-) {
-  closeTranscriptDialog();
-  const fileName = (label.trim() || targetPath).split(/[\\/]/u).filter(Boolean).at(-1) ?? targetPath;
-  openTarget({
-    kind: "local_file",
-    filePath: targetPath,
-    label: fileName,
-  });
-}
-
-export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
+export function LogViewer({
+  run,
+  agentRuntimeType,
+  onAnnotate,
+}: {
+  run: HeartbeatRun;
+  agentRuntimeType: string;
+  onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
+}) {
   type RunDetailTab = "transcript" | "invocation";
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
   const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
   const [loading, setLoading] = useState(true);
   const [logLoading, setLogLoading] = useState(!!run.logRef);
   const [logError, setLogError] = useState<string | null>(null);
-  const [logOffset, setLogOffset] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
-  const [isStreamingConnected, setIsStreamingConnected] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
-  const failureDisplay = getRunFailureDisplay(run);
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
-  const { openTarget: openSidePanelTarget } = useSidePanel();
   const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
     fromX: "0px",
     fromY: "-16px",
@@ -87,16 +91,9 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     fromScaleY: "0.96",
   });
   const transcriptVisible = activeDetailTab === "transcript";
-  const openTranscriptFile = useCallback((targetPath: string, label: string) => {
-    openRunTranscriptLocalFile(
-      openSidePanelTarget,
-      () => setTranscriptModalOpen(false),
-      targetPath,
-      label,
-    );
-  }, [openSidePanelTarget]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
+  const persistedEventCursorRef = useRef(0);
   const pendingLogLineRef = useRef("");
   const seenLogChunkKeysRef = useRef<Set<string>>(new Set());
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
@@ -106,6 +103,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     distanceFromBottom: Number.POSITIVE_INFINITY,
   });
   const isLive = run.status === "running" || run.status === "queued";
+  const activityCoordinator = useActivityCoordinator();
+  const handleAnnotate = useCallback((input: TranscriptRunAnnotationInput) => {
+    setTranscriptModalOpen(false);
+    onAnnotate?.(input);
+  }, [onAnnotate]);
   const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => {
     if (!isLive) return [];
     return [{
@@ -139,15 +141,12 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     maxChunksPerRun: 500,
     includeRunEvents: false,
   });
+  const liveTranscriptSize = liveTranscriptByRun.get(run.id)?.length ?? 0;
   const { data: workspaceOperations = [] } = useQuery({
     queryKey: queryKeys.runWorkspaceOperations(run.id),
     queryFn: () => agentRunsApi.workspaceOperations(run.id),
     refetchInterval: isLive ? 2000 : false,
   });
-
-  function isRunLogUnavailable(err: unknown): boolean {
-    return err instanceof ApiError && err.status === 404;
-  }
 
   function appendLogContent(content: string, finalize = false) {
     if (!content && !finalize) return;
@@ -201,16 +200,74 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
 
   // Fetch events
   const { data: initialEvents } = useQuery({
-    queryKey: ["run-events", run.id],
-    queryFn: () => agentRunsApi.events(run.id, 0, 200),
+    queryKey: queryKeys.runEvents(run.id),
+    queryFn: () => agentRunsApi.allEvents(run.id),
   });
 
   useEffect(() => {
+    persistedEventCursorRef.current = 0;
+    setEvents([]);
+    setLoading(true);
+  }, [run.id]);
+
+  useEffect(() => {
     if (initialEvents) {
-      setEvents(initialEvents);
+      persistedEventCursorRef.current = advancePersistedRunEventCursor(
+        persistedEventCursorRef.current,
+        initialEvents,
+      );
+      setEvents((currentEvents) => {
+        if (currentEvents.length === 0) return initialEvents;
+        return mergeRunEvents(currentEvents, initialEvents);
+      });
       setLoading(false);
     }
   }, [initialEvents]);
+
+  // The opened Run keeps a cursor-based event backfill so reconnect gaps and
+  // terminal races cannot lose structured invocation evidence. Background Runs
+  // do not mount LogViewer and therefore do not create this request loop.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let terminalStableReads = 0;
+
+    const schedule = () => {
+      if (cancelled) return;
+      timer = setTimeout(() => {
+        void backfill();
+      }, 2_000);
+    };
+
+    const backfill = async () => {
+      try {
+        const newEvents = await agentRunsApi.events(run.id, persistedEventCursorRef.current, 1_000);
+        if (cancelled) return;
+        if (newEvents.length > 0) {
+          persistedEventCursorRef.current = advancePersistedRunEventCursor(
+            persistedEventCursorRef.current,
+            newEvents,
+          );
+          terminalStableReads = 0;
+          setEvents((currentEvents) => mergeRunEvents(currentEvents, newEvents));
+        } else if (!isLive) {
+          terminalStableReads += 1;
+        }
+
+        if (isLive || terminalStableReads < 2) schedule();
+      } catch {
+        // A transient read failure must not turn a reconnect gap into permanent
+        // data loss while this Run remains visible.
+        if (isLive || terminalStableReads < 2) schedule();
+      }
+    };
+
+    void backfill();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [isLive, run.id]);
 
   const getScrollContainer = useCallback((): ScrollContainer => {
     if (scrollContainerRef.current) return scrollContainerRef.current;
@@ -291,7 +348,7 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
       isFollowingRef.current = true;
     }
     setIsFollowing((prev) => (prev ? prev : true));
-  }, [events.length, logLines.length, isLive, transcriptVisible, getScrollContainer]);
+  }, [events.length, getScrollContainer, isLive, liveTranscriptSize, logLines.length, transcriptVisible]);
 
   // Fetch persisted shell log
   useEffect(() => {
@@ -299,10 +356,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     pendingLogLineRef.current = "";
     seenLogChunkKeysRef.current.clear();
     setLogLines([]);
-    setLogOffset(0);
     setLogError(null);
 
-    if (!run.logRef && !isLive) {
+    // Live Runs use the shared ActivityCoordinator-backed transcript source.
+    // Only terminal detail views hydrate the persisted log directly.
+    if (isLive || !run.logRef) {
       setLogLoading(false);
       return () => {
         cancelled = true;
@@ -324,17 +382,12 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
           if (cancelled) break;
           appendLogContent(result.content, result.nextOffset === undefined);
           const next = result.nextOffset ?? result.endOffset ?? offset + utf8ByteLength(result.content);
-          setLogOffset(next);
           offset = next;
           first = false;
           if (result.nextOffset === undefined || isLive) break;
         }
       } catch (err) {
         if (!cancelled) {
-          if (isLive && isRunLogUnavailable(err)) {
-            setLogLoading(false);
-            return;
-          }
           setLogError(err instanceof Error ? err.message : "Failed to load run log");
         }
       } finally {
@@ -348,159 +401,47 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     };
   }, [run.id, run.logRef, run.logBytes, isLive]);
 
-  // Poll for live updates
+  // Reuse the single organization event stream owned by LiveUpdatesProvider.
   useEffect(() => {
-    if (!shouldPollLiveRunBackfill({ isLive, isStreamingConnected })) return;
-    const interval = setInterval(async () => {
-      const maxSeq = events.length > 0 ? Math.max(...events.map((e) => e.seq)) : 0;
-      try {
-        const newEvents = await agentRunsApi.events(run.id, maxSeq, 100);
-        if (newEvents.length > 0) {
-          setEvents((prev) => [...prev, ...newEvents]);
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [run.id, isLive, isStreamingConnected, events]);
+    if (!isLive) return undefined;
+    return activityCoordinator.subscribeLiveEvents((event: LiveEvent) => {
+      if (event.orgId !== run.orgId || event.type !== "heartbeat.run.event") return;
+      const payload = asRecord(event.payload);
+      if (!payload || asNonEmptyString(payload.runId) !== run.id) return;
 
-  // Poll shell log for running runs
-  useEffect(() => {
-    if (!shouldPollLiveRunBackfill({ isLive, isStreamingConnected })) return;
-    const interval = setInterval(async () => {
-      try {
-        const result = await agentRunsApi.log(run.id, logOffset, 256_000);
-        if (result.content) {
-          appendLogContent(result.content, result.nextOffset === undefined);
-        }
-        if (result.nextOffset !== undefined) {
-          setLogOffset(result.nextOffset);
-        } else if (result.endOffset !== undefined) {
-          setLogOffset(result.endOffset);
-        } else if (result.content.length > 0) {
-          setLogOffset((prev) => prev + utf8ByteLength(result.content));
-        }
-      } catch (err) {
-        if (isRunLogUnavailable(err)) return;
-        // ignore polling errors
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [run.id, isLive, isStreamingConnected, logOffset]);
+      const seq = typeof payload.seq === "number" ? payload.seq : null;
+      if (seq === null || !Number.isFinite(seq)) return;
 
-  // Stream live updates from websocket (primary path for running runs).
-  useEffect(() => {
-    if (!isLive) return;
-
-    let closed = false;
-    let reconnectTimer: number | null = null;
-    let socket: WebSocket | null = null;
-
-    const scheduleReconnect = () => {
-      if (closed) return;
-      reconnectTimer = window.setTimeout(connect, 1500);
-    };
-
-    const connect = () => {
-      if (closed) return;
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/orgs/${encodeURIComponent(run.orgId)}/events/ws`;
-      socket = new WebSocket(url);
-
-      socket.onopen = () => {
-        setIsStreamingConnected(true);
+      const streamRaw = asNonEmptyString(payload.stream);
+      const stream =
+        streamRaw === "stdout" || streamRaw === "stderr" || streamRaw === "system"
+          ? streamRaw
+          : null;
+      const levelRaw = asNonEmptyString(payload.level);
+      const level =
+        levelRaw === "info" || levelRaw === "warn" || levelRaw === "error"
+          ? levelRaw
+          : null;
+      const liveEvent: HeartbeatRunEvent = {
+        id: seq,
+        orgId: run.orgId,
+        runId: run.id,
+        agentId: run.agentId,
+        seq,
+        eventType: asNonEmptyString(payload.eventType) ?? "event",
+        stream,
+        level,
+        color: asNonEmptyString(payload.color),
+        message: asNonEmptyString(payload.message),
+        payload: asRecord(payload.payload),
+        createdAt: new Date(event.createdAt),
       };
-
-      socket.onmessage = (message) => {
-        const rawMessage = typeof message.data === "string" ? message.data : "";
-        if (!rawMessage) return;
-
-        let event: LiveEvent;
-        try {
-          event = JSON.parse(rawMessage) as LiveEvent;
-        } catch {
-          return;
-        }
-
-        if (event.orgId !== run.orgId) return;
-        const payload = asRecord(event.payload);
-        const eventRunId = asNonEmptyString(payload?.runId);
-        if (!payload || eventRunId !== run.id) return;
-
-        if (event.type === "heartbeat.run.log") {
-          if (payload.truncated === true) return;
-          const chunk = typeof payload.chunk === "string" ? payload.chunk : "";
-          if (!chunk) return;
-          const streamRaw = asNonEmptyString(payload.stream);
-          const stream = streamRaw === "stderr" || streamRaw === "system" ? streamRaw : "stdout";
-          const ts = asNonEmptyString((payload as Record<string, unknown>).ts) ?? event.createdAt;
-          appendLogChunks([{ ts, stream, chunk }]);
-          return;
-        }
-
-        if (event.type !== "heartbeat.run.event") return;
-
-        const seq = typeof payload.seq === "number" ? payload.seq : null;
-        if (seq === null || !Number.isFinite(seq)) return;
-
-        const streamRaw = asNonEmptyString(payload.stream);
-        const stream =
-          streamRaw === "stdout" || streamRaw === "stderr" || streamRaw === "system"
-            ? streamRaw
-            : null;
-        const levelRaw = asNonEmptyString(payload.level);
-        const level =
-          levelRaw === "info" || levelRaw === "warn" || levelRaw === "error"
-            ? levelRaw
-            : null;
-
-        const liveEvent: HeartbeatRunEvent = {
-          id: seq,
-          orgId: run.orgId,
-          runId: run.id,
-          agentId: run.agentId,
-          seq,
-          eventType: asNonEmptyString(payload.eventType) ?? "event",
-          stream,
-          level,
-          color: asNonEmptyString(payload.color),
-          message: asNonEmptyString(payload.message),
-          payload: asRecord(payload.payload),
-          createdAt: new Date(event.createdAt),
-        };
-
-        setEvents((prev) => {
-          if (prev.some((existing) => existing.seq === seq)) return prev;
-          return [...prev, liveEvent];
-        });
-      };
-
-      socket.onerror = () => {
-        socket?.close();
-      };
-
-      socket.onclose = () => {
-        setIsStreamingConnected(false);
-        scheduleReconnect();
-      };
-    };
-
-    connect();
-
-    return () => {
-      closed = true;
-      setIsStreamingConnected(false);
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      if (socket) {
-        socket.onopen = null;
-        socket.onmessage = null;
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close(1000, "run_detail_unmount");
-      }
-    };
-  }, [isLive, run.orgId, run.id, run.agentId]);
+      // Socket delivery updates presentation only. The persisted REST cursor
+      // advances exclusively from REST results so a reconnect cannot skip a
+      // missing lower sequence.
+      setEvents((prev) => mergeRunEvents(prev, [liveEvent]));
+    });
+  }, [activityCoordinator, isLive, run.agentId, run.id, run.orgId]);
 
   const censorUsernameInLogs = useQuery({
     queryKey: queryKeys.instance.generalSettings,
@@ -596,8 +537,12 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     }
   }, [activeDetailTab, hasInvocationTab]);
 
-  if (loading || logLoading) {
+  if (loading && logLoading) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
+  }
+
+  if (transcript.length === 0 && !logError) {
+    return <p className="text-xs text-muted-foreground">No log events.</p>;
   }
 
   return (
@@ -684,7 +629,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
-              onOpenFile={openTranscriptFile}
+              runAnnotationContext={onAnnotate ? {
+                sourceRunId: run.id,
+                sourceAgentId: run.agentId,
+                onAnnotate: handleAnnotate,
+              } : undefined}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -820,7 +769,11 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
-              onOpenFile={openTranscriptFile}
+              runAnnotationContext={onAnnotate ? {
+                sourceRunId: run.id,
+                sourceAgentId: run.agentId,
+                onAnnotate: handleAnnotate,
+              } : undefined}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -830,25 +783,6 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
           </div>
         </DialogContent>
       </Dialog>
-
-      {(run.status === "failed" || run.status === "timed_out") && (
-        <div className="rounded-lg border border-red-300 dark:border-red-500/30 bg-red-50 dark:bg-red-950/20 p-3 space-y-2">
-          <div className="text-xs font-medium text-red-700 dark:text-red-300">Failure details</div>
-          {failureDisplay && (
-            <div className="text-xs text-red-600 dark:text-red-200">
-              <span className="text-red-700 dark:text-red-300">{failureDisplay.title}: </span>
-              {redactPathText(failureDisplay.body, censorUsernameInLogs)}
-              {failureDisplay.actionPath && failureDisplay.actionLabel && (
-                <div className="mt-1">
-                  <Link to={failureDisplay.actionPath} className="text-xs font-medium text-red-700 underline dark:text-red-300">
-                    {failureDisplay.actionLabel}
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
     </div>
   );

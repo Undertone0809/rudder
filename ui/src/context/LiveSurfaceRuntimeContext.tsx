@@ -56,9 +56,13 @@ export type LiveSurfaceRenderer = (
 ) => ReactNode;
 
 export type LiveSurfaceOwnerCallbacks = {
+  annotationConversationId?: string | null;
   canOpenNewTab?: boolean;
+  savedViewId?: string | null;
   onCloseTarget?: (target: SidePanelTarget) => void;
   onCycleTab?: (direction: -1 | 1) => void;
+  onLocalAppTitleChange?: (title: string) => void;
+  onOpenBrowserSettings?: () => void;
   onOpenTarget?: (target: SidePanelTarget) => void;
   onRegisterShortcutController?: (
     key: string,
@@ -84,6 +88,7 @@ type LiveSurfaceRuntimeRecord = {
   owners: Map<string, LiveSurfaceOwnerRegistration>;
   renderSurface: LiveSurfaceRenderer | null;
   runtimeId: string;
+  shortcutController: ((action: BrowserShortcutAction) => void) | null;
   target: LiveSurfaceTarget;
   webContentsId: number | null;
 };
@@ -99,12 +104,30 @@ export type LiveSurfaceGuestOwner = {
 type LiveSurfaceRuntimeContextValue = {
   autoClaimSurface: (runtimeId: string, ownerId: string) => boolean;
   claimSurface: (runtimeId: string, ownerId: string) => boolean;
+  closeTargetForGuest: (webContentsId: number) => boolean;
+  closeTargetForRuntime: (runtimeId: string) => boolean;
+  dispatchBrowserShortcutForGuest: (
+    webContentsId: number,
+    action: BrowserShortcutAction,
+  ) => boolean;
+  dispatchBrowserShortcutForRuntime: (
+    runtimeId: string,
+    action: BrowserShortcutAction,
+  ) => boolean;
   disposeSurface: (runtimeId: string) => void;
   getGuestOwner: (webContentsId: number) => LiveSurfaceGuestOwner | null;
   getLiveBrowserCount: (organizationId: string) => number;
   getRuntimeTarget: (runtimeId: string) => LiveSurfaceTarget | null;
   hasSurface: (runtimeId: string) => boolean;
   listRecords: () => LiveSurfaceRuntimeRecord[];
+  openTargetForGuest: (
+    webContentsId: number,
+    target: SidePanelTarget,
+  ) => boolean;
+  registerBrowserShortcutController: (
+    runtimeId: string,
+    controller: ((action: BrowserShortcutAction) => void) | null,
+  ) => void;
   registerOwner: (
     registration: LiveSurfaceOwnerRegistration,
   ) => () => void;
@@ -165,14 +188,51 @@ function liveTargetsMatch(
     && exactViewInstanceId(left) === exactViewInstanceId(right);
 }
 
+function serializableValuesMatch(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null
+    || right === null
+    || typeof left !== "object"
+    || typeof right !== "object"
+  ) return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => (
+        serializableValuesMatch(value, right[index])
+      ));
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).filter(
+    (key) => leftRecord[key] !== undefined,
+  );
+  const rightKeys = Object.keys(rightRecord).filter(
+    (key) => rightRecord[key] !== undefined,
+  );
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => (
+      Object.hasOwn(rightRecord, key)
+      && serializableValuesMatch(leftRecord[key], rightRecord[key])
+    ));
+}
+
 function ownerSurface(ownerId: string): "side_panel" | "workbench" {
   return ownerId.startsWith("main:") ? "workbench" : "side_panel";
 }
 
 function ownerReady(owner: LiveSurfaceOwnerRegistration | null | undefined) {
-  if (!owner?.active || !owner.element.isConnected) return false;
+  if (!ownerClaimable(owner)) return false;
   const rect = owner.element.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
+}
+
+function ownerClaimable(
+  owner: LiveSurfaceOwnerRegistration | null | undefined,
+): owner is LiveSurfaceOwnerRegistration {
+  return Boolean(owner?.active && owner.element.isConnected);
 }
 
 export function LiveSurfaceRuntimeProvider({
@@ -200,11 +260,11 @@ export function LiveSurfaceRuntimeProvider({
       owners: new Map<string, LiveSurfaceOwnerRegistration>(),
       renderSurface: registration.renderSurface ?? null,
       runtimeId: registration.runtimeId,
+      shortcutController: null,
       target: registration.target,
       webContentsId: null,
     };
     record.owners.set(registration.ownerId, registration);
-    record.target = registration.target;
     if (registration.renderSurface) record.renderSurface = registration.renderSurface;
     recordsRef.current.set(registration.runtimeId, record);
     touch();
@@ -227,15 +287,25 @@ export function LiveSurfaceRuntimeProvider({
     if (!record || !liveTargetsMatch(record.target, registration.target)) return;
     const existing = record.owners.get(registration.ownerId);
     if (!existing) return;
+    const targetChanged = !serializableValuesMatch(
+      existing.target,
+      registration.target,
+    );
     const changed = existing.active !== registration.active
       || existing.callbacks !== registration.callbacks
       || existing.element !== registration.element
       || existing.hostId !== registration.hostId
       || existing.renderSurface !== registration.renderSurface
-      || existing.target !== registration.target;
+      || targetChanged;
     if (!changed) return;
     record.owners.set(registration.ownerId, registration);
-    record.target = registration.target;
+    if (
+      targetChanged
+      && record.leaseOwnerId === registration.ownerId
+      && !record.interactionLocked
+    ) {
+      record.target = registration.target;
+    }
     if (registration.renderSurface) record.renderSurface = registration.renderSurface;
     touch();
   }, [touch]);
@@ -253,7 +323,7 @@ export function LiveSurfaceRuntimeProvider({
   const autoClaimSurface = useCallback((runtimeId: string, ownerId: string) => {
     const record = recordsRef.current.get(runtimeId);
     const owner = record?.owners.get(ownerId);
-    if (!record || !ownerReady(owner)) return false;
+    if (!record || !ownerClaimable(owner)) return false;
     if (record.leaseOwnerId && record.leaseOwnerId !== ownerId) return false;
     if (record.leaseOwnerId === ownerId) return true;
     record.leaseOwnerId = ownerId;
@@ -339,6 +409,69 @@ export function LiveSurfaceRuntimeProvider({
     };
   }, []);
 
+  const openTargetForGuest = useCallback((
+    webContentsId: number,
+    target: SidePanelTarget,
+  ) => {
+    const runtimeId = webContentsRuntimeIdsRef.current.get(webContentsId);
+    const record = runtimeId ? recordsRef.current.get(runtimeId) : null;
+    const owner = record?.leaseOwnerId
+      ? record.owners.get(record.leaseOwnerId)
+      : null;
+    if (!owner?.callbacks.onOpenTarget) return false;
+    owner.callbacks.onOpenTarget(target);
+    return true;
+  }, []);
+
+  const closeTargetForRuntime = useCallback((runtimeId: string) => {
+    const record = recordsRef.current.get(runtimeId);
+    const owner = record?.leaseOwnerId
+      ? record.owners.get(record.leaseOwnerId)
+      : null;
+    if (!record || !owner?.callbacks.onCloseTarget) return false;
+    owner.callbacks.onCloseTarget(record.target);
+    return true;
+  }, []);
+
+  const closeTargetForGuest = useCallback((webContentsId: number) => {
+    const runtimeId = webContentsRuntimeIdsRef.current.get(webContentsId);
+    return runtimeId ? closeTargetForRuntime(runtimeId) : false;
+  }, [closeTargetForRuntime]);
+
+  const registerBrowserShortcutController = useCallback((
+    runtimeId: string,
+    controller: ((action: BrowserShortcutAction) => void) | null,
+  ) => {
+    const record = recordsRef.current.get(runtimeId);
+    if (!record || record.target.kind !== "browser") return;
+    record.shortcutController = controller;
+  }, []);
+
+  const dispatchBrowserShortcutForRuntime = useCallback((
+    runtimeId: string,
+    action: BrowserShortcutAction,
+  ) => {
+    const record = recordsRef.current.get(runtimeId);
+    if (
+      !record
+      || record.target.kind !== "browser"
+      || !record.leaseOwnerId
+      || !record.shortcutController
+    ) return false;
+    record.shortcutController(action);
+    return true;
+  }, []);
+
+  const dispatchBrowserShortcutForGuest = useCallback((
+    webContentsId: number,
+    action: BrowserShortcutAction,
+  ) => {
+    const runtimeId = webContentsRuntimeIdsRef.current.get(webContentsId);
+    return runtimeId
+      ? dispatchBrowserShortcutForRuntime(runtimeId, action)
+      : false;
+  }, [dispatchBrowserShortcutForRuntime]);
+
   const getLiveBrowserCount = useCallback((organizationId: string) => (
     Array.from(recordsRef.current.values()).filter((record) => (
       record.target.kind === "browser"
@@ -361,12 +494,18 @@ export function LiveSurfaceRuntimeProvider({
   const value = useMemo<LiveSurfaceRuntimeContextValue>(() => ({
     autoClaimSurface,
     claimSurface,
+    closeTargetForGuest,
+    closeTargetForRuntime,
+    dispatchBrowserShortcutForGuest,
+    dispatchBrowserShortcutForRuntime,
     disposeSurface,
     getGuestOwner,
     getLiveBrowserCount,
     getRuntimeTarget,
     hasSurface,
     listRecords,
+    openTargetForGuest,
+    registerBrowserShortcutController,
     registerOwner,
     registerWebContentsId,
     revision,
@@ -377,12 +516,18 @@ export function LiveSurfaceRuntimeProvider({
   }), [
     autoClaimSurface,
     claimSurface,
+    closeTargetForGuest,
+    closeTargetForRuntime,
+    dispatchBrowserShortcutForGuest,
+    dispatchBrowserShortcutForRuntime,
     disposeSurface,
     getGuestOwner,
     getLiveBrowserCount,
     getRuntimeTarget,
     hasSurface,
     listRecords,
+    openTargetForGuest,
+    registerBrowserShortcutController,
     registerOwner,
     registerWebContentsId,
     revision,
@@ -447,14 +592,26 @@ export function LiveSurfaceAnchor({
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   const stableCallbacks = useMemo<LiveSurfaceOwnerCallbacks>(() => ({
+    get annotationConversationId() {
+      return callbacksRef.current.annotationConversationId;
+    },
     get canOpenNewTab() {
       return callbacksRef.current.canOpenNewTab;
+    },
+    get savedViewId() {
+      return callbacksRef.current.savedViewId;
     },
     onCloseTarget: (nextTarget) => (
       callbacksRef.current.onCloseTarget?.(nextTarget)
     ),
     onCycleTab: (direction) => (
       callbacksRef.current.onCycleTab?.(direction)
+    ),
+    onLocalAppTitleChange: (title) => (
+      callbacksRef.current.onLocalAppTitleChange?.(title)
+    ),
+    onOpenBrowserSettings: () => (
+      callbacksRef.current.onOpenBrowserSettings?.()
     ),
     onOpenTarget: (nextTarget) => (
       callbacksRef.current.onOpenTarget?.(nextTarget)
@@ -545,7 +702,9 @@ function RuntimeSurface({
     ) {
       runtime.updateTarget(record.runtimeId, nextTarget);
     }
-    callbacks?.onReplaceTarget?.(nextTarget);
+    if (!record.interactionLocked) {
+      callbacks?.onReplaceTarget?.(nextTarget);
+    }
   };
   const renderedCustomSurface = record.renderSurface?.({
     active: visible,
@@ -561,13 +720,21 @@ function RuntimeSurface({
       <BrowserLiveSurface
         active={visible}
         canOpenNewTab={callbacks?.canOpenNewTab ?? false}
+        surface={surface}
         target={target}
         targetKey={sidePanelTargetKey(target)}
         onCloseTarget={closeTarget}
         onCycleTab={callbacks?.onCycleTab}
+        onOpenBrowserSettings={callbacks?.onOpenBrowserSettings}
         onOpenTarget={openTarget}
         onRegisterShortcutController={
-          callbacks?.onRegisterShortcutController ?? (() => undefined)
+          (key, controller) => {
+            runtime.registerBrowserShortcutController(
+              record.runtimeId,
+              controller,
+            );
+            callbacks?.onRegisterShortcutController?.(key, controller);
+          }
         }
         onReplaceTarget={(_key, nextTarget) => replaceTarget(nextTarget)}
         onWebContentsIdChange={(webContentsId) => {
@@ -577,7 +744,14 @@ function RuntimeSurface({
     );
   }
   if (target.kind === "local_app") {
-    return <LocalAppPanelView active={visible} target={target} />;
+    return (
+      <LocalAppPanelView
+        active={visible}
+        savedViewId={callbacks?.savedViewId}
+        target={target}
+        onTitleChange={callbacks?.onLocalAppTitleChange}
+      />
+    );
   }
   if (renderedCustomSurface !== undefined) {
     return <>{renderedCustomSurface}</>;
@@ -588,12 +762,6 @@ function RuntimeSurface({
         <LazyAutomationDetail
           automationId={target.automationId}
           onClose={() => closeTarget(target)}
-          onOpenRunChat={(conversationId) => openTarget({
-            kind: "chat",
-            conversationId,
-            label: "Automation run",
-            messageId: null,
-          })}
           surface={surface}
         />
       </Suspense>
@@ -603,6 +771,7 @@ function RuntimeSurface({
     <Suspense fallback={<div className="h-full" />}>
       <LazyLibraryLiveSurface
         active={visible}
+        annotationConversationId={callbacks?.annotationConversationId}
         organizationId={organizationIdFromRuntimeId(record.runtimeId)}
         onOpenTarget={openTarget}
         surface={surface}
@@ -624,7 +793,7 @@ export function LiveSurfaceRuntimeLayer() {
     const observer = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(update);
-    for (const record of records) {
+    for (const record of runtime.listRecords()) {
       for (const owner of record.owners.values()) {
         observer?.observe(owner.element);
       }
@@ -634,7 +803,7 @@ export function LiveSurfaceRuntimeLayer() {
       window.removeEventListener("scroll", update, true);
       observer?.disconnect();
     };
-  }, [records, runtime.revision]);
+  }, [runtime]);
 
   return (
     <div
@@ -663,7 +832,15 @@ export function LiveSurfaceRuntimeLayer() {
             aria-hidden={!visible}
             hidden={!visible}
             inert={inert ? true : undefined}
-            className="fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)]"
+            className={`fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)] ${
+              owner?.ownerId.startsWith("side:")
+                ? "rounded-[var(--desktop-workspace-radius)]"
+                : owner?.ownerId.startsWith("main:")
+                  ? record.target.kind === "browser"
+                    ? "rounded-[var(--desktop-workspace-radius)]"
+                    : "rounded-b-[var(--desktop-workspace-radius)]"
+                  : ""
+            }`}
             style={{
               height: rect ? `${rect.height}px` : "0px",
               left: rect ? `${rect.left}px` : "0px",

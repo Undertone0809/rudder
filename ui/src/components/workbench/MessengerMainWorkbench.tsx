@@ -1,4 +1,6 @@
 import { messengerApi } from "@/api/messenger";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
+import { LocalAppDefinitionReviewDialog } from "@/components/side-panel/LocalAppsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,7 +10,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import {
   LiveSurfaceAnchor,
   createLiveSurfaceRuntimeId,
@@ -16,9 +25,19 @@ import {
   type LiveSurfaceTarget,
 } from "@/context/LiveSurfaceRuntimeContext";
 import { useOrganizationMainWorkbench } from "@/context/MainWorkbenchContext";
+import { useOptionalToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
+import {
+  readDesktopShell,
+  type DesktopLocalAppDefinition,
+  type DesktopLocalAppDefinitionDraft,
+} from "@/lib/desktop-shell";
+import {
+  localAppIdentityMatches,
+} from "@/lib/local-apps";
 import type { MainWorkbenchTab, MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
+  localAppSavedViewRoute,
   messengerSavedViewRoute,
   savedViewKeepInputFromSidePanelTarget,
 } from "@/lib/messenger-saved-views";
@@ -37,6 +56,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type KeyboardCodes,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -45,6 +65,10 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  MAX_BROWSER_FAVICON_LENGTH,
+  resolveKnownWebsiteIcon,
+} from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
@@ -52,11 +76,11 @@ import {
   FileText,
   Folder,
   Globe2,
-  GripVertical,
   Loader2,
+  MoreHorizontal,
   Plus,
+  Settings2,
   Workflow,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -73,6 +97,12 @@ type WorkbenchTabIcon = {
   label: string;
 };
 
+const workbenchTabKeyboardCodes = {
+  start: ["Space"],
+  cancel: ["Escape"],
+  end: ["Space"],
+} satisfies KeyboardCodes;
+
 function tabIcon(target: MainWorkbenchTarget): WorkbenchTabIcon {
   if (target.kind === "browser") return { fallback: Globe2, label: "Browser" };
   if (target.kind === "local_app") return { fallback: AppWindow, label: "Local App" };
@@ -84,7 +114,7 @@ function tabIcon(target: MainWorkbenchTarget): WorkbenchTabIcon {
 function acceptedBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8_192) return null;
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (trimmed.startsWith("data:image/")) return trimmed;
   try {
     const url = new URL(trimmed);
@@ -102,8 +132,13 @@ function panelDomId(organizationId: string, viewInstanceId: string) {
   return `messenger-workbench-panel-${encodeURIComponent(organizationId)}-${encodeURIComponent(viewInstanceId)}`;
 }
 
-function routeForTab(tab: MainWorkbenchTab | null) {
-  if (!tab) return "/messenger";
+type MainWorkbenchRouteMode = "messenger" | "local_app";
+
+function routeForTab(tab: MainWorkbenchTab | null, routeMode: MainWorkbenchRouteMode) {
+  if (!tab) return routeMode === "local_app" ? "/apps" : "/messenger";
+  if (routeMode === "local_app" && tab.savedViewId && tab.target.kind === "local_app") {
+    return localAppSavedViewRoute(tab.savedViewId);
+  }
   return tab.savedViewId
     ? messengerSavedViewRoute(tab.savedViewId)
     : "/messenger/workbench";
@@ -118,6 +153,7 @@ function SortableWorkbenchTab({
   tab,
   onActivate,
   onClose,
+  onLocalAppUpdated,
   onFocus,
   onKeyDown,
 }: {
@@ -129,6 +165,7 @@ function SortableWorkbenchTab({
   tab: MainWorkbenchTab;
   onActivate: () => void;
   onClose: () => void;
+  onLocalAppUpdated: (definition: DesktopLocalAppDefinition) => void;
   onFocus: () => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
@@ -142,77 +179,171 @@ function SortableWorkbenchTab({
   const favicon = tab.target.kind === "browser"
     ? acceptedBrowserFavicon(tab.target.favicon)
     : null;
+  const browserIconDarkMode = tab.target.kind === "browser"
+    ? resolveKnownWebsiteIcon(tab.target.url)?.darkMode
+    : undefined;
 
   return (
-    <div
-      ref={sortable.setNodeRef}
-      data-dragging={sortable.isDragging ? "true" : undefined}
-      className={cn(
-        "group flex h-8 max-w-[15rem] shrink-0 items-center gap-0.5 rounded-md border pr-1",
-        "transition-[color,background-color,border-color,opacity]",
-        active
-          ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
-          : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
-        sortable.isDragging && "opacity-50",
+    <WorkspaceTab
+      active={active}
+      buttonRef={(node) => {
+          setTabRef(node);
+          sortable.setActivatorNodeRef(node);
+      }}
+      activatorProps={{
+        ...sortable.attributes,
+        ...sortable.listeners,
+        "data-target-kind": tab.target.kind,
+        "data-view-instance-id": tab.viewInstanceId,
+      }}
+      disabled={moving}
+      dragging={sortable.isDragging}
+      focused={focused}
+      id={tabDomId(organizationId, tab.viewInstanceId)}
+      panelId={panelDomId(organizationId, tab.viewInstanceId)}
+      icon={tab.target.kind === "local_app" ? (
+        <LocalAppIdentityIcon
+          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+          identity={tab.target}
+          testId="messenger-workbench-local-app-icon"
+        />
+      ) : favicon ? (
+        <img
+          src={favicon}
+          alt=""
+          data-dark-mode={browserIconDarkMode}
+          referrerPolicy="no-referrer"
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 rounded-sm object-contain",
+            browserIconDarkMode === "invert" && "dark:invert",
+          )}
+        />
+      ) : (
+        <Icon className="h-3.5 w-3.5 shrink-0" aria-label={icon.label} />
       )}
-      style={style}
+      label={tab.target.label}
+      movingLabel={moving ? "Moving…" : undefined}
+      onActivate={onActivate}
+      onClose={onClose}
+      onFocus={onFocus}
+      onKeyDown={(event) => {
+          sortable.listeners?.onKeyDown?.(event);
+          if (!event.defaultPrevented) onKeyDown(event);
+      }}
+      rootRef={sortable.setNodeRef}
+      rootStyle={style}
     >
-      <button
-        ref={setTabRef}
-        type="button"
-        id={tabDomId(organizationId, tab.viewInstanceId)}
-        role="tab"
-        aria-controls={panelDomId(organizationId, tab.viewInstanceId)}
-        aria-selected={active}
-        data-target-kind={tab.target.kind}
-        data-view-instance-id={tab.viewInstanceId}
-        tabIndex={focused ? 0 : -1}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        onClick={onActivate}
-        onFocus={onFocus}
-        onKeyDown={onKeyDown}
+      {tab.target.kind === "local_app" ? (
+        <LocalAppTabActions
+          target={tab.target}
+          onUpdated={onLocalAppUpdated}
+        />
+      ) : null}
+    </WorkspaceTab>
+  );
+}
+
+function LocalAppTabActions({
+  target,
+  onUpdated,
+}: {
+  target: Extract<MainWorkbenchTarget, { kind: "local_app" }>;
+  onUpdated: (definition: DesktopLocalAppDefinition) => void;
+}) {
+  const queryClient = useQueryClient();
+  const localApps = readDesktopShell()?.localApps;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const definitionsQuery = useQuery({
+    queryKey: queryKeys.localApps.definitions,
+    queryFn: () => localApps!.list(),
+    enabled: Boolean(localApps?.supported && (menuOpen || settingsOpen)),
+    staleTime: 1_000,
+  });
+  const definition = definitionsQuery.data?.find(
+    (candidate) => localAppIdentityMatches(candidate, target),
+  ) ?? null;
+  const statusQuery = useQuery({
+    queryKey: queryKeys.localApps.status(target.localBindingId),
+    queryFn: () => localApps!.status(definition!.id),
+    enabled: Boolean(localApps?.supported && settingsOpen && definition),
+  });
+  const editable = statusQuery.data?.status === "stopped"
+    || statusQuery.data?.status === "failed";
+  const stopMutation = useMutation({
+    mutationFn: () => localApps!.stop(definition!.id),
+    onSuccess: (nextStatus) => {
+      queryClient.setQueryData(
+        queryKeys.localApps.status(target.localBindingId),
+        nextStatus,
+      );
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: (draft: DesktopLocalAppDefinitionDraft) => (
+      localApps!.update(definition!.id, draft)
+    ),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<DesktopLocalAppDefinition[]>(
+        queryKeys.localApps.definitions,
+        (current) => current?.map((candidate) => (
+          candidate.id === updated.id ? updated : candidate
+        )) ?? [updated],
+      );
+      onUpdated(updated);
+      setSettingsOpen(false);
+    },
+  });
+
+  return (
+    <>
+      <DropdownMenu
+        modal={false}
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
       >
-        {favicon ? (
-          <img
-            src={favicon}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="h-3.5 w-3.5 shrink-0 rounded-sm object-contain"
-          />
-        ) : (
-          <Icon className="h-3.5 w-3.5 shrink-0" aria-label={icon.label} />
-        )}
-        <span className="truncate">{tab.target.label}</span>
-        {moving ? (
-          <span className="shrink-0 text-[10px] text-muted-foreground">
-            Moving…
-          </span>
-        ) : null}
-      </button>
-      <button
-        ref={sortable.setActivatorNodeRef}
-        type="button"
-        aria-label={`Reorder ${tab.target.label} tab`}
-        className="inline-flex h-6 w-5 shrink-0 cursor-grab items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 active:cursor-grabbing"
-        {...sortable.attributes}
-        {...sortable.listeners}
-      >
-        <GripVertical className="h-3 w-3" aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label={`Close ${tab.target.label} tab`}
-        disabled={moving}
-        className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        onClick={(event) => {
-          event.stopPropagation();
-          if (moving) return;
-          onClose();
-        }}
-      >
-        <X className="h-3 w-3" aria-hidden />
-      </button>
-    </div>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`More options for ${target.label}`}
+            className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3 w-3" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem
+            disabled={!localApps?.supported}
+            onSelect={() => {
+              updateMutation.reset();
+              setSettingsOpen(true);
+            }}
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden />
+            Project settings
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {settingsOpen && definition ? (
+        <LocalAppDefinitionReviewDialog
+          definition={definition}
+          edit
+          editable={editable}
+          error={updateMutation.error ?? stopMutation.error ?? statusQuery.error}
+          open
+          pending={updateMutation.isPending}
+          requestEditPending={stopMutation.isPending}
+          title="Project settings"
+          onCancel={() => {
+            updateMutation.reset();
+            setSettingsOpen(false);
+          }}
+          onRequestEdit={() => stopMutation.mutate()}
+          onSubmit={(draft) => updateMutation.mutate(draft)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -238,6 +369,7 @@ function MainLiveSurfacePanel({
   tab: MainWorkbenchTab & { target: LiveSurfaceTarget };
 }) {
   const navigate = useNavigate();
+  const toast = useOptionalToast();
   const workbench = useOrganizationMainWorkbench(organizationId);
   const onCloseRef = useRef(onClose);
   const onCycleTabRef = useRef(onCycleTab);
@@ -277,13 +409,32 @@ function MainLiveSurfacePanel({
   ]);
   const callbacks = useMemo(() => ({
     canOpenNewTab: workbench.canCreateBrowser,
+    savedViewId: tab.savedViewId,
     onCloseTarget: closeTarget,
     onCycleTab: cycleTarget,
+    onLocalAppTitleChange: (title: string) => {
+      if (tab.target.kind !== "local_app") return;
+      workbench.updateTarget(
+        tab.runtimeId,
+        tab.viewInstanceId,
+        { ...tab.target, label: title },
+      );
+    },
     onOpenTarget: (nextTarget: SidePanelTarget) => {
+      if (nextTarget.kind === "chat") {
+        navigate(`/messenger/chat/${nextTarget.conversationId}`);
+        return;
+      }
       if (nextTarget.kind === "browser") {
         const opened = workbench.createSessionBrowser(nextTarget);
         if (opened.admitted) {
           navigate("/messenger/workbench", { replace: true });
+        } else {
+          toast?.pushToast({
+            title: "Browser tab limit reached",
+            body: "Close a Browser tab to open another. Side Panel and Main share 8 live tabs.",
+            tone: "error",
+          });
         }
         return;
       }
@@ -314,9 +465,15 @@ function MainLiveSurfacePanel({
     organizationId,
     replaceTarget,
     tab.originContextKey,
+    tab.runtimeId,
+    tab.savedViewId,
+    tab.target,
+    tab.viewInstanceId,
+    toast,
     workbench.canCreateBrowser,
     workbench.createSessionBrowser,
     workbench.createSessionTab,
+    workbench.updateTarget,
   ]);
 
   return (
@@ -337,6 +494,7 @@ function MainLiveSurfacePanel({
 
 const RECENT_SAVED_VIEW_GROUP_KEY_PREFIX =
   "rudder.messengerRecentSavedViewGroup:";
+const LOOSE_MESSENGER_PLACEMENT = "__messenger_sidebar__";
 
 function recentSavedViewGroupId(organizationId: string) {
   try {
@@ -383,7 +541,6 @@ function SessionBrowserKeepControl({
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [newGroupName, setNewGroupName] = useState("Saved views");
   const mutationIdsRef = useRef(new Map<string, string>());
-  const createdGroupsRef = useRef(new Map<string, { id: string; name: string }>());
   const groupsQuery = useQuery({
     queryKey: queryKeys.messenger.customGroups(organizationId),
     queryFn: () => messengerApi.listCustomGroups(organizationId),
@@ -414,34 +571,45 @@ function SessionBrowserKeepControl({
 
   const keepMutation = useMutation({
     mutationFn: async () => {
+      const loosePlacement = !createMode
+        && selectedGroupId === LOOSE_MESSENGER_PLACEMENT;
       let destination: { id: string; name: string } | null = (
         groups.find((group) => group.id === selectedGroupId) ?? null
       );
+      let newGroupNameForMutation: string | null = null;
       if (createMode) {
         const name = newGroupName.trim();
         if (!name) throw new Error("Enter a name for the new Messenger group.");
-        const createKey = `${tab.viewInstanceId}\u0000${name}`;
-        destination = createdGroupsRef.current.get(createKey) ?? null;
-        if (!destination) {
-          const created = await messengerApi.createCustomGroup(
-            organizationId,
-            { name, icon: null },
-          );
-          destination = { id: created.id, name: created.name };
-          createdGroupsRef.current.set(createKey, destination);
-        }
+        newGroupNameForMutation = name;
+        destination = null;
       }
-      if (!destination) throw new Error("Choose a Messenger group.");
-      const intentKey = `${tab.viewInstanceId}\u0000${destination.id}`;
+      if (!destination && !loosePlacement && !createMode) throw new Error("Choose a Messenger destination.");
+      const intentKey = `${tab.viewInstanceId}\u0000${createMode ? `create:${newGroupNameForMutation}` : destination?.id ?? "loose"}`;
       const clientMutationId = mutationIdsRef.current.get(intentKey)
         ?? newClientMutationId();
       mutationIdsRef.current.set(intentKey, clientMutationId);
       const input = savedViewKeepInputFromSidePanelTarget(tab.target, {
         clientMutationId,
-        placement: { kind: "group", groupId: destination.id },
+        placement: destination
+          ? { kind: "group", groupId: destination.id }
+          : { kind: "loose" },
       });
       if (!input) throw new Error("This Browser tab cannot be kept in Messenger.");
       const result = await messengerApi.keepSavedView(organizationId, input);
+      if (createMode && newGroupNameForMutation) {
+        const savedViewItemKey = `saved-view:${result.savedView.id}`;
+        const grouped = await messengerApi.createCustomGroupWithEntries(organizationId, {
+          autoGenerateName: false,
+          icon: null,
+          itemKeys: [savedViewItemKey],
+          name: newGroupNameForMutation,
+        });
+        const groupedEntry = grouped.groups.find((group) =>
+          group.entries.some((entry) => entry.itemKey === savedViewItemKey),
+        );
+        if (!groupedEntry) throw new Error("The Saved View group was not created.");
+        destination = { id: groupedEntry.id, name: groupedEntry.name };
+      }
       return { destination, intentKey, result };
     },
     onSuccess: ({ destination, intentKey, result }) => {
@@ -451,12 +619,17 @@ function SessionBrowserKeepControl({
         result.savedView,
       );
       workbench.bindSavedView(tab.viewInstanceId, result.savedView.id);
-      rememberSavedViewGroup(organizationId, destination.id);
+      if (destination) rememberSavedViewGroup(organizationId, destination.id);
       setOpen(false);
-      onAnnounce(`Kept in ${result.group.name}.`);
+      onAnnounce(destination
+        ? `Kept in ${destination.name}.`
+        : "Kept in Messenger sidebar.");
       navigate(messengerSavedViewRoute(result.savedView.id), { replace: true });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.messenger.customGroups(organizationId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["messenger", organizationId, "saved-views"],
       });
     },
   });
@@ -514,6 +687,23 @@ function SessionBrowserKeepControl({
             </div>
           ) : (
             <div className="space-y-2" role="radiogroup" aria-label="Messenger group">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!createMode && selectedGroupId === LOOSE_MESSENGER_PLACEMENT}
+                className={cn(
+                  "flex w-full items-center rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  !createMode && selectedGroupId === LOOSE_MESSENGER_PLACEMENT
+                    ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)]"
+                    : "border-border/70 hover:bg-[color:var(--surface-active)]",
+                )}
+                onClick={() => {
+                  setCreateMode(false);
+                  setSelectedGroupId(LOOSE_MESSENGER_PLACEMENT);
+                }}
+              >
+                Messenger sidebar
+              </button>
               {groups.map((group) => (
                 <button
                   key={group.id}
@@ -613,9 +803,11 @@ function nextTabAfterClose(
 export function MessengerMainWorkbench({
   className,
   organizationId,
+  routeMode = "messenger",
 }: {
   className?: string;
   organizationId: string;
+  routeMode?: MainWorkbenchRouteMode;
 }) {
   const navigate = useNavigate();
   const workbench = useOrganizationMainWorkbench(organizationId);
@@ -637,11 +829,14 @@ export function MessengerMainWorkbench({
   const [bindingAnnouncement, setBindingAnnouncement] = useState("");
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastActiveRouteRef = useRef<string | null>(
-    workbench.activeTab ? routeForTab(workbench.activeTab) : null,
+    workbench.activeTab ? routeForTab(workbench.activeTab, routeMode) : null,
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: workbenchTabKeyboardCodes,
+    }),
   );
 
   const rovingViewInstanceId = focusedViewInstanceId
@@ -654,7 +849,7 @@ export function MessengerMainWorkbench({
         target: Extract<MainWorkbenchTarget, { kind: "browser" }>;
       }
     : null;
-  const activeRoute = workbench.activeTab ? routeForTab(workbench.activeTab) : null;
+  const activeRoute = workbench.activeTab ? routeForTab(workbench.activeTab, routeMode) : null;
   const movingViewInstanceIds = useMemo(
     () => new Set(
       Object.values(workbench.promotionsById)
@@ -668,7 +863,7 @@ export function MessengerMainWorkbench({
     if (!activeRoute) {
       if (lastActiveRouteRef.current !== null) {
         lastActiveRouteRef.current = null;
-        navigate("/messenger", { replace: true });
+        navigate(routeForTab(null, routeMode), { replace: true });
         return;
       }
       lastActiveRouteRef.current = null;
@@ -677,7 +872,7 @@ export function MessengerMainWorkbench({
     if (lastActiveRouteRef.current === activeRoute) return;
     lastActiveRouteRef.current = activeRoute;
     navigate(activeRoute, { replace: true });
-  }, [activeRoute, navigate]);
+  }, [activeRoute, navigate, routeMode]);
 
   useEffect(() => {
     if (workbench.activeViewInstanceId) {
@@ -693,10 +888,10 @@ export function MessengerMainWorkbench({
 
   const activateTab = useCallback((tab: MainWorkbenchTab) => {
     workbench.focusTab(tab.viewInstanceId);
-    const route = routeForTab(tab);
+    const route = routeForTab(tab, routeMode);
     lastActiveRouteRef.current = route;
     navigate(route, { replace: true });
-  }, [navigate, workbench.focusTab]);
+  }, [navigate, routeMode, workbench.focusTab]);
 
   const focusRelativeTab = useCallback((
     currentViewInstanceId: string,
@@ -761,7 +956,7 @@ export function MessengerMainWorkbench({
     );
     workbench.closeTab(tab.viewInstanceId);
     disposeSurface(tab.runtimeId);
-    const route = routeForTab(nextTab);
+    const route = routeForTab(nextTab, routeMode);
     lastActiveRouteRef.current = nextTab ? route : null;
     navigate(route, { replace: true });
   }, [
@@ -769,6 +964,7 @@ export function MessengerMainWorkbench({
     flushBrowserSavedViewTarget,
     navigate,
     movingViewInstanceIds,
+    routeMode,
     workbench.activeViewInstanceId,
     workbench.closeTab,
     workbench.tabOrder,
@@ -776,7 +972,7 @@ export function MessengerMainWorkbench({
   ]);
 
   const handleWorkbenchKeyDown = useCallback((
-    event: ReactKeyboardEvent<HTMLDivElement>,
+    event: ReactKeyboardEvent<HTMLDivElement> | KeyboardEvent,
   ) => {
     if (event.defaultPrevented) return;
     if (
@@ -815,6 +1011,24 @@ export function MessengerMainWorkbench({
     workbench.createSessionBrowser,
   ]);
 
+  useEffect(() => {
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const mainRuntimeHost = target.closest<HTMLElement>(
+        "[data-testid='live-surface-runtime-host'][data-owner-id^='main:']",
+      );
+      const belongsToOrganizationRuntime = mainRuntimeHost
+        ?.dataset.ownerId?.startsWith(`main:${organizationId}:`) ?? false;
+      if (!belongsToOrganizationRuntime) return;
+      handleWorkbenchKeyDown(event);
+    };
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, true);
+    };
+  }, [handleWorkbenchKeyDown, organizationId]);
+
   const panels = useMemo(() => workbench.tabs.map((tab) => {
     const active = tab.viewInstanceId === workbench.activeViewInstanceId;
     return (
@@ -846,7 +1060,7 @@ export function MessengerMainWorkbench({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
+        "messenger-main-workbench-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
         className,
       )}
       data-testid="messenger-main-workbench"
@@ -880,6 +1094,13 @@ export function MessengerMainWorkbench({
                 tab={tab}
                 onActivate={() => activateTab(tab)}
                 onClose={() => void closeTab(tab)}
+                onLocalAppUpdated={(definition) => {
+                  workbench.updateTarget(
+                    tab.runtimeId,
+                    tab.viewInstanceId,
+                    { ...tab.target, label: definition.title },
+                  );
+                }}
                 onFocus={() => setFocusedViewInstanceId(tab.viewInstanceId)}
                 onKeyDown={(event) => {
                   if (

@@ -105,6 +105,7 @@ async function waitForAct(assertion: () => void) {
 async function renderWorkspace(
   initialState?: MainWorkbenchState,
   savedViewId = "saved-a",
+  routeMode: "messenger" | "local_app" = "messenger",
 ) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -119,6 +120,7 @@ async function renderWorkspace(
           <MainWorkbenchProvider initialState={initialState}>
             <MessengerSavedViewWorkspace
               organizationId="org-a"
+              routeMode={routeMode}
               savedViewId={savedViewId}
             />
           </MainWorkbenchProvider>
@@ -145,10 +147,10 @@ afterEach(() => {
 });
 
 describe("MessengerSavedViewWorkspace", () => {
-  it("opens the exact Local App instance in Main without probing or starting it", async () => {
+  it("opens the exact Local App instance in Main without status probing or starting it", async () => {
     const localApps = {
       supported: true,
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       status: vi.fn(),
       start: vi.fn(),
     };
@@ -161,9 +163,49 @@ describe("MessengerSavedViewWorkspace", () => {
     await waitForAct(() => expect(
       host?.querySelector('[data-view-instance-id="view-a"]'),
     ).not.toBeNull());
-    expect(localApps.list).not.toHaveBeenCalled();
+    expect(localApps.list).toHaveBeenCalledTimes(1);
     expect(localApps.status).not.toHaveBeenCalled();
     expect(localApps.start).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen a Saved View after the user closes its Main tab", async () => {
+    await renderWorkspace();
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+
+    await act(async () => {
+      host
+        ?.querySelector<HTMLButtonElement>(
+          '[aria-label="Close MKT dashboard tab"]',
+        )
+        ?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).toBeNull());
+    expect(navigate).toHaveBeenLastCalledWith("/messenger", { replace: true });
+  });
+
+  it("keeps top-level Local App hydration and close navigation outside Messenger", async () => {
+    await renderWorkspace(undefined, "saved-a", "local_app");
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/apps/saved/saved-a",
+      { replace: true },
+    );
+
+    await act(async () => {
+      host
+        ?.querySelector<HTMLButtonElement>('[aria-label="Close MKT dashboard tab"]')
+        ?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(navigate).toHaveBeenLastCalledWith("/apps", { replace: true });
   });
 
   it("keeps a binding from another installation as an isolated Main tab", async () => {

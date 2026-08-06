@@ -2,20 +2,32 @@ import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
+import { healthApi } from "@/api/health";
 import { issuesApi } from "@/api/issues";
+import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import {
+  FileAnnotationSelectionToolbar,
+  type FileTextSelection,
+} from "@/components/chat/FileAnnotationSelectionToolbar";
 import { CommentThread } from "@/components/CommentThread";
+import { isAgentWakeEligible } from "@/components/CommentThread.submit";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
 import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
+import { RunFeedbackChatPanel } from "@/components/side-panel/RunFeedbackChatPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
+import { SubagentsPanelView } from "@/components/side-panel/SubagentsPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
+import { StatusIcon } from "@/components/StatusIcon";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { BrowserLiveSurface } from "@/components/workbench/BrowserLiveSurface";
+import { WorkspaceCodeEditor } from "@/components/WorkspaceCodeEditor";
 import {
   isWorkspaceCsvPreviewFile,
   isWorkspaceHtmlPreviewFile,
@@ -33,7 +46,9 @@ import {
   WorkspaceFilePreview,
   type WorkspaceFilePreviewMode,
 } from "@/components/WorkspaceFilePreview";
+import { WorkspaceHtmlPreviewToolbar } from "@/components/WorkspaceHtmlPreview";
 import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaunchControls";
+import { useI18n } from "@/context/I18nContext";
 import {
   createLiveSurfaceRuntimeId,
   LiveSurfaceAnchor,
@@ -47,11 +62,21 @@ import { useToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
+import { requestChatFileAnnotationLocation } from "@/lib/chat-file-annotation-events";
+import { createChatResponseAnnotationNavigationState } from "@/lib/chat-response-annotation-navigation";
+import { hashChatAnnotationSource } from "@/lib/chat-response-annotation-selection";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
+import { IssueProposalSidePanelContent } from "@/lib/issue-proposal-side-panel-registry";
+import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import {
+  buildSettingsOverlayState,
+  rememberSettingsOverlayBackgroundPath,
+} from "@/lib/settings-overlay-state";
+import {
+  sideChatGenerationScopeKey,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
@@ -59,13 +84,17 @@ import {
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import {
+  MAX_BROWSER_FAVICON_LENGTH,
   resolveBrowserShortcutInput,
+  resolveKnownWebsiteIcon,
   type Agent,
   type BrowserShortcutAction,
+  type ChatInlineAnnotation,
   type Issue,
   type IssueComment,
+  type OrganizationSkillFileDetail,
   type OrganizationWorkspaceFileDetail,
-  type OrganizationWorkspaceFileEntry
+  type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -76,9 +105,12 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  CircleAlert,
   CirclePlus,
+  Code2,
   Compass,
   ExternalLink,
+  Eye,
   FileAudio2,
   FileCode2,
   FileText,
@@ -87,6 +119,7 @@ import {
   Globe2,
   Image as ImageIcon,
   LibraryBig,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -97,7 +130,8 @@ import {
   Table2,
   Undo2,
   UserRound,
-  X
+  Workflow,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -108,6 +142,7 @@ import {
   useState,
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { AutomationDetail } from "./AutomationDetail";
@@ -145,6 +180,140 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
 ]);
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
 const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you were editing it.";
+
+function acceptedChatSidePanelBrowserFavicon(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
+  if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+function ChatSidePanelBrowserTabIcon({ favicon, url }: { favicon?: string; url: string }) {
+  const acceptedFavicon = acceptedChatSidePanelBrowserFavicon(favicon);
+  const darkMode = resolveKnownWebsiteIcon(url)?.darkMode;
+  const [faviconFailed, setFaviconFailed] = useState(false);
+
+  useEffect(() => {
+    setFaviconFailed(false);
+  }, [acceptedFavicon]);
+
+  if (acceptedFavicon && !faviconFailed) {
+    return (
+      <img
+        alt=""
+        className={cn(
+          "size-3.5 shrink-0 rounded-[3px] object-contain",
+          darkMode === "invert" && "dark:invert",
+        )}
+        data-dark-mode={darkMode}
+        data-testid="chat-side-panel-tab-browser-favicon"
+        referrerPolicy="no-referrer"
+        src={acceptedFavicon}
+        onError={() => setFaviconFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <Globe2
+      aria-hidden
+      className="size-3.5 shrink-0"
+      data-testid="chat-side-panel-tab-browser-fallback-icon"
+    />
+  );
+}
+
+function ChatSidePanelIssueTabIcon({
+  enabled,
+  issueId,
+}: {
+  enabled: boolean;
+  issueId: string;
+}) {
+  const issueQuery = useQuery({
+    queryKey: queryKeys.issues.detail(issueId),
+    queryFn: () => issuesApi.get(issueId),
+    enabled,
+  });
+
+  if (issueQuery.isPending) {
+    return (
+      <LoaderCircle
+        aria-hidden
+        className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+        data-testid="chat-side-panel-tab-issue-loading-icon"
+      />
+    );
+  }
+  if (issueQuery.isError || !issueQuery.data) {
+    return (
+      <CircleAlert
+        aria-hidden
+        className="size-3.5 shrink-0 text-muted-foreground"
+        data-testid="chat-side-panel-tab-issue-fallback-icon"
+      />
+    );
+  }
+
+  return (
+    <StatusIcon
+      className="size-3.5"
+      dataSlot="side-panel-tab-issue-status-icon"
+      status={issueQuery.data.status}
+    />
+  );
+}
+
+function ChatSidePanelTabIcon({
+  enabled,
+  tab,
+}: {
+  enabled: boolean;
+  tab: SidePanelTarget;
+}) {
+  const iconClassName = "size-3.5 shrink-0";
+
+  if (tab.kind === "issue") {
+    return <ChatSidePanelIssueTabIcon enabled={enabled} issueId={tab.issueId} />;
+  }
+  if (tab.kind === "issue_proposal") return <CirclePlus aria-hidden className={iconClassName} />;
+  if (tab.kind === "automation") return <Workflow aria-hidden className={iconClassName} />;
+  if (tab.kind === "chat" || tab.kind === "side_chat") {
+    return <MessageSquare aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "subagents" || tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_directory") return <Folder aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_document") return <FileText aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_entry") {
+    return tab.path
+      ? <FileText aria-hidden className={iconClassName} />
+      : <LibraryBig aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "library_file" || tab.kind === "local_file") {
+    return <FileText aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "organization_skill_file") return <FileText aria-hidden className={iconClassName} />;
+  if (tab.kind === "local_apps") return <AppWindow aria-hidden className={iconClassName} />;
+  if (tab.kind === "local_app") {
+    return (
+      <LocalAppIdentityIcon
+        className={iconClassName}
+        identity={tab}
+        testId="chat-side-panel-tab-local-app-icon"
+      />
+    );
+  }
+  if (tab.kind === "browser") return <ChatSidePanelBrowserTabIcon favicon={tab.favicon} url={tab.url} />;
+  if (tab.kind === "placeholder" && tab.targetKind === "issue") return <Circle aria-hidden className={iconClassName} />;
+  if (tab.kind === "placeholder" && tab.targetKind === "automation") return <Workflow aria-hidden className={iconClassName} />;
+  return <MessageSquare aria-hidden className={iconClassName} />;
+}
 
 function useChatSidePanelMobileLayout() {
   const [isMobile, setIsMobile] = useState(() => (
@@ -344,6 +513,7 @@ function ChatIssueSidePanelView({
   expanded?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useI18n();
   const issueRef = issue.identifier ?? issue.id.slice(0, 8);
   const projectName = issue.project?.name ?? null;
 
@@ -453,6 +623,11 @@ function ChatIssueSidePanelView({
               orgId={issue.orgId}
               projectId={issue.projectId}
               issueStatus={issue.status}
+              locale={locale}
+              reopenWillWakeAgent={Boolean(
+                issue.assigneeAgentId
+                && isAgentWakeEligible(agentMap.get(issue.assigneeAgentId)?.status),
+              )}
               agentMap={agentMap}
               currentUserId={currentUserId}
               operatorDisplayName={operatorDisplayName}
@@ -725,12 +900,18 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
-function ChatSidePanelMarkdownFileEditor({
+function ChatSidePanelTextFileEditor({
   libraryFile,
   organizationId,
+  sourceConversationId,
+  markdown,
+  sourceToolbar,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
+  sourceConversationId: string | null;
+  markdown: boolean;
+  sourceToolbar?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const filePath = libraryFile.filePath;
@@ -741,6 +922,8 @@ function ChatSidePanelMarkdownFileEditor({
   }
   const restoredDraft = restoredDraftRef.current;
   const editorRef = useRef<MarkdownEditorRef>(null);
+  const annotationContainerRef = useRef<HTMLDivElement | null>(null);
+  const [codeSelection, setCodeSelection] = useState<FileTextSelection | null>(null);
   const syncedContentRef = useRef(restoredDraft.baseContent);
   const latestServerContentRef = useRef(serverContent);
   const draftContentRef = useRef(restoredDraft.content);
@@ -972,54 +1155,99 @@ function ChatSidePanelMarkdownFileEditor({
     enqueueSave(draftContentRef.current);
   };
 
-  const markdownParts = splitChatSidePanelYamlFrontmatter(draftContent);
+  const markdownParts = markdown
+    ? splitChatSidePanelYamlFrontmatter(draftContent)
+    : { frontmatter: null, separator: "", body: draftContent };
   const wordCount = countChatSidePanelMarkdownWords(markdownParts.body);
   const canUndo = editorRef.current?.canUndo?.() ?? false;
   const canRedo = editorRef.current?.canRedo?.() ?? false;
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 flex-col"
-      data-testid="chat-side-panel-library-markdown-editor"
+      className="relative flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
+      data-testid={markdown
+        ? "chat-side-panel-library-markdown-editor"
+        : "chat-side-panel-library-text-editor"}
     >
-      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
-        {markdownParts.frontmatter !== null ? (
-          <details
-            className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
-            data-testid="chat-side-panel-library-frontmatter-editor"
-          >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <span>Frontmatter</span>
-              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-            </summary>
-            <textarea
-              value={markdownParts.frontmatter}
-              onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-                event.currentTarget.value,
+      {sourceToolbar}
+      {markdown ? (
+        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
+          <div className="rudder-readable-document mx-auto w-full max-w-[880px]">
+            {markdownParts.frontmatter !== null ? (
+              <details
+                className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+                data-chat-annotation-ignore
+                data-testid="chat-side-panel-library-frontmatter-editor"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <span>Frontmatter</span>
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                </summary>
+                <textarea
+                  value={markdownParts.frontmatter}
+                  onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                    event.currentTarget.value,
+                    markdownParts.separator,
+                    markdownParts.body,
+                  ))}
+                  spellCheck={false}
+                  className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                  aria-label="Frontmatter"
+                />
+              </details>
+            ) : null}
+            <MarkdownEditor
+              ref={editorRef}
+              key={filePath}
+              engine="codemirror"
+              documentIdentity={`library-file:${filePath}`}
+              value={markdownParts.body}
+              onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                markdownParts.frontmatter,
                 markdownParts.separator,
-                markdownParts.body,
+                body,
               ))}
-              spellCheck={false}
-              className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
-              aria-label="Frontmatter"
+              bordered={false}
+              placeholder="Write in Markdown..."
+              contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
             />
-          </details>
-        ) : null}
-        <MarkdownEditor
-          ref={editorRef}
-          key={filePath}
-          engine="milkdown"
-          value={markdownParts.body}
-          onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-            markdownParts.frontmatter,
-            markdownParts.separator,
-            body,
-          ))}
-          bordered={false}
-          placeholder="Write in Markdown..."
-          contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
-        />
-      </div>
+          </div>
+        </div>
+      ) : (
+        <div ref={annotationContainerRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-14">
+          <WorkspaceCodeEditor
+            data-testid="chat-side-panel-library-text-source-editor"
+            annotationSource={{
+              surface: "workspace_file",
+              sourceFilePath: filePath,
+            }}
+            ariaLabel={`${filePath || "Library file"} source editor`}
+            filePath={filePath}
+            value={draftContent}
+            onChange={handleDraftChange}
+            onSelectionChange={setCodeSelection}
+          />
+        </div>
+      )}
+      <FileAnnotationSelectionToolbar
+        containerRef={annotationContainerRef}
+        conversationId={sourceConversationId}
+        explicitSelection={markdown ? undefined : codeSelection}
+        saved={
+          saveStatus === "saved"
+          && !saveConflict
+          && draftContent === syncedContentRef.current
+        }
+        source={draftContent}
+        sourceIdentity={{
+          surface: "workspace_file",
+          sourceFilePath: filePath,
+          sourceLibraryEntryId: libraryFile.libraryEntryId,
+        }}
+        sourceRenderMode={markdown ? "markdown" : "text"}
+        renderedSource={markdown ? markdownParts.body : draftContent}
+        renderedSourceOffset={markdown ? draftContent.length - markdownParts.body.length : 0}
+      />
 
       <div className="pointer-events-none absolute inset-x-3 bottom-3 flex min-w-0 items-end justify-between gap-3">
         <div
@@ -1066,7 +1294,7 @@ function ChatSidePanelMarkdownFileEditor({
           ) : null}
         </div>
 
-        <TooltipProvider delayDuration={120}>
+        {markdown ? <TooltipProvider delayDuration={120}>
           <div
             className="pointer-events-auto flex shrink-0 items-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-0.5 shadow-sm"
             data-testid="chat-side-panel-library-history-controls"
@@ -1106,7 +1334,7 @@ function ChatSidePanelMarkdownFileEditor({
               <TooltipContent side="top">Redo</TooltipContent>
             </Tooltip>
           </div>
-        </TooltipProvider>
+        </TooltipProvider> : null}
       </div>
     </div>
   );
@@ -1115,9 +1343,11 @@ function ChatSidePanelMarkdownFileEditor({
 function ChatSidePanelLibraryFileView({
   libraryFile,
   organizationId,
+  sourceConversationId,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
+  sourceConversationId: string | null;
 }) {
   const { pushToast } = useToast();
   const { selectedOrganization } = useOrganization();
@@ -1126,6 +1356,9 @@ function ChatSidePanelLibraryFileView({
   const html = isWorkspaceHtmlPreviewFile(libraryFile); const media = libraryFile.previewKind === "video" || libraryFile.previewKind === "audio";
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
   const markdown = isWorkspaceMarkdownPreviewFile(libraryFile);
+  const editableText = libraryFile.previewKind === "text"
+    && libraryFile.content !== null
+    && !libraryFile.truncated;
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
   const pathSegments = libraryFile.filePath.split("/").filter(Boolean);
   const visiblePathSegments = pathSegments.length > 3
@@ -1270,7 +1503,10 @@ function ChatSidePanelLibraryFileView({
   const LibraryFileIcon = html ? Globe2 : libraryFile.previewKind === "video" ? FileVideo2 : libraryFile.previewKind === "audio" ? FileAudio2 : FileText;
 
   return (
-    <div className="flex h-full min-h-[420px] flex-col" data-testid="chat-side-panel-library-file-view">
+    <div
+      className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
+      data-testid="chat-side-panel-library-file-view"
+    >
       <div
         className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4"
         data-testid="chat-side-panel-library-file-toolbar"
@@ -1322,11 +1558,29 @@ function ChatSidePanelLibraryFileView({
           </div>
         ) : null}
       </div>
-      {markdown && !libraryFile.truncated ? (
-        <ChatSidePanelMarkdownFileEditor
+      {editableText && (
+        markdown
+        || (!html && !csv)
+        || previewMode === "source"
+      ) ? (
+        <ChatSidePanelTextFileEditor
           key={`${organizationId}:${libraryFile.filePath}`}
           libraryFile={libraryFile}
           organizationId={organizationId}
+          sourceConversationId={sourceConversationId}
+          markdown={markdown}
+          sourceToolbar={html ? (
+            <WorkspaceHtmlPreviewToolbar
+              viewMode="source"
+              onViewModeChange={setPreviewMode}
+              openAction={(
+                <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+                  {openInMenu}
+                </div>
+              )}
+              testIdPrefix="chat-side-panel-library"
+            />
+          ) : undefined}
         />
       ) : (
         <>
@@ -1354,6 +1608,82 @@ function ChatSidePanelLibraryFileView({
           />
         </>
       )}
+    </div>
+  );
+}
+
+export function ChatSidePanelSkillFileView({
+  file,
+  label,
+}: {
+  file: OrganizationSkillFileDetail;
+  label: string;
+}) {
+  const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
+  const markdownParts = splitChatSidePanelYamlFrontmatter(file.content);
+  const previewAvailable = file.markdown;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-skill-file-view">
+      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4">
+        <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">{label}</div>
+          <div className="truncate font-mono text-[11px] text-muted-foreground">{file.path}</div>
+        </div>
+        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          Read only
+        </span>
+        {previewAvailable ? (
+          <div
+            className="flex shrink-0 items-center rounded-md border border-[color:var(--border-soft)] p-0.5"
+            data-testid="chat-side-panel-skill-view-toggle"
+          >
+            <button
+              type="button"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors",
+                viewMode === "preview"
+                  ? "bg-[color:var(--surface-active)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-label="Preview skill Markdown"
+              aria-pressed={viewMode === "preview"}
+              onClick={() => setViewMode("preview")}
+            >
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors",
+                viewMode === "source"
+                  ? "bg-[color:var(--surface-active)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-label="View skill Markdown source"
+              aria-pressed={viewMode === "source"}
+              onClick={() => setViewMode("source")}
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        {previewAvailable && viewMode === "preview" ? (
+          <MarkdownBody className="rudder-readable-document mx-auto w-full max-w-[880px] text-sm leading-7 text-foreground">
+            {markdownParts.body}
+          </MarkdownBody>
+        ) : (
+          <pre
+            className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/85"
+            data-testid="chat-side-panel-skill-source"
+          >
+            <code>{file.content}</code>
+          </pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -1387,16 +1717,64 @@ export function ChatSidePanel({
   const [movingSideChatKey, setMovingSideChatKey] = useState<string | null>(null);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
+  const activeTabElementRef = useRef<HTMLDivElement>(null);
+  const tabScrollerElementRef = useRef<HTMLDivElement>(null);
   const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
   const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
   const closingSideChatKeysRef = useRef(new Set<string>());
   const movingSideChatKeyRef = useRef<string | null>(null);
-  const browserShortcutScopeActiveRef = useRef(false);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
+  const mobileFocusRestoreRef = useRef<HTMLElement | null>(null);
+  const mobileFocusTrapActiveRef = useRef(false);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
   const isMobile = useChatSidePanelMobileLayout();
   const { openTarget } = sidePanel;
+  useEffect(() => {
+    if (!isMobile || !contextReady) return undefined;
+    const panel = panelRef.current;
+    if (!panel) return undefined;
+
+    if (!sidePanel.open) {
+      if (mobileFocusTrapActiveRef.current) {
+        mobileFocusTrapActiveRef.current = false;
+        const restoreTarget = mobileFocusRestoreRef.current;
+        mobileFocusRestoreRef.current = null;
+        if (restoreTarget?.isConnected) {
+          window.requestAnimationFrame(() => restoreTarget.focus());
+        }
+      }
+      return undefined;
+    }
+
+    if (mobileFocusTrapActiveRef.current) return undefined;
+    mobileFocusTrapActiveRef.current = true;
+    const activeElement = document.activeElement;
+    mobileFocusRestoreRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (document.querySelector('[data-slot="dialog-content"][data-state="open"]')) return;
+      panel.querySelector<HTMLElement>('[data-testid="chat-side-panel-collapse"]')?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !sidePanel.open) return;
+      if (document.querySelector('[data-slot="dialog-content"][data-state="open"]')) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (focusable.length === 0) return;
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+        : currentIndex === focusable.length - 1 ? 0 : currentIndex + 1;
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [contextReady, isMobile, sidePanel.open]);
   const registerBrowserShortcutController = useCallback((
     key: string,
     controller: ((action: BrowserShortcutAction) => void) | null,
@@ -1404,6 +1782,15 @@ export function ChatSidePanel({
     if (controller) browserShortcutControllersRef.current.set(key, controller);
     else browserShortcutControllersRef.current.delete(key);
   }, []);
+  const openBrowserSettings = useCallback(() => {
+    const currentPath = `${location.pathname}${location.search}${location.hash}`;
+    const overlayState = buildSettingsOverlayState(location);
+    rememberSettingsOverlayBackgroundPath(currentPath);
+    navigate(
+      "/instance/settings/browser",
+      overlayState ? { state: overlayState } : undefined,
+    );
+  }, [location, navigate]);
   const registerSideChatCloseHandler = useCallback((
     clientMutationId: string,
     handler: (() => Promise<string | null>) | null,
@@ -1411,8 +1798,106 @@ export function ChatSidePanel({
     if (handler) sideChatCloseHandlersRef.current.set(clientMutationId, handler);
     else sideChatCloseHandlersRef.current.delete(clientMutationId);
   }, []);
+  const selectSideChatResponseAnnotation = useCallback((
+    annotation: ChatInlineAnnotation,
+    ordinal: number,
+  ) => {
+    if (annotation.surface === "agent_run_transcript") {
+      sidePanel.hidePanel();
+      navigate(`/agents/${encodeURIComponent(annotation.sourceAgentId)}/runs/${encodeURIComponent(annotation.sourceRunId)}`);
+      return;
+    }
+    if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+      void (async () => {
+        try {
+          let resolvedPath = annotation.sourceFilePath;
+          let source: string | null;
+          if (annotation.surface === "workspace_file") {
+            if (!selectedOrganizationId) throw new Error("No organization selected");
+            if (annotation.sourceLibraryEntryId) {
+              const entry = await organizationsApi.getLibraryEntry(
+                selectedOrganizationId,
+                annotation.sourceLibraryEntryId,
+              );
+              if (entry.status !== "active" || !entry.currentPath) {
+                throw new Error("Library source is unavailable");
+              }
+              resolvedPath = entry.currentPath;
+            }
+            source = (
+              await organizationsApi.readWorkspaceFile(
+                selectedOrganizationId,
+                resolvedPath,
+              )
+            ).content;
+          } else {
+            const desktopShell = readDesktopShell();
+            if (!desktopShell) throw new Error("Desktop file access is unavailable");
+            source = (await desktopShell.previewLocalFile(resolvedPath)).content;
+          }
+          if (
+            source === null
+            || await hashChatAnnotationSource(source) !== annotation.sourceHash
+            || source.slice(
+              Math.max(0, annotation.start - annotation.prefix.length),
+              annotation.start,
+            ) !== annotation.prefix
+            || source.slice(
+              annotation.end,
+              annotation.end + annotation.suffix.length,
+            ) !== annotation.suffix
+          ) {
+            throw new Error("Annotation source changed");
+          }
+          const label = resolvedPath.split(/[\\/]/u).filter(Boolean).at(-1)
+            ?? resolvedPath;
+          requestChatFileAnnotationLocation({
+            surface: annotation.surface,
+            sourceFilePath: resolvedPath,
+            sourceHash: annotation.sourceHash,
+            sourceRenderMode: annotation.sourceRenderMode,
+            start: annotation.start,
+            end: annotation.end,
+          });
+          sidePanel.openTarget(
+            annotation.surface === "workspace_file"
+              ? annotation.sourceLibraryEntryId
+                ? {
+                    kind: "library_entry",
+                    entryId: annotation.sourceLibraryEntryId,
+                    path: resolvedPath,
+                    label,
+                  }
+                : { kind: "library_file", filePath: resolvedPath, label }
+              : { kind: "local_file", filePath: resolvedPath, label },
+          );
+        } catch {
+          pushToast({
+            title: "Source is no longer available",
+            body: "The file was changed, moved without a Library identity, or deleted.",
+            tone: "error",
+          });
+        }
+      })();
+      return;
+    }
+    sidePanel.hidePanel();
+    navigate(
+      {
+        pathname: `/messenger/chat/${annotation.sourceConversationId}`,
+        search: `?messageId=${encodeURIComponent(annotation.sourceMessageId)}`,
+      },
+      {
+        state: createChatResponseAnnotationNavigationState(annotation, ordinal),
+      },
+    );
+  }, [navigate, pushToast, selectedOrganizationId, sidePanel]);
 
   const visibleTabs = sidePanel.tabs;
+  const sideChatTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "side_chat" }> => candidate.kind === "side_chat"),
+    [visibleTabs],
+  );
   const browserTargets = useMemo(
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
     [visibleTabs],
@@ -1437,6 +1922,13 @@ export function ChatSidePanel({
     browserTargets,
     organizationId: selectedOrganizationId,
   });
+  const liveBrowserCount = liveSurfaceRuntime && selectedOrganizationId
+    ? liveSurfaceRuntime.getLiveBrowserCount(selectedOrganizationId)
+    : browserTargets.length;
+  const canOpenNewBrowserGuest = (
+    browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT
+    && liveBrowserCount < MAIN_WORKBENCH_BROWSER_CAPACITY
+  );
   useLayoutEffect(() => {
     if (isMobile) return undefined;
     if (sidePanel.open) {
@@ -1463,7 +1955,14 @@ export function ChatSidePanel({
   }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
-  const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
+  const sitesHealthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+  });
+  const localAppsAvailable = Boolean(
+    readDesktopShell()?.localApps?.supported
+    && sitesHealthQuery.data?.features?.experimentalSitesEnabled,
+  );
   useEffect(() => {
     if (!contextReady
       || !target
@@ -1478,6 +1977,12 @@ export function ChatSidePanel({
       sidePanel.closeTarget(sidePanelTargetKey(browserTarget));
     }
   }, [browserTargets, desktopBrowserAvailable, sidePanel]);
+  useEffect(() => {
+    if (localAppsAvailable) return;
+    for (const localAppTarget of localAppTargets) {
+      sidePanel.closeTarget(sidePanelTargetKey(localAppTarget));
+    }
+  }, [localAppTargets, localAppsAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
     if (!contextReady) return null;
     if (visibleTabs.length === 0) return null;
@@ -1490,12 +1995,16 @@ export function ChatSidePanel({
   }, [contextReady, sidePanel.activeKey, visibleTabs]);
 
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
+  const issueProposalTarget = activeTarget?.kind === "issue_proposal" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
+  const runFeedbackTarget = activeTarget?.kind === "run_feedback_chat" ? activeTarget : null;
+  const subagentsTarget = activeTarget?.kind === "subagents" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const localFileTarget = activeTarget?.kind === "local_file" ? activeTarget : null;
+  const organizationSkillFileTarget = activeTarget?.kind === "organization_skill_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
@@ -1513,53 +2022,6 @@ export function ChatSidePanel({
   const sourceConversationId = sidePanel.contextKey.startsWith("chat:")
     ? sidePanel.contextKey.slice("chat:".length) || null
     : null;
-
-  useEffect(() => {
-    const desktopShell = readDesktopShell();
-    const setBrowserSurfaceShortcutActive = desktopShell?.setBrowserSurfaceShortcutActive;
-    if (!setBrowserSurfaceShortcutActive) return undefined;
-    let disposed = false;
-    const syncScope = () => {
-      if (disposed) return;
-      const activeElement = document.activeElement;
-      const nextActive = Boolean(
-        sidePanel.open
-        && activeBrowserTargetKey
-        && activeElement
-        && panelRef.current?.contains(activeElement),
-      );
-      if (browserShortcutScopeActiveRef.current === nextActive) return;
-      browserShortcutScopeActiveRef.current = nextActive;
-      void setBrowserSurfaceShortcutActive(nextActive).catch(() => undefined);
-    };
-    const queueScopeSync = () => queueMicrotask(syncScope);
-    document.addEventListener("focusin", queueScopeSync, true);
-    document.addEventListener("focusout", queueScopeSync, true);
-    syncScope();
-    return () => {
-      disposed = true;
-      document.removeEventListener("focusin", queueScopeSync, true);
-      document.removeEventListener("focusout", queueScopeSync, true);
-      if (!browserShortcutScopeActiveRef.current) return;
-      browserShortcutScopeActiveRef.current = false;
-      void setBrowserSurfaceShortcutActive(false).catch(() => undefined);
-    };
-  }, [activeBrowserTargetKey, sidePanel.open]);
-
-  useEffect(() => {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell?.onBrowserShortcut) return undefined;
-    return desktopShell.onBrowserShortcut((action) => {
-      const activeElement = document.activeElement;
-      if (
-        !sidePanel.open
-        || !activeBrowserTargetKey
-        || !activeElement
-        || !panelRef.current?.contains(activeElement)
-      ) return;
-      browserShortcutControllersRef.current.get(activeBrowserTargetKey)?.(action);
-    });
-  }, [activeBrowserTargetKey, sidePanel.open]);
 
   const handleSidePanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     if (readDesktopShell()?.onBrowserShortcut || !activeBrowserTargetKey) return;
@@ -1606,7 +2068,7 @@ export function ChatSidePanel({
     onSuccess: (updatedIssue) => {
       queryClient.setQueryData(queryKeys.issues.detail(updatedIssue.id), updatedIssue);
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] }); if (selectedOrganizationId) void queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifests(selectedOrganizationId) });
     },
   });
   const addIssueCommentMutation = useMutation({
@@ -1629,13 +2091,26 @@ export function ChatSidePanel({
   });
   const chatMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
-    queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
+    queryFn: () => chatsApi.listMessages(selectedOrganizationId!, chatTarget!.conversationId),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!chatTarget,
   });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFilePreviewPath ?? ""),
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!libraryFilePreviewPath,
+  });
+  const organizationSkillFileQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.file(
+      selectedOrganizationId ?? "__none__",
+      organizationSkillFileTarget?.skillId ?? "__none__",
+      organizationSkillFileTarget?.filePath ?? "SKILL.md",
+    ),
+    queryFn: () => organizationSkillsApi.file(
+      selectedOrganizationId!,
+      organizationSkillFileTarget!.skillId,
+      organizationSkillFileTarget!.filePath,
+    ),
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!organizationSkillFileTarget,
   });
   const libraryDirectoryQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryTarget?.directoryPath ?? ""),
@@ -1647,9 +2122,10 @@ export function ChatSidePanel({
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
       || (libraryFilePreviewPath && libraryFileQuery.isPending)
+      || (organizationSkillFileTarget && organizationSkillFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
+  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? organizationSkillFileQuery.error ?? libraryDirectoryQuery.error;
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
@@ -1657,13 +2133,64 @@ export function ChatSidePanel({
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
   const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
+  const organizationSkillFile = organizationSkillFileTarget ? organizationSkillFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
+  const visibleTabOrderKey = visibleTabs.map(sidePanelTargetKey).join("\n");
+
+  useLayoutEffect(() => {
+    if (!sidePanel.open) return;
+    const frameId = window.requestAnimationFrame(() => {
+      const scroller = tabScrollerElementRef.current;
+      const activeTabElement = activeTabElementRef.current;
+      if (!scroller || !activeTabElement) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const tabRect = activeTabElement.getBoundingClientRect();
+      const leftOverflow = tabRect.left - scrollerRect.left;
+      const rightOverflow = tabRect.right - scrollerRect.right;
+      if (leftOverflow < 0) {
+        scroller.scrollLeft += leftOverflow;
+      } else if (rightOverflow > 0) {
+        scroller.scrollLeft += rightOverflow;
+      }
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeTargetKey, expanded, isMobile, sidePanel.open, visibleTabOrderKey]);
+
+  useEffect(() => {
+    const scroller = tabScrollerElementRef.current;
+    if (!scroller || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const activeTabElement = activeTabElementRef.current;
+      if (!activeTabElement) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const tabRect = activeTabElement.getBoundingClientRect();
+      const leftOverflow = tabRect.left - scrollerRect.left;
+      const rightOverflow = tabRect.right - scrollerRect.right;
+      if (leftOverflow < 0) {
+        scroller.scrollLeft += leftOverflow;
+      } else if (rightOverflow > 0) {
+        scroller.scrollLeft += rightOverflow;
+      }
+    });
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [sidePanel.open, visibleTabOrderKey]);
 
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
     if (nextTarget.kind === "browser" && !browserAvailable) return;
     if (nextTarget.kind === "local_apps" && !localAppsAvailable) return;
-    sidePanel.openTarget(nextTarget);
+    const result = sidePanel.openTarget(nextTarget, {
+      allowNewBrowserGuest: nextTarget.kind !== "browser"
+        || canOpenNewBrowserGuest,
+    });
+    if (!result.admitted && result.reason === "browser_capacity") {
+      pushToast({
+        title: "Browser tab limit reached",
+        body: `Close a Browser tab to open another. Side Panel and Main share ${MAIN_WORKBENCH_BROWSER_CAPACITY} live tabs.`,
+        tone: "error",
+      });
+    }
   };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
   const cycleSidePanelTab = useCallback((direction: -1 | 1) => {
@@ -1725,7 +2252,9 @@ export function ChatSidePanel({
     closingSideChatKeysRef.current.add(tabKey);
     setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
     try {
-      const registeredClose = sideChatCloseHandlersRef.current.get(tab.clientMutationId);
+      const registeredClose = sideChatCloseHandlersRef.current.get(
+        sideChatGenerationScopeKey(selectedOrganizationId ?? "__none__", tab),
+      );
       const destroyedConversationId = registeredClose
         ? await registeredClose()
         : tab.conversationId
@@ -1826,33 +2355,49 @@ export function ChatSidePanel({
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
   const panel = (
-    <aside
-      ref={panelRef}
-      onKeyDownCapture={handleSidePanelKeyDown}
-      data-testid="chat-side-panel"
-      className={cn(
-        "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
-        isMobile
-          ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-[60] w-auto"
-          : "h-full w-full",
-        isMobile && exiting && "translate-x-4 scale-[0.985] opacity-0",
-        !contextReady && "hidden",
-        isMobile && !sidePanel.open && !exiting && "hidden",
-      )}
-      aria-label="Side Panel"
-      aria-hidden={!contextReady || undefined}
-    >
+    <>
+      {isMobile && contextReady && (sidePanel.open || exiting) ? (
+        <button
+          type="button"
+          data-testid="chat-side-panel-backdrop"
+          aria-label="Close Side Panel"
+          className="fixed inset-0 z-40 bg-[rgb(23_17_11/0.18)] backdrop-blur-[1px]"
+          onClick={onClose ?? sidePanel.hidePanel}
+        />
+      ) : null}
+      <aside
+        ref={panelRef}
+        onKeyDownCapture={handleSidePanelKeyDown}
+        data-testid="chat-side-panel"
+        className={cn(
+          "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
+          isMobile
+            ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-[45] w-auto"
+            : "h-full w-full",
+          isMobile && exiting && "translate-x-4 scale-[0.985] opacity-0",
+          !contextReady && "hidden",
+          isMobile && !sidePanel.open && !exiting && "hidden",
+        )}
+        role={isMobile ? "dialog" : undefined}
+        aria-modal={isMobile ? true : undefined}
+        aria-label="Side Panel"
+        aria-hidden={!contextReady || undefined}
+      >
       <div className={cn(
-        "workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
+        "workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
       )}>
         <div
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
-          className="scrollbar-auto-hide flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
+          className="workspace-tab-strip flex shrink-0 items-center gap-1 overflow-hidden px-2 py-1.5"
         >
-          <div className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          <div
+            ref={tabScrollerElementRef}
+            data-testid="chat-side-panel-tab-scroller"
+            className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto"
+          >
             {visibleTabs.map((tab) => {
               const tabKey = sidePanelTargetKey(tab);
               const selected = tabKey === activeTargetKey;
@@ -1891,6 +2436,7 @@ export function ChatSidePanel({
                   onMoveSideChat={moveSideChatToMessenger}
                 >
                   <div
+                    ref={selected ? activeTabElementRef : undefined}
                     role="presentation"
                     data-side-panel-tab-key={tabKey}
                     data-dragging={dragging ? "true" : undefined}
@@ -1925,7 +2471,7 @@ export function ChatSidePanel({
                       setTabDropTarget(null);
                     }}
                     className={cn(
-                      "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
+                      "workspace-tab-pill group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
                       tab.kind === "browser" && "w-[12.5rem]",
                       selected
                         ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
@@ -1947,12 +2493,16 @@ export function ChatSidePanel({
                           : tab.viewInstanceId
                         : undefined}
                       data-browser-favicon={tab.kind === "browser" ? tab.favicon : undefined}
-                      className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      data-side-panel-tab-kind={tab.kind}
+                      className="flex min-w-0 flex-1 cursor-grab items-center gap-1.5 rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                       onClick={() => {
                         if (!promotionMoving) sidePanel.setActiveKey(tabKey);
                       }}
                     >
-                      {promotionMoving ? `${tab.label} · Moving…` : tab.label}
+                      <ChatSidePanelTabIcon enabled={targetQueriesEnabled} tab={tab} />
+                      <span className="min-w-0 truncate">
+                        {promotionMoving ? `${tab.label} · Moving…` : tab.label}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -1973,6 +2523,8 @@ export function ChatSidePanel({
                 </ChatSidePanelTabContextMenu>
               );
             })}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
               data-testid="chat-side-panel-add-tab"
@@ -1982,8 +2534,6 @@ export function ChatSidePanel({
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
             <KeepSidePanelViewButton
               contextKey={sidePanel.contextKey}
               organizationId={selectedOrganizationId}
@@ -2015,12 +2565,14 @@ export function ChatSidePanel({
         </div>
       </div>
       <div className={cn(
-        "workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        "workspace-tab-content-card workspace-main-card flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)]",
       )}>
         <div className={cn(
-          "scrollbar-auto-hide min-h-0 flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || localFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || subagentsTarget || subagentTarget
+            ? "flex h-full flex-col overflow-hidden"
+            : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
@@ -2036,18 +2588,20 @@ export function ChatSidePanel({
                 key={runtimeId}
                 active={active}
                 callbacks={{
-                  canOpenNewTab: browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT,
+                  annotationConversationId: sourceConversationId,
+                  canOpenNewTab: canOpenNewBrowserGuest,
                   onCloseTarget: (nextTarget) => {
                     void closeSidePanelTab(nextTarget);
                   },
                   onCycleTab: cycleSidePanelTab,
+                  onOpenBrowserSettings: openBrowserSettings,
                   onOpenTarget: openSidePanelTarget,
                   onRegisterShortcutController: registerBrowserShortcutController,
                   onReplaceTarget: (nextTarget) => (
                     replaceSidePanelTarget(targetKey, nextTarget)
                   ),
                 }}
-                className={cn("h-full min-h-0", active ? "block" : "hidden")}
+                className={cn("h-full min-h-0 min-w-0 max-w-full", active ? "block" : "hidden")}
                 hostId={ownerId}
                 ownerId={ownerId}
                 runtimeId={runtimeId}
@@ -2063,9 +2617,11 @@ export function ChatSidePanel({
               <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
                 <BrowserLiveSurface
                   active={active}
-                  canOpenNewTab={browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT}
+                  canOpenNewTab={canOpenNewBrowserGuest}
+                  surface="side_panel"
                   target={target}
                   targetKey={targetKey}
+                  onOpenBrowserSettings={openBrowserSettings}
                   onOpenTarget={openSidePanelTarget}
                   onReplaceTarget={replaceSidePanelTarget}
                   onCloseTarget={closeSidePanelTab}
@@ -2075,12 +2631,31 @@ export function ChatSidePanel({
               </div>
             );
           }) : null}
-          {!liveSurfaceRuntime ? localAppTargets.map((target) => {
+          {!liveSurfaceRuntime && localAppsAvailable ? localAppTargets.map((target) => {
             const targetKey = sidePanelTargetKey(target);
             const active = targetKey === activeTargetKey;
             return (
               <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
                 <LocalAppPanelView active={active} target={target} />
+              </div>
+            );
+          }) : null}
+          {selectedOrganizationId ? sideChatTargets.map((target) => {
+            const active = sidePanelTargetKey(target) === activeTargetKey;
+            return (
+              <div
+                key={`side-chat-view:${selectedOrganizationId}:${target.sourceConversationId}:${target.clientMutationId}`}
+                className={cn("h-full min-h-0", active ? "block" : "hidden")}
+                aria-hidden={!active}
+              >
+                <SideChatPanelView
+                  active={active}
+                  organizationId={selectedOrganizationId}
+                  target={target}
+                  onRegisterCloseHandler={registerSideChatCloseHandler}
+                  onReplaceTarget={replaceSidePanelTarget}
+                  onSelectResponseAnnotation={selectSideChatResponseAnnotation}
+                />
               </div>
             );
           }) : null}
@@ -2125,6 +2700,13 @@ export function ChatSidePanel({
                 }}
               />
             )
+          ) : issueProposalTarget ? (
+            <div
+              className="h-full min-h-0"
+              data-testid="chat-side-panel-issue-proposal-view"
+            >
+              <IssueProposalSidePanelContent targetKey={sidePanelTargetKey(issueProposalTarget)} />
+            </div>
           ) : automationTarget ? (
             <div className="h-full min-h-0" data-testid="chat-side-panel-automation-view">
               <AutomationDetail
@@ -2138,13 +2720,14 @@ export function ChatSidePanel({
             <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
-          ) : sideChatTarget && selectedOrganizationId ? (
-            <SideChatPanelView
+          ) : sideChatTarget ? null : runFeedbackTarget && selectedOrganizationId ? (
+            <RunFeedbackChatPanel
               organizationId={selectedOrganizationId}
-              target={sideChatTarget}
-              onRegisterCloseHandler={registerSideChatCloseHandler}
+              target={runFeedbackTarget}
               onReplaceTarget={replaceSidePanelTarget}
             />
+          ) : subagentsTarget && selectedOrganizationId ? (
+            <SubagentsPanelView organizationId={selectedOrganizationId} target={subagentsTarget} />
           ) : subagentTarget ? (
             <SubagentPanelView target={subagentTarget} />
           ) : chatTarget ? (
@@ -2168,12 +2751,20 @@ export function ChatSidePanel({
               key={libraryFile.filePath}
               libraryFile={libraryFile}
               organizationId={selectedOrganizationId}
+              sourceConversationId={sourceConversationId}
             />
           ) : localFileTarget ? (
             <TranscriptLocalFilePreview
               key={localFileTarget.filePath}
               targetPath={localFileTarget.filePath}
               label={localFileTarget.label}
+              sourceConversationId={sourceConversationId}
+            />
+          ) : organizationSkillFileTarget && organizationSkillFile ? (
+            <ChatSidePanelSkillFileView
+              key={`${organizationSkillFileTarget.skillId}:${organizationSkillFileTarget.filePath}`}
+              file={organizationSkillFile}
+              label={organizationSkillFileTarget.label}
             />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
@@ -2199,17 +2790,19 @@ export function ChatSidePanel({
           )}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 
   if (isMobile) {
-    if (!sidePanel.open && !exiting) return null;
+    if (!sidePanel.open && !exiting && sideChatTargets.length === 0) return null;
     return typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
   }
   if (sidePanel.open) {
     lastOpenDesktopPanelRef.current = panel;
     return panel;
   }
+  if (sideChatTargets.length > 0) return panel;
   if (
     !desktopExitComplete
     || liveSurfaceTargets.length > 0

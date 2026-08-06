@@ -19,6 +19,7 @@ import {
   type MainWorkbenchTarget,
 } from "@/lib/main-workbench-state";
 import { queryKeys } from "@/lib/queryKeys";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
   MessengerCustomGroupsResponse,
   MessengerSavedView,
@@ -42,17 +43,24 @@ let emitDragEnd: ((event: {
 }) => void) | null = null;
 let nextId = 0;
 
-const createCustomGroup = vi.hoisted(() => vi.fn());
+const createCustomGroupWithEntries = vi.hoisted(() => vi.fn());
 const keepSavedView = vi.hoisted(() => vi.fn());
 const listCustomGroups = vi.hoisted(() => vi.fn());
 const updateSavedView = vi.hoisted(() => vi.fn());
+const listLocalApps = vi.hoisted(() => vi.fn());
+const statusLocalApp = vi.hoisted(() => vi.fn());
+const stopLocalApp = vi.hoisted(() => vi.fn());
+const updateLocalApp = vi.hoisted(() => vi.fn());
 const navigate = vi.hoisted(() => vi.fn());
+const pushToast = vi.hoisted(() => vi.fn());
+const sortableKeyDown = vi.hoisted(() => vi.fn());
+const useSensorMock = vi.hoisted(() => vi.fn((sensor, options) => ({ options, sensor })));
 const scrollIntoView = vi.fn();
 const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
 vi.mock("@/api/messenger", () => ({
   messengerApi: {
-    createCustomGroup,
+    createCustomGroupWithEntries,
     keepSavedView,
     listCustomGroups,
     updateSavedView,
@@ -62,6 +70,86 @@ vi.mock("@/api/messenger", () => ({
 vi.mock("@/lib/router", () => ({
   useNavigate: () => navigate,
 }));
+
+vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => ({ pushToast }),
+}));
+
+vi.mock("@/lib/desktop-shell", () => ({
+  readDesktopShell: () => ({
+    localApps: {
+      supported: true,
+      list: listLocalApps,
+      status: statusLocalApp,
+      stop: stopLocalApp,
+      update: updateLocalApp,
+    },
+  }),
+}));
+
+vi.mock("@/components/ui/dropdown-menu", async () => {
+  const React = await import("react");
+  const MenuContext = React.createContext<{
+    open: boolean;
+    setOpen: (open: boolean) => void;
+  } | null>(null);
+  return {
+    DropdownMenu: ({
+      children,
+      open: controlledOpen,
+      onOpenChange,
+    }: {
+      children: ReactNode;
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+    }) => {
+      const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+      const open = controlledOpen ?? uncontrolledOpen;
+      const setOpen = (nextOpen: boolean) => {
+        setUncontrolledOpen(nextOpen);
+        onOpenChange?.(nextOpen);
+      };
+      return (
+        <MenuContext.Provider value={{ open, setOpen }}>
+          {children}
+        </MenuContext.Provider>
+      );
+    },
+    DropdownMenuContent: ({ children }: { children: ReactNode }) => {
+      const menu = React.useContext(MenuContext);
+      return menu?.open ? <div role="menu">{children}</div> : null;
+    },
+    DropdownMenuItem: ({
+      children,
+      disabled,
+      onSelect,
+    }: {
+      children: ReactNode;
+      disabled?: boolean;
+      onSelect?: () => void;
+    }) => (
+      <button
+        type="button"
+        role="menuitem"
+        aria-disabled={disabled || undefined}
+        disabled={disabled}
+        onClick={onSelect}
+      >
+        {children}
+      </button>
+    ),
+    DropdownMenuTrigger: ({
+      children,
+    }: {
+      children: React.ReactElement<{ onClick?: () => void }>;
+    }) => {
+      const menu = React.useContext(MenuContext);
+      return React.cloneElement(children, {
+        onClick: () => menu?.setOpen(!menu.open),
+      });
+    },
+  };
+});
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children, open }: { children: ReactNode; open?: boolean }) => (
@@ -90,7 +178,7 @@ vi.mock("@dnd-kit/core", async () => {
     },
     KeyboardSensor: vi.fn(),
     PointerSensor: vi.fn(),
-    useSensor: vi.fn((sensor, options) => ({ options, sensor })),
+    useSensor: useSensorMock,
     useSensors: vi.fn((...sensors) => sensors),
   };
 });
@@ -106,10 +194,10 @@ vi.mock("@dnd-kit/sortable", async () => {
     useSortable: ({ id }: { id: string }) => ({
       attributes: {
         "aria-describedby": `sortable-${id}`,
-        "aria-roledescription": "sortable tab",
+        "aria-roledescription": "sortable",
       },
       isDragging: false,
-      listeners: {},
+      listeners: { onKeyDown: sortableKeyDown },
       setActivatorNodeRef: vi.fn(),
       setNodeRef: vi.fn(),
       transform: null,
@@ -132,7 +220,7 @@ vi.mock("@/components/workbench/BrowserLiveSurface", () => ({
   }: {
     target: Extract<MainWorkbenchTarget, { kind: "browser" }>;
     onCloseTarget: (target: MainWorkbenchTarget) => void;
-    onOpenTarget: (target: MainWorkbenchTarget) => void;
+    onOpenTarget: (target: SidePanelTarget) => void;
     onReplaceTarget: (key: string, target: MainWorkbenchTarget) => void;
     onCycleTab?: (direction: -1 | 1) => void;
   }) => (
@@ -171,6 +259,18 @@ vi.mock("@/components/workbench/BrowserLiveSurface", () => ({
       </button>
       <button
         type="button"
+        data-testid="mock-open-linked-chat"
+        onClick={() => onOpenTarget({
+          kind: "chat",
+          conversationId: "automation-linked-chat",
+          label: "Automation run",
+          messageId: null,
+        })}
+      >
+        Open linked chat
+      </button>
+      <button
+        type="button"
         data-testid="mock-browser-close"
         onClick={() => onCloseTarget(target)}
       >
@@ -190,11 +290,36 @@ beforeEach(() => {
   nextId = 0;
   controls = null;
   emitDragEnd = null;
-  createCustomGroup.mockReset();
+  createCustomGroupWithEntries.mockReset();
   keepSavedView.mockReset();
   listCustomGroups.mockReset().mockResolvedValue({ groups: [] });
   updateSavedView.mockReset().mockResolvedValue({});
+  listLocalApps.mockReset().mockResolvedValue([{
+    id: "definition-a",
+    desktopInstallationId: "desktop-a",
+    appPublicId: "mkt-dashboard",
+    localBindingId: "binding-a",
+    title: "MKT dashboard",
+    executable: "/opt/homebrew/bin/pnpm",
+    argv: ["dev"],
+    cwd: "/workspace/mkt-dashboard",
+    inheritedEnvNames: ["DATABASE_URL"],
+    readiness: { path: "/api/health", timeoutMs: 30_000 },
+    openPath: "/outreach",
+    trustFingerprint: "fingerprint-a",
+    approvedFingerprint: "fingerprint-a",
+    createdAt: "2026-07-23T00:00:00.000Z",
+    updatedAt: "2026-07-23T00:00:00.000Z",
+  }]);
+  statusLocalApp.mockReset().mockResolvedValue({ status: "stopped", generation: null });
+  stopLocalApp.mockReset().mockResolvedValue({ status: "stopped", generation: null });
+  updateLocalApp.mockReset().mockImplementation(async (_id, definition) => ({
+    ...(await listLocalApps())[0],
+    ...definition,
+  }));
   navigate.mockReset();
+  pushToast.mockReset();
+  sortableKeyDown.mockReset();
   scrollIntoView.mockReset();
   window.localStorage.clear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -432,17 +557,19 @@ function detachingPromotionState(
   });
 }
 
-function Harness() {
+function Harness({ routeMode = "messenger" }: { routeMode?: "messenger" | "local_app" }) {
   controls = useOrganizationMainWorkbench("org-a");
-  return <MessengerMainWorkbench organizationId="org-a" />;
+  return <MessengerMainWorkbench organizationId="org-a" routeMode={routeMode} />;
 }
 
 function renderWorkbench({
   initialState,
+  routeMode = "messenger",
   runtimeLayer = false,
   sideTarget,
 }: {
   initialState?: MainWorkbenchState;
+  routeMode?: "messenger" | "local_app";
   runtimeLayer?: boolean;
   sideTarget?: Extract<MainWorkbenchTarget, { kind: "browser" }>;
 } = {}) {
@@ -474,7 +601,7 @@ function renderWorkbench({
                 target={sideTarget}
               />
             ) : null}
-            <Harness />
+            <Harness routeMode={routeMode} />
             {runtimeLayer ? <LiveSurfaceRuntimeLayer /> : null}
           </LiveSurfaceRuntimeProvider>
         </MainWorkbenchProvider>
@@ -497,7 +624,7 @@ function tabs() {
 }
 
 describe("MessengerMainWorkbench", () => {
-  it("renders one full-bleed mixed tab surface without a nested workbench or Browser card", () => {
+  it("renders a masked rounded workbench without nesting another Browser card", () => {
     renderWorkbench();
     openKinds(["browser", "local_app", "library_document", "automation"]);
 
@@ -506,7 +633,8 @@ describe("MessengerMainWorkbench", () => {
     )!;
     expect(workbench.querySelectorAll('[role="tablist"]')).toHaveLength(1);
     expect(workbench.className).not.toContain("workspace-main-card");
-    expect(workbench.className).not.toMatch(/\brounded/);
+    expect(workbench.className).toContain("rounded-[var(--desktop-workspace-radius)]");
+    expect(workbench.className).toContain("messenger-main-workbench-surface");
     expect(workbench.className).not.toMatch(/\bp-[1-9]/);
     expect(workbench.querySelector('[data-testid="browser-main-card"]')).toBeNull();
     expect(workbench.querySelector('[data-testid="messenger-main-live-surface-anchor"]'))
@@ -553,6 +681,24 @@ describe("MessengerMainWorkbench", () => {
     );
   });
 
+  it("keeps Local App Saved View tabs in the top-level Apps route mode", () => {
+    renderWorkbench({ routeMode: "local_app" });
+    const localApp = target("local_app", "saved-local-app");
+    act(() => controls!.openSavedTab("saved-local-a", tabDraft(localApp)));
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/apps/saved/saved-local-a",
+      { replace: true },
+    );
+
+    act(() => {
+      host!
+        .querySelector<HTMLButtonElement>("[aria-label='Close MKT dashboard tab']")
+        ?.click();
+    });
+    expect(navigate).toHaveBeenLastCalledWith("/apps", { replace: true });
+  });
+
   it("reorders Main tabs without changing their durable bindings", () => {
     renderWorkbench();
     openKinds(["browser", "library_document", "automation"]);
@@ -570,6 +716,135 @@ describe("MessengerMainWorkbench", () => {
     ]);
     expect(controls!.tabsByViewInstanceId["view-0"]?.savedViewId)
       .toBe("saved-browser");
+  });
+
+  it("uses the whole tab as the sortable activator without a separate reorder button", () => {
+    renderWorkbench();
+    openKinds(["browser"]);
+
+    const tab = tabs()[0]!;
+    expect(tab.getAttribute("aria-roledescription")).toBe("sortable");
+    expect(host!.querySelector('[aria-label="Reorder Browser tab"]')).toBeNull();
+    expect(useSensorMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        keyboardCodes: {
+          cancel: ["Escape"],
+          end: ["Space"],
+          start: ["Space"],
+        },
+      }),
+    );
+
+    act(() => {
+      tab.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        key: " ",
+      }));
+    });
+    expect(sortableKeyDown).toHaveBeenCalledOnce();
+  });
+
+  it("opens editable Local App project settings from the hover More menu", async () => {
+    renderWorkbench();
+    openKinds(["local_app"]);
+    await vi.waitFor(() => expect(listLocalApps).toHaveBeenCalledOnce());
+    expect(statusLocalApp).not.toHaveBeenCalled();
+
+    await act(async () => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="More options for MKT dashboard"]',
+        )
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(statusLocalApp).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
+      expect(item).not.toBeNull();
+      expect(item?.getAttribute("aria-disabled")).not.toBe("true");
+    });
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(
+      document.querySelector<HTMLElement>('[role="dialog"]'),
+    ).not.toBeNull());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    act(() => dialog.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
+    expect(dialog.textContent).toContain("Project settings");
+    expect(dialog.querySelector<HTMLInputElement>("#local-app-name")?.value)
+      .toBe("MKT dashboard");
+    expect(dialog.querySelector<HTMLInputElement>("#local-app-cwd")?.value)
+      .toBe("/workspace/mkt-dashboard");
+
+    const name = dialog.querySelector<HTMLInputElement>("#local-app-name")!;
+    await vi.waitFor(() => expect(name.disabled).toBe(false));
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(name, "MKT command center");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      dialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(updateLocalApp).toHaveBeenCalledWith(
+      "definition-a",
+      expect.objectContaining({ title: "MKT command center" }),
+    ));
+  });
+
+  it("requires an explicit stop before editing a running Local App", async () => {
+    statusLocalApp.mockResolvedValue({ status: "running", generation: "generation-a" });
+    renderWorkbench();
+    openKinds(["local_app"]);
+
+    await act(async () => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="More options for MKT dashboard"]',
+        )
+        ?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
+      expect(item).not.toBeNull();
+      expect(item?.getAttribute("aria-disabled")).not.toBe("true");
+    });
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    act(() => dialog?.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
+    await vi.waitFor(() => expect(
+      document.querySelector<HTMLInputElement>("#local-app-name")?.disabled,
+    ).toBe(true));
+    expect(document.querySelector('[role="dialog"]')?.textContent)
+      .toContain("Stop this Local App to edit its launch settings.");
+
+    await act(async () => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes("Stop & edit"))
+        ?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(stopLocalApp).toHaveBeenCalledWith("definition-a"));
+    await vi.waitFor(() => expect(
+      document.querySelector<HTMLInputElement>("#local-app-name")?.disabled,
+    ).toBe(false));
   });
 
   it("creates session-only Browser tabs from + and disables creation at shared capacity", () => {
@@ -654,6 +929,56 @@ describe("MessengerMainWorkbench", () => {
     );
   });
 
+  it("keeps a session Browser loose in the Messenger sidebar", async () => {
+    listCustomGroups.mockResolvedValue({
+      groups: [group("group-a", "Research")],
+    });
+    renderWorkbench();
+    const browser = target("browser", "loose-view") as Extract<
+      MainWorkbenchTarget,
+      { kind: "browser" }
+    >;
+    act(() => controls!.createSessionBrowser(browser));
+    await vi.waitFor(() => expect(listCustomGroups).toHaveBeenCalledWith("org-a"));
+    await act(async () => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Keep active Browser in Messenger"]',
+        )
+        ?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Messenger sidebar"));
+    const sidebar = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((option) => option.textContent?.includes("Messenger sidebar"));
+    act(() => sidebar?.click());
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    keepSavedView.mockResolvedValue({
+      savedView: savedBrowser(browser, "saved-loose"),
+      group: null,
+    });
+
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="confirm-main-browser-keep"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(keepSavedView).toHaveBeenCalledWith(
+      "org-a",
+      expect.objectContaining({ placement: { kind: "loose" } }),
+    ));
+    expect(controls!.activeTab?.savedViewId).toBe("saved-loose");
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/messenger/saved/saved-loose",
+      { replace: true },
+    );
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["messenger", "org-a", "saved-views"],
+    });
+  });
+
   it("creates an editable default group before keeping when Messenger has no groups", async () => {
     listCustomGroups.mockResolvedValue({ groups: [] });
     renderWorkbench();
@@ -689,7 +1014,12 @@ describe("MessengerMainWorkbench", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     const created = group("group-created", "Dashboard tools");
-    createCustomGroup.mockResolvedValue(created);
+    createCustomGroupWithEntries.mockResolvedValue({
+      groups: [{
+        ...created,
+        entries: [{ itemKey: "saved-view:saved-local" }],
+      }],
+    });
     keepSavedView.mockResolvedValue({
       savedView: savedBrowser(browser, "saved-local"),
       group: { id: created.id, name: created.name },
@@ -700,9 +1030,14 @@ describe("MessengerMainWorkbench", () => {
         ?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(createCustomGroup).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(createCustomGroupWithEntries).toHaveBeenCalledWith(
       "org-a",
-      { name: "Dashboard tools", icon: null },
+      {
+        autoGenerateName: false,
+        icon: null,
+        itemKeys: ["saved-view:saved-local"],
+        name: "Dashboard tools",
+      },
     ));
   });
 
@@ -842,25 +1177,71 @@ describe("MessengerMainWorkbench", () => {
     expect(controls!.tabs).toHaveLength(2);
   });
 
+  it("shows a visible failure when a Main-owned Browser popup reaches shared capacity", () => {
+    renderWorkbench({ runtimeLayer: true });
+    act(() => {
+      for (let index = 0; index < 8; index += 1) {
+        controls!.createSessionBrowser(target(
+          "browser",
+          `capacity-${index}`,
+        ) as Extract<MainWorkbenchTarget, { kind: "browser" }>);
+      }
+    });
+
+    act(() => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="live-surface-runtime-host"][aria-hidden="false"] [data-testid="mock-browser-open"]',
+        )
+        ?.click();
+    });
+
+    expect(controls!.tabs).toHaveLength(8);
+    expect(pushToast).toHaveBeenCalledWith({
+      title: "Browser tab limit reached",
+      body: "Close a Browser tab to open another. Side Panel and Main share 8 live tabs.",
+      tone: "error",
+    });
+  });
+
+  it("opens an Automation-linked chat instead of swallowing the workbench callback", () => {
+    renderWorkbench({ runtimeLayer: true });
+    openKinds(["browser"]);
+
+    act(() => {
+      host
+        ?.querySelector<HTMLButtonElement>('[data-testid="mock-open-linked-chat"]')
+        ?.click();
+    });
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/messenger/chat/automation-linked-chat",
+    );
+  });
+
   it("owns Cmd/Ctrl+T, Cmd/Ctrl+W, and Ctrl+Tab while focus is in Main", async () => {
-    renderWorkbench();
+    renderWorkbench({ runtimeLayer: true });
     openKinds(["browser", "library_document"]);
-    const workbench = host!.querySelector<HTMLElement>(
-      '[data-testid="messenger-main-workbench"]',
+    act(() => controls!.focusTab("view-0"));
+    const runtimeControl = host!.querySelector<HTMLButtonElement>(
+      '[data-testid="mock-browser-replace"]',
     )!;
+    runtimeControl.focus();
+    expect(runtimeControl.closest("[data-testid='messenger-main-workbench']"))
+      .toBeNull();
     navigate.mockClear();
 
     act(() => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "Tab",
         ctrlKey: true,
       }));
     });
-    expect(controls!.activeViewInstanceId).toBe("view-0");
+    expect(controls!.activeViewInstanceId).toBe("view-1");
 
     act(() => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "t",
         metaKey: true,
@@ -870,7 +1251,7 @@ describe("MessengerMainWorkbench", () => {
     expect(controls!.activeTab?.target.kind).toBe("browser");
 
     await act(async () => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "w",
         metaKey: true,

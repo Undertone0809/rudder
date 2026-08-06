@@ -594,12 +594,12 @@ export function RunFiltersToolbar({
   };
 
   return (
-    <div className="agent-run-filter-shell pointer-events-none sticky top-2 z-20 mb-3 flex justify-end">
+    <div className="pointer-events-none sticky top-2 z-20 mb-3 flex justify-end">
       <div
-        className="agent-run-filter-toolbar pointer-events-auto flex max-w-full flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-background/95 px-2.5 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85"
+        className="pointer-events-auto flex max-w-full flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-background/95 px-2.5 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85"
         data-testid="run-filter-floating-toolbar"
       >
-        <div className="agent-run-filter-views flex items-center overflow-hidden rounded-md border border-border bg-muted/20">
+        <div className="flex items-center overflow-hidden rounded-md border border-border bg-muted/20">
           {runFilterViews.map((view) => (
             <button
               key={view.value}
@@ -617,7 +617,7 @@ export function RunFiltersToolbar({
           ))}
         </div>
 
-        <label className="agent-run-filter-search relative block w-56 max-w-full">
+        <label className="relative block w-[min(14rem,42vw)]">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="Search runs"

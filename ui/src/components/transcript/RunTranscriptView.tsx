@@ -10,7 +10,7 @@ import { normalizeTranscript } from "./RunTranscriptView.normalize";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
+export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -44,7 +44,12 @@ export function RunTranscriptView({
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
+  runAnnotationContext,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -150,7 +155,7 @@ export function RunTranscriptView({
           thinkingClassName={thinkingClassName}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
-          onOpenFile={handleOpenFile}
+          runAnnotationContext={runAnnotationContext}
         />
       </div>
     );
@@ -170,8 +175,12 @@ export function RunTranscriptView({
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
           onOpenFile={handleOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
+          annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       </div>
     );
@@ -192,6 +201,8 @@ export function RunTranscriptView({
             collapseStdout,
             thinkingClassName,
             onMarkdownLinkClick: handleMarkdownLinkClick,
+            annotationSource,
+            sentAnnotationContext,
           })}
         </div>
       ))}

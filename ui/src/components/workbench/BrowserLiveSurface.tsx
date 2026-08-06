@@ -1,5 +1,7 @@
+import { OnboardingCallout } from "@/components/OnboardingCallout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useI18n } from "@/context/I18nContext";
 import {
   BROWSER_SIDE_PANEL_BLANK_URL,
   browserSidePanelErrorContent,
@@ -14,6 +16,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import {
+  MAX_BROWSER_FAVICON_LENGTH,
   resolveBrowserShortcutInput,
   type BrowserShortcutAction,
 } from "@rudderhq/shared";
@@ -23,7 +26,7 @@ import {
   ExternalLink,
   FileWarning,
   Globe2,
-  Loader2,
+  Info,
   Plus,
   RotateCw,
 } from "lucide-react";
@@ -39,6 +42,25 @@ import {
 const BROWSER_LIVE_SURFACE_ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
 ] as const;
+const BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY = "rudder.browser.side-panel-onboarding.dismissed.v1";
+const BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY = "rudder.browser.side-panel-onboarding.session-dismissed.v1";
+const BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT = "rudder:browser-side-panel-onboarding-dismissed";
+
+function hasDismissedBrowserSidePanelOnboarding() {
+  if (typeof window === "undefined") return true;
+  try {
+    if (window.localStorage.getItem(BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY) === "true") {
+      return true;
+    }
+  } catch {
+    // Fall through to the session-scoped fallback.
+  }
+  try {
+    return window.sessionStorage.getItem(BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
@@ -55,7 +77,7 @@ type BrowserWebviewElement = HTMLElement & {
 function acceptedBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8_192) return null;
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (trimmed.startsWith("data:image/")) return trimmed;
   try {
     const url = new URL(trimmed);
@@ -68,8 +90,10 @@ function acceptedBrowserFavicon(value: unknown) {
 export type BrowserLiveSurfaceProps = {
   active: boolean;
   canOpenNewTab: boolean;
+  surface: "side_panel" | "workbench";
   target: Extract<SidePanelTarget, { kind: "browser" }>;
   targetKey: string;
+  onOpenBrowserSettings?: () => void;
   onOpenTarget: (target: SidePanelTarget) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onCloseTarget: (target: SidePanelTarget) => void;
@@ -84,8 +108,10 @@ export type BrowserLiveSurfaceProps = {
 export function BrowserLiveSurface({
   active,
   canOpenNewTab,
+  surface,
   target,
   targetKey,
+  onOpenBrowserSettings,
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
@@ -93,6 +119,7 @@ export function BrowserLiveSurface({
   onWebContentsIdChange,
   onRegisterShortcutController,
 }: BrowserLiveSurfaceProps) {
+  const { t } = useI18n();
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
@@ -112,7 +139,6 @@ export function BrowserLiveSurface({
   );
   const [currentUrl, setCurrentUrl] = useState(target.url);
   const [webviewSrc, setWebviewSrc] = useState(target.url);
-  const [title, setTitle] = useState(target.label);
   const [loading, setLoading] = useState(false);
   const [navigationState, setNavigationState] = useState({
     canGoBack: false,
@@ -120,7 +146,9 @@ export function BrowserLiveSurface({
   });
   const [loadError, setLoadError] = useState<BrowserLoadError | null>(null);
   const [loadErrorDetailsOpen, setLoadErrorDetailsOpen] = useState(false);
-  const [zoomFactor, setZoomFactor] = useState(1);
+  const [showSidePanelOnboarding, setShowSidePanelOnboarding] = useState(
+    () => !hasDismissedBrowserSidePanelOnboarding(),
+  );
   const isBlank = currentUrl === BROWSER_SIDE_PANEL_BLANK_URL;
   const loadErrorContent = loadError ? browserSidePanelErrorContent(loadError) : null;
   currentUrlRef.current = currentUrl;
@@ -167,7 +195,6 @@ export function BrowserLiveSurface({
     }, false);
     if (!applied) return;
     zoomFactorRef.current = factor;
-    setZoomFactor(factor);
   }, [safeWebviewCall]);
 
   const stepZoomFactor = useCallback((direction: -1 | 1) => {
@@ -259,7 +286,6 @@ export function BrowserLiveSurface({
     currentUrlRef.current = nextUrl;
     targetRef.current = nextTarget;
     setCurrentUrl(nextUrl);
-    setTitle(nextTitle);
     setAddressValue(nextUrl === BROWSER_SIDE_PANEL_BLANK_URL ? "" : nextUrl);
     targetUrlRef.current = nextUrl;
     onReplaceTargetRef.current(targetKey, nextTarget);
@@ -271,7 +297,6 @@ export function BrowserLiveSurface({
     currentUrlRef.current = target.url;
     targetRef.current = target;
     setCurrentUrl(target.url);
-    setTitle(target.label);
     setAddressValue(target.url === BROWSER_SIDE_PANEL_BLANK_URL ? "" : target.url);
     if (externallyChangedUrl) {
       setWebviewSrc(target.url);
@@ -320,7 +345,6 @@ export function BrowserLiveSurface({
       const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
         ? event.title.trim()
         : browserSidePanelLabel(nextUrl);
-      setTitle(nextTitle);
       const nextTarget = { ...targetRef.current, url: nextUrl, label: nextTitle };
       targetRef.current = nextTarget;
       onReplaceTargetRef.current(targetKey, nextTarget);
@@ -383,14 +407,14 @@ export function BrowserLiveSurface({
         onCycleTabRef.current(input.shift ? -1 : 1);
         return;
       }
+      if (readDesktopShell()?.onBrowserShortcut) return;
       if (isBrowserSidePanelCloseShortcutInput(inputEvent.input)) {
         event.preventDefault();
         onCloseTargetRef.current(targetRef.current);
         return;
       }
       if (
-        readDesktopShell()?.onBrowserShortcut
-        || !inputEvent.input
+        !inputEvent.input
         || !activeRef.current
       ) return;
       const action = resolveBrowserShortcutInput(inputEvent.input, {
@@ -445,6 +469,29 @@ export function BrowserLiveSurface({
     onWebContentsIdChangeRef.current?.(null);
   }, []);
 
+  useEffect(() => {
+    const handleDismissed = () => setShowSidePanelOnboarding(false);
+    window.addEventListener(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT, handleDismissed);
+    return () => {
+      window.removeEventListener(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT, handleDismissed);
+    };
+  }, []);
+
+  const dismissSidePanelOnboarding = () => {
+    setShowSidePanelOnboarding(false);
+    try {
+      window.localStorage.setItem(BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY, "true");
+    } catch {
+      // Fall back to session storage below.
+    }
+    try {
+      window.sessionStorage.setItem(BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY, "true");
+    } catch {
+      // The mounted Browser surfaces still synchronize through the event below.
+    }
+    window.dispatchEvent(new Event(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT));
+  };
+
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
     setLoadError(null);
@@ -482,12 +529,15 @@ export function BrowserLiveSurface({
 
   return (
     <div
-      className="flex min-h-full flex-col"
+      className="flex min-h-full flex-col bg-[color:var(--surface-elevated)]"
       data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
       data-browser-tab-id={target.tabId}
       data-active={active ? "true" : "false"}
     >
-      <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] px-2 py-2">
+      <div
+        className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2 py-2"
+        data-testid="chat-side-panel-browser-toolbar"
+      >
         <Button
           type="button"
           variant="ghost"
@@ -555,21 +605,40 @@ export function BrowserLiveSurface({
           <ExternalLink className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]">
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[color:var(--border-soft)] px-3 text-xs text-muted-foreground">
-          {loading
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <Globe2 className="h-3.5 w-3.5" />}
-          <span className="min-w-0 flex-1 truncate">{isBlank ? "New tab" : title}</span>
-          {zoomFactor !== 1 ? (
-            <span
-              className="shrink-0 tabular-nums"
-              data-testid="chat-side-panel-browser-zoom"
-            >
-              {Math.round(zoomFactor * 100)}%
-            </span>
-          ) : null}
-        </div>
+      <div
+        className="relative flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]"
+        data-testid="chat-side-panel-browser-content"
+      >
+        {active && surface === "side_panel" && showSidePanelOnboarding ? (
+          <OnboardingCallout
+            testId="browser-side-panel-onboarding"
+            className="absolute right-3 top-3 z-20 w-[min(24rem,calc(100%-1.5rem))] shadow-[var(--shadow-lg)]"
+            icon={<Info aria-hidden="true" />}
+            title={t("browser.onboarding.title")}
+            description={t("browser.onboarding.description")}
+            stackActions
+            actions={(
+              <>
+                {onOpenBrowserSettings ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      dismissSidePanelOnboarding();
+                      onOpenBrowserSettings();
+                    }}
+                  >
+                    {t("browser.onboarding.settings")}
+                  </Button>
+                ) : null}
+                <Button type="button" size="sm" onClick={dismissSidePanelOnboarding}>
+                  {t("browser.onboarding.dismiss")}
+                </Button>
+              </>
+            )}
+          />
+        ) : null}
         {isBlank ? (
           <div
             className="flex min-h-[44vh] flex-1 items-center justify-center px-6 text-center"
@@ -587,7 +656,7 @@ export function BrowserLiveSurface({
               ref: handleWebviewRef,
               src: webviewSrc,
               className: cn(
-                "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
+                "min-h-[52vh] flex-1 bg-[color:var(--surface-elevated)]",
                 loadError && "invisible",
               ),
               "data-testid": active
@@ -603,7 +672,7 @@ export function BrowserLiveSurface({
               <div
                 role="alert"
                 data-testid="chat-side-panel-browser-error"
-                className="absolute inset-0 flex overflow-y-auto bg-[color:var(--surface-panel)] px-8 py-10"
+                className="absolute inset-0 flex overflow-y-auto bg-[color:var(--surface-elevated)] px-8 py-10"
               >
                 <div className="m-auto w-full max-w-[32rem]">
                   <FileWarning
