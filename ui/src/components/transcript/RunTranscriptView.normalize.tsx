@@ -1,85 +1,7 @@
-import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
-
-type ProvenancedTranscriptTextEntry = Extract<
-  TranscriptEntry,
-  { kind: "assistant" | "thinking" }
-> & Partial<{
-  generationId: string;
-  generationSeqStart: number;
-  generationSeqEnd: number;
-}>;
-
-type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
-  steerMessage?: ChatMessage;
-};
-
-function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
-  return typeof entry.generationId === "string"
-    && Number.isInteger(entry.generationSeqStart)
-    && Number.isInteger(entry.generationSeqEnd)
-    ? {
-        generationId: entry.generationId,
-        generationSeqStart: entry.generationSeqStart!,
-        generationSeqEnd: entry.generationSeqEnd!,
-      }
-    : null;
-}
-
-function transcriptEntrySourceIds(entry: TranscriptEntry): string[] {
-  return typeof entry.sourceEntryId === "string" && entry.sourceEntryId.trim()
-    ? [entry.sourceEntryId]
-    : [];
-}
-
-function appendTranscriptSourceId(block: TranscriptBlock, sourceEntryId: string | undefined) {
-  if (!sourceEntryId || !sourceEntryId.trim()) return;
-  const sourceEntryIds = block.sourceEntryIds ?? [];
-  if (!sourceEntryIds.includes(sourceEntryId)) block.sourceEntryIds = [...sourceEntryIds, sourceEntryId];
-}
-
-function blockHasTranscriptProvenance(
-  block: TranscriptBlock,
-): block is Extract<TranscriptBlock, { type: "message" | "thinking" }> & {
-  generationId: string;
-  generationSeqStart: number;
-  generationSeqEnd: number;
-} {
-  return (block.type === "message" || block.type === "thinking")
-    && typeof block.generationId === "string"
-    && Number.isInteger(block.generationSeqStart)
-    && Number.isInteger(block.generationSeqEnd);
-}
-
-function canMergeTranscriptProvenance(
-  previous: TranscriptBlock,
-  current: ReturnType<typeof transcriptEntryProvenance>,
-  continuesDeltaGroup: boolean,
-  currentSegmentId?: string,
-) {
-  if (previous.type !== "message" && previous.type !== "thinking") return false;
-  if (previous.segmentId || currentSegmentId) {
-    return continuesDeltaGroup
-      && Boolean(
-        previous.segmentId
-        && currentSegmentId
-        && previous.segmentId === currentSegmentId,
-      )
-      && (
-        !current
-        || !blockHasTranscriptProvenance(previous)
-        || previous.generationId === current.generationId
-      );
-  }
-  if (!current) return !blockHasTranscriptProvenance(previous);
-  return continuesDeltaGroup
-    && blockHasTranscriptProvenance(previous)
-    && previous.generationId === current.generationId
-    && previous.generationSeqEnd + 1 === current.generationSeqStart;
-}
 
 export function formatSemanticDigest(
   infos: TranscriptToolSemanticInfo[],
@@ -92,6 +14,7 @@ export function formatSemanticDigest(
   }
 
   let exploreCount = 0;
+  let imageCount = 0;
   let readCount = 0;
   let searchCount = 0;
   let editCount = 0;
@@ -101,6 +24,10 @@ export function formatSemanticDigest(
   const editNouns = new Set<TranscriptToolSemanticInfo["noun"]>();
 
   for (const info of meaningfulInfos) {
+    if (info.actionKind === "image_view") {
+      imageCount += info.quantity;
+      continue;
+    }
     if (info.bucket === "explore") {
       exploreCount += info.quantity;
       exploreNouns.add(info.noun);
@@ -136,6 +63,9 @@ export function formatSemanticDigest(
         ? `Used ${exploreCount} ${pluralize(noun, exploreCount)}`
         : `Explored ${exploreCount} ${pluralize(noun, exploreCount)}`,
     );
+  }
+  if (imageCount > 0) {
+    parts.push(imageCount === 1 ? "Viewed an image" : `Viewed ${imageCount} images`);
   }
   if (readCount > 0) {
     parts.push(`Read ${readCount} ${pluralize("file", readCount)}`);
@@ -367,7 +297,6 @@ export function collapseNetworkDisconnectBlocks(blocks: TranscriptBlock[]): Tran
     if (pending.length === 0) return;
     const first = pending[0];
     const last = pending[pending.length - 1];
-    const sourceEntryIds = pending.flatMap((block) => block.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     collapsed.push({
       type: "event",
       ts: first?.ts ?? last?.ts ?? new Date(0).toISOString(),
@@ -376,7 +305,6 @@ export function collapseNetworkDisconnectBlocks(blocks: TranscriptBlock[]): Tran
       text: summarizeNetworkDisconnectTexts(pendingTexts),
       detail: pendingTexts.join("\n\n"),
       collapseByDefault: true,
-      sourceEntryIds,
     });
     pending = [];
     pendingTexts = [];
@@ -412,13 +340,11 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
 
   const flush = () => {
     if (pending.length === 0 || !groupTs) return;
-    const sourceEntryIds = pending.flatMap((item) => item.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     grouped.push({
       type: "command_group",
       ts: groupTs,
       endTs: groupEndTs,
       items: pending,
-      sourceEntryIds,
     });
     pending = [];
     groupTs = null;
@@ -435,12 +361,10 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
         ts: block.ts,
         endTs: block.endTs,
         name: block.name,
-        toolUseId: block.toolUseId,
         input: block.input,
         result: block.result,
         isError: block.isError,
         status: block.status,
-        sourceEntryIds: block.sourceEntryIds,
       });
       continue;
     }
@@ -522,12 +446,16 @@ export function normalizeTranscript(
     blocks.splice(pendingIndex, 1, block);
   };
 
-  const trustedImageResultInput = (toolName: string | undefined, content: string): unknown | null => {
-    if (toolName?.replace(/[\s_-]+/g, "").toLowerCase() !== "imageview") return null;
+  const trustedArtifactResultInput = (toolName: string | undefined, content: string): unknown | null => {
+    if (toolName !== "image_view" && toolName !== "file_change") return null;
     try {
       const parsed = JSON.parse(content) as unknown;
       const record = asRecord(parsed);
-      return typeof record?.path === "string" && record.path.trim() ? parsed : null;
+      if (!record) return null;
+      if (toolName === "image_view") {
+        return typeof record.path === "string" && record.path.trim() ? parsed : null;
+      }
+      return Array.isArray(record.changes) ? parsed : null;
     } catch {
       return null;
     }
@@ -542,9 +470,6 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
-      const steerMessage = entry.kind === "user"
-        ? (entry as NativeSteerTranscriptEntry).steerMessage
-        : undefined;
       if (entry.kind === "user") {
         if (isInternalAgentInstructionText(entry.text)) {
           if (options?.showDeveloperDiagnostics) {
@@ -586,27 +511,18 @@ export function normalizeTranscript(
         }
       }
 
-      const provenance = entry.kind === "assistant"
-        ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
-        : null;
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
-      const continuesDeltaGroup = entry.kind === "assistant"
-        && entry.delta === true
-        && previousTextEntry?.kind === "assistant"
-        && previousTextEntry.delta
-        && !forceTextBoundary;
       if (
         previous?.type === "message"
         && previous.role === entry.kind
         && previous.source === (entry.kind === "user" ? entry.source : undefined)
         && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
-        && canMergeTranscriptProvenance(
-          previous,
-          provenance,
-          continuesDeltaGroup,
-          entry.kind === "assistant" ? entry.segmentId : undefined,
-        )
       ) {
+        const continuesDeltaGroup = entry.kind === "assistant"
+          && entry.delta === true
+          && previousTextEntry?.kind === "assistant"
+          && previousTextEntry.delta
+          && !forceTextBoundary;
         previous.text += continuesDeltaGroup
           || previous.text.endsWith("\n")
           || entry.text.startsWith("\n")
@@ -614,21 +530,6 @@ export function normalizeTranscript(
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
-        if (provenance && blockHasTranscriptProvenance(previous)) {
-          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
-            previous.generationSeqEnd = provenance.generationSeqEnd;
-          } else {
-            const mutableProvenance = previous as Partial<{
-              generationId: string;
-              generationSeqStart: number;
-              generationSeqEnd: number;
-            }>;
-            delete mutableProvenance.generationId;
-            delete mutableProvenance.generationSeqStart;
-            delete mutableProvenance.generationSeqEnd;
-          }
-        }
       } else {
         blocks.push({
           type: "message",
@@ -637,14 +538,10 @@ export function normalizeTranscript(
             source: entry.source,
             messageId: entry.messageId,
             controlActionId: entry.controlActionId,
-            steerMessage,
           } : {}),
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
-          sourceEntryIds: transcriptEntrySourceIds(entry),
-          ...(entry.kind === "assistant" && entry.segmentId ? { segmentId: entry.segmentId } : {}),
-          ...provenance,
         });
       }
       previousTextEntry = { kind: entry.kind, delta: entry.kind === "assistant" && entry.delta === true };
@@ -653,45 +550,23 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "thinking") {
-      const provenance = transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry);
       const isStreaming = streaming && entry.delta === true;
-      const continuesDeltaGroup = entry.delta === true
-        && previousTextEntry?.kind === "thinking"
-        && previousTextEntry.delta
-        && !forceTextBoundary;
-      if (
-        previous?.type === "thinking"
-        && canMergeTranscriptProvenance(previous, provenance, continuesDeltaGroup, entry.segmentId)
-      ) {
+      if (previous?.type === "thinking") {
+        const continuesDeltaGroup = entry.delta === true
+          && previousTextEntry?.kind === "thinking"
+          && previousTextEntry.delta
+          && !forceTextBoundary;
         previous.text += continuesDeltaGroup || previous.text.endsWith("\n") || entry.text.startsWith("\n")
           ? entry.text
           : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
-        if (provenance && blockHasTranscriptProvenance(previous)) {
-          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
-            previous.generationSeqEnd = provenance.generationSeqEnd;
-          } else {
-            const mutableProvenance = previous as Partial<{
-              generationId: string;
-              generationSeqStart: number;
-              generationSeqEnd: number;
-            }>;
-            delete mutableProvenance.generationId;
-            delete mutableProvenance.generationSeqStart;
-            delete mutableProvenance.generationSeqEnd;
-          }
-        }
       } else {
         blocks.push({
           type: "thinking",
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
-          sourceEntryIds: transcriptEntrySourceIds(entry),
-          ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
-          ...provenance,
         });
       }
       previousTextEntry = { kind: entry.kind, delta: entry.delta === true };
@@ -710,7 +585,6 @@ export function normalizeTranscript(
         toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
         input: entry.input,
         status: "running",
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
       if (toolBlock.toolUseId) {
@@ -725,28 +599,26 @@ export function normalizeTranscript(
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {
-        const imageInput = trustedImageResultInput(matched.name, entry.content);
-        if (imageInput !== null) matched.input = imageInput;
+        const artifactInput = trustedArtifactResultInput(matched.name, entry.content);
+        if (artifactInput !== null) matched.input = artifactInput;
         mergeCollaborationToolResultInput(matched, entry.content);
         matched.result = entry.content;
         matched.isError = entry.isError;
         matched.status = entry.isError ? "error" : "completed";
         matched.endTs = entry.ts;
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(matched, sourceEntryId);
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
-        const imageInput = trustedImageResultInput(entry.toolName, entry.content);
+        const artifactInput = trustedArtifactResultInput(entry.toolName, entry.content);
         blocks.push({
           type: "tool",
           ts: entry.ts,
           endTs: entry.ts,
           name: entry.toolName ?? "tool",
           toolUseId: entry.toolUseId,
-          input: imageInput,
+          input: artifactInput,
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",
-          sourceEntryIds: transcriptEntrySourceIds(entry),
         });
       }
       continue;
@@ -759,14 +631,12 @@ export function normalizeTranscript(
       if (existing) {
         existing.ts = entry.ts;
         existing.items = entry.items;
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
       } else {
         const block: Extract<TranscriptBlock, { type: "todo_list" }> = {
           type: "todo_list",
           ts: entry.ts,
           todoListId: entry.todoListId,
           items: entry.items,
-          sourceEntryIds: transcriptEntrySourceIds(entry),
         };
         blocks.push(block);
         pendingTodoListBlocks.set(todoListKey, block);
@@ -781,7 +651,6 @@ export function normalizeTranscript(
         label: "init",
         tone: "info",
         text: `model ${entry.model}${entry.sessionId ? ` • session ${entry.sessionId}` : ""}`,
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -793,7 +662,6 @@ export function normalizeTranscript(
         label: "result",
         tone: entry.isError ? "error" : "info",
         text: entry.text.trim() || entry.errors[0] || (entry.isError ? "Run failed" : "Completed"),
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -809,7 +677,6 @@ export function normalizeTranscript(
         tone: "error",
         text: entry.text,
         collapseByDefault: shouldCollapseEventText(entry.text),
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -820,13 +687,11 @@ export function normalizeTranscript(
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);
       if (memoryUpdate) {
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(memoryUpdate, sourceEntryId);
         replacePendingFileChangeActivity(memoryUpdate);
         continue;
       }
       const fileChange = parseFileChangeSystemText(entry.text, entry.ts);
       if (fileChange) {
-        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(fileChange, sourceEntryId);
         replacePendingFileChangeActivity(fileChange);
         continue;
       }
@@ -836,7 +701,6 @@ export function normalizeTranscript(
         if (existing) {
           existing.status = activity.status;
           existing.ts = entry.ts;
-          for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
           if (activity.status === "completed" && activity.activityId) {
             pendingActivityBlocks.delete(activity.activityId);
           }
@@ -847,7 +711,6 @@ export function normalizeTranscript(
             activityId: activity.activityId,
             name: activity.name,
             status: activity.status,
-            sourceEntryIds: transcriptEntrySourceIds(entry),
           };
           blocks.push(block);
           if (activity.status === "running" && activity.activityId) {
@@ -862,7 +725,6 @@ export function normalizeTranscript(
         label: "system",
         tone: getSystemEventTone(entry.text),
         text: entry.text,
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
       continue;
     }
@@ -880,20 +742,17 @@ export function normalizeTranscript(
       activeCommandBlock.result = activeCommandBlock.result
         ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`}`
         : filteredStdout;
-      for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(activeCommandBlock, sourceEntryId);
       continue;
     }
 
     if (previous?.type === "stdout") {
       previous.text += previous.text.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`;
       previous.ts = entry.ts;
-      for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
     } else {
       blocks.push({
         type: "stdout",
         ts: entry.ts,
         text: filteredStdout,
-        sourceEntryIds: transcriptEntrySourceIds(entry),
       });
     }
   }

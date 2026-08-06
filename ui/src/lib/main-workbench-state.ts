@@ -290,13 +290,6 @@ export type MainWorkbenchAction =
       organizationId: string;
       promotionId: string;
       expectedSourceRevision: number;
-    }
-  | {
-      type: "promotion/cancel-saved-view";
-      organizationId: string;
-      promotionId: string;
-      savedViewId: string;
-      expectedSourceRevision: number;
     };
 
 function emptyOrganizationState(): MainWorkbenchOrganizationState {
@@ -1130,49 +1123,6 @@ function discardPromotion(
   return clearPromotion(organization, promotionId);
 }
 
-function cancelSavedViewPromotion(
-  organization: MainWorkbenchOrganizationState,
-  organizationId: string,
-  promotionId: string,
-  savedViewId: string,
-  expectedSourceRevision: number,
-): MainWorkbenchOrganizationState {
-  const promotion = organization.promotionsById[promotionId];
-  if (
-    !promotion
-    || promotion.source.sourceRevision !== expectedSourceRevision
-    || (
-      promotion.source.savedViewId !== savedViewId
-      && (
-        !("savedViewId" in promotion)
-        || promotion.savedViewId !== savedViewId
-      )
-    )
-  ) {
-    return organization;
-  }
-
-  if (promotion.status === "detaching") {
-    const restored = detachFailPromotion(
-      organization,
-      organizationId,
-      promotionId,
-      savedViewId,
-      expectedSourceRevision,
-      "saved_view_removed",
-    );
-    return clearPromotion(restored, promotionId);
-  }
-  return clearPromotion(
-    restorePromotionSourceHost(
-      organization,
-      organizationId,
-      promotion.source,
-    ),
-    promotionId,
-  );
-}
-
 function promotionClaimConflict(
   organization: MainWorkbenchOrganizationState,
   organizationId: string,
@@ -1755,16 +1705,6 @@ export function mainWorkbenchReducer(
         discardPromotion(
           organization,
           action.promotionId,
-          action.expectedSourceRevision,
-        )
-      ));
-    case "promotion/cancel-saved-view":
-      return updateOrganization(state, action.organizationId, (organization) => (
-        cancelSavedViewPromotion(
-          organization,
-          action.organizationId,
-          action.promotionId,
-          action.savedViewId,
           action.expectedSourceRevision,
         )
       ));

@@ -7,7 +7,6 @@ const organizationWorkspaceSidebarSource = readFileSync(
   "utf8",
 );
 const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
-const chatSidePanelSource = readFileSync(new URL("../pages/Chat.side-panel.tsx", import.meta.url), "utf8");
 const issueDetailSource = readFileSync(new URL("../pages/IssueDetail.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
@@ -29,19 +28,6 @@ function cssBlock(selector: string) {
 }
 
 describe("index.css motion rules", () => {
-  it("keeps raised control hover compatible with semantic disabled states and custom scale utilities", () => {
-    expect(indexCss).toContain(
-      '.control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
-    );
-    expect(indexCss).toContain(
-      '.control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
-    );
-    expect(indexCss).toContain("transform: translateY(-1px);");
-    expect(indexCss).toContain("scale: 1.02;");
-    expect(indexCss).toContain("transition: none !important;");
-    expect(indexCss).toContain("scale: none !important;");
-  });
-
   it("keeps editor issue done mentions as a two-layer status icon", () => {
     const doneStatusBlock = cssBlock('.rudder-mention-chip--with-status-icon[data-mention-status="done"]');
     const doneCircleMaskLine =
@@ -191,7 +177,7 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain("animation: none");
   });
 
-  it("keeps the chat composer streaming boundary static and integrated with the input surface", () => {
+  it("keeps the chat composer streaming ring integrated with the input surface", () => {
     const composerStreaming =
       indexCss.match(/\n\s*\.chat-composer\.chat-composer--streaming \{\s*\n\s*--active-surface-ring-width: 2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const composerRing =
@@ -203,10 +189,8 @@ describe("index.css motion rules", () => {
     expect(composerStreaming).toContain("inset 0 1px 0");
     expect(composerRing).toContain("inset: -2px");
     expect(composerRing).toContain("border-radius: calc(var(--radius-lg) + 2px)");
-    expect(composerRing).toContain("background: color-mix(in oklab, var(--accent-base) 26%, transparent)");
-    expect(composerRing).toContain("opacity: 0.55");
-    expect(composerRing).toContain("animation: none");
-    expect(composerRing).not.toContain("var(--command-palette-search-angle)");
+    expect(composerRing).toContain("opacity: 0.88");
+    expect(composerRing).toContain("var(--ring) 78%");
     expect(composerRing).toContain("filter: drop-shadow");
   });
 
@@ -429,21 +413,22 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on the app backdrop and active Chat header without adding a workspace wash", () => {
+  it("keeps macOS desktop glass on shell layers while limiting the glass header to active Chat cards", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
     const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
     const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
-    const darkWorkspaceShell = cssBlock("html.dark.desktop-shell-macos .workspace-shell");
     const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
     const chatHeaderSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
     const darkChatHeaderSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
-    const activeChatCard = cssBlock(activeChatCardSelector);
+    const lightChatCard = cssBlock(activeChatCardSelector);
     const lightChatHeader = cssBlock(chatHeaderSelector);
     const darkChatHeader = cssBlock(darkChatHeaderSelector);
-    const chatMessages = cssBlock(".chat-messages-scroll-content");
+    const chatMessages = cssBlock('html.desktop-shell-macos [data-testid="chat-main-workspace-card"] .chat-messages-scroll-content');
+    const chatLoadError = cssBlock(`${activeChatCardSelector} > [data-testid="chat-load-error"]`);
+    const chatLoadingState = cssBlock(`${activeChatCardSelector} > [data-testid="chat-conversation-loading-state"]`);
     const chatToolbarClearance = cssBlock(".chat-desktop-toolbar-clearance");
     const chatLoadErrorOffset = cssBlock(".chat-load-error-offset");
     const chatLoadingOffset = cssBlock(".chat-conversation-loading-offset");
@@ -451,26 +436,32 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
     expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
     expect(lightPrimaryRail).toContain("backdrop-filter: blur(22px) saturate(112%)");
-    expect(lightWorkspaceShell).toContain("background: transparent");
-    expect(darkWorkspaceShell).toContain("background: transparent");
-    expect(lightWorkspaceShell).not.toContain("linear-gradient");
-    expect(darkWorkspaceShell).not.toContain("linear-gradient");
+    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.08)");
+    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.03)");
 
     expect(lightDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-light)");
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
     expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
     expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
-    expect(activeChatCard).toContain("isolation: isolate");
-    expect(activeChatCard).not.toContain("linear-gradient");
+    expect(lightChatCard).toContain("isolation: isolate");
+    expect(lightChatCard).not.toContain("linear-gradient");
+    expect(chatMessages).toContain("padding-top: calc(2.75rem + 1rem)");
+    expect(chatLoadError).toContain("margin-top: calc(2.75rem + 1.5rem)");
+    expect(chatLoadingState).toContain("padding-top: calc(2.75rem + 1rem)");
     expect(chatToolbarClearance).toContain("height: 2.75rem");
-    expect(lightChatHeader).toContain("position: relative");
-    expect(lightChatHeader).toContain("height: 2.75rem");
-    expect(lightChatHeader).toContain("backdrop-filter: blur(18px) saturate(128%)");
-    expect(darkChatHeader).toContain("backdrop-filter: blur(18px) saturate(132%)");
-    expect(chatMessages).toContain("padding-top: 1rem");
     expect(chatLoadErrorOffset).toContain("margin-top: 1.5rem");
     expect(chatLoadingOffset).toContain("padding-top: 1rem");
     expect(chatLoadingOffset).toContain("padding-bottom: 1rem");
+    expect(lightChatHeader).toContain("position: absolute");
+    expect(lightChatHeader).toContain("inset: 0 0 auto");
+    expect(lightChatHeader).toContain("height: 2.75rem");
+    expect(lightChatHeader).toContain("border-top-left-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px))");
+    expect(lightChatHeader).toContain("border-top-right-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px))");
+    expect(lightChatHeader).toContain("var(--desktop-content-surface-light) 26%");
+    expect(lightChatHeader).toContain("backdrop-filter: blur(18px) saturate(128%)");
+    expect(darkChatHeader).toContain("var(--desktop-content-surface-dark) 24%");
+    expect(darkChatHeader).toContain("backdrop-filter: blur(18px) saturate(132%)");
+    expect(activeChatCardSelector).toContain(":has(>");
     expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
   });
 
@@ -594,44 +585,18 @@ describe("index.css motion rules", () => {
   });
 
   it("lets website links keep their rendered treatment outside markdown bodies", () => {
-    const inlineTokenLabel = cssBlock(".rudder-inline-token-label");
-    const mentionChip = cssBlock(
-      ".rudder-milkdown-content .rudder-mention-chip,\n.rudder-milkdown-content .rudder-project-mention-chip,\na.rudder-mention-chip,\na.rudder-project-mention-chip",
-    );
-    const skillToken = cssBlock("a.rudder-skill-token");
-    const skillTokenIcon = cssBlock(
-      ".rudder-mdxeditor-content .rudder-skill-token::before,\n.rudder-milkdown-content .rudder-skill-token::before,\n.rudder-markdown .rudder-skill-token::before,\na.rudder-skill-token::before",
-    );
-    const entityPreviewWrap = cssBlock(".rudder-entity-preview-wrap");
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteIcon = cssBlock(".rudder-website-link-icon");
     const websiteLogo = cssBlock(".rudder-website-link-logo");
     const darkWebsiteLogo = cssBlock('.dark .rudder-website-link-logo[data-dark-mode="invert"]');
     const websiteGeneric = cssBlock(".rudder-website-link-generic");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
-    const localFileLink = cssBlock("a.rudder-local-file-link");
 
-    expect(inlineTokenLabel).toContain("display: block");
-    expect(inlineTokenLabel).toContain("min-width: 0");
-    expect(inlineTokenLabel).toContain("text-overflow: ellipsis");
-    expect(inlineTokenLabel).toContain("white-space: nowrap");
-    expect(mentionChip).toContain("max-width: min(30rem, 100%)");
-    expect(mentionChip).toContain("overflow: hidden");
-    expect(mentionChip).toContain("text-overflow: ellipsis");
-    expect(skillToken).toContain("max-width: min(30rem, 100%)");
-    expect(skillToken).toContain("overflow: hidden");
-    expect(skillToken).toContain("text-overflow: ellipsis");
-    expect(skillTokenIcon).toContain("flex: 0 0 auto");
-    expect(entityPreviewWrap).toContain("max-width: min(30rem, 100%)");
     expect(websiteLink).toContain("display: inline-flex");
     expect(websiteLink).toContain("align-items: baseline");
-    expect(websiteLink).toContain("max-width: min(30rem, 100%)");
-    expect(websiteLink).toContain("overflow: hidden");
+    expect(websiteLink).toContain("max-width: 100%");
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
-    expect(localFileLink).toContain("display: inline-flex");
-    expect(localFileLink).toContain("max-width: min(30rem, 100%)");
-    expect(localFileLink).toContain("overflow: hidden");
     expect(websiteIcon).toContain("display: inline-flex");
     expect(websiteIcon).toContain("position: relative");
     expect(websiteIcon).toContain("top: 0.06em");
@@ -673,17 +638,19 @@ describe("index.css motion rules", () => {
     expect(tabScrollerScrollbar).toContain("height: 4px !important");
   });
 
-  it("keeps Library file tabs aligned with the detached Side Panel card layout", () => {
+  it("keeps Library file-tab chrome and sidebar dividers aligned", () => {
     const editorSurface = cssBlock(".rudder-doc-editor-surface");
+    const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
     const sidebarHeader = cssBlock(".rudder-doc-editor-sidebar-header");
     const sidebarBreadcrumbOnly = cssBlock(".rudder-doc-editor-sidebar-header--breadcrumb-only");
     const sidebarTabsOnly = cssBlock(".rudder-doc-editor-sidebar-header--tabs-only");
     const sidebarTabsAndBreadcrumb = cssBlock(".rudder-doc-editor-sidebar-header--tabs-and-breadcrumb");
     const sidebarChromeStates = cssBlock(".rudder-doc-editor-sidebar-header--breadcrumb-only,\n.rudder-doc-editor-sidebar-header--tabs-only,\n.rudder-doc-editor-sidebar-header--tabs-and-breadcrumb");
+    const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
 
-    expect(editorSurface).toContain("--rudder-doc-editor-tab-strip-height: 42px");
+    expect(editorSurface).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(editorSurface).toContain("--rudder-doc-editor-breadcrumb-height: 32px");
-    expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 42px");
+    expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(sidebarHeader).toContain("--rudder-doc-editor-breadcrumb-height: 32px");
     expect(sidebarHeader).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
     expect(sidebarHeader).toContain("height: var(--rudder-doc-editor-sidebar-header-height)");
@@ -692,41 +659,53 @@ describe("index.css motion rules", () => {
     expect(sidebarTabsAndBreadcrumb).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
     expect(sidebarChromeStates).toContain("align-items: flex-start");
     expect(sidebarChromeStates).toContain("padding-top: calc((var(--rudder-doc-editor-sidebar-header-content-height) - 28px) / 2)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 38px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
+    expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
     const tabStripClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-editor-tabs"[\s\S]{0,220}className="([^"]+)"/);
     const tabStripClassTokens = tabStripClassMatch?.[1]?.split(/\s+/) ?? [];
     const breadcrumbClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-path-breadcrumb"\s+className="([^"]+)"/);
     const breadcrumbClassTokens = breadcrumbClassMatch?.[1]?.split(/\s+/) ?? [];
 
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-surface flex min-h-[420px]");
-    expect(organizationWorkspacesSource).toContain("workspace-tab-header-card workspace-main-card");
-    expect(organizationWorkspacesSource).toContain("workspace-tab-content-card workspace-main-card");
-    expect(organizationWorkspacesSource).toContain("workspace-tab-strip rudder-doc-editor-tab-scroller");
-    expect(organizationWorkspacesSource).toContain("workspace-tab-pill rudder-doc-editor-tab");
-    expect(chatSidePanelSource).toContain("workspace-tab-header-card workspace-main-card");
-    expect(chatSidePanelSource).toContain("workspace-tab-content-card workspace-main-card");
-    expect(chatSidePanelSource).toContain("workspace-tab-strip flex shrink-0 items-center gap-1 overflow-hidden");
-    expect(chatSidePanelSource).toContain('data-testid="chat-side-panel-tab-scroller"');
-    expect(chatSidePanelSource).toContain("scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto");
-    expect(chatSidePanelSource).toContain("workspace-tab-pill group");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
     expect(organizationWorkspaceSidebarSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
     expect(organizationWorkspaceSidebarSource).toContain("sidebarHasTabStrip && !sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-only\"");
     expect(organizationWorkspaceSidebarSource).toContain("!sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--breadcrumb-only\"");
     expect(organizationWorkspaceSidebarSource).toContain("sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-and-breadcrumb\"");
     expect(organizationWorkspaceSidebarSource).toContain("flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors");
-    expect(tabStripClassTokens).toEqual(expect.arrayContaining([
-      "workspace-tab-header-card",
-      "workspace-main-card",
-      "rounded-[var(--desktop-workspace-radius)]",
+    expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
+    expect(tabStripClassTokens).toContain("border-r");
+    expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");
+    expect(tabStripClassTokens).toContain("bg-transparent");
+    expect(tabStripClassTokens).not.toContain("border-t");
+    expect(organizationWorkspacesSource).not.toContain("rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-active-height)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
+    expect(organizationWorkspacesSource).toContain("mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)]");
+    expect(organizationWorkspacesSource).toContain("transition-[box-shadow,opacity,transform]");
+    expect(organizationWorkspacesSource).not.toContain("transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]");
+    expect(organizationWorkspacesSource).toContain("hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)]");
+    expect(organizationWorkspacesSource).toContain("rudder-doc-editor-tab-drag-spacer mb-2 h-9");
+    expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
+    expect(breadcrumbClassTokens).toEqual(expect.arrayContaining([
+      "h-[var(--rudder-doc-editor-breadcrumb-height)]",
+      "border-x",
+      "border-[color:var(--border-base)]",
     ]));
-    expect(organizationWorkspacesSource).toContain("h-7 min-w-[132px] max-w-[248px]");
-    expect(organizationWorkspacesSource).toContain("border-[color:var(--border-strong)] bg-[color:var(--surface-active)]");
-    expect(organizationWorkspacesSource).toContain("rudder-doc-editor-tab-drag-spacer h-7");
-    expect(organizationWorkspacesSource).not.toContain("rudder-doc-editor-tab--active");
-    expect(breadcrumbClassTokens).toContain("h-[var(--rudder-doc-editor-breadcrumb-height)]");
-    expect(breadcrumbClassTokens).toContain("border-b");
-    expect(breadcrumbClassTokens).not.toContain("border-x");
+    expect(organizationWorkspacesSource).not.toContain("showWorkspaceFileTabs && \"rounded-tr-[var(--desktop-workspace-radius)] border-t\"");
     expect(organizationWorkspacesSource).toContain("const showWorkspaceFileTabs = openFilePaths.length > 0");
     expect(organizationWorkspacesSource).toMatch(/\{showWorkspaceFileTabs \? \([\s\S]{0,240}data-testid="org-workspaces-editor-tabs"/);
-    expect(organizationWorkspacesSource).toContain('className="min-h-0 flex-1 overflow-hidden bg-[color:var(--surface-elevated)]"');
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-editor-content"[\s\S]{0,260}className=\{cn\([\s\S]{0,240}\bborder-x\b[\s\S]{0,80}\bborder-b\b[\s\S]{0,120}border-\[color:var\(--border-base\)\]/);
+    expect(organizationWorkspacesSource).toContain("!showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && \"rounded-[var(--desktop-workspace-radius)] border-t\"");
+    expect(organizationWorkspacesSource).not.toContain("workspace-card-header");
+    expect(organizationWorkspacesSource).not.toMatch(/rudder-doc-editor-tab--active[^\n]*rounded-t-\[24px]/);
+    expect(organizationWorkspacesSource).not.toMatch(/mb-1 h-9[^\n]*rounded-\[18px]/);
   });
 });

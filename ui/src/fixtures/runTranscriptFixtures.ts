@@ -206,6 +206,37 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     isError: false,
   },
   {
+    kind: "tool_call",
+    ts: "2026-03-11T15:22:26.300Z",
+    name: "mcp__rudder-tools__rudder_chat_transcript",
+    toolUseId: "mcp_fixture_rudder_chat",
+    input: {
+      id: "mcp-fixture-rudder-chat",
+      server: "rudder-tools",
+      tool: "rudder_chat_transcript",
+      invocation: {
+        server: "rudder-tools",
+        tool: "rudder_chat_transcript",
+        arguments: {
+          full: true,
+          chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+        },
+      },
+      args: {
+        full: true,
+        chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+      },
+    },
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:22:26.400Z",
+    toolUseId: "mcp_fixture_rudder_chat",
+    toolName: "mcp__rudder-tools__rudder_chat_transcript",
+    content: "Fetched Rudder chat transcript",
+    isError: false,
+  },
+  {
     kind: "assistant",
     ts: "2026-03-11T15:22:26.500Z",
     text: "I’m loading the transcript skill instructions so the operator view can show the skill-level action while retaining the raw path in details.",

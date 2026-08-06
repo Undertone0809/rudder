@@ -4,22 +4,18 @@ import {
   toAgentRun,
   type AgentRunScene,
   type AgentRunTargetType,
-  type ChatInlineAnnotationInput,
   type HeartbeatRun
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Bug,
   ChevronRight,
   Clock,
   RotateCcw
 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
@@ -30,19 +26,14 @@ import {
   agentsApi,
   type ClaudeLoginResult
 } from "../api/agents";
-import { healthApi } from "../api/health";
 import { CopyText } from "../components/CopyText";
-import { RunIssueReportDialog } from "../components/RunIssueReportDialog";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusBadge } from "../components/StatusBadge";
-import type { TranscriptRunAnnotationInput } from "../components/transcript/RunTranscriptView";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useSidebar } from "../context/SidebarContext";
-import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
-import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -51,9 +42,7 @@ import {
   shouldShowRunStderrExcerpt,
 } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
-import { stageRunFeedbackPendingFiles } from "../lib/run-feedback-pending-files";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { type SidePanelTarget } from "../lib/side-panel-targets";
 import { resolveSourceBadge } from "../lib/source-badge";
 import { cn, formatTokens, relativeTime } from "../lib/utils";
 import { RunChatContextCard } from "./AgentDetail.chat-context";
@@ -69,8 +58,6 @@ import {
   writeRunFilterState,
 } from "./AgentDetail.run-filters";
 import { LogViewer } from "./AgentDetail.run-log";
-
-type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
 
 export function getRunListSummary(run: HeartbeatRun): string {
   const failureDisplay = getRunFailureDisplay(run);
@@ -446,123 +433,8 @@ export function RunsTab({
   selectedRunId: string | null;
   agentRuntimeType: string;
 }) {
-  const { isMobile, setSidebarOpen } = useSidebar();
-  const sidePanel = useSidePanel();
-  const { pushToast } = useToast();
-  const feedbackTargetRef = useRef<RunFeedbackTarget | null>(null);
+  const { isMobile } = useSidebar();
   const [searchParams, setSearchParams] = useSearchParams();
-  const contextKey = `agent-runs:${agentRouteId}`;
-  useEffect(() => {
-    sidePanel.setContextKey(contextKey);
-  }, [contextKey, sidePanel]);
-  useEffect(() => {
-    const existing = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
-    if (existing) {
-      feedbackTargetRef.current = existing;
-      return;
-    }
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Extract<SidePanelTarget, { kind: "run_feedback_chat" }>>;
-      if (parsed.agentId !== agentId || parsed.organizationId !== orgId) return;
-      if (!Array.isArray(parsed.inlineAnnotations)) return;
-      const restoredTarget: RunFeedbackTarget = {
-        kind: "run_feedback_chat",
-        agentId,
-        organizationId: orgId,
-        conversationId: typeof parsed.conversationId === "string" ? parsed.conversationId : null,
-        projectLocked: parsed.projectLocked === true || typeof parsed.conversationId === "string",
-        clientMutationId: typeof parsed.clientMutationId === "string" ? parsed.clientMutationId : crypto.randomUUID(),
-        projectId: typeof parsed.projectId === "string" ? parsed.projectId : null,
-        body: typeof parsed.body === "string" ? parsed.body : "",
-        inlineAnnotations: parsed.inlineAnnotations,
-        label: "Run feedback",
-      };
-      feedbackTargetRef.current = restoredTarget;
-      sidePanel.openTargetForContext(contextKey, restoredTarget);
-    } catch {
-      // Ignore malformed or unavailable local draft storage.
-    }
-  }, [agentId, contextKey, orgId, sidePanel]);
-  useEffect(() => {
-    const current = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
-    if (current) feedbackTargetRef.current = current;
-  }, [agentId, orgId, sidePanel.tabs]);
-
-  const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
-    if (!input.text.trim()) return;
-    const annotationId = crypto.randomUUID();
-    const existing = feedbackTargetRef.current ?? sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
-    const clientMutationId = existing?.clientMutationId ?? crypto.randomUUID();
-    const pendingAnnotation: ChatInlineAnnotationInput = {
-      id: annotationId,
-      selectedText: input.text,
-      comment: input.comment,
-      sourceHash: "pending",
-      surface: "agent_run_transcript",
-      sourceRunId: input.sourceRunId,
-      sourceAgentId: input.sourceAgentId,
-      anchorKind: input.anchorKind,
-      sourceEntryId: input.blockId,
-      sourceMemberIds: input.sourceMemberIds?.length ? input.sourceMemberIds : [input.blockId],
-      attachmentIds: input.attachmentIds,
-      attachmentFileIndexes: [],
-    };
-    const validationError = validateChatResponseAnnotationAdd(
-      createChatResponseAnnotationState(existing?.inlineAnnotations ?? []),
-      pendingAnnotation,
-    );
-    if (validationError) {
-      pushToast({
-        title: "Could not add annotation",
-        body: validationError,
-        tone: "warn",
-      });
-      return;
-    }
-    const pendingTarget: RunFeedbackTarget = existing
-      ? { ...existing, inlineAnnotations: [...existing.inlineAnnotations, pendingAnnotation] }
-      : {
-        kind: "run_feedback_chat",
-        agentId,
-        organizationId: orgId,
-        conversationId: null,
-        projectLocked: false,
-        clientMutationId,
-        projectId: null,
-        body: "",
-        inlineAnnotations: [pendingAnnotation],
-        label: "Run feedback",
-      };
-    feedbackTargetRef.current = pendingTarget;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.text));
-    const sourceHash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    const current = feedbackTargetRef.current ?? pendingTarget;
-    const target: RunFeedbackTarget = {
-      ...current,
-      inlineAnnotations: current.inlineAnnotations.map((annotation) => (
-        annotation.id === annotationId ? { ...annotation, sourceHash } : annotation
-      )),
-    };
-    stageRunFeedbackPendingFiles(clientMutationId, annotationId, input.pendingFiles);
-    feedbackTargetRef.current = target;
-    sidePanel.openTargetForContext(contextKey, target);
-    setSidebarOpen(false);
-  }, [agentId, contextKey, orgId, pushToast, setSidebarOpen, sidePanel]);
   const filterState = useMemo(() => parseRunFilterState(searchParams), [searchParams]);
 
   if (runs.length === 0) {
@@ -629,7 +501,7 @@ export function RunsTab({
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to runs
           </Link>
-          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} onAnnotate={annotateRun} />
+          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
         </div>
       );
     }
@@ -639,7 +511,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -657,7 +529,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -670,21 +542,21 @@ export function RunsTab({
 
   // Desktop: detail pane first, compact navigation rail on the right.
   return (
-    <div className="agent-runs-layout-container min-w-0">
+    <div className="agent-runs-layout min-w-0">
       {toolbar}
       {activeFilterChips.length > 0 && (
         <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mb-3 justify-end" />
       )}
-      <div className="agent-runs-layout flex min-w-0 items-start gap-4">
+      <div className="agent-runs-desktop-split min-w-0">
         <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
-          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} onAnnotate={annotateRun} />
+          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
         </div>
 
         <div
-          className="w-[clamp(14rem,24vw,24rem)] shrink-0 border border-border rounded-lg overflow-clip"
+          className="agent-runs-list-pane shrink-0 rounded-lg border border-border"
           data-testid="agent-runs-list-pane"
         >
-          <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
+          <div className="agent-runs-list-scroll overflow-y-auto">
             {selectedRunOutsideFilters && (
               <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 Selected run is outside the current filters.
@@ -727,17 +599,7 @@ function RunListEmptyState({ message }: { message: string }) {
 
 /* ---- Run Detail (expanded) ---- */
 
-export function RunDetail({
-  run: initialRun,
-  agentRouteId,
-  agentRuntimeType,
-  onAnnotate,
-}: {
-  run: HeartbeatRun;
-  agentRouteId: string;
-  agentRuntimeType: string;
-  onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
-}) {
+export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -750,12 +612,7 @@ export function RunDetail({
   const run = hydratedRun ?? initialRun;
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);
-  const [issueReportOpen, setIssueReportOpen] = useState(false);
   const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
-  const { data: health } = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-  });
 
   useEffect(() => {
     setClaudeLoginResult(null);
@@ -882,10 +739,10 @@ export function RunDetail({
   })();
 
   return (
-    <div className="run-detail-container space-y-4 min-w-0">
+    <div className="space-y-4 min-w-0">
       {/* Run summary card */}
       <div className="border border-border rounded-lg overflow-hidden" data-testid="run-summary-card">
-        <div className="run-detail-summary-layout flex flex-col sm:flex-row">
+        <div className="agent-run-summary-layout flex flex-col">
           {/* Left column: status + timing */}
           <div className="min-w-0 flex-1 p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
@@ -944,21 +801,6 @@ export function RunDetail({
                     </Link>
                   </div>
                 )}
-                {failureDisplay.tone === "destructive" && (
-                  <div className="mt-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setIssueReportOpen(true)}
-                      data-testid="run-report-issue"
-                    >
-                      <Bug className="mr-1.5 h-3.5 w-3.5" />
-                      Report issue
-                    </Button>
-                  </div>
-                )}
               </div>
             )}
             {run.errorCode === "claude_auth_required" && agentRuntimeType === "claude_local" && (
@@ -1015,7 +857,7 @@ export function RunDetail({
               </div>
             )}
             {facts.length > 0 && (
-              <div className="run-detail-facts grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2" data-testid="run-agent-run-facts">
+              <div className="agent-run-facts-grid grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid="run-agent-run-facts">
                 {facts.map((fact) => (
                   <div key={`${fact.label}:${fact.value}`} className="min-w-0">
                     <div className="text-[11px] text-muted-foreground">{fact.label}</div>
@@ -1091,7 +933,7 @@ export function RunDetail({
 
           {/* Right column: metrics */}
           {hasMetrics && (
-            <div className="run-detail-metrics border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
+            <div className="agent-run-summary-metrics grid grid-cols-2 content-center gap-x-4 gap-y-3 border-t border-border p-4 tabular-nums">
               <div>
                 <div className="text-xs text-muted-foreground">Prompt input</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.promptTokens)}</div>
@@ -1182,16 +1024,6 @@ export function RunDetail({
           </div>
         )}
       </div>
-      <RunIssueReportDialog
-        run={run}
-        version={health?.version ?? "unknown"}
-        environment={[
-          health?.localEnv ?? "unknown",
-          health?.runtimeOwnerKind ?? "unknown",
-        ].join(" / ")}
-        open={issueReportOpen}
-        onOpenChange={setIssueReportOpen}
-      />
 
       <RunChatContextCard run={run} agentRouteId={agentRouteId} />
 
@@ -1234,7 +1066,7 @@ export function RunDetail({
       )}
 
       {/* Log viewer */}
-      <LogViewer run={run} agentRuntimeType={agentRuntimeType} onAnnotate={onAnnotate} />
+      <LogViewer run={run} agentRuntimeType={agentRuntimeType} />
       <ScrollToBottom />
     </div>
   );

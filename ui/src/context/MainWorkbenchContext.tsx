@@ -1,5 +1,5 @@
-import { useOptionalLiveSurfaceRuntime } from "@/context/LiveSurfaceRuntimeContext";
 import { createBrowserSidePanelTarget } from "@/lib/browser-side-panel";
+import { useOptionalLiveSurfaceRuntime } from "@/context/LiveSurfaceRuntimeContext";
 import {
   createMainWorkbenchState,
   MAIN_WORKBENCH_BROWSER_CAPACITY,
@@ -49,11 +49,6 @@ type MainWorkbenchContextValue = {
   state: MainWorkbenchState;
   dispatch: (action: MainWorkbenchAction) => MainWorkbenchState;
   getState: () => MainWorkbenchState;
-  unbindSavedViewForOrganization: (
-    organizationId: string,
-    viewInstanceId: string,
-    savedViewId: string,
-  ) => void;
 };
 
 const MainWorkbenchContext = createContext<MainWorkbenchContextValue | null>(null);
@@ -114,33 +109,9 @@ export function MainWorkbenchProvider({
   }, []);
 
   const getState = useCallback(() => stateRef.current, []);
-  const unbindSavedViewForOrganization = useCallback((
-    organizationId: string,
-    viewInstanceId: string,
-    savedViewId: string,
-  ) => {
-    dispatch({
-      type: "tab/unbind-saved-view",
-      organizationId,
-      viewInstanceId,
-      savedViewId,
-    });
-  }, [dispatch]);
   const value = useMemo<MainWorkbenchContextValue>(
-    () => ({
-      createId,
-      dispatch,
-      getState,
-      state,
-      unbindSavedViewForOrganization,
-    }),
-    [
-      createId,
-      dispatch,
-      getState,
-      state,
-      unbindSavedViewForOrganization,
-    ],
+    () => ({ createId, dispatch, getState, state }),
+    [createId, dispatch, getState, state],
   );
 
   return (

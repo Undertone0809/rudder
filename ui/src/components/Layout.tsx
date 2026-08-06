@@ -32,7 +32,7 @@ import {
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, isLegacyOrganizationSettingsRedirectPath, toOrganizationRelativePath } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { RUDDER_DOCS_URL } from "../lib/product-links";
@@ -75,10 +75,9 @@ const SIDE_PANEL_COLLAPSE_GAP = SIDE_PANEL_MIN_WIDTH - SIDE_PANEL_COLLAPSE_WIDTH
 const SIDE_PANEL_RESIZER_WIDTH = 4;
 const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
 
-type WorkspaceColumnFamily = "apps" | "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
+type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
 const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
-  apps: 268,
   chat: 318,
   messenger: 332,
   issues: 248,
@@ -90,7 +89,6 @@ const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
 };
 
 const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number; max: number; maxViewportFraction?: number }> = {
-  apps: { min: 236, max: 360 },
   chat: { min: 280, max: 420 },
   messenger: { min: 280, max: 420 },
   issues: { min: 220, max: 340, maxViewportFraction: 1 / 3 },
@@ -127,7 +125,6 @@ function readRememberedWorkspacePath(): string {
     if (
       relativePath.startsWith("/instance/")
       || relativePath.startsWith("/organization/settings")
-      || isLegacyOrganizationSettingsRedirectPath(relativePath)
     ) {
       return DEFAULT_ORGANIZATION_HOME_PATH;
     }
@@ -256,7 +253,7 @@ export function DesktopSettingsModalFrame({
           ref={shellRef}
           aria-describedby={undefined}
           tabIndex={-1}
-          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
+          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1100px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
           onOpenAutoFocus={(event) => {
             if (!isMobile) return;
             event.preventDefault();
@@ -368,7 +365,6 @@ function isMacDesktopShell(): boolean {
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
-  if (/^\/apps(?:\/|$)/.test(relativePath)) return "apps";
   if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return "backups";
   if (/^\/chat(?:\/|$)/.test(relativePath)) return "chat";
   if (/^\/messenger(?:\/|$)/.test(relativePath)) return "messenger";
@@ -376,18 +372,34 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   if (/^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath)) return "calendar";
   if (/^\/projects(?:\/|$)/.test(relativePath)) return "org";
   if (/^\/agents(?:\/|$)/.test(relativePath)) return "agents";
-  if (/^\/(?:dashboard|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
+  if (/^\/(?:dashboard|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
   return null;
 }
 
 export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
-  if (/^\/apps(?:\/|$)/.test(relativePath)) return true;
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return true;
   if (/^\/automations(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/(?:workbench|saved)(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";
+}
+
+export function shouldAutoCollapseAgentContextSidebar({
+  isMobile,
+  relativePath,
+  sidePanelOpen,
+  sidePanelContextReady,
+}: {
+  isMobile: boolean;
+  relativePath: string;
+  sidePanelOpen: boolean;
+  sidePanelContextReady: boolean;
+}): boolean {
+  return !isMobile
+    && sidePanelOpen
+    && sidePanelContextReady
+    && /^\/agents\/[^/]+(?:\/|$)/.test(relativePath);
 }
 
 function decodeSidePanelRouteSegment(segment: string): string {
@@ -408,9 +420,6 @@ export function resolveSidePanelContextKey(relativePath: string): string | null 
   }
   if (segments[0] === "chat" && segments[1]) {
     return `chat:${decodeSidePanelRouteSegment(segments[1])}`;
-  }
-  if (segments[0] === "agents" && segments[1] && segments[2] === "runs") {
-    return `agent-runs:${decodeSidePanelRouteSegment(segments[1])}`;
   }
   return null;
 }
@@ -775,13 +784,13 @@ function DesktopSidePanelSlot({
   return (
     <>
       <span ref={workspaceAnchorRef} className="hidden" aria-hidden="true" />
-      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-1" data-testid="side-panel-hover-edge">
+      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
         <Button
           type="button"
           variant="outline"
           size="icon"
           data-testid="global-side-panel-trigger"
-          className="pointer-events-none absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
           onClick={sidePanel.showPanel}
           aria-label="Open Side Panel"
           title="Open Side Panel"
@@ -883,33 +892,6 @@ function SidePanelRouteContextBinder({
   return null;
 }
 
-function CollapsedWorkspaceSidebarReveal({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div
-      data-testid="workspace-sidebar-reopen-zone"
-      className="group absolute left-0 top-0 z-30 flex w-8 items-start"
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            data-testid="workspace-sidebar-reopen-button"
-            className="desktop-window-no-drag pointer-events-none h-10 w-7 shrink-0 -translate-x-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
-            onClick={onOpen}
-            aria-label="Open workspace sidebar"
-            title="Open workspace sidebar"
-          >
-            <PanelLeft className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="right">Open workspace sidebar</TooltipContent>
-      </Tooltip>
-    </div>
-  );
-}
-
 export function Layout() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -957,8 +939,7 @@ export function Layout() {
   );
   const useMiddleContextColumn = useMemo(
     () =>
-      !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativeBoardPath)
-      && /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+      /^\/(?:chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isWorkspaceBackupsRoute = useMemo(
@@ -1028,6 +1009,13 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
+  const autoCollapseAgentContextSidebar = shouldAutoCollapseAgentContextSidebar({
+    isMobile,
+    relativePath: relativeBoardPath,
+    sidePanelOpen,
+    sidePanelContextReady,
+  });
+  const contextSidebarVisible = sidebarOpen && !autoCollapseAgentContextSidebar;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1177,23 +1165,14 @@ export function Layout() {
 
     let startX = 0;
     let startY = 0;
-    let gestureIgnored = false;
 
     const onTouchStart = (e: TouchEvent) => {
       const t = e.touches[0]!;
       startX = t.clientX;
       startY = t.clientY;
-      const target = e.target instanceof Element ? e.target : null;
-      gestureIgnored = Boolean(
-        target?.closest('[data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-testid="chat-side-panel"]'),
-      );
     };
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (gestureIgnored) {
-        gestureIgnored = false;
-        return;
-      }
       const t = e.changedTouches[0]!;
       const dx = t.clientX - startX;
       const dy = Math.abs(t.clientY - startY);
@@ -1306,7 +1285,6 @@ export function Layout() {
     const relativePath = toOrganizationRelativePath(
       `${location.pathname}${location.search}${location.hash}`,
     );
-    if (isLegacyOrganizationSettingsRedirectPath(relativePath)) return;
     try {
       window.localStorage.setItem(LAST_WORKSPACE_PATH_KEY, relativePath);
     } catch {
@@ -1643,15 +1621,16 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          aria-hidden={!sidebarOpen}
-                          inert={sidebarOpen ? undefined : true}
+                          data-auto-collapsed={autoCollapseAgentContextSidebar || undefined}
+                          aria-hidden={!contextSidebarVisible}
+                          inert={contextSidebarVisible ? undefined : true}
                           className={cn(
-                            "flex min-h-0 shrink-0 overflow-hidden",
+                            "box-border flex min-h-0 shrink-0 overflow-hidden",
                             "workspace-context-card",
-                            !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
+                            !resizingColumn && "motion-resize",
+                            contextSidebarVisible ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
                           )}
-                          style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
+                          style={{ width: contextSidebarVisible ? contextColumnWidth : 0 }}
                         >
                           {isWorkspaceBackupsRoute ? (
                             <WorkspaceBackupFilesSidebar />
@@ -1663,14 +1642,15 @@ export function Layout() {
                         </div>
                         <div
                           data-testid="workspace-column-resizer"
-                          aria-hidden={!sidebarOpen}
+                          aria-hidden={!contextSidebarVisible}
                           className={cn(
-                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
+                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+                            !resizingColumn && "motion-resize",
+                            contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
                             resizingColumn && "is-resizing",
                           )}
                           onPointerDown={startContextColumnResize}
-                          role={sidebarOpen ? "separator" : undefined}
+                          role={contextSidebarVisible ? "separator" : undefined}
                           aria-orientation="vertical"
                           aria-label="Resize workspace columns"
                         >
@@ -1678,8 +1658,23 @@ export function Layout() {
                         </div>
                       </>
                     ) : null}
-                    {showIntegratedShellSidebar && !sidebarOpen && useFramelessWorkspaceMain ? (
-                      <CollapsedWorkspaceSidebarReveal onOpen={() => setSidebarOpen(true)} />
+                    {isLibraryRoute && !sidebarOpen ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="absolute left-[3px] top-1/2 z-20 h-11 w-7 -translate-y-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                            onClick={() => setSidebarOpen(true)}
+                            aria-label="Show Library sidebar"
+                            data-testid="org-workspaces-show-sidebar-button"
+                          >
+                            <PanelLeft className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">Show Library sidebar</TooltipContent>
+                      </Tooltip>
                     ) : null}
                     <div className="workspace-main-panel-stack relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
                       <div
@@ -1691,8 +1686,7 @@ export function Layout() {
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelContentInactive
-                            && "pointer-events-none border-0 [box-shadow:none]",
+                          desktopSidePanelContentInactive && "pointer-events-none",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (

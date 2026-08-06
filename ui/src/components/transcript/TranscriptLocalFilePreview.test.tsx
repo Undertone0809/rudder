@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
@@ -47,7 +47,11 @@ async function renderPreview() {
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    root.render(<TranscriptLocalFilePreview targetPath="/tmp/evidence.md" label="evidence.md" />);
+    root.render(
+      <StrictMode>
+        <TranscriptLocalFilePreview targetPath="/tmp/evidence.md" label="evidence.md" />
+      </StrictMode>,
+    );
   });
   return container;
 }
@@ -81,8 +85,11 @@ describe("TranscriptLocalFilePreview", () => {
     const container = await renderPreview();
 
     expect(previewLocalFile).toHaveBeenCalledWith("/tmp/evidence.md");
+    expect(previewLocalFile).toHaveBeenCalledTimes(1);
     expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent).toContain("Evidence");
-    expect(container.textContent).toContain("/private/tmp");
+    expect(container.textContent).not.toContain("/private/tmp");
+    expect(container.querySelector("[data-testid='chat-side-panel-local-file-view'] [title='/private/tmp/evidence.md']")?.textContent)
+      .toBe("evidence.md");
   });
 
   it("conditionally saves an edited local Markdown file", async () => {

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import type { MainWorkbenchTarget } from "@/lib/main-workbench-state";
-import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,20 +52,6 @@ function RuntimeProbe() {
   return null;
 }
 
-function RecreatedTargetAnchor() {
-  useLiveSurfaceRuntime();
-  const target = { ...browser };
-  return (
-    <LiveSurfaceAnchor
-      active
-      hostId="side-host"
-      ownerId="side:chat-a:view-a"
-      runtimeId={createLiveSurfaceRuntimeId("org-a", target)}
-      target={target}
-    />
-  );
-}
-
 const browser: Extract<MainWorkbenchTarget, { kind: "browser" }> = {
   kind: "browser",
   label: "Example",
@@ -99,15 +84,13 @@ describe("LiveSurfaceRuntimeProvider", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
   let originalRect: typeof HTMLElement.prototype.getBoundingClientRect;
-  let sideOwnerRect: DOMRect;
 
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     originalRect = HTMLElement.prototype.getBoundingClientRect;
-    sideOwnerRect = rect(900, 80, 420, 700);
     HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
       const ownerId = this.getAttribute("data-owner-id");
-      if (ownerId === "side:chat-a:view-a") return sideOwnerRect;
+      if (ownerId === "side:chat-a:view-a") return rect(900, 80, 420, 700);
       if (ownerId === "main:org-a:view-a") return rect(300, 40, 900, 760);
       return originalRect.call(this);
     };
@@ -125,21 +108,11 @@ describe("LiveSurfaceRuntimeProvider", () => {
 
   function render({
     main = false,
-    mainCloseTarget,
-    mainOpenTarget,
     renderSurface,
-    sideCloseTarget,
-    sideOpenTarget,
-    sideReplaceTarget,
     target = browser,
   }: {
     main?: boolean;
-    mainCloseTarget?: (target: SidePanelTarget) => void;
-    mainOpenTarget?: (target: SidePanelTarget) => void;
     renderSurface?: (context: LiveSurfaceRenderContext) => React.ReactNode;
-    sideCloseTarget?: (target: SidePanelTarget) => void;
-    sideOpenTarget?: (target: SidePanelTarget) => void;
-    sideReplaceTarget?: (target: SidePanelTarget) => void;
     target?: MainWorkbenchTarget;
   } = {}) {
     const runtimeId = createLiveSurfaceRuntimeId("org-a", target);
@@ -152,11 +125,6 @@ describe("LiveSurfaceRuntimeProvider", () => {
           <RuntimeProbe />
           <LiveSurfaceAnchor
             active
-            callbacks={{
-              onCloseTarget: sideCloseTarget,
-              onOpenTarget: sideOpenTarget,
-              onReplaceTarget: sideReplaceTarget,
-            }}
             hostId="side-host"
             ownerId="side:chat-a:view-a"
             runtimeId={runtimeId}
@@ -167,10 +135,6 @@ describe("LiveSurfaceRuntimeProvider", () => {
             <LiveSurfaceAnchor
               active
               autoClaim={false}
-              callbacks={{
-                onCloseTarget: mainCloseTarget,
-                onOpenTarget: mainOpenTarget,
-              }}
               hostId="main:org-a:view-a"
               ownerId="main:org-a:view-a"
               runtimeId={runtimeId}
@@ -190,8 +154,6 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(physicalBefore?.textContent).toBe("0");
     expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
       ?.getAttribute("data-owner-id")).toBe("side:chat-a:view-a");
-    expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
-      ?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
 
     act(() => {
       physicalBefore?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -207,40 +169,6 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(host?.getAttribute("data-owner-id")).toBe("main:org-a:view-a");
     expect(host?.style.left).toBe("300px");
     expect(host?.style.width).toBe("900px");
-    expect(host?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
-  });
-
-  it("preserves the bottom-only Main boundary for non-Browser live surfaces", () => {
-    const runtimeId = render({ main: true, target: libraryFile });
-
-    act(() => {
-      expect(runtime?.claimSurface(runtimeId, "main:org-a:view-a")).toBe(true);
-    });
-
-    const host = container?.querySelector<HTMLElement>(
-      '[data-testid="live-surface-runtime-host"]',
-    );
-    expect(host?.getAttribute("data-owner-id")).toBe("main:org-a:view-a");
-    expect(host?.className).toContain("rounded-b-[var(--desktop-workspace-radius)]");
-    expect(host?.className).not.toContain("rounded-[var(--desktop-workspace-radius)]");
-  });
-
-  it("claims an active Side owner before its opening animation has geometry", () => {
-    sideOwnerRect = rect(900, 80, 0, 700);
-    render();
-    const host = container?.querySelector<HTMLElement>(
-      '[data-testid="live-surface-runtime-host"]',
-    );
-    expect(host?.getAttribute("data-owner-id")).toBe("side:chat-a:view-a");
-    expect(host?.hidden).toBe(true);
-
-    act(() => {
-      sideOwnerRect = rect(900, 80, 420, 700);
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(host?.hidden).toBe(false);
-    expect(host?.style.width).toBe("420px");
   });
 
   it("retains a Side renderer and its editor state when Main does not replace it", () => {
@@ -286,215 +214,5 @@ describe("LiveSurfaceRuntimeProvider", () => {
     });
     expect(host?.style.pointerEvents).toBe("auto");
     expect(host?.hasAttribute("inert")).toBe(false);
-  });
-
-  it("buffers physical metadata without changing the frozen Side source revision", () => {
-    const sideReplaceTarget = vi.fn();
-    const redirectedTarget = {
-      ...libraryFile,
-      label: "redirected.md",
-    };
-    const runtimeId = render({
-      renderSurface: ({ replaceTarget }) => (
-        <button
-          type="button"
-          data-testid="late-runtime-metadata"
-          onClick={() => replaceTarget(redirectedTarget)}
-        >
-          Late metadata
-        </button>
-      ),
-      sideReplaceTarget,
-      target: libraryFile,
-    });
-
-    act(() => {
-      runtime?.setInteractionLocked(runtimeId, true);
-      container
-        ?.querySelector<HTMLButtonElement>('[data-testid="late-runtime-metadata"]')
-        ?.click();
-    });
-
-    expect(runtime?.getRuntimeTarget(runtimeId)).toEqual(redirectedTarget);
-    expect(sideReplaceTarget).not.toHaveBeenCalled();
-  });
-
-  it("opens popup targets in the exact owner that currently leases the guest", () => {
-    const sideOpenTarget = vi.fn();
-    const mainOpenTarget = vi.fn();
-    const runtimeId = render({
-      main: true,
-      mainOpenTarget,
-      sideOpenTarget,
-    });
-    const popupTarget = {
-      ...browser,
-      tabId: "browser-popup",
-      viewInstanceId: "view-popup",
-    };
-
-    act(() => {
-      runtime?.registerWebContentsId(runtimeId, 42);
-      (runtime as unknown as {
-        openTargetForGuest(
-          webContentsId: number,
-          target: MainWorkbenchTarget,
-        ): boolean;
-      }).openTargetForGuest(42, popupTarget);
-    });
-    expect(sideOpenTarget).toHaveBeenCalledWith(popupTarget);
-    expect(mainOpenTarget).not.toHaveBeenCalled();
-
-    act(() => {
-      runtime?.claimSurface(runtimeId, "main:org-a:view-a");
-      (runtime as unknown as {
-        openTargetForGuest(
-          webContentsId: number,
-          target: MainWorkbenchTarget,
-        ): boolean;
-      }).openTargetForGuest(42, popupTarget);
-    });
-    expect(mainOpenTarget).toHaveBeenCalledWith(popupTarget);
-  });
-
-  it("dispatches a Browser shortcut only to the exact source guest controller", () => {
-    const runtimeId = render();
-    const controller = vi.fn();
-
-    act(() => {
-      runtime?.registerWebContentsId(runtimeId, 42);
-      (runtime as unknown as {
-        registerBrowserShortcutController(
-          runtimeId: string,
-          controller: ((action: string) => void) | null,
-        ): void;
-      }).registerBrowserShortcutController(runtimeId, controller);
-      (runtime as unknown as {
-        dispatchBrowserShortcutForGuest(
-          webContentsId: number,
-          action: string,
-        ): boolean;
-      }).dispatchBrowserShortcutForGuest(42, "new_tab");
-    });
-
-    expect(controller).toHaveBeenCalledOnce();
-    expect(controller).toHaveBeenCalledWith("new_tab");
-  });
-
-  it("closes only the exact owner that currently leases the source guest", () => {
-    const sideCloseTarget = vi.fn();
-    const mainCloseTarget = vi.fn();
-    const runtimeId = render({
-      main: true,
-      mainCloseTarget,
-      sideCloseTarget,
-    });
-
-    act(() => {
-      runtime?.registerWebContentsId(runtimeId, 42);
-      (runtime as unknown as {
-        closeTargetForGuest(webContentsId: number): boolean;
-      }).closeTargetForGuest(42);
-    });
-    expect(sideCloseTarget).toHaveBeenCalledWith(browser);
-    expect(mainCloseTarget).not.toHaveBeenCalled();
-
-    act(() => {
-      runtime?.claimSurface(runtimeId, "main:org-a:view-a");
-      (runtime as unknown as {
-        closeTargetForGuest(webContentsId: number): boolean;
-      }).closeTargetForGuest(42);
-    });
-    expect(mainCloseTarget).toHaveBeenCalledWith(browser);
-  });
-
-  it("does not let a stale inactive owner overwrite physical runtime metadata", () => {
-    const runtimeId = render();
-    const navigatedTarget = {
-      ...browser,
-      label: "Redirected",
-      url: "https://redirected.example/final",
-    };
-    const staleMainElement = document.createElement("div");
-    document.body.appendChild(staleMainElement);
-    let unregister: () => void = () => undefined;
-
-    act(() => {
-      expect(runtime?.updateTarget(runtimeId, navigatedTarget)).toBe(true);
-      unregister = runtime!.registerOwner({
-        active: false,
-        callbacks: {},
-        element: staleMainElement,
-        hostId: "main:org-a:view-a",
-        ownerId: "main:org-a:view-a",
-        runtimeId,
-        target: browser,
-      });
-      runtime?.updateOwner({
-        active: false,
-        callbacks: {},
-        element: staleMainElement,
-        hostId: "main:org-a:view-a",
-        ownerId: "main:org-a:view-a",
-        runtimeId,
-        target: { ...browser, label: "Frozen at click time" },
-      });
-    });
-
-    expect(runtime?.listRecords()[0]?.target).toEqual(navigatedTarget);
-
-    act(() => unregister());
-    staleMainElement.remove();
-  });
-
-  it("does not resubscribe ResizeObserver after a geometry-only update", async () => {
-    let observerCount = 0;
-    let notifyResize: ResizeObserverCallback | null = null;
-    class NotifyingResizeObserver {
-      constructor(callback: ResizeObserverCallback) {
-        observerCount += 1;
-        notifyResize = callback;
-      }
-
-      observe() {}
-
-      unobserve() {}
-
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", NotifyingResizeObserver);
-
-    render();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const settledObserverCount = observerCount;
-    await act(async () => {
-      notifyResize?.([], {} as ResizeObserver);
-      await Promise.resolve();
-    });
-
-    expect(observerCount).toBe(settledObserverCount);
-  });
-
-  it("treats recreated but semantically identical targets as one owner update", async () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        <LiveSurfaceRuntimeProvider>
-          <RecreatedTargetAnchor />
-          <LiveSurfaceRuntimeLayer />
-        </LiveSurfaceRuntimeProvider>,
-      );
-      await Promise.resolve();
-    });
-
-    expect(container.querySelectorAll(
-      '[data-testid="live-surface-runtime-host"]',
-    )).toHaveLength(1);
   });
 });

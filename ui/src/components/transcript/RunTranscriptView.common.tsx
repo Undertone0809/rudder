@@ -1,9 +1,3 @@
-import {
-  isInternalChatTranscriptLifecycleEntry,
-  type ChatInlineAnnotation,
-  type ChatInlineAnnotationInput,
-  type ChatMessage,
-} from "@rudderhq/shared";
 import type { LucideIcon } from "lucide-react";
 import {
   Boxes,
@@ -66,23 +60,35 @@ export interface TranscriptActionIconTreatment {
 export interface TranscriptToolSemanticInfo {
   category: TranscriptToolCategory;
   label: string;
+  actionKind?: "read" | "skill" | "file_change" | "image_view";
   summary: string;
   bucket: TranscriptDigestBucket;
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
-  skillTargets?: TranscriptSkillTarget[];
+  fileChanges?: TranscriptFileChangeEvidence[];
   image?: TranscriptImageEvidence;
+  evidenceWarning?: string;
 }
 
 export interface TranscriptFileTarget {
+  /** Original evidence label. Keep this for raw details and tooltips. */
   label: string;
+  /** Compact operator-facing label. */
+  displayLabel: string;
   path: string | null;
 }
 
-export interface TranscriptSkillTarget {
-  name: string;
-  path: string | null;
+export interface TranscriptFileChangeEvidence {
+  additions: number;
+  deletions: number;
+  diff: string | null;
+  diffOriginalBytes: number | null;
+  diffTruncated: boolean;
+  displayLabel: string;
+  movePath: string | null;
+  operation: "add" | "delete" | "update" | "move" | "unknown";
+  path: string;
 }
 
 export interface TranscriptImageEvidence {
@@ -99,7 +105,6 @@ export interface TranscriptToolCardEntry {
   result?: string;
   isError?: boolean;
   status: "running" | "completed" | "error";
-  sourceEntryIds?: string[];
 }
 
 export type TranscriptMemoryScope = "stable_instructions" | "daily_note" | "knowledge_graph";
@@ -132,65 +137,8 @@ export interface RunTranscriptViewProps {
   hiddenAssistantMessageText?: string | null;
   /** Open a structured local-file target without inferring paths from rendered prose. */
   onOpenFile?: (targetPath: string, label: string) => void;
-  /** Open a structured skill target without reparsing its rendered activity label. */
-  onOpenSkill?: (target: TranscriptSkillTarget) => void;
-  /** Report whether a structured skill target resolves to an inspectable source. */
-  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
-  /** Stable owning assistant message for selectable persisted Process prose. */
-  annotationSource?: TranscriptAnnotationSourceContext;
-  /** Read-only annotations attached to user Steer messages embedded in Process. */
-  sentAnnotationContext?: TranscriptSentAnnotationContext;
-  /** Stage an annotation for a completed Nice transcript block in Run Detail. */
-  runAnnotationContext?: TranscriptRunAnnotationContext;
-}
-
-export interface TranscriptRunAnnotationInput {
-  sourceRunId: string;
-  sourceAgentId: string;
-  blockId: string;
-  sourceMemberIds?: string[];
-  blockType: TranscriptBlock["type"];
-  text: string;
-  anchorKind: "text" | "transition";
-  ts: string;
-  anchor: HTMLButtonElement;
-  comment: string | null;
-  pendingFiles: File[];
-  attachmentIds: string[];
-  block?: TranscriptBlock;
-}
-
-export interface TranscriptRunAnnotationContext {
-  sourceRunId: string;
-  sourceAgentId: string;
-  onAnnotate: (input: TranscriptRunAnnotationInput) => void;
-}
-
-export interface TranscriptAnnotationSourceContext {
-  sourceConversationId: string;
-  sourceMessageId: string;
-  annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-  onActivateAnnotation?: (
-    annotationId: string,
-    anchor: HTMLButtonElement,
-  ) => void;
-}
-
-export interface TranscriptSentAnnotationContext {
-  onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
-  onExpandedChange?: (
-    annotations: ChatInlineAnnotation[],
-    expanded: boolean,
-  ) => void;
-  unlocatableAnnotationId?: string | null;
-}
-
-export interface TranscriptGenerationProvenance {
-  generationId: string;
-  generationSeqStart: number;
-  generationSeqEnd: number;
 }
 
 export interface TranscriptAgentInspection {
@@ -212,21 +160,16 @@ export type TranscriptBlock =
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
-      steerMessage?: ChatMessage;
       ts: string;
       text: string;
       streaming: boolean;
-      segmentId?: string;
-      sourceEntryIds?: string[];
-    } & Partial<TranscriptGenerationProvenance>
+    }
   | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
-      segmentId?: string;
-      sourceEntryIds?: string[];
-    } & Partial<TranscriptGenerationProvenance>
+    }
   | {
       type: "tool";
       ts: string;
@@ -237,7 +180,6 @@ export type TranscriptBlock =
       result?: string;
       isError?: boolean;
       status: "running" | "completed" | "error";
-      sourceEntryIds?: string[];
     }
   | {
       type: "activity";
@@ -245,27 +187,23 @@ export type TranscriptBlock =
       activityId?: string;
       name: string;
       status: "running" | "completed";
-      sourceEntryIds?: string[];
     }
   | {
       type: "todo_list";
       ts: string;
       todoListId?: string;
       items: TranscriptTodoListItem[];
-      sourceEntryIds?: string[];
     }
   | {
       type: "command_group";
       ts: string;
       endTs?: string;
       items: Array<TranscriptToolCardEntry>;
-      sourceEntryIds?: string[];
     }
   | {
       type: "stdout";
       ts: string;
       text: string;
-      sourceEntryIds?: string[];
     }
   | {
       type: "memory_update";
@@ -278,7 +216,6 @@ export type TranscriptBlock =
       effect: string;
       rawText: string;
       failureReason?: string;
-      sourceEntryIds?: string[];
     }
   | {
       type: "event";
@@ -288,7 +225,6 @@ export type TranscriptBlock =
       text: string;
       detail?: string;
       collapseByDefault?: boolean;
-      sourceEntryIds?: string[];
     };
 
 export interface ChatTranscriptTurn {
@@ -407,18 +343,6 @@ function resolveStructuredAbsoluteFileTarget(value: string | null | undefined): 
   return normalized.startsWith("/") ? normalizePosixAbsolutePath(normalized) : null;
 }
 
-function resolveStructuredAbsoluteWorkingDirectory(value: string | null | undefined): string | null {
-  const normalized = value?.trim();
-  if (
-    !normalized
-    || /[\0\r\n`$*?{}]/u.test(normalized)
-    || /%[^%]+%/u.test(normalized)
-  ) {
-    return null;
-  }
-  return resolveStructuredAbsoluteFileTarget(normalized);
-}
-
 export function resolveTranscriptFileTarget(
   target: string | null | undefined,
   workingDirectory?: string | null,
@@ -430,7 +354,7 @@ export function resolveTranscriptFileTarget(
   if (absoluteTarget) return absoluteTarget;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) return null;
 
-  const root = resolveStructuredAbsoluteWorkingDirectory(workingDirectory);
+  const root = resolveStructuredAbsoluteFileTarget(workingDirectory);
   if (!root) return null;
   if (/^[A-Za-z]:[\\/]/.test(root) || /^\\\\/.test(root)) {
     return normalizeWindowsAbsolutePath(`${root}\\${value}`);
@@ -448,7 +372,11 @@ export function compactWhitespace(value: string): string {
 
 export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): boolean {
   if (entry.kind !== "system") return false;
-  return isInternalChatTranscriptLifecycleEntry(entry);
+  const text = compactWhitespace(entry.text).toLowerCase();
+  return text === "reasoning started"
+    || text === "reasoning completed"
+    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
+    || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
 }
 
 export function isTurnStartedText(value: string): boolean {

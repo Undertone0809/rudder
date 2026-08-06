@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
 
 
-import { ToastProvider } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import type {
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileList,
 } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, useState, type ReactNode } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
 import {
   afterEach,
   beforeEach,
@@ -40,26 +38,15 @@ vi.mock("@/api/orgs", () => ({
   },
 }));
 
-vi.mock("@/lib/router", () => ({
-  useLocation: () => ({ pathname: "/ORG/library" }),
-  useNavigate: () => vi.fn(),
-}));
-
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
-    documentIdentity,
-    engine,
     onChange,
     value,
   }: {
-    documentIdentity?: string;
-    engine?: string;
     onChange: (value: string) => void;
     value: string;
   }) => (
     <textarea
-      data-document-identity={documentIdentity}
-      data-editor-engine={engine}
       data-testid="mock-markdown-editor"
       value={value}
       onChange={(event) => onChange(event.currentTarget.value)}
@@ -74,27 +61,7 @@ vi.mock("@/components/MarkdownBody", () => ({
 }));
 
 vi.mock("@/components/WorkspaceFilePreview", () => ({
-  isWorkspaceCsvPreviewFile: (candidate: OrganizationWorkspaceFileDetail) =>
-    candidate.filePath.endsWith(".csv"),
-  isWorkspaceHtmlPreviewFile: (candidate: OrganizationWorkspaceFileDetail) =>
-    candidate.filePath.endsWith(".html"),
   WorkspaceFilePreview: () => <div data-testid="mock-file-preview" />,
-}));
-
-vi.mock("@/components/WorkspaceCodeEditor", () => ({
-  WorkspaceCodeEditor: ({
-    onChange,
-    value,
-  }: {
-    onChange?: (value: string) => void;
-    value: string;
-  }) => (
-    <textarea
-      data-testid="mock-code-editor"
-      value={value}
-      onChange={(event) => onChange?.(event.currentTarget.value)}
-    />
-  ),
 }));
 
 let host: HTMLDivElement | null = null;
@@ -136,7 +103,6 @@ beforeEach(() => {
   listWorkspaceFiles.mockReset();
   readWorkspaceFile.mockReset();
   updateWorkspaceFile.mockReset();
-  Reflect.deleteProperty(window, "desktopShell");
 });
 
 afterEach(() => {
@@ -147,18 +113,7 @@ afterEach(() => {
   host = null;
   root = null;
   queryClient = null;
-  Reflect.deleteProperty(window, "desktopShell");
 });
-
-function Providers({ children }: { children: ReactNode }) {
-  return (
-    <MemoryRouter>
-      <QueryClientProvider client={queryClient!}>
-        <ToastProvider>{children}</ToastProvider>
-      </QueryClientProvider>
-    </MemoryRouter>
-  );
-}
 
 function FileHarness() {
   const [surface, setSurface] = useState<"side_panel" | "workbench">(
@@ -199,9 +154,9 @@ function renderFileHarness(initialFile = file()) {
   );
   act(() => {
     root!.render(
-      <Providers>
+      <QueryClientProvider client={queryClient!}>
         <FileHarness />
-      </Providers>,
+      </QueryClientProvider>,
     );
   });
 }
@@ -242,10 +197,6 @@ describe("LibraryLiveSurface", () => {
     expect(
       host!.querySelector('[data-testid="mock-markdown-editor"]'),
     ).toBe(editor);
-    expect(editor.dataset.editorEngine).toBe("codemirror");
-    expect(editor.dataset.documentIdentity).toBe(
-      "library-file:reports/growth.md",
-    );
 
     await act(async () => vi.advanceTimersByTimeAsync(700));
 
@@ -258,67 +209,6 @@ describe("LibraryLiveSurface", () => {
         expectedContent: "hello",
       },
     );
-  });
-
-  it("restores the file open selector on promoted Library file surfaces", async () => {
-    const openWorkspaceFileInIde = vi.fn(async () => undefined);
-    const openWorkspaceFileLocation = vi.fn(async () => undefined);
-    Object.defineProperty(window, "desktopShell", {
-      configurable: true,
-      value: {
-        listWorkspaceLaunchTargets: vi.fn(async () => [
-          { id: "cursor", label: "Cursor", kind: "ide" },
-          { id: "finder", label: "Finder", kind: "folder" },
-        ]),
-        openWorkspaceFileInIde,
-        openWorkspaceFileLocation,
-      },
-    });
-    renderFileHarness();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const selector = host!.querySelector<HTMLElement>(
-      '[data-testid="library-live-surface-file-open-selector"]',
-    );
-    const toolbar = host!.querySelector<HTMLElement>(
-      '[data-testid="library-live-surface-file-toolbar"]',
-    );
-    const trigger = selector?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Open file options"]',
-    );
-    expect(toolbar?.textContent).toContain("reports/growth.md");
-    expect(toolbar?.contains(selector ?? null)).toBe(true);
-    expect(selector?.classList.contains("absolute")).toBe(false);
-    expect(trigger).not.toBeNull();
-
-    await act(async () => {
-      trigger?.dispatchEvent(new MouseEvent(
-        "pointerdown",
-        { bubbles: true, cancelable: true, button: 0 },
-      ));
-      await Promise.resolve();
-    });
-
-    const cursorItem = document.body.querySelector<HTMLElement>(
-      '[data-testid="library-live-surface-file-open-menu-target-cursor"]',
-    );
-    expect(document.body.textContent).toContain("Default app");
-    expect(cursorItem?.textContent).toContain("Cursor");
-    expect(document.body.textContent).toContain("Finder");
-
-    await act(async () => {
-      cursorItem?.click();
-      await Promise.resolve();
-    });
-    expect(openWorkspaceFileInIde).toHaveBeenCalledWith(
-      "/tmp/workspace",
-      "reports/growth.md",
-      "cursor",
-    );
-    expect(openWorkspaceFileLocation).not.toHaveBeenCalled();
   });
 
   it("reconciles a stale write into an isolated conflict instead of overwriting server content", async () => {
@@ -346,23 +236,6 @@ describe("LibraryLiveSurface", () => {
     expect(host!.textContent).toContain("Use latest");
   });
 
-  it("keeps CSV preview-first and exposes an editable Source mode", () => {
-    renderFileHarness({
-      ...file("name,value\nalpha,1\n"),
-      contentType: "text/csv",
-      filePath: "reports/growth.csv",
-    });
-
-    expect(host!.querySelector('[data-testid="mock-file-preview"]')).not.toBeNull();
-    expect(host!.querySelector('[data-testid="mock-code-editor"]')).toBeNull();
-
-    act(() => {
-      host!.querySelector<HTMLButtonElement>('button[aria-label="Show source"]')!.click();
-    });
-    expect(host!.querySelector('[data-testid="mock-code-editor"]')).not.toBeNull();
-    expect(host!.querySelector<HTMLButtonElement>('button[aria-label="Show table"]')).not.toBeNull();
-  });
-
   it("does not let disabled document and entry queries keep a directory permanently pending", () => {
     const directory: OrganizationWorkspaceFileList = {
       directoryPath: "reports",
@@ -384,7 +257,7 @@ describe("LibraryLiveSurface", () => {
     const opened: unknown[] = [];
     act(() => {
       root!.render(
-        <Providers>
+        <QueryClientProvider client={queryClient!}>
           <LibraryLiveSurface
             active
             organizationId="org-a"
@@ -397,7 +270,7 @@ describe("LibraryLiveSurface", () => {
             }}
             onOpenTarget={(target) => opened.push(target)}
           />
-        </Providers>,
+        </QueryClientProvider>,
       );
     });
 
@@ -435,7 +308,7 @@ describe("LibraryLiveSurface", () => {
     );
     act(() => {
       root!.render(
-        <Providers>
+        <QueryClientProvider client={queryClient!}>
           <LibraryLiveSurface
             active
             organizationId="org-a"
@@ -448,7 +321,7 @@ describe("LibraryLiveSurface", () => {
             }}
             onOpenTarget={() => undefined}
           />
-        </Providers>,
+        </QueryClientProvider>,
       );
     });
 

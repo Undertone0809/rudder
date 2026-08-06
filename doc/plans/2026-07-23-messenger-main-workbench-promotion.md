@@ -2,7 +2,7 @@
 title: Messenger Main Workbench Promotion
 date: 2026-07-23
 kind: implementation
-status: completed
+status: in_progress
 area: chat
 entities:
   - messenger_saved_views
@@ -36,8 +36,7 @@ commit_refs:
   - 6514e539e
   - 1a8f9d574
   - 223c3128a
-  - 697439623
-updated_at: 2026-07-24
+updated_at: 2026-07-23
 ---
 
 # Messenger Main Workbench Promotion
@@ -59,9 +58,8 @@ from `2026-07-23-messenger-work-packages-local-apps.md`.
 The implementation affects `CHAT.SIDE.PANEL.001`,
 `MESSENGER.SAVED.VIEWS.001`, `MESSENGER.CUSTOM.GROUPS.001`, and
 `AGENT.BROWSER.001`, plus a proposed Local App Main-host lifecycle contract.
-On 2026-07-24 the user explicitly authorized synchronization of the guarded
-Product Logic Registry. The implementation is now reflected in all four
-existing contracts and the new `DESKTOP.LOCAL.APPS.001` contract.
+The guarded `doc/product/**` registry is not edited without separate explicit
+authorization. Code and tests will ship with a concrete registry delta proposal.
 
 ## First-Principles Model
 
@@ -168,3 +166,4 @@ affected Main tab.
 - Final gates are lint, recursive typecheck, test suite, build, relevant E2E,
   product-logic check, Desktop verification, rendered screenshots, and two
   adversarial review/black-box verification rounds.
+
