@@ -1,11 +1,20 @@
 import type { Db } from "@rudderhq/db";
 import {
+  acceptGoalResultProposalSchema,
   activateGoalSchema,
   assignGoalOwnerSchema,
   createGoalActivitySchema,
+  createGoalChangeProposalSchema,
+  createGoalFeedbackSchema,
+  createGoalResultProposalSchema,
   createGoalSchema,
+  decideGoalChangeProposalSchema,
   evaluateGoalSchema,
+  isUuidLike,
+  previewGoalStartSchema,
+  rejectGoalResultProposalSchema,
   setGoalFocusSchema,
+  startGoalSchema,
   updateGoalPlanSchema,
   updateGoalSchema,
 } from "@rudderhq/shared";
@@ -19,6 +28,7 @@ export function goalRoutes(db: Db) {
   const svc = goalService(db);
 
   async function loadAuthorizedGoal(req: Parameters<typeof assertCompanyAccess>[0], id: string) {
+    if (!isUuidLike(id)) return null;
     const goal = await svc.getById(id);
     if (!goal) return null;
     assertCompanyAccess(req, goal.orgId);
@@ -31,6 +41,12 @@ export function goalRoutes(db: Db) {
     res.json(await svc.list(orgId));
   });
 
+  router.get("/orgs/:orgId/goals/workspace", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    res.json(await svc.workspaceCards(orgId));
+  });
+
   router.get("/goals/:id", async (req, res) => {
     const id = req.params.id as string;
     const goal = await loadAuthorizedGoal(req, id);
@@ -39,6 +55,15 @@ export function goalRoutes(db: Db) {
       return;
     }
     res.json(await svc.detail(id));
+  });
+
+  router.get("/goals/:id/workspace", async (req, res) => {
+    const id = req.params.id as string;
+    if (!await loadAuthorizedGoal(req, id)) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    res.json(await svc.workspace(id));
   });
 
   router.get("/goals/:id/dependencies", async (req, res) => {
@@ -78,6 +103,34 @@ export function goalRoutes(db: Db) {
       details: { lifecycle: goal.lifecycle, title: goal.title },
     });
     res.status(201).json(goal);
+  });
+
+  router.post("/orgs/:orgId/goals/start-preview", validate(previewGoalStartSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertBoard(req);
+    assertCompanyAccess(req, orgId);
+    res.json(await svc.previewStart(orgId, req.body));
+  });
+
+  router.post("/orgs/:orgId/goals/start", validate(startGoalSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertBoard(req);
+    assertCompanyAccess(req, orgId);
+    const { goal, replayed } = await svc.start(orgId, req.body);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.started",
+      entityType: "goal",
+      entityId: goal.id,
+      details: { ownerAgentId: goal.ownerAgentId, packetHash: req.body.packetHash },
+      idempotencyKey: `goal-start:${req.body.requestKey}`,
+    });
+    res.status(replayed ? 200 : 201).json(goal);
   });
 
   router.patch("/goals/:id", validate(updateGoalSchema), async (req, res) => {
@@ -171,6 +224,157 @@ export function goalRoutes(db: Db) {
       idempotencyKey: req.body.idempotencyKey ?? null,
     });
     res.status(201).json(activity);
+  });
+
+  router.post("/goals/:id/feedback", validate(createGoalFeedbackSchema), async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const existing = await loadAuthorizedGoal(req, id);
+    if (!existing) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const feedback = await svc.feedback(id, req.body, actor.actorId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.feedback_added",
+      entityType: "goal",
+      entityId: id,
+      details: { feedbackId: feedback.id, feedbackKind: feedback.feedbackKind },
+      idempotencyKey: `goal-feedback:${feedback.id}`,
+    });
+    res.status(201).json(feedback);
+  });
+
+  router.post("/goals/:id/change-proposals", validate(createGoalChangeProposalSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await loadAuthorizedGoal(req, id);
+    if (!existing) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const proposal = await svc.createChangeProposal(id, req.body, actor.agentId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.change_proposed",
+      entityType: "goal",
+      entityId: id,
+      details: { proposalId: proposal.id, expectedContractRevision: proposal.expectedContractRevision },
+      idempotencyKey: `goal-change-proposal:${proposal.id}`,
+    });
+    res.status(201).json(proposal);
+  });
+
+  router.post("/goal-change-proposals/:proposalId/decide", validate(decideGoalChangeProposalSchema), async (req, res) => {
+    assertBoard(req);
+    const proposalId = req.params.proposalId as string;
+    const existing = await svc.getChangeProposalById(proposalId);
+    if (!existing) {
+      res.status(404).json({ error: "Goal change proposal not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+    const actor = getActorInfo(req);
+    const proposal = await svc.decideChangeProposal(proposalId, req.body, actor.actorId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: req.body.decision === "approve" ? "goal.change_approved" : "goal.change_rejected",
+      entityType: "goal",
+      entityId: existing.goalId,
+      details: { proposalId, status: proposal.status, appliedRevision: proposal.appliedRevision },
+      idempotencyKey: `goal-change-decision:${proposalId}:${req.body.decision}`,
+    });
+    res.json(proposal);
+  });
+
+  router.post("/goals/:id/result-proposals", validate(createGoalResultProposalSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await loadAuthorizedGoal(req, id);
+    if (!existing) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const proposal = await svc.createResultProposal(id, req.body, actor.agentId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.result_proposed",
+      entityType: "goal",
+      entityId: id,
+      details: { proposalId: proposal.id, status: proposal.status, outcome: proposal.preflight.outcome },
+      idempotencyKey: `goal-result-proposal:${proposal.id}`,
+    });
+    res.status(201).json(proposal);
+  });
+
+  router.post("/goal-result-proposals/:proposalId/accept", validate(acceptGoalResultProposalSchema), async (req, res) => {
+    assertBoard(req);
+    const proposalId = req.params.proposalId as string;
+    const existing = await svc.getResultProposalById(proposalId);
+    if (!existing) {
+      res.status(404).json({ error: "Goal Result Proposal not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+    const actor = getActorInfo(req);
+    const goal = await svc.acceptResultProposal(proposalId, req.body, actor.actorId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.result_accepted",
+      entityType: "goal",
+      entityId: existing.goalId,
+      details: { proposalId, outcome: goal.evaluationResult },
+      idempotencyKey: `goal-result-accept:${proposalId}:${req.body.idempotencyKey}`,
+    });
+    res.json(goal);
+  });
+
+  router.post("/goal-result-proposals/:proposalId/reject", validate(rejectGoalResultProposalSchema), async (req, res) => {
+    assertBoard(req);
+    const proposalId = req.params.proposalId as string;
+    const existing = await svc.getResultProposalById(proposalId);
+    if (!existing) {
+      res.status(404).json({ error: "Goal Result Proposal not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+    const actor = getActorInfo(req);
+    const proposal = await svc.rejectResultProposal(proposalId, req.body, actor.actorId);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.result_rejected",
+      entityType: "goal",
+      entityId: existing.goalId,
+      details: { proposalId, status: proposal.status },
+      idempotencyKey: `goal-result-reject:${proposalId}:${req.body.idempotencyKey}`,
+    });
+    res.json(proposal);
   });
 
   router.post("/goals/:id/owner", validate(assignGoalOwnerSchema), async (req, res) => {

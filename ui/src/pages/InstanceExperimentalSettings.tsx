@@ -13,7 +13,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Beaker, FlaskConical } from "lucide-react";
+import { Beaker, FlaskConical, Target } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 
@@ -68,6 +68,24 @@ export function InstanceExperimentalSettings() {
       );
     },
   });
+  const goalsUpdateMutation = useMutation({
+    mutationFn: (enabled: boolean) => instanceSettingsApi.updateGeneral({
+      experimentalGoalsEnabled: enabled,
+    }),
+    onSuccess: async (nextSettings) => {
+      setActionError(null);
+      queryClient.setQueryData(queryKeys.instance.generalSettings, nextSettings);
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.instance.generalSettings,
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.health });
+    },
+    onError: (error) => {
+      setActionError(
+        error instanceof Error ? error.message : t("experimental.updateFailed"),
+      );
+    },
+  });
 
   if (settingsQuery.isLoading) return <SettingsPageSkeleton />;
   if (settingsQuery.error) {
@@ -81,6 +99,7 @@ export function InstanceExperimentalSettings() {
   }
 
   const enabled = settingsQuery.data?.experimentalSitesEnabled === true;
+  const goalsEnabled = settingsQuery.data?.experimentalGoalsEnabled === true;
 
   return (
     <SettingsPage>
@@ -121,6 +140,27 @@ export function InstanceExperimentalSettings() {
         <p className="mt-3 max-w-3xl text-xs leading-5 text-muted-foreground">
           {t("experimental.sites.notice")}
         </p>
+      </SettingsSection>
+
+      <SettingsSection title={t("experimental.goals.section")}>
+        <SettingsGroup>
+          <SettingsItem
+            title={t("experimental.goals.title")}
+            description={goalsEnabled
+              ? t("experimental.goals.enabledDescription")
+              : t("experimental.goals.disabledDescription")}
+            icon={Target}
+            action={
+              <SettingsToggle
+                checked={goalsEnabled}
+                disabled={goalsUpdateMutation.isPending}
+                aria-label={t("experimental.goals.toggle")}
+                data-testid="experimental-goals-toggle"
+                onClick={() => goalsUpdateMutation.mutate(!goalsEnabled)}
+              />
+            }
+          />
+        </SettingsGroup>
       </SettingsSection>
     </SettingsPage>
   );

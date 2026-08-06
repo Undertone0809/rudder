@@ -25,6 +25,7 @@ import { MainWorkbenchProvider } from "./context/MainWorkbenchContext";
 import { useOrganization } from "./context/OrganizationContext";
 import { SavedViewPromotionProvider } from "./context/SavedViewPromotionContext";
 import { SidePanelProvider } from "./context/SidePanelContext";
+import { useExperimentalGoalsEnabled } from "./hooks/useExperimentalGoalsEnabled";
 import { useViewedOrganization } from "./hooks/useViewedOrganization";
 import {
   normalizeRememberedInstanceSettingsPath,
@@ -262,8 +263,10 @@ function boardRoutes() {
       <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="run-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
-      <Route path="goals" element={<Goals />} />
-      <Route path="goals/:goalId" element={<GoalDetail />} />
+      <Route element={<ExperimentalGoalsGate />}>
+        <Route path="goals" element={<Goals />} />
+        <Route path="goals/:goalId" element={<GoalDetail />} />
+      </Route>
       <Route path="costs" element={<Costs />} />
       <Route path="activity" element={<Activity />} />
       <Route path="inbox" element={<LegacyInboxRedirect />} />
@@ -449,6 +452,30 @@ function OrganizationRootRedirect() {
   }
 
   return <Navigate to={`/${getOrganizationRouteKey(targetOrganization)}${DEFAULT_ORGANIZATION_HOME_PATH}`} replace />;
+}
+
+function ExperimentalGoalsGate() {
+  const { enabled, error, isLoading, retry } = useExperimentalGoalsEnabled();
+
+  if (isLoading) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  }
+
+  if (error) {
+    return (
+      <div role="alert" className="mx-auto max-w-xl space-y-3 py-10">
+        <p className="text-sm font-medium text-destructive">Unable to check whether Goals are enabled.</p>
+        <p className="text-sm text-muted-foreground">Retry to check the experiment setting before opening Goals.</p>
+        <Button type="button" variant="outline" onClick={() => void retry()}>Retry</Button>
+      </div>
+    );
+  }
+
+  if (!enabled) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Outlet />;
 }
 
 function UnprefixedBoardRedirect() {

@@ -17,6 +17,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { floorDateToMinuteIso, resolvePresetDateRange } from "../lib/date-range-cache";
 import { queryKeys } from "../lib/queryKeys";
@@ -129,6 +130,7 @@ function latestTranscriptSnippet(entries: TranscriptEntry[]): string | null {
 
 export function Dashboard() {
   const { selectedOrganizationId, organizations } = useOrganization();
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const operatorDisplayName = useOperatorDisplayName();
@@ -186,7 +188,7 @@ export function Dashboard() {
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(selectedOrganizationId!),
     queryFn: () => goalsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId,
+    enabled: !!selectedOrganizationId && goalsEnabled,
   });
 
   const { data: companyLiveRuns } = useQuery({

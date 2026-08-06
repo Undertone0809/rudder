@@ -5,9 +5,10 @@ import { Link } from "@/lib/router";
 import type { Project } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Archive, ArchiveRestore, Check, Loader2, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { goalsApi } from "../api/goals";
 import { useOrganization } from "../context/OrganizationContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
@@ -207,6 +208,7 @@ function ArchiveDangerZone({
 
 export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSaveState, onArchive, archivePending }: ProjectPropertiesProps) {
   const { selectedOrganizationId } = useOrganization();
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const [goalOpen, setGoalOpen] = useState(false);
 
   const commitField = (field: ProjectConfigFieldKey, data: Record<string, unknown>) => {
@@ -221,8 +223,11 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
   const { data: allGoals } = useQuery({
     queryKey: queryKeys.goals.list(selectedOrganizationId!),
     queryFn: () => goalsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId,
+    enabled: !!selectedOrganizationId && goalsEnabled,
   });
+  useEffect(() => {
+    if (!goalsEnabled) setGoalOpen(false);
+  }, [goalsEnabled]);
   const linkedGoalIds = project.goalIds.length > 0
     ? project.goalIds
     : project.goalId
@@ -304,7 +309,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
             <span className="text-sm font-mono">{project.leadAgentId.slice(0, 8)}</span>
           </PropertyRow>
         )}
-        <PropertyRow
+        {goalsEnabled ? <PropertyRow
           label={<FieldLabel label="Goals" state={fieldState("goals")} />}
           alignStart
           valueClassName="space-y-2"
@@ -365,7 +370,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
               </PopoverContent>
             </Popover>
           )}
-        </PropertyRow>
+        </PropertyRow> : null}
         <PropertyRow label={<FieldLabel label="Created" state="idle" />}>
           <span className="text-sm">{formatDate(project.createdAt)}</span>
         </PropertyRow>

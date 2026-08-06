@@ -618,6 +618,39 @@ export const GOAL_ACTIVITY_KINDS = [
 ] as const;
 export type GoalActivityKind = (typeof GOAL_ACTIVITY_KINDS)[number];
 
+export const GOAL_START_REQUEST_STATUSES = ["pending", "completed", "failed"] as const;
+export type GoalStartRequestStatus = (typeof GOAL_START_REQUEST_STATUSES)[number];
+
+export const GOAL_FEEDBACK_KINDS = ["ordinary", "consequential"] as const;
+export type GoalFeedbackKind = (typeof GOAL_FEEDBACK_KINDS)[number];
+
+export const GOAL_CHANGE_PROPOSAL_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+  "superseded",
+  "applied",
+] as const;
+export type GoalChangeProposalStatus = (typeof GOAL_CHANGE_PROPOSAL_STATUSES)[number];
+
+export const GOAL_RESULT_PROPOSAL_STATUSES = [
+  "inconclusive",
+  "ready",
+  "accepted",
+  "rejected",
+  "superseded",
+] as const;
+export type GoalResultProposalStatus = (typeof GOAL_RESULT_PROPOSAL_STATUSES)[number];
+
+export const GOAL_WORKSPACE_FACETS = [
+  "agent_advancing",
+  "needs_attention",
+  "waiting_external",
+  "ready_for_acceptance",
+  "closed",
+] as const;
+export type GoalWorkspaceFacet = (typeof GOAL_WORKSPACE_FACETS)[number];
+
 export const PROJECT_STATUSES = [
   "backlog",
   "planned",
@@ -759,6 +792,7 @@ export const APPROVAL_TYPES = [
   "chat_issue_creation",
   "chat_operation",
   "agent_runtime",
+  "goal_change",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 

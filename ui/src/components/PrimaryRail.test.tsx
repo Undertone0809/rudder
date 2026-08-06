@@ -21,6 +21,7 @@ const mockState = vi.hoisted(() => ({
   },
   generalSettings: {
     experimentalSitesEnabled: false,
+    experimentalGoalsEnabled: false,
   },
   inboxBadge: {
     inbox: 4,
@@ -203,6 +204,7 @@ beforeEach(() => {
   };
   mockState.generalSettings = {
     experimentalSitesEnabled: false,
+    experimentalGoalsEnabled: false,
   };
   mockState.inboxBadge = {
     inbox: 4,
@@ -532,7 +534,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Apps"))).toBeUndefined();
 
-    mockState.generalSettings = { experimentalSitesEnabled: true };
+    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pathname = "/apps";
     await view.rerender();
 
@@ -542,8 +544,23 @@ describe("PrimaryRail active motion indicator", () => {
     expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
   });
 
+  it("shows Goals only after the Goals experiment is enabled", async () => {
+    const view = await renderPrimaryRail();
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Goals"))).toBeUndefined();
+
+    mockState.generalSettings = { experimentalSitesEnabled: false, experimentalGoalsEnabled: true };
+    mockState.pathname = "/goals";
+    await view.rerender();
+
+    const goalsLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Goals"));
+    expect(goalsLink?.getAttribute("href")).toBe("/goals");
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("2");
+  });
+
   it("shows pinned Local App Saved Views after the fixed destinations", async () => {
-    mockState.generalSettings = { experimentalSitesEnabled: true };
+    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
       title: "MKT dashboard with a very long project name",
@@ -569,7 +586,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("gives an exact pinned Local App the unified active treatment", async () => {
-    mockState.generalSettings = { experimentalSitesEnabled: true };
+    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pathname = "/apps/saved/saved-local-a";
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
@@ -612,6 +629,7 @@ describe("PrimaryRail active motion indicator", () => {
     mockState.primaryRailPaths = {
       messenger: "/messenger/issues/ZST-200",
       issues: "/issues/ZST-586",
+      goals: "/goals/goal-1",
       agents: "/agents/wesley/runs/run-1",
       library: "/library?path=projects%2Frudder",
       organization: "/dashboard/calendar",
@@ -625,6 +643,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(linkHref("Messenger")).toBe("/messenger/issues/ZST-200");
     expect(linkHref("Issue")).toBe("/issues/ZST-586");
+    expect(linkHref("Goals")).toBeUndefined();
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
     expect(linkHref("Organization")).toBe("/dashboard/calendar");

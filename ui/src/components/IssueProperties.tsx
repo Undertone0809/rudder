@@ -5,7 +5,7 @@ import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target, User } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
@@ -14,6 +14,7 @@ import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -154,6 +155,7 @@ export function IssueProperties({
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const orgId = issue.orgId ?? selectedOrganizationId;
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [reviewerOpen, setReviewerOpen] = useState(false);
@@ -192,8 +194,14 @@ export function IssueProperties({
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(orgId!),
     queryFn: () => goalsApi.list(orgId!),
-    enabled: !!orgId,
+    enabled: !!orgId && goalsEnabled,
   });
+  useEffect(() => {
+    if (!goalsEnabled) {
+      setGoalOpen(false);
+      setGoalSearch("");
+    }
+  }, [goalsEnabled]);
   const activeProjects = useMemo(
     () => (projects ?? []).filter((p) => !p.archivedAt || p.id === issue.projectId),
     [projects, issue.projectId],
@@ -1014,7 +1022,7 @@ export function IssueProperties({
           {projectContent}
         </PropertyPicker>
 
-        <PropertyPicker
+        {goalsEnabled ? <PropertyPicker
           inline={inline}
           label="Goal"
           open={goalOpen}
@@ -1035,7 +1043,7 @@ export function IssueProperties({
           ) : undefined}
         >
           {goalContent}
-        </PropertyPicker>
+        </PropertyPicker> : null}
 
         <PropertyPicker
           inline={inline}

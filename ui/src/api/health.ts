@@ -27,6 +27,7 @@ export type HealthStatus = {
   features?: {
     companyDeletionEnabled?: boolean;
     experimentalSitesEnabled?: boolean;
+    experimentalGoalsEnabled?: boolean;
   };
   devServer?: DevServerHealthStatus;
 };

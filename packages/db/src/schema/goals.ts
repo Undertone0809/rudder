@@ -1,3 +1,13 @@
+import type {
+  GoalChangeProposal,
+  GoalChangeProposalStatus,
+  GoalFeedbackAttachment,
+  GoalFeedbackKind,
+  GoalResultProposal,
+  GoalResultProposalStatus,
+  GoalStartPacket,
+  GoalStartRequestStatus,
+} from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -11,7 +21,9 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
+import { approvals } from "./approvals.js";
 import { organizations } from "./organizations.js";
 
 export const goals = pgTable(
@@ -21,6 +33,7 @@ export const goals = pgTable(
     orgId: uuid("org_id").notNull().references(() => organizations.id),
     title: text("title").notNull(),
     description: text("description"),
+    alignmentQuestion: text("alignment_question"),
     /** Canonical Goal Contract fields. Legacy hierarchy/status columns remain for migration reads. */
     outcomeStatement: text("outcome_statement"),
     objectiveMode: text("objective_mode").notNull().default("target"),
@@ -126,5 +139,135 @@ export const goalActivities = pgTable(
     idempotencyUq: uniqueIndex("goal_activities_idempotency_uq")
       .on(table.goalId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
+  }),
+);
+
+export const goalStartRequests = pgTable(
+  "goal_start_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    requestKey: text("request_key").notNull(),
+    packetHash: text("packet_hash").notNull(),
+    packet: jsonb("packet").$type<GoalStartPacket>().notNull(),
+    draftGoalId: uuid("draft_goal_id").references(() => goals.id, { onDelete: "cascade" }),
+    goalId: uuid("goal_id").references(() => goals.id, { onDelete: "cascade" }),
+    status: text("status").$type<GoalStartRequestStatus>().notNull().default("pending"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    orgRequestKeyUq: uniqueIndex("goal_start_requests_org_request_key_uq").on(
+      table.orgId,
+      table.requestKey,
+    ),
+    orgStatusUpdatedIdx: index("goal_start_requests_org_status_updated_idx").on(
+      table.orgId,
+      table.status,
+      table.updatedAt,
+    ),
+  }),
+);
+
+export const goalFeedbackEntries = pgTable(
+  "goal_feedback_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    goalId: uuid("goal_id").notNull().references(() => goals.id, { onDelete: "cascade" }),
+    actorType: text("actor_type").$type<"user">().notNull(),
+    actorId: text("actor_id").notNull(),
+    body: text("body").notNull(),
+    attachments: jsonb("attachments").$type<GoalFeedbackAttachment[]>().notNull().default([]),
+    contentHash: text("content_hash").notNull(),
+    feedbackKind: text("feedback_kind").$type<GoalFeedbackKind>().notNull().default("ordinary"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    routedWakeupRequestId: uuid("routed_wakeup_request_id").references(
+      () => agentWakeupRequests.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    goalCreatedIdx: index("goal_feedback_entries_goal_created_idx").on(table.goalId, table.createdAt),
+    goalIdempotencyUq: uniqueIndex("goal_feedback_entries_goal_idempotency_uq").on(
+      table.goalId,
+      table.idempotencyKey,
+    ),
+  }),
+);
+
+export const goalChangeProposals = pgTable(
+  "goal_change_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    goalId: uuid("goal_id").notNull().references(() => goals.id, { onDelete: "cascade" }),
+    expectedContractRevision: integer("expected_contract_revision").notNull(),
+    beforeContract: jsonb("before_contract").$type<GoalChangeProposal["beforeContract"]>().notNull(),
+    afterContract: jsonb("after_contract").$type<GoalChangeProposal["afterContract"]>().notNull(),
+    rationale: text("rationale").notNull(),
+    evidenceRefs: jsonb("evidence_refs").$type<string[]>().notNull().default([]),
+    approvalId: uuid("approval_id").notNull().references(() => approvals.id),
+    status: text("status").$type<GoalChangeProposalStatus>().notNull().default("pending"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    proposedByAgentId: uuid("proposed_by_agent_id").notNull().references(() => agents.id),
+    appliedRevision: integer("applied_revision"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    goalStatusCreatedIdx: index("goal_change_proposals_goal_status_created_idx").on(
+      table.goalId,
+      table.status,
+      table.createdAt,
+    ),
+    goalIdempotencyUq: uniqueIndex("goal_change_proposals_goal_idempotency_uq").on(
+      table.goalId,
+      table.idempotencyKey,
+    ),
+    approvalUq: uniqueIndex("goal_change_proposals_approval_uq").on(table.approvalId),
+  }),
+);
+
+export const goalResultProposals = pgTable(
+  "goal_result_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    goalId: uuid("goal_id").notNull().references(() => goals.id, { onDelete: "cascade" }),
+    contractRevision: integer("contract_revision").notNull(),
+    candidate: jsonb("candidate").$type<GoalResultProposal["candidate"]>().notNull(),
+    candidateHash: text("candidate_hash").notNull(),
+    preflight: jsonb("preflight").$type<GoalResultProposal["preflight"]>().notNull(),
+    riskSummary: text("risk_summary").notNull(),
+    status: text("status").$type<GoalResultProposalStatus>().notNull().default("ready"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    proposedByAgentId: uuid("proposed_by_agent_id").notNull().references(() => agents.id),
+    acceptedByActorType: text("accepted_by_actor_type").$type<"user">(),
+    acceptedByActorId: text("accepted_by_actor_id"),
+    acceptanceIdempotencyKey: text("acceptance_idempotency_key"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    rejectedByActorType: text("rejected_by_actor_type").$type<"user">(),
+    rejectedByActorId: text("rejected_by_actor_id"),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectionFeedback: text("rejection_feedback"),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    goalStatusCreatedIdx: index("goal_result_proposals_goal_status_created_idx").on(
+      table.goalId,
+      table.status,
+      table.createdAt,
+    ),
+    goalIdempotencyUq: uniqueIndex("goal_result_proposals_goal_idempotency_uq").on(
+      table.goalId,
+      table.idempotencyKey,
+    ),
   }),
 );

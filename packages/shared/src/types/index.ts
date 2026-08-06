@@ -91,12 +91,25 @@ export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } fro
 export type {
   Goal,
   GoalActivity,
+  GoalChangeProposal,
   GoalContinuation,
+  GoalContractPatch,
+  GoalContractSnapshot,
   GoalCriterion,
   GoalDependencies,
   GoalDependencyPreview,
+  GoalEvaluationCandidate,
+  GoalFeedbackAttachment,
+  GoalFeedbackEntry,
   GoalOwnerAssignment,
-  GoalPlan
+  GoalPlan,
+  GoalResultProposal,
+  GoalResultReducerPreflight,
+  GoalStartPacket,
+  GoalStartPreview,
+  GoalStartRequest,
+  GoalWorkspaceCard,
+  GoalWorkspaceSummary
 } from "./goal.js";
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,

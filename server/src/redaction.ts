@@ -28,6 +28,18 @@ function isPlainBinding(value: unknown): value is { type: "plain"; value: unknow
   return value.type === "plain" && "value" in value;
 }
 
+export function omitSecretPayloadFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitSecretPayloadFields);
+  if (!value || typeof value !== "object") return value;
+  if (isSecretRefBinding(value)) return value;
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key, entry]) => !SECRET_PAYLOAD_KEY_RE.test(key) || isSecretRefBinding(entry))
+      .map(([key, entry]) => [key, omitSecretPayloadFields(entry)]),
+  );
+}
+
 export function sanitizeRecord(record: Record<string, unknown>): Record<string, unknown> {
   const redacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {

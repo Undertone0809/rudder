@@ -16,6 +16,7 @@ import {
   accessService,
   approvalService,
   chatService,
+  goalService,
   heartbeatService,
   issueApprovalService,
   issueService,
@@ -55,6 +56,7 @@ export function approvalRoutes(db: Db) {
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
+  const goalsSvc = goalService(db);
   const chatsSvc = chatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const issuesSvc = issueService(db);
@@ -270,6 +272,41 @@ export function approvalRoutes(db: Db) {
     const approvalForValidation = pendingApproval && payloadOverride
       ? { ...pendingApproval, payload: payloadOverride }
       : pendingApproval;
+    if (pendingApproval?.type === "goal_change") {
+      const proposalId = typeof pendingApproval.payload?.proposalId === "string"
+        ? pendingApproval.payload.proposalId
+        : null;
+      if (!proposalId) throw unprocessable("Goal change approval is missing its proposal reference");
+      const actorId = req.actor.userId ?? "board";
+      const proposal = await goalsSvc.decideChangeProposal(proposalId, {
+        decision: "approve",
+        note: req.body.decisionNote,
+      }, actorId);
+      const approval = await svc.getById(id);
+      if (!approval) throw unprocessable("Goal change approval disappeared after its decision");
+      await logActivity(db, {
+        orgId: approval.orgId,
+        actorType: "user",
+        actorId,
+        action: "goal.change_approved",
+        entityType: "goal",
+        entityId: proposal.goalId,
+        details: { approvalId: id, proposalId, status: proposal.status, appliedRevision: proposal.appliedRevision },
+        idempotencyKey: `goal-change-decision:${proposalId}:approve`,
+      });
+      await logActivity(db, {
+        orgId: approval.orgId,
+        actorType: "user",
+        actorId,
+        action: "approval.approved",
+        entityType: "approval",
+        entityId: approval.id,
+        details: { type: approval.type, requestedByAgentId: approval.requestedByAgentId },
+        idempotencyKey: `goal-change-approval:${proposalId}:approve`,
+      });
+      res.json(redactApprovalPayload(approval));
+      return;
+    }
     if (approvalForValidation?.type === "chat_issue_creation") {
       await assertCanApproveChatIssueConversion(req, approvalForValidation);
       await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
@@ -492,6 +529,42 @@ export function approvalRoutes(db: Db) {
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const pendingApproval = await svc.getById(id);
+    if (pendingApproval?.type === "goal_change") {
+      const proposalId = typeof pendingApproval.payload?.proposalId === "string"
+        ? pendingApproval.payload.proposalId
+        : null;
+      if (!proposalId) throw unprocessable("Goal change approval is missing its proposal reference");
+      const actorId = req.actor.userId ?? "board";
+      const proposal = await goalsSvc.decideChangeProposal(proposalId, {
+        decision: "reject",
+        note: req.body.decisionNote,
+      }, actorId);
+      const approval = await svc.getById(id);
+      if (!approval) throw unprocessable("Goal change approval disappeared after its decision");
+      await logActivity(db, {
+        orgId: approval.orgId,
+        actorType: "user",
+        actorId,
+        action: "goal.change_rejected",
+        entityType: "goal",
+        entityId: proposal.goalId,
+        details: { approvalId: id, proposalId, status: proposal.status },
+        idempotencyKey: `goal-change-decision:${proposalId}:reject`,
+      });
+      await logActivity(db, {
+        orgId: approval.orgId,
+        actorType: "user",
+        actorId,
+        action: "approval.rejected",
+        entityType: "approval",
+        entityId: approval.id,
+        details: { type: approval.type, requestedByAgentId: approval.requestedByAgentId },
+        idempotencyKey: `goal-change-approval:${proposalId}:reject`,
+      });
+      res.json(redactApprovalPayload(approval));
+      return;
+    }
     const { approval, applied } = await svc.reject(
       id,
       req.body.decidedByUserId ?? "board",

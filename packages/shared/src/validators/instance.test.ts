@@ -50,6 +50,7 @@ describe("instanceGeneralSettingsSchema", () => {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: false,
+      experimentalGoalsEnabled: false,
       locale: "en",
       productAnalyticsMode: "off",
       productAnalyticsConsentEpoch: 1,

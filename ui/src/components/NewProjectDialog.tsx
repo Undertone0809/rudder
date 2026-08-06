@@ -33,7 +33,7 @@ import {
   Target,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { organizationsApi } from "../api/orgs";
@@ -41,6 +41,7 @@ import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { libraryCopy } from "../lib/library-copy";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
@@ -153,12 +154,16 @@ export function NewProjectDialog() {
   const [resourceSearch, setResourceSearch] = useState("");
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const addResourcesScrollRef = useScrollbarActivityRef("new-project:add-resources");
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
 
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(selectedOrganizationId!),
     queryFn: () => goalsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && newProjectOpen,
+    enabled: !!selectedOrganizationId && newProjectOpen && goalsEnabled,
   });
+  useEffect(() => {
+    if (!goalsEnabled) setGoalIds([]);
+  }, [goalsEnabled]);
 
   const { data: organizationResources } = useQuery({
     queryKey: queryKeys.organizations.resources(selectedOrganizationId ?? "__none__"),
@@ -831,7 +836,7 @@ export function NewProjectDialog() {
             </PopoverContent>
           </Popover>
 
-          {selectedGoals.map((goal) => (
+          {goalsEnabled && selectedGoals.map((goal) => (
             <span
               key={goal.id}
               className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs"
@@ -849,7 +854,7 @@ export function NewProjectDialog() {
             </span>
           ))}
 
-          <Popover open={goalOpen} onOpenChange={setGoalOpen}>
+          {goalsEnabled ? <Popover open={goalOpen} onOpenChange={setGoalOpen}>
             <PopoverTrigger asChild>
               <button
                 className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs transition-colors hover:bg-accent/50 disabled:opacity-60"
@@ -886,7 +891,7 @@ export function NewProjectDialog() {
                 </div>
               )}
             </PopoverContent>
-          </Popover>
+          </Popover> : null}
 
           <div className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs">
             <Calendar className="h-3 w-3 text-muted-foreground" />

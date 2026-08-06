@@ -213,14 +213,23 @@ export {
 } from "./workspace-backup.js";
 
 export {
+  acceptGoalResultProposalSchema,
   activateGoalSchema,
-  assignGoalOwnerSchema,
-  createGoalActivitySchema,
+  assignGoalOwnerSchema, createGoalActivitySchema, createGoalChangeProposalSchema,
+  createGoalFeedbackSchema, createGoalResultProposalSchema,
   createGoalSchema,
+  decideGoalChangeProposalSchema,
   evaluateGoalSchema,
-  setGoalFocusSchema, updateGoalPlanSchema, updateGoalSchema, type ActivateGoal,
-  type AssignGoalOwner, type CreateGoal, type CreateGoalActivity, type EvaluateGoal,
+  previewGoalStartSchema,
+  rejectGoalResultProposalSchema,
+  setGoalFocusSchema,
+  startGoalSchema,
+  updateGoalPlanSchema, updateGoalSchema, type AcceptGoalResultProposal, type ActivateGoal, type ActivateGoalInput,
+  type AssignGoalOwner, type CreateGoal, type CreateGoalActivity, type CreateGoalChangeProposal,
+  type CreateGoalFeedback, type CreateGoalResultProposal, type DecideGoalChangeProposal,
+  type EvaluateGoal, type PreviewGoalStart, type RejectGoalResultProposal,
   type SetGoalFocus,
+  type StartGoal,
   type UpdateGoal,
   type UpdateGoalPlan
 } from "./goal.js";

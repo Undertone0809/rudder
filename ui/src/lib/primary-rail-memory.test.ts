@@ -38,6 +38,7 @@ describe("primary rail memory", () => {
 
   it("maps nested routes to their primary rail section", () => {
     expect(resolvePrimaryRailSection("/issues/ZST-586")).toBe("issues");
+    expect(resolvePrimaryRailSection("/goals/goal-1")).toBe("goals");
     expect(resolvePrimaryRailSection("/agents/wesley/runs/run-1")).toBe("agents");
     expect(resolvePrimaryRailSection("/dashboard/calendar")).toBe("organization");
     expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
@@ -54,6 +55,7 @@ describe("primary rail memory", () => {
     );
     expect(sanitizePrimaryRailPath("issues", "/agents/wesley")).toBeNull();
     expect(sanitizePrimaryRailPath("issues", "issues/ZST-586")).toBeNull();
+    expect(sanitizePrimaryRailPath("goals", "/dashboard")).toBeNull();
   });
 
   it("stores remembered paths per organization and section", () => {
@@ -64,6 +66,14 @@ describe("primary rail memory", () => {
     expect(readRememberedPrimaryRailPath("org-1", "issues", "/issues")).toBe("/issues/ZST-586");
     expect(readRememberedPrimaryRailPath("org-1", "agents", "/agents")).toBe("/agents/wesley/runs/run-1");
     expect(readRememberedPrimaryRailPath("org-2", "issues", "/issues")).toBe("/issues/ZST-100");
+  });
+
+  it("keeps Goal paths independent from Organization memory", () => {
+    rememberPrimaryRailPath("org-1", "/goals/goal-1");
+    rememberPrimaryRailPath("org-1", "/dashboard");
+
+    expect(readRememberedPrimaryRailPath("org-1", "goals", "/goals")).toBe("/goals/goal-1");
+    expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
   });
 
   it("does not replace the Apps launcher memory with a pinned Local App route", () => {

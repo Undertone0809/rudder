@@ -1,7 +1,14 @@
 import { agents, calendarEvents, goalActivities, goalOwnerAssignments, goalPlans, goals, heartbeatRuns } from "@rudderhq/db";
-import { activateGoalSchema, createGoalActivitySchema, evaluateGoalSchema, updateGoalSchema } from "@rudderhq/shared";
+import {
+  activateGoalSchema,
+  createGoalActivitySchema,
+  evaluateGoalSchema,
+  previewGoalStartSchema,
+  startGoalSchema,
+  updateGoalSchema,
+} from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
-import { goalService, reduceGoalEvaluation } from "../services/goals.js";
+import { compileGoalStartPreview, goalService, reduceGoalEvaluation, stableGoalHash } from "../services/goals.js";
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG_ID = "22222222-2222-4222-8222-222222222222";
@@ -10,6 +17,21 @@ const SECOND_GOAL_ID = "44444444-4444-4444-8444-444444444444";
 const OWNER_ID = "55555555-5555-4555-8555-555555555555";
 const OTHER_ORG_OWNER_ID = "66666666-6666-4666-8666-666666666666";
 const RUN_ID = "77777777-7777-4777-8777-777777777777";
+
+type PreviewOwner = NonNullable<Parameters<typeof compileGoalStartPreview>[1]>;
+
+function makePreviewOwner(overrides: Partial<PreviewOwner> = {}): PreviewOwner {
+  return {
+    id: OWNER_ID,
+    orgId: ORG_ID,
+    name: "Goal owner",
+    status: "idle",
+    role: "engineer",
+    title: null,
+    capabilities: "Plan and execute end-to-end software releases with verifiable evidence.",
+    ...overrides,
+  };
+}
 
 function makeGoal(overrides: Record<string, unknown> = {}) {
   const now = new Date("2026-08-04T00:00:00.000Z");
@@ -50,8 +72,8 @@ function createGoalDb(initialGoal = makeGoal()) {
   const state = {
     goals: [initialGoal, makeGoal({ id: SECOND_GOAL_ID, title: "Keep a second focus candidate" })],
     agents: [
-      { id: OWNER_ID, orgId: ORG_ID },
-      { id: OTHER_ORG_OWNER_ID, orgId: OTHER_ORG_ID },
+      makePreviewOwner(),
+      makePreviewOwner({ id: OTHER_ORG_OWNER_ID, orgId: OTHER_ORG_ID }),
     ],
     runs: [{ id: RUN_ID, orgId: ORG_ID, status: "running" }],
     calendarEvents: [] as Array<Record<string, unknown>>,
@@ -208,6 +230,75 @@ function evaluationInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Goal contract", () => {
+  it("hashes the canonical Start packet that survives request validation unchanged", () => {
+    const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+      title: "Publish a verified Goal Workspace release candidate",
+      context: "Keep the result inspectable.",
+      ownerAgentId: OWNER_ID,
+      targetTime: "2026-08-20T10:00:00.000Z",
+    }), makePreviewOwner());
+    const parsed = startGoalSchema.parse({
+      requestKey: "goal-start-roundtrip",
+      packetHash: preview.packetHash,
+      packet: preview.packet,
+    });
+
+    expect(stableGoalHash(parsed.packet)).toBe(preview.packetHash);
+  });
+
+  it("keeps long but ambiguous Goals in alignment", () => {
+    const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+      title: "Explore pricing options",
+      context: null,
+      ownerAgentId: OWNER_ID,
+      targetTime: null,
+    }), makePreviewOwner());
+
+    expect(preview.valid).toBe(false);
+    expect(preview.packet).toBeNull();
+    expect(preview.alignmentQuestion).toMatch(/observable result or decision/i);
+  });
+
+  it("uses context in the success criterion and infers objective modes", () => {
+    const cases = [
+      ["Publish a verified release candidate", "target", "artifact"],
+      ["Increase activation rate by 20%", "maximize", "metric"],
+      ["Maintain service uptime above 99.9%", "maintain", "policy"],
+      ["Decide which pricing model to launch", "decide", "human"],
+    ] as const;
+
+    for (const [title, objectiveMode, evaluator] of cases) {
+      const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+        title,
+        context: "The result must preserve existing customer data.",
+        ownerAgentId: OWNER_ID,
+        targetTime: null,
+      }), makePreviewOwner());
+
+      expect(preview.valid).toBe(true);
+      expect(preview.review?.success).toContain("preserve existing customer data");
+      expect(preview.packet?.activation.objectiveMode).toBe(objectiveMode);
+      expect(preview.packet?.activation.criteria[0]?.evaluator).toBe(evaluator);
+    }
+  });
+
+  it("rejects an available same-organization Agent whose capabilities do not cover the Goal", () => {
+    const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+      title: "Publish a verified software release candidate",
+      context: "Run automated tests and preserve existing API behavior.",
+      ownerAgentId: OWNER_ID,
+      targetTime: null,
+    }), makePreviewOwner({
+      role: "general",
+      title: "Recruiting coordinator",
+      capabilities: "Schedules interviews and manages candidate communications.",
+    }));
+
+    expect(preview.valid).toBe(false);
+    expect(preview.packet).toBeNull();
+    expect(preview.alignmentQuestion).toMatch(/better-matched Agent/i);
+  });
+
   it("requires a Run reference for closeout Activities", () => {
     expect(() => createGoalActivitySchema.parse({
       summary: "Unbound closeout",
@@ -503,7 +594,7 @@ describe("Goal contract", () => {
     expect(dependencies.previews.calendarEvents).toEqual([{ id: "calendar-event-1", title: "Goal review", subtitle: "scheduled" }]);
   });
 
-  it("clears Focus when evaluation closes the Goal", async () => {
+  it("keeps Focus when direct terminal evaluation is blocked pending human acceptance", async () => {
     const { db, state } = createGoalDb(makeGoal({
       lifecycle: "active",
       status: "active",
@@ -511,10 +602,12 @@ describe("Goal contract", () => {
       planRevision: 1,
       focus: true,
     }));
-    const closed = await goalService(db).evaluate(GOAL_ID, evaluationInput({ criteria: [{ id: "result", status: "met" }] }));
-    expect(closed.lifecycle).toBe("closed");
-    expect(closed.focus).toBe(false);
-    expect(state.goals[0]!.focus).toBe(false);
+    await expect(goalService(db).evaluate(
+      GOAL_ID,
+      evaluationInput({ criteria: [{ id: "result", status: "met" }] }),
+    )).rejects.toMatchObject({ status: 409 });
+    expect(state.goals[0]!.lifecycle).toBe("active");
+    expect(state.goals[0]!.focus).toBe(true);
   });
 
   it("keeps Focus unique within an organization", async () => {

@@ -24,6 +24,10 @@ const mockChatService = vi.hoisted(() => ({
   applyApprovedApproval: vi.fn(),
 }));
 
+const mockGoalService = vi.hoisted(() => ({
+  decideChangeProposal: vi.fn(),
+}));
+
 const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
 }));
@@ -47,6 +51,7 @@ vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
   chatService: () => mockChatService,
+  goalService: () => mockGoalService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
   issueService: () => mockIssueService,

@@ -42,6 +42,7 @@ import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
@@ -241,6 +242,7 @@ export function NewIssueDialog() {
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
@@ -256,8 +258,11 @@ export function NewIssueDialog() {
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(effectiveCompanyId!),
     queryFn: () => goalsApi.list(effectiveCompanyId!),
-    enabled: !!effectiveCompanyId && newIssueOpen,
+    enabled: !!effectiveCompanyId && newIssueOpen && goalsEnabled,
   });
+  useEffect(() => {
+    if (!goalsEnabled) setGoalId("");
+  }, [goalsEnabled]);
   const { data: allIssues } = useQuery({
     queryKey: queryKeys.issues.list(effectiveCompanyId!),
     queryFn: () => issuesApi.list(effectiveCompanyId!),
@@ -1700,7 +1705,7 @@ export function NewIssueDialog() {
             </PopoverContent>
           </Popover>
 
-          <InlineEntitySelector
+          {goalsEnabled ? <InlineEntitySelector
             value={goalId}
             options={goalOptions}
             placeholder="Goal"
@@ -1740,7 +1745,7 @@ export function NewIssueDialog() {
                 <span className="truncate">{option.label}</span>
               )
             }
-          />
+          /> : null}
 
           <input
             ref={stageFileInputRef}
