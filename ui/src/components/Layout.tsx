@@ -390,6 +390,23 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   return relativePath === "/messenger";
 }
 
+export function shouldAutoCollapseAgentContextSidebar({
+  isMobile,
+  relativePath,
+  sidePanelOpen,
+  sidePanelContextReady,
+}: {
+  isMobile: boolean;
+  relativePath: string;
+  sidePanelOpen: boolean;
+  sidePanelContextReady: boolean;
+}): boolean {
+  return !isMobile
+    && sidePanelOpen
+    && sidePanelContextReady
+    && /^\/agents\/[^/]+(?:\/|$)/.test(relativePath);
+}
+
 function decodeSidePanelRouteSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);
@@ -1028,6 +1045,13 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
+  const autoCollapseAgentContextSidebar = shouldAutoCollapseAgentContextSidebar({
+    isMobile,
+    relativePath: relativeBoardPath,
+    sidePanelOpen,
+    sidePanelContextReady,
+  });
+  const contextSidebarVisible = sidebarOpen && !autoCollapseAgentContextSidebar;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1643,15 +1667,16 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          aria-hidden={!sidebarOpen}
-                          inert={sidebarOpen ? undefined : true}
+                          data-auto-collapsed={autoCollapseAgentContextSidebar || undefined}
+                          aria-hidden={!contextSidebarVisible}
+                          inert={contextSidebarVisible ? undefined : true}
                           className={cn(
-                            "flex min-h-0 shrink-0 overflow-hidden",
+                            "box-border flex min-h-0 shrink-0 overflow-hidden",
                             "workspace-context-card",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
                             sidebarOpen ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
                           )}
-                          style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
+                          style={{ width: contextSidebarVisible ? contextColumnWidth : 0 }}
                         >
                           {isWorkspaceBackupsRoute ? (
                             <WorkspaceBackupFilesSidebar />
@@ -1663,14 +1688,15 @@ export function Layout() {
                         </div>
                         <div
                           data-testid="workspace-column-resizer"
-                          aria-hidden={!sidebarOpen}
+                          aria-hidden={!contextSidebarVisible}
                           className={cn(
-                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
+                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+                            !resizingColumn && "motion-resize",
+                            contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
                             resizingColumn && "is-resizing",
                           )}
                           onPointerDown={startContextColumnResize}
-                          role={sidebarOpen ? "separator" : undefined}
+                          role={contextSidebarVisible ? "separator" : undefined}
                           aria-orientation="vertical"
                           aria-label="Resize workspace columns"
                         >

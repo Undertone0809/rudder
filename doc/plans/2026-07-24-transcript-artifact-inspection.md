@@ -106,6 +106,12 @@ to the current workspace file.
 - Show only the filename in the Side Panel tab and preview title.
 - Remove the parent directory as a permanently visible subtitle while retaining
   the full path in contextual details where needed.
+- While a Side Panel is docked on an Agent detail route, temporarily animate
+  the Agent context column closed without overwriting the operator's saved
+  sidebar preference; restore it when the panel closes.
+- Make Agent detail actions, tabs, Run filters, the run rail, summary facts,
+  metrics, and transcript content respond to their remaining container width
+  instead of relying only on viewport breakpoints.
 - Preserve Messenger route, draft, scroll position, and Side Panel session
   context.
 

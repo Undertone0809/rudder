@@ -1288,15 +1288,38 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText(sourcePath, { exact: true })).toHaveCount(0);
     await expect(detailPane.getByText(skillPath, { exact: true })).toHaveCount(0);
 
+    const contextCard = page.getByTestId("workspace-context-card");
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
     const runUrl = page.url();
     await sourceTarget.click();
     await expect(page).toHaveURL(runUrl);
     const sidePanel = page.getByRole("complementary", { name: "Side Panel" });
     await expect(sidePanel).toBeVisible();
+    await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
+    await expect(contextCard).toHaveAttribute("aria-hidden", "true");
+    await expect.poll(async () => contextCard.evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(2);
+    await expect(page.getByRole("button", { name: "Assign Task" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Chat" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run heartbeat" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
     await expect(sidePanel.getByRole("tab", { name: "RunTranscriptView.tsx" })).toBeVisible();
     const localPreview = sidePanel.getByTestId("chat-side-panel-local-file-view");
     await expect(localPreview.getByText("RunTranscriptView.tsx", { exact: true })).toBeVisible();
     await expect(localPreview.getByText("/workspace/rudder/ui/src/components/transcript", { exact: true })).toHaveCount(0);
+
+    const runListPane = page.getByTestId("agent-runs-list-pane");
+    const stackedLayout = await Promise.all([
+      runListPane.boundingBox(),
+      detailPane.boundingBox(),
+      page.getByTestId("run-filter-floating-toolbar").boundingBox(),
+      page.getByTestId("workspace-main-card").boundingBox(),
+    ]);
+    expect(stackedLayout.every(Boolean)).toBe(true);
+    const [listBox, detailBox, toolbarBox, mainBox] = stackedLayout;
+    expect(listBox!.y).toBeLessThan(detailBox!.y);
+    expect(Math.abs(listBox!.width - detailBox!.width)).toBeLessThan(2);
+    expect(toolbarBox!.x).toBeGreaterThanOrEqual(mainBox!.x);
+    expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(mainBox!.x + mainBox!.width + 1);
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
@@ -1311,8 +1334,14 @@ test.describe("Run transcript detail", () => {
     await expect(sidePanel.getByText("/workspace/rudder/.agents/skills/systematic-debugging", { exact: true })).toHaveCount(0);
 
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-transcript-file-side-panel.png",
+      path: "/tmp/rudder-agent-run-side-panel-responsive.png",
       fullPage: true,
     });
+
+    await page.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await expect(contextCard).not.toHaveAttribute("data-auto-collapsed", "true");
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+    await expect.poll(async () => contextCard.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(0);
   });
 });
