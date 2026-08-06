@@ -138,6 +138,7 @@ process.stdin.on("end", async () => {
     body: "Streaming reply for chat.",
     structuredPayload: null,
   });
+  const memoryToolName = /para-memory-files/i.test(prompt) ? "para-memory-files" : "command_execution";
   process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-e2e", model: "gpt-5.4" }) + "\\n");
   process.stdout.write(
     JSON.stringify({
@@ -148,7 +149,7 @@ process.stdin.on("end", async () => {
   process.stdout.write(
     JSON.stringify({
       type: "item.started",
-      item: { type: "tool_use", id: "tool-1", name: "command_execution", input: { command: "echo chat" } },
+      item: { type: "tool_use", id: "tool-1", name: memoryToolName, input: { command: "echo chat" } },
     }) + "\\n",
   );
   process.stdout.write(

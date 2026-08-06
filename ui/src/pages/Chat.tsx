@@ -164,7 +164,7 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { latestSideChatAnchor } from "@/lib/side-chat";
-import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { chatGenerationScopeKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { resolveTranscriptSkillSidePanelTarget } from "@/lib/transcript-skill-targets";
 import { cn } from "@/lib/utils";
 import {
@@ -320,11 +320,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   useLayoutEffect(() => {
     const activeCheckpointKeys = new Set<string>();
     for (const streamDraft of Object.values(streamDrafts)) {
-      if (streamDraft.state !== "streaming" && streamDraft.state !== "finalizing") continue;
+      const chatId = streamDraft.chatId;
+      if (streamDraft.state !== "streaming" && streamDraft.state !== "tool_busy" && streamDraft.state !== "finalizing") continue;
+      if (!chatId) continue;
       if (!streamDraft.generationId || !streamDraft.attemptEpoch) continue;
       if (streamDraft.lastCommittedRenderSeq === undefined || !streamDraft.renderedBodyHash) continue;
       const checkpoint = {
-        chatId: streamDraft.chatId,
+        chatId,
         generationId: streamDraft.generationId,
         attemptEpoch: streamDraft.attemptEpoch,
         generationSeq: streamDraft.lastCommittedRenderSeq,
@@ -542,9 +544,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.messenger.customGroups(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && !!selectedConversation,
-  }); const customGroups = customGroupsQuery.data?.groups ?? []; const selectedConversationThreadKey = selectedConversation ? `chat:${selectedConversation.id}` : null; const selectedConversationCustomGroupId = selectedConversationThreadKey
+  }); const customGroups = customGroupsQuery.data?.groups ?? []; const selectedConversationStreamScopeKey = selectedConversation && selectedOrganizationId
+    ? chatGenerationScopeKey(selectedOrganizationId, selectedConversation)
+    : null; const streamScopeKeyForChatId = useCallback((chatId: string) => (
+      selectedConversation?.id === chatId && selectedConversationStreamScopeKey
+        ? selectedConversationStreamScopeKey
+        : chatId
+    ), [selectedConversation?.id, selectedConversationStreamScopeKey]); const selectedConversationThreadKey = selectedConversation ? `chat:${selectedConversation.id}` : null; const selectedConversationCustomGroupId = selectedConversationThreadKey
     ? customGroups.find((group) => group.entries.some((entry) => entry.threadKey === selectedConversationThreadKey))?.id ?? null
-    : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
+    : null; const selectedConversationGenerating = Boolean(selectedConversation && selectedConversationStreamScopeKey && (streamDrafts[selectedConversationStreamScopeKey] || sendInFlightByChatId[selectedConversationStreamScopeKey])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null;
   const conversationHeaderAgentId = selectedConversation?.preferredAgentId
     ?? selectedConversation?.chatRuntime.runtimeAgentId
@@ -849,10 +857,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         tone: "error", }); }, }); const deleteConversationMutation = useMutation({
     mutationFn: async ({ chatId, cancelActive }: { chatId: string; cancelActive?: boolean }) => {
       if (cancelActive) {
-        abortChatStream(chatId);
+        const streamScopeKey = streamScopeKeyForChatId(chatId);
+        abortChatStream(streamScopeKey);
         await chatsApi.stopMessageStream(chatId).catch(() => undefined);
-        setStreamDraftForChat(chatId, null);
-        setChatSendInFlight(chatId, false);
+        setStreamDraftForChat(streamScopeKey, null);
+        setChatSendInFlight(streamScopeKey, false);
       }
       return chatsApi.remove(chatId, cancelActive ? { cancelActive: true } : {});
     },
@@ -1037,10 +1046,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!streamKey) return false;
     const ownedStream = streamOwnershipRef.current[recovery.chatId];
     if (ownedStream) return ownedStream.streamKey === streamKey;
-    const currentDraft = streamDraftsRef.current[recovery.chatId];
+    const currentDraft = streamDraftsRef.current[streamScopeKeyForChatId(recovery.chatId)];
     if (currentDraft) return currentDraft.streamKey === streamKey;
     return stopRecoveryStreamKeysRef.current[recovery.chatId] === streamKey;
-  }, []); const submitStopRecovery = useCallback((
+  }, [streamScopeKeyForChatId]); const submitStopRecovery = useCallback((
     recovery: PendingChatStopRecovery,
   ) => {
     const { chatId, frozenDraft, orgId, request } = recovery;
@@ -1059,17 +1068,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
     stoppingChatIdsRef.current.add(chatId);
     setStoppingChatIds((current) => new Set(current).add(chatId));
+    const streamScopeKey = streamScopeKeyForChatId(chatId);
     const streamKey = frozenDraft?.streamKey ?? null;
     if (frozenDraft) {
       const ownedStream = streamOwnershipRef.current[chatId];
-      const currentDraft = streamDraftsRef.current[chatId];
+      const currentDraft = streamDraftsRef.current[streamScopeKey];
       if (
         (!ownedStream || ownedStream.streamKey === streamKey)
         && (!currentDraft || currentDraft.streamKey === streamKey)
       ) {
         stopRecoveryStreamKeysRef.current[chatId] = streamKey!;
       }
-      setStreamDraftForChat(chatId, (current) => {
+      setStreamDraftForChat(streamScopeKey, (current) => {
         if (current && current.streamKey !== frozenDraft.streamKey) return current;
         return { ...frozenDraft, state: "stopping" };
       });
@@ -1098,7 +1108,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         ].includes(result.disposition ?? "");
         const completionCommitted = !result.stopped && result.disposition === "completion_committed";
         if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recovery)) {
-          abortChatStream(chatId);
+          abortChatStream(streamScopeKey);
         } else if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
           delete stopRecoveryStreamKeysRef.current[chatId];
         }
@@ -1111,8 +1121,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           })),
         ]);
         if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
-          setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
-          setChatSendInFlight(chatId, false);
+          setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
+          setChatSendInFlight(streamScopeKey, false);
         }
         clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
 
@@ -1141,7 +1151,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           stopRecoveryRetrier.resolve(recovery);
           stopActionSettled = true;
           if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
-            setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey
+            setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey
               ? { ...frozenDraft!, state: recovery.previousStreamState ?? "streaming" }
               : current);
           }
@@ -1175,14 +1185,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         }
       }
     })();
-  }, [abortChatStream, pushToast, queryClient, setChatSendInFlight, setStreamDraftForChat, stopRecoveryMatchesCurrentStream, stopRecoveryRetrier]); submitStopRecoveryRef.current = submitStopRecovery; const stopStreaming = useCallback((chatId: string) => {
+  }, [abortChatStream, pushToast, queryClient, setChatSendInFlight, setStreamDraftForChat, stopRecoveryMatchesCurrentStream, stopRecoveryRetrier, streamScopeKeyForChatId]); submitStopRecoveryRef.current = submitStopRecovery; const stopStreaming = useCallback((chatId: string) => {
     if (!selectedOrganizationId || stoppingChatIdsRef.current.has(chatId)) return;
     const existingRecovery = readPendingChatStopRecovery(selectedOrganizationId, chatId);
     if (existingRecovery) {
       stopRecoveryRetrier.retryNow(existingRecovery);
       return;
     }
-    const streamDraft = streamDrafts[chatId] ?? null;
+    const streamDraft = streamDrafts[streamScopeKeyForChatId(chatId)] ?? null;
     const serverGenerationFence = serverActiveGenerationId
       && queueQuery.data?.activeAttemptEpoch !== null
       && queueQuery.data?.activeAttemptEpoch !== undefined
@@ -1213,7 +1223,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     });
     savePendingChatStopRecovery(recovery);
     submitStopRecovery(recovery);
-  }, [queueQuery.data, selectedOrganizationId, stopRecoveryRetrier, streamDrafts, submitStopRecovery]);
+  }, [queueQuery.data, selectedOrganizationId, stopRecoveryRetrier, streamDrafts, streamScopeKeyForChatId, submitStopRecovery]);
   useEffect(() => () => {
     stopRecoveryRetrierRef.current?.dispose();
     for (const pending of steerRetryStatesRef.current.values()) {
@@ -1330,7 +1340,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body,
           files: regularFilesToUpload,
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
-          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
+          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1389,13 +1399,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               conversation = event.conversation;
               acceptedConversation.current = event.conversation;
               activeChatId = conversation.id;
+              const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation);
+              activeStreamScopeKey = streamScopeKey;
               if (!acquireChatSendLock(conversation.id)) {
                 throw new Error("The accepted chat is already sending another message");
               }
               chatSendLockAcquired = true;
               streamOwnershipRef.current[conversation.id] = { streamKey, controller: abortController };
-              setStreamAbortController(conversation.id, abortController);
-              setChatSendInFlight(conversation.id, true);
+              setStreamAbortController(streamScopeKey, abortController);
+              setChatSendInFlight(streamScopeKey, true);
               upsertConversation(conversation);
               upsertMessengerThreadSummary(conversation, {
                 latestActivityAt: new Date(event.userMessage.createdAt),
@@ -1424,7 +1436,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 clearPendingFilesForCurrentScope();
                 pendingFilesClearedAfterAck = true;
               }
-              setStreamDraftForChat(conversation.id, {
+              setStreamDraftForChat(streamScopeKey, {
                 chatId: conversation.id,
                 streamKey,
                 userBody: body,
@@ -1451,14 +1463,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (!conversation) {
               throw new Error("Chat stream emitted output before accepting the first message");
             }
+            const streamScopeKey = activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, conversation);
             if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
-              setStreamDraftForChat(conversation.id, (current) => applyChatStreamProgressEvent(current, streamKey, event));
+              setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
               return;
             }
             if (event.type === "final") {
               keepProcessOpenForMessages(event.messages);
               upsertMessages(conversation.id, event.messages);
-              setStreamDraftForChat(conversation.id, (current) => current?.streamKey === streamKey ? null : current);
+              setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
             }
           },
         });
@@ -1469,10 +1482,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
         await refreshChat(createdConversation.id);
         await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
-        setStreamDraftForChat(createdConversation.id, (current) => current?.streamKey === streamKey ? null : current);
+        setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
         return;
       }
-      const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);
+      const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
       if (!options?.queuedMessageId && (activeDraftForChat || serverActiveGenerationId)) {
         if (editUserMessageId) {
           const isRetry = options?.editIntent === "retry";
@@ -1492,14 +1505,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           clearComposerOnSuccess: usesComposerState,
         });
         return;
-      } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
+      } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; activeStreamScopeKey = streamScopeKey; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
       if (newConversationLockAcquired || newConversationSendLockRef.current) { releaseNewConversationSendLock();
         newConversationLockAcquired = false; }
       if (usesComposerState) { setBranchPreview(null); setDraft("");
-        clearPendingFilesForCurrentScope(); } setChatSendInFlight(chatId, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(chatId, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
-      setStreamDraftForChat(chatId, {
+        clearPendingFilesForCurrentScope(); } setChatSendInFlight(streamScopeKey, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
+      setStreamDraftForChat(streamScopeKey, {
         chatId,
         streamKey,
         userBody: body,
@@ -1541,7 +1554,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               setResponseAnnotationsExpanded(false);
               responseAnnotationEditor.close();
             }
-            setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+            setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
             return;
           }
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
@@ -1559,7 +1572,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             options?.onUserMessageAcknowledged?.();
             if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) { clearPendingFilesForCurrentScope(); pendingFilesClearedAfterAck = true; }
             setStreamDraftForChat(
-              chatId,
+              streamScopeKey,
               (current) => (current?.streamKey === streamKey ? { ...current,
                 userCreatedAt: new Date(event.userMessage.createdAt),
                 userMessageId: event.userMessage.id,
@@ -1585,7 +1598,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 pendingFilesClearedAfterAck = true;
               }
               setStreamDraftForChat(
-                chatId,
+                streamScopeKey,
                 (current) => current?.streamKey === streamKey
                   ? { ...current, userMessageId: event.messageId ?? null }
                   : current,
@@ -1594,7 +1607,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             throw new Error(event.error);
           }
           if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
-            setStreamDraftForChat(chatId, (current) => applyChatStreamProgressEvent(current, streamKey, event));
+            setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
             return; }
           if (event.type === "final") {
             const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, chatId);
@@ -1607,21 +1620,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             keepProcessOpenForMessages(event.messages);
             upsertMessages(chatId, event.messages);
             if (!pendingStop) {
-              setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+              setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
             }
           } }, });
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
       await refreshChat(chatId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
       if (!readPendingChatStopRecovery(selectedOrganizationId, chatId)) {
-        setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+        setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
       const pendingStop = conversation
         ? readPendingChatStopRecovery(selectedOrganizationId, conversation.id)
         : null;
+      const streamScopeKey = activeStreamScopeKey
+        ?? (conversation ? chatGenerationScopeKey(selectedOrganizationId, conversation) : null);
       if (conversation && pendingStop) {
-        setStreamDraftForChat(conversation.id, (current) => {
+        if (!streamScopeKey) return;
+        setStreamDraftForChat(streamScopeKey, (current) => {
           if (current && pendingStop.frozenDraft && current.streamKey !== pendingStop.frozenDraft.streamKey) {
             return current;
           }
@@ -1636,14 +1652,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         await chatsApi.releaseQueuedMessageClaim(conversation.id, options.queuedMessageId).catch(() => null);
       }
       if (conversation && isAbort) {
+        if (!streamScopeKey) return;
         setStreamDraftForChat(
-          conversation.id, (current) => (current?.streamKey === activeStreamKey ? { ...current, state: "stopped" } : current), );
+          streamScopeKey, (current) => (current?.streamKey === activeStreamKey ? { ...current, state: "stopped" } : current), );
         await refreshChat(conversation.id);
-        setStreamDraftForChat(conversation.id, (current) => current?.streamKey === activeStreamKey ? null : current);
+        setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === activeStreamKey ? null : current);
         return; }
       if (conversation) {
+        if (!streamScopeKey) return;
         setStreamDraftForChat(
-          conversation.id, (current) => (current?.streamKey === activeStreamKey ? null : current), ); }
+          streamScopeKey, (current) => (current?.streamKey === activeStreamKey ? null : current), ); }
       if (submittedComposerDraft && !userMessageAcknowledged) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
           submittedComposerDraft.orgId, restoreConversationId, ); saveChatComposerDraft(
           submittedComposerDraft.orgId,
@@ -1685,8 +1703,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (activeChatId) { const ownedStream = streamOwnershipRef.current[activeChatId];
         if (!ownedStream || ownedStream.streamKey === activeStreamKey) {
           delete streamOwnershipRef.current[activeChatId];
-          setStreamAbortController(activeChatId, null);
-          setChatSendInFlight(activeChatId, false);
+          const streamScopeKey = activeStreamScopeKey ?? activeChatId;
+          setStreamAbortController(streamScopeKey, null);
+          setChatSendInFlight(streamScopeKey, false);
         }
         const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, activeChatId);
         if (!pendingStop && stopRecoveryStreamKeysRef.current[activeChatId] === activeStreamKey) {
@@ -2126,7 +2145,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     });
   }, []);
   const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({ hasConversation: Boolean(selectedConversation), preferredAgentId: selectedConversation?.preferredAgentId, hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const projectSelectionLocked = isChatProjectSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversationStreamScopeKey ?? undefined); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversationStreamScopeKey ?? undefined); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({ hasConversation: Boolean(selectedConversation), preferredAgentId: selectedConversation?.preferredAgentId, hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const projectSelectionLocked = isChatProjectSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
@@ -3028,9 +3047,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       ...(expectedControlVersion !== null && expectedControlVersion !== undefined
         ? { expectedControlVersion }
         : {}),
-      ...(streamDrafts[chatId] ? {
-        lastCommittedRenderSeq: streamDrafts[chatId].lastCommittedRenderSeq ?? 0,
-        renderedBodyHash: streamDrafts[chatId].renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+      ...(streamDrafts[streamScopeKeyForChatId(chatId)] ? {
+        lastCommittedRenderSeq: streamDrafts[streamScopeKeyForChatId(chatId)].lastCommittedRenderSeq ?? 0,
+        renderedBodyHash: streamDrafts[streamScopeKeyForChatId(chatId)].renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
       } : {}),
     };
     const pending: PendingChatSteerRetry = {

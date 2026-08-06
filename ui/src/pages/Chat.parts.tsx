@@ -1429,6 +1429,7 @@ export function isUserVisibleIncomingChatMessage(
 
 export function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["status"]) {
   if (state === "streaming") return "Streaming";
+  if (state === "tool_busy") return "Working";
   if (state === "finalizing") return "Finalizing";
   if (state === "stopped") return "Stopped";
   if (state === "failed") return "Failed";

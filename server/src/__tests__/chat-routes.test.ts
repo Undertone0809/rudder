@@ -1298,6 +1298,7 @@ describe("chat routes", () => {
       action: "chat.side_chat_created",
       entityId: "chat-side",
       orgId: "organization-1",
+      idempotencyKey: "chat.side_chat_created:chat-side",
     }));
   });
 
@@ -6347,9 +6348,21 @@ describe("chat routes", () => {
       "final",
     ]);
     expect(events[0]?.userMessage?.id).toBe("message-user");
+    expect(events[1]).toMatchObject({
+      type: "assistant_state",
+      state: "streaming",
+      generationId: "generation-1",
+      attemptEpoch: 1,
+    });
     expect(events[2]?.entry?.kind).toBe("thinking");
     expect(events[3]?.entry?.kind).toBe("tool_call");
     expect(events[7]?.messages).toHaveLength(1);
+    expect(events[6]).toMatchObject({
+      type: "assistant_state",
+      state: "finalizing",
+      generationId: "generation-1",
+      attemptEpoch: 1,
+    });
     expect(events[7]?.messages[0]?.id).toBe("message-assistant");
     expect(events[7]?.messages[0]?.generationId).toBe("generation-1");
     expect(mockChatService.generationProtocol.appendVisibleEventAndProject).toHaveBeenCalledWith(
