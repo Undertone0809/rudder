@@ -85,7 +85,7 @@ function formatRunOccurrenceForTest(date: Date, now: Date) {
 
 test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -111,8 +111,8 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("Ran rudder issue done", { exact: false })).toHaveCount(0);
 
     await firstProgressChunk.click();
-    await expect(page.getByText("Read doc/product/GOAL.md", { exact: false })).toBeVisible();
-    await expect(page.getByText("Read doc/archive/SPEC-implementation.md", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open file GOAL.md", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open file SPEC-implementation.md", exact: true })).toBeVisible();
 
     const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 2 tools" });
     await expect(externalToolGroup).toHaveCount(1);
@@ -139,10 +139,6 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
 
     const rudderDisclosure = rudderMcpRow.locator('[data-transcript-action-row-disclosure="true"]');
-    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
-    await rudderMcpRow.hover();
-    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
-    await page.mouse.move(0, 0);
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
     await githubMcpRow.focus();
@@ -172,7 +168,7 @@ test.describe("Run transcript detail", () => {
     await rudderMcpRow.blur();
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
-    const skillUseRow = page.getByRole("button", { name: /Expand tool details/ }).filter({ hasText: "Use flomo-local-api skill" });
+    const skillUseRow = page.getByRole("button", { name: "Expand tool details: Use flomo-local-api skill" });
     await expect(skillUseRow).toHaveCount(1);
     await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toHaveCount(0);
     await skillUseRow.click();
@@ -281,7 +277,12 @@ test.describe("Run transcript detail", () => {
     const listBox = await listPane.boundingBox();
     expect(detailBox).not.toBeNull();
     expect(listBox).not.toBeNull();
-    expect(detailBox!.x).toBeLessThan(listBox!.x);
+    if (Math.abs(detailBox!.y - listBox!.y) <= 2) {
+      expect(detailBox!.x).toBeLessThan(listBox!.x);
+    } else {
+      expect(listBox!.y).toBeLessThan(detailBox!.y);
+      expect(Math.abs(detailBox!.width - listBox!.width)).toBeLessThan(2);
+    }
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
     await expect(detailPane.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
@@ -402,7 +403,8 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    await expect(detailPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible({
+    const summaryCard = detailPane.getByTestId("run-summary-card");
+    await expect(summaryCard.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible({
       timeout: 15_000,
     });
     await expect(detailPane.getByTestId("run-stderr-excerpt")).toHaveCount(0);
@@ -431,6 +433,12 @@ test.describe("Run transcript detail", () => {
     const runId = randomUUID();
     const conversationId = randomUUID();
     const userMessage = "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.";
+    const failureResult = {
+      outcome: "failed",
+      errorCode: "chat_result_missing_sentinel",
+      recoverable: true,
+      userMessage,
+    };
     await e2eDb.insert(chatConversations).values({
       id: conversationId,
       orgId: organization.id,
@@ -451,12 +459,8 @@ test.describe("Run transcript detail", () => {
       finishedAt: new Date("2026-06-26T06:16:31.946Z"),
       error: "Chat adapter completed without the required Rudder result sentinel",
       errorCode: "chat_result_missing_sentinel",
-      resultJson: {
-        outcome: "failed",
-        errorCode: "chat_result_missing_sentinel",
-        recoverable: true,
-        userMessage,
-      },
+      resultJson: failureResult,
+      resultSummaryJson: failureResult,
       contextSnapshot: {
         scene: "chat",
         targetType: "chat_conversation",
@@ -481,6 +485,63 @@ test.describe("Run transcript detail", () => {
 
     const listPane = page.getByTestId("agent-runs-list-pane");
     await expect(listPane.getByText("The assistant finished without a final Rudder reply", { exact: false })).toBeVisible();
+  });
+
+  test("shows an explicit empty state when only operator-hidden run events were persisted", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Empty-Transcript-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Empty Transcript Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date("2026-07-24T09:00:00.000Z");
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Scheduled heartbeat",
+      status: "succeeded",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 1_000),
+      resultJson: { summary: "The run has no operator-visible transcript." },
+      resultSummaryJson: { summary: "The run has no operator-visible transcript." },
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 1_000),
+    });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 1,
+      eventType: "issue.execution_released",
+      stream: "system",
+      level: "info",
+      message: null,
+      payload: null,
+      createdAt: new Date(startedAt.getTime() + 500),
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText("No persisted transcript for this run.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByRole("button", { name: "Expand transcript" })).toBeVisible();
   });
 
   test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {

@@ -596,12 +596,8 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     }
   }, [activeDetailTab, hasInvocationTab]);
 
-  if (loading && logLoading) {
+  if (loading || logLoading) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
-  }
-
-  if (events.length === 0 && logLines.length === 0 && !logError) {
-    return <p className="text-xs text-muted-foreground">No log events.</p>;
   }
 
   return (

@@ -463,4 +463,31 @@ test("inspects recorded images and independent historical diffs in a real Messen
   expect(await previewCalls()).not.toContain(editedPath);
   expect(await previewCalls()).not.toContain(missingDiffPath);
   expect(await previewCalls()).not.toContain(failedDiffPath);
+
+  await page.getByRole("button", { name: "Close Side Panel" }).click();
+  await expect(sidePanel).toBeHidden();
+  await page.reload({ waitUntil: "domcontentloaded" });
+
+  const refreshedTranscript = page.getByTestId("chat-transcript-item");
+  await expect(refreshedTranscript).toBeVisible();
+  await refreshedTranscript.getByRole("button", { name: /Worked for/i }).click();
+  const refreshedActivity = refreshedTranscript.getByRole("button", { name: "Expand tool activity" });
+  await expect(refreshedActivity).toContainText(/viewed an image/i);
+  await refreshedActivity.click();
+  await expect.poll(previewCalls).toEqual([]);
+
+  const refreshedImageTarget = refreshedTranscript.locator(`[data-transcript-image-target="${imagePath}"]`);
+  await refreshedImageTarget.click();
+  await expect.poll(previewCalls).toEqual([imagePath]);
+  await expect(refreshedTranscript.getByRole("img", { name: "Preview of transcript-preview.png" })).toBeVisible();
+
+  const refreshedDiffTargets = refreshedTranscript.locator(`[data-transcript-diff-target="${editedPath}"]`);
+  await expect(refreshedDiffTargets).toHaveCount(2);
+  await refreshedDiffTargets.nth(0).click();
+  await expect(refreshedTranscript.locator("[data-transcript-unified-diff]").filter({ hasText: "old-one" })).toContainText("new-one");
+
+  const refreshedSkillTarget = refreshedTranscript.locator(`[data-transcript-file-target="${skillPath}"]`);
+  await refreshedSkillTarget.click();
+  await expect(page.getByRole("complementary", { name: "Side Panel" }).getByTestId("chat-side-panel-local-file-view")).toBeVisible();
+  await expect.poll(previewCalls).toEqual([imagePath, skillPath]);
 });
