@@ -1199,6 +1199,50 @@ describe("heartbeat run concurrency", () => {
     expect(mockRuntimeAdapter.calls.map((call) => call.taskKey)).toEqual(["serial:1"]);
   });
 
+  it("abandons local execution when its initial lease renewal loses ownership", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "lease-owner-takeover",
+      createdAt: new Date("2026-04-27T00:40:00.000Z"),
+    });
+    const takeoverOwnerToken = randomUUID();
+    let renewalAttempts = 0;
+    const heartbeat = heartbeatService(db, {
+      beforeRunExecutionLeaseRenewal: async ({ runId: renewedRunId, ownerToken }) => {
+        renewalAttempts += 1;
+        await db
+          .update(heartbeatRuns)
+          .set({
+            executionOwnerToken: takeoverOwnerToken,
+            executionLeaseExpiresAt: new Date("2026-04-27T00:45:00.000Z"),
+          })
+          .where(and(
+            eq(heartbeatRuns.id, renewedRunId),
+            eq(heartbeatRuns.executionOwnerToken, ownerToken),
+          ));
+      },
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const current = await db
+        .select({ status: heartbeatRuns.status, executionOwnerToken: heartbeatRuns.executionOwnerToken })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0] ?? null);
+      return renewalAttempts > 0 && current?.executionOwnerToken === takeoverOwnerToken;
+    });
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    const runs = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toEqual([{ id: runId, status: "running" }]);
+  });
+
   it("defaults agents without an explicit value to eight concurrent runs", async () => {
     const { orgId, agentId } = await seedAgentFixture();
     const createdAt = new Date("2026-04-27T01:00:00.000Z");

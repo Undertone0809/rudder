@@ -14,7 +14,7 @@ import {
   organizationSkills,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -938,6 +938,104 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, wakeupRequestId))
       .then((rows) => rows[0] ?? null);
     expect(wakeup?.status).toBe("failed");
+  });
+
+  it("preserves a live locally tracked child when its execution lease expires", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const result = await heartbeatService(db).reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    });
+
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: ownerToken,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T00:15:00.000Z");
+  });
+
+  it("stops a locally tracked child when another owner takes its execution lease", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId, agentId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db, {
+      beforeRunExecutionLeaseRenewal: async ({ runId: renewedRunId, ownerToken: renewedOwnerToken }) => {
+        await db
+          .update(heartbeatRuns)
+          .set({
+            executionOwnerToken: takeoverOwnerToken,
+            executionLeaseExpiresAt: new Date("2026-03-19T00:15:00.000Z"),
+          })
+          .where(and(
+            eq(heartbeatRuns.id, renewedRunId),
+            eq(heartbeatRuns.executionOwnerToken, renewedOwnerToken),
+          ));
+        expect(renewedOwnerToken).toBe(ownerToken);
+      },
+    });
+    const result = await heartbeat.reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    });
+
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+    });
+    const runs = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
   });
 
   it("queues exactly one retry when the recorded local pid is dead", async () => {

@@ -103,6 +103,10 @@ export function heartbeatService(
   db: Db,
   testHooks?: {
     afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
+    beforeRunExecutionLeaseRenewal?: (input: {
+      runId: string;
+      ownerToken: string;
+    }) => Promise<void> | void;
   },
 ) {
   const instanceSettings = instanceSettingsService(db);
@@ -816,8 +820,20 @@ export function heartbeatService(
     return markHeartbeatRunProcessExited(db, runId);
   }
 
-  async function renewRunExecutionLease(runId: string, ownerToken: string) {
-    return renewHeartbeatRunExecutionLease(db, runId, ownerToken);
+  function abortRunExecution(runId: string) {
+    const controller = runAbortControllers.get(runId);
+    if (controller) {
+      controller.abort();
+      return;
+    }
+
+    const tracked = runningProcesses.get(runId);
+    if (tracked) killChildProcessTree(tracked.child, false);
+  }
+
+  async function renewRunExecutionLease(runId: string, ownerToken: string, now = new Date()) {
+    await testHooks?.beforeRunExecutionLeaseRenewal?.({ runId, ownerToken });
+    return renewHeartbeatRunExecutionLease(db, runId, ownerToken, now);
   }
 
   async function countRunningRunsForAgent(agentId: string, excludeRunId?: string) {
@@ -1141,6 +1157,17 @@ export function heartbeatService(
       if (staleThresholdMs > 0) {
         const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
         if (now.getTime() - refTime < staleThresholdMs) continue;
+      }
+
+      // The lease timer pauses while the host sleeps, but the child process
+      // and this server's execution registry can remain alive. Preserve that
+      // local execution instead of turning it into a process-loss retry.
+      if (activeRunExecutions.has(run.id) || runningProcesses.has(run.id)) {
+        if (run.executionOwnerToken) {
+          const renewed = await renewRunExecutionLease(run.id, run.executionOwnerToken, now);
+          if (!renewed) abortRunExecution(run.id);
+        }
+        continue;
       }
 
       const recoveryClaim = await claimExpiredHeartbeatRunExecution(db, run.id, { now, recoveryCutoff });
@@ -1734,7 +1761,7 @@ export function heartbeatService(
 
   const baseContext = {
     db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({
@@ -1749,7 +1776,12 @@ export function heartbeatService(
     ...wakeupHandlers,
     afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
   });
-  const executeHandlers = createHeartbeatExecuteHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers });
+  const executeHandlers = createHeartbeatExecuteHandlers({
+    ...baseContext,
+    ...recoveryHandlers,
+    ...releaseHandlers,
+    ...wakeupHandlers,
+  });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
   const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy } = recoveryHandlers;
   const { enqueueWakeup } = wakeupHandlers;
