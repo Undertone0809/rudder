@@ -41,6 +41,33 @@ When `DATABASE_URL` is unset, this command targets the current embedded PostgreS
 
 This mode is ideal for local development and one-command installs.
 
+## Schema upgrade safety
+
+Schema upgrades are treated as a compatibility operation, not as a side effect of
+server startup:
+
+- Every migration is append-only. The journal order, SQL contents, and SHA-256
+  manifest are immutable after publication. A correction is a new migration;
+  editing an old SQL file fails the release compatibility preflight.
+- Before applying migrations to a non-empty database, startup writes a complete
+  pre-migration SQL recovery point, including the migration journal. If the
+  recovery point cannot be written, startup fails closed and no schema change is
+  attempted. Keep the recovery file until the upgrade has been verified.
+- Migration application uses a database advisory lock and transactional
+  statements. Afterward Rudder checks the journal, current migration state,
+  core primary keys, foreign-key validation, and index validity before opening
+  the application.
+- Releases run a real old-version matrix before npm, tag, or GitHub Release
+  mutation. The matrix builds the schema from historical stable migrations,
+  loads production-shaped rows, upgrades with the candidate, and checks counts,
+  relationships, journal state, and restart persistence. A new schema epoch
+  must add its historical fixture and fingerprint before release.
+
+The recovery point is a logical PostgreSQL dump produced by the existing backup
+library. For large hosted databases, use the provider's physical snapshot or
+`pg_dump`/restore workflow as the operational recovery point; do not disable the
+startup gate to avoid a backup.
+
 Docker note: the Docker quickstart image also uses embedded PostgreSQL by default. Persist `/rudder` to keep DB state across container restarts (see `doc/engineering/DOCKER.md`).
 
 Production local and packaged Desktop builds should use PostgreSQL 18.4 production binaries for this managed local database path. Set `RUDDER_POSTGRES_BIN_DIR` to the `bin` directory from a PostgreSQL 18.4 installation or packaged runtime payload:

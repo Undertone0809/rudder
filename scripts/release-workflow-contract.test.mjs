@@ -12,6 +12,14 @@ const docsProductionWorkflow = readFileSync(
 const ciWorkflow = readFileSync(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const desktopWorkflow = readFileSync(join(repoRoot, ".github/workflows/desktop-release.yml"), "utf8");
 const releaseScript = readFileSync(join(repoRoot, "scripts/release.sh"), "utf8");
+const releaseCompatibilityScript = readFileSync(
+  join(repoRoot, "scripts/release-compatibility-matrix.mjs"),
+  "utf8",
+);
+const releaseCompatibilityRuntimeScript = readFileSync(
+  join(repoRoot, "scripts/release-compatibility-runtime.ts"),
+  "utf8",
+);
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
 
 describe("release workflow latency contracts", () => {
@@ -21,7 +29,6 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain("types: [completed]");
     expect(releaseWorkflow).not.toMatch(/^  verify:/m);
     expect(releaseWorkflow).not.toContain("Unit tests");
-    expect(releaseWorkflow).not.toContain("matrix.os");
   });
 
   it("resolves an immutable source and runs release preflight before installation", () => {
@@ -51,6 +58,64 @@ describe("release workflow latency contracts", () => {
     const installIndex = releaseWorkflow.indexOf("Install dependencies");
     expect(preflightIndex).toBeGreaterThan(-1);
     expect(installIndex).toBeGreaterThan(preflightIndex);
+  });
+
+  it("blocks stable and canary publication on the migration compatibility matrix", () => {
+    const canaryJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  canary:\n"),
+      releaseWorkflow.indexOf("\n  stable-dry-run:\n"),
+    );
+    const stableJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  stable:\n"),
+      releaseWorkflow.indexOf("\n  stable-docs:\n"),
+    );
+
+    expect(releaseWorkflow).toContain("node scripts/release-compatibility-matrix.mjs");
+    expect(releaseWorkflow).not.toContain("continue-on-error: true");
+    expect(canaryJob).toContain("Locked canary migration compatibility preflight");
+    expect(stableJob).toContain("Locked stable migration compatibility preflight");
+
+    const canaryPreflightIndex = canaryJob.indexOf("Locked canary migration compatibility preflight");
+    const canaryPublishIndex = canaryJob.indexOf("\n      - name: Publish canary\n");
+    const canaryDesktopIndex = canaryJob.indexOf("\n      - name: Start desktop release build\n");
+    expect(canaryPreflightIndex).toBeGreaterThan(-1);
+    expect(canaryPublishIndex).toBeGreaterThan(canaryPreflightIndex);
+    expect(canaryDesktopIndex).toBeGreaterThan(canaryPublishIndex);
+
+    const stablePreflightIndex = stableJob.indexOf("Locked stable migration compatibility preflight");
+    const stablePublishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
+    const stableDesktopIndex = stableJob.indexOf("\n      - name: Start desktop release build\n");
+    expect(stablePreflightIndex).toBeGreaterThan(-1);
+    expect(stablePublishIndex).toBeGreaterThan(stablePreflightIndex);
+    expect(stableDesktopIndex).toBeGreaterThan(stablePublishIndex);
+
+    expect(releaseCompatibilityScript).toContain("candidateFingerprint");
+    expect(releaseCompatibilityScript).toContain("old-version matrix declaration");
+    expect(releaseCompatibilityScript).toContain("published migration history must remain immutable");
+  });
+
+  it("requires the cross-platform packaged upgrade gate before any public mutation", () => {
+    const gateJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n"),
+      releaseWorkflow.indexOf("\n  canary:\n"),
+    );
+    expect(gateJob).toContain("Prepublish database and packaged upgrade gate");
+    expect(gateJob).toContain("os: [ubuntu-latest, macos-latest, windows-latest]");
+    expect(gateJob).toContain("pnpm desktop:verify");
+    expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
+    expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
+    expect(releaseCompatibilityRuntimeScript).toContain("chat_conversations");
+    expect(releaseCompatibilityRuntimeScript).toContain("principal_permission_grants");
+    expect(releaseCompatibilityRuntimeScript).toContain("await db.restart()");
+
+    const gateIndex = releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n");
+    const npmPublishIndex = releaseWorkflow.indexOf("./scripts/release.sh canary --skip-verify");
+    const stablePublishIndex = releaseWorkflow.indexOf("./scripts/release.sh stable --skip-verify");
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(npmPublishIndex).toBeGreaterThan(gateIndex);
+    expect(stablePublishIndex).toBeGreaterThan(gateIndex);
+    expect(releaseWorkflow).toMatch(/canary:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
+    expect(releaseWorkflow).toMatch(/stable:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
   });
 
   it("keeps dry-run code read-only without repository-authorization attestations", () => {

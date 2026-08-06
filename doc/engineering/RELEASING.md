@@ -9,6 +9,14 @@ The release model is now commit-driven:
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
 
+Database compatibility is an explicit pre-publish gate. For the exact locked
+source, the release workflow must pass the migration manifest immutability check,
+the historical schema matrix (including production-shaped data and restart
+verification), the recovery-point/restore drill, and packaged upgrade smoke on
+Linux, macOS, and Windows before the first npm publish, tag push, or GitHub
+Release mutation. A later Desktop build cannot retroactively make a published
+database migration safe.
+
 ## Versioning Model
 
 Rudder uses semver directly:

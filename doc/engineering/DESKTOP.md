@@ -65,6 +65,14 @@ Smoke scenarios:
 
 - `pnpm --filter @rudderhq/desktop smoke` runs the development Desktop scenarios, authenticated update-session fetch smoke, and App Builder smoke.
 - `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema before relaunching.
+
+Packaged upgrade verification is a release gate, not only a local smoke check.
+The gate runs the historical schema compatibility matrix and recovery-point
+drill first, then runs the packaged startup/upgrade smoke on Linux, macOS, and
+Windows. The release workflow must complete this gate before publishing npm,
+creating a stable/canary tag, or creating a GitHub Release. Desktop asset
+generation after that point is artifact production and cannot be the first
+database-safety signal.
 - Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
 ## Local profiles

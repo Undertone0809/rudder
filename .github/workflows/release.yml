@@ -77,18 +77,83 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
+            channel="canary"
             version="$(./scripts/release.sh canary --preflight)"
           else
+            channel="stable"
             version="$(./scripts/release.sh stable --preflight)"
           fi
+          node scripts/release-compatibility-matrix.mjs \
+            --channel "$channel" \
+            --candidate-version "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release source: ${{ steps.source.outputs.sha }}"
           echo "Release version: $version"
 
+  prepublish-upgrade-gate:
+    name: Prepublish database and packaged upgrade gate (${{ matrix.os }})
+    needs: preflight
+    if: >-
+      github.event_name == 'workflow_run' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify locked migration compatibility
+        shell: bash
+        run: |
+          channel="canary"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then channel="stable"; fi
+          node scripts/release-compatibility-matrix.mjs \
+            --channel "$channel" \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Run database migration and recovery tests
+        shell: bash
+        run: pnpm --filter @rudderhq/db exec vitest run src/client.test.ts src/migration-manifest.test.ts
+
+      - name: Run historical schema upgrade matrix with shaped data
+        shell: bash
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
+
+      - name: Run packaged upgrade smoke
+        shell: bash
+        run: pnpm desktop:verify
+
   canary:
     name: Publish npm canary
-    needs: preflight
-    if: github.event_name == 'workflow_run'
+    needs:
+      - preflight
+      - prepublish-upgrade-gate
+    if: github.event_name == 'workflow_run' && needs.prepublish-upgrade-gate.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -116,6 +181,12 @@ jobs:
       - name: Locked canary preflight
         id: locked-preflight
         run: echo "version=$(./scripts/release.sh canary --preflight)" >> "$GITHUB_OUTPUT"
+
+      - name: Locked canary migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel canary \
+            --candidate-version "${{ steps.locked-preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:
@@ -194,6 +265,12 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
 
+      - name: Locked stable migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel stable \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -214,8 +291,10 @@ jobs:
 
   stable:
     name: Publish stable release
-    needs: preflight
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    needs:
+      - preflight
+      - prepublish-upgrade-gate
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder' && needs.prepublish-upgrade-gate.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -236,6 +315,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Locked stable migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel stable \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:

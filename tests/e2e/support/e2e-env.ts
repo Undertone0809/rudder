@@ -68,6 +68,7 @@ export const E2E_INSTANCE_ID = nonEmpty(process.env.RUDDER_E2E_INSTANCE_ID)
 export const E2E_INSTANCE_ROOT = path.join(E2E_HOME, "instances", E2E_INSTANCE_ID);
 export const E2E_CONFIG_PATH = path.join(E2E_INSTANCE_ROOT, "config.json");
 export const E2E_SERVER_PID_PATH = path.join(E2E_INSTANCE_ROOT, "server.pid");
+export const E2E_RUNTIME_DESCRIPTOR_PATH = path.join(E2E_INSTANCE_ROOT, "runtime", "server.json");
 export const E2E_BIN_DIR = path.join(E2E_HOME, "bin");
 export const E2E_CODEX_STUB = path.join(E2E_BIN_DIR, "codex");
 export const E2E_CODEX_APP_SERVER_STUB = path.join(E2E_ROOT, "fixtures", "codex-app-server");

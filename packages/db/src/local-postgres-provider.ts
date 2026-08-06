@@ -228,6 +228,33 @@ async function waitForOfficialPostgresReady(options: LocalPostgresInstanceOption
   );
 }
 
+async function stopSpawnedPostgres(child: ReturnType<typeof spawn> | null): Promise<void> {
+  if (!child?.pid) return;
+  const pid = child.pid;
+  const signal = (value: NodeJS.Signals): void => {
+    try {
+      if (process.platform === "win32") child.kill(value);
+      else process.kill(-pid, value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  };
+  const waitForExit = async (timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return child.exitCode !== null || child.signalCode !== null;
+  };
+
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  signal("SIGTERM");
+  if (await waitForExit(5_000)) return;
+  signal("SIGKILL");
+  await waitForExit(2_000);
+}
+
 export function createOfficialPostgresInstance(
   binDir: string,
   options: LocalPostgresInstanceOptions,
@@ -278,8 +305,9 @@ export function createOfficialPostgresInstance(
       }
     },
     async start() {
+      let child: ReturnType<typeof spawn> | null = null;
       const startPostgres = () => {
-        const child = spawn(
+        child = spawn(
           binaries.postgres,
           ["-D", options.databaseDir, "-h", "127.0.0.1", "-p", String(options.port)],
           {
@@ -294,18 +322,29 @@ export function createOfficialPostgresInstance(
         return child;
       };
 
-      startPostgres();
       try {
-        await waitForOfficialPostgresReady(options);
-      } catch (error) {
-        if (!isEmbeddedPostgresSharedMemoryError(error)) throw error;
-        const recovered = await cleanupStaleSysvSharedMemorySegments();
-        if (recovered.removedIds.length === 0) throw error;
-        process.emitWarning(
-          `Recovered ${recovered.removedIds.length} stale SysV shared memory segment(s) before retrying PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start.`,
-        );
         startPostgres();
         await waitForOfficialPostgresReady(options);
+      } catch (error) {
+        if (isEmbeddedPostgresSharedMemoryError(error)) {
+          const recovered = await cleanupStaleSysvSharedMemorySegments();
+          if (recovered.removedIds.length > 0) {
+            process.emitWarning(
+              `Recovered ${recovered.removedIds.length} stale SysV shared memory segment(s) before retrying PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start.`,
+            );
+            await stopSpawnedPostgres(child).catch(() => undefined);
+            try {
+              startPostgres();
+              await waitForOfficialPostgresReady(options);
+              return;
+            } catch (retryError) {
+              await stopSpawnedPostgres(child).catch(() => undefined);
+              throw retryError;
+            }
+          }
+        }
+        await stopSpawnedPostgres(child).catch(() => undefined);
+        throw error;
       }
     },
     async stop() {

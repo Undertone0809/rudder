@@ -1,0 +1,148 @@
+import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
+import {
+  buildMigrationManifest,
+  runCompatibilityPreflight,
+  validateCompatibilityMatrix,
+} from "./release-compatibility-matrix.mjs";
+
+function journal(entries) {
+  return JSON.stringify({
+    version: "7",
+    dialect: "postgresql",
+    entries: entries.map((tag, idx) => ({
+      idx,
+      version: "7",
+      when: 1_700_000_000_000 + idx,
+      tag,
+      breakpoints: true,
+    })),
+  });
+}
+
+function manifest(tags, sqlByTag, label) {
+  return buildMigrationManifest({
+    label,
+    journalRaw: journal(tags),
+    readSqlFile: (fileName) => {
+      const tag = fileName.replace(/\.sql$/u, "");
+      const sql = sqlByTag[tag];
+      if (!sql) throw new Error(`missing ${fileName}`);
+      return sql;
+    },
+  });
+}
+
+describe("release migration compatibility matrix", () => {
+  it("accepts the checked-in 0.7.2 candidate against immutable release fixtures", () => {
+    const result = runCompatibilityPreflight({
+      candidateVersion: "0.7.2-canary.1",
+      channel: "canary",
+    });
+
+    expect(result.candidateMigrations).toBe(147);
+    expect(result.candidateSqlFiles).toBe(149);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.1",
+      "0.7.0",
+      "0.6.5",
+    ]);
+  });
+
+  it("fails closed when a candidate version has no declared old-version matrix", () => {
+    const candidate = manifest(["0000_base"], { "0000_base": "SELECT 1;" }, "candidate");
+
+    expect(() => validateCompatibilityMatrix({
+      candidateManifest: candidate,
+      candidateVersion: "9.9.9",
+      channel: "stable",
+      matrix: {},
+      loadFixture: () => {
+        throw new Error("fixture loading must not start");
+      },
+    })).toThrow("has no old-version matrix declaration");
+  });
+
+  it("rejects a candidate that rewrites an old fixture migration", () => {
+    const fixture = manifest(["0000_base"], { "0000_base": "SELECT 1;" }, "fixture");
+    const candidate = manifest(
+      ["0000_base", "0001_next"],
+      { "0000_base": "SELECT 2;", "0001_next": "SELECT 3;" },
+      "candidate",
+    );
+    const matrix = {
+      "1.1.0": {
+        candidateFingerprint: candidate.fingerprint,
+        fixtures: [{
+          version: "1.0.0",
+          ref: "v1.0.0",
+          fingerprint: fixture.fingerprint,
+        }],
+      },
+    };
+
+    expect(() => validateCompatibilityMatrix({
+      candidateManifest: candidate,
+      candidateVersion: "1.1.0",
+      channel: "stable",
+      matrix,
+      loadFixture: () => fixture,
+    })).toThrow("published migration history must remain immutable");
+  });
+
+  it("fingerprints compatibility SQL files that are intentionally outside the journal", () => {
+    const fixture = buildMigrationManifest({
+      label: "fixture",
+      journalRaw: journal(["0000_base"]),
+      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
+      readSqlFile: (fileName) => ({
+        "0000_base.sql": "SELECT 1;",
+        "0055_legacy_compat.sql": "SELECT 2;",
+      })[fileName],
+    });
+    const candidate = buildMigrationManifest({
+      label: "candidate",
+      journalRaw: journal(["0000_base"]),
+      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
+      readSqlFile: (fileName) => ({
+        "0000_base.sql": "SELECT 1;",
+        "0055_legacy_compat.sql": "SELECT 3;",
+      })[fileName],
+    });
+
+    expect(() => validateCompatibilityMatrix({
+      candidateManifest: candidate,
+      candidateVersion: "1.1.0",
+      channel: "stable",
+      matrix: {
+        "1.1.0": {
+          candidateFingerprint: candidate.fingerprint,
+          fixtures: [{
+            version: "1.0.0",
+            ref: "v1.0.0",
+            fingerprint: fixture.fingerprint,
+          }],
+        },
+      },
+      loadFixture: () => fixture,
+    })).toThrow("rewrites migration file 0055_legacy_compat.sql");
+  });
+
+  it("exits nonzero before release work when the CLI matrix declaration is missing", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/release-compatibility-matrix.mjs",
+        "--channel",
+        "stable",
+        "--candidate-version",
+        "9.9.9",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("has no old-version matrix declaration");
+  });
+});

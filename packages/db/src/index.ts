@@ -10,9 +10,8 @@ export {
   type RunDatabaseRestoreOptions
 } from "./backup-lib.js";
 export {
-  applyPendingMigrations, createDb, ensurePostgresDatabase,
-  ensurePostgresRolePassword, getPostgresDataDirectory, inspectMigrations, migratePostgresIfEmpty, normalizeLegacyColumnNames, reconcilePendingMigrationHistory, type Db, type EnsurePostgresRolePasswordOptions,
-  type EnsurePostgresRolePasswordResult, type MigrationBootstrapResult, type MigrationHistoryReconcileResult, type MigrationState
+  MIGRATION_ADVISORY_LOCK_NAME, applyPendingMigrations, assertPostMigrationInvariants, createDb, ensurePostgresDatabase,
+  ensurePostgresRolePassword, getPostgresDataDirectory, inspectMigrations, migratePostgresIfEmpty, normalizeLegacyColumnNames, reconcilePendingMigrationHistory, validatePostMigrationInvariants, type Db, type EnsurePostgresRolePasswordOptions, type EnsurePostgresRolePasswordResult, type MigrationBootstrapResult, type MigrationHistoryReconcileResult, type MigrationState, type PostMigrationInvariantIssue, type PostMigrationInvariantReport
 } from "./client.js";
 export {
   cleanupStaleSysvSharedMemorySegments,
@@ -38,4 +37,13 @@ export {
   type LocalPostgresProvider,
   type PostgresVersionRunner
 } from "./local-postgres-provider.js";
+export {
+  assertMigrationManifestCompatible,
+  createMigrationManifest,
+  validateMigrationManifestCompatibility,
+  validateMigrationManifestIntegrity,
+  type MigrationManifest,
+  type MigrationManifestEntry,
+  type MigrationManifestValidation
+} from "./migration-manifest.js";
 export * from "./schema/index.js";

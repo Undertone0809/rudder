@@ -12,7 +12,9 @@ import {
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
   inspectMigrations,
+  MIGRATION_ADVISORY_LOCK_NAME,
   reconcilePendingMigrationHistory,
+  validatePostMigrationInvariants,
 } from "./client.js";
 
 type EmbeddedPostgresInstance = {
@@ -253,6 +255,113 @@ afterEach(async () => {
 });
 
 describe("applyPendingMigrations", () => {
+  it(
+    "serializes migration attempts with a database advisory lock",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const blocker = postgres(connectionString, { max: 1, onnotice: () => {} });
+      let lockReleased = false;
+
+      try {
+        await blocker`
+          SELECT pg_advisory_lock(
+            hashtext(current_database()),
+            hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+          )
+        `;
+        const migration = applyPendingMigrations(connectionString);
+        const initialOutcome = await Promise.race([
+          migration.then(() => "completed" as const),
+          new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 150)),
+        ]);
+        expect(initialOutcome).toBe("waiting");
+
+        await blocker`
+          SELECT pg_advisory_unlock(
+            hashtext(current_database()),
+            hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+          )
+        `;
+        lockReleased = true;
+        await migration;
+      } finally {
+        if (!lockReleased) {
+          await blocker`
+            SELECT pg_advisory_unlock(
+              hashtext(current_database()),
+              hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+            )
+          `;
+        }
+        await blocker.end();
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "reports journal, core table, foreign key, and index invariants after migration",
+    async () => {
+      const connectionString = await createTempDatabase();
+
+      await applyPendingMigrations(connectionString);
+      const report = await validatePostMigrationInvariants(connectionString);
+
+      expect(report).toMatchObject({
+        valid: true,
+        migrationJournalSchema: "drizzle",
+        organizationsTablePresent: true,
+        organizationsPrimaryKeyValid: true,
+        unvalidatedForeignKeys: [],
+        invalidIndexes: [],
+        issues: [],
+      });
+      expect(report.manifestFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(report.expectedMigrationCount).toBeGreaterThan(0);
+      expect(report.migrationJournalEntryCount).toBeGreaterThan(0);
+      expect(report.foreignKeyCount).toBeGreaterThan(0);
+
+      const journalTamperSql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await journalTamperSql.unsafe(`
+          UPDATE "drizzle"."__drizzle_migrations"
+          SET "hash" = repeat('0', 64)
+          WHERE "id" = (SELECT min("id") FROM "drizzle"."__drizzle_migrations")
+        `);
+      } finally {
+        await journalTamperSql.end();
+      }
+      const tamperedReport = await validatePostMigrationInvariants(connectionString);
+      expect(tamperedReport.valid).toBe(false);
+      expect(tamperedReport.issues).toContainEqual(expect.objectContaining({
+        code: "migration_journal_invalid",
+      }));
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`CREATE TABLE "migration_invariant_parent" ("id" integer PRIMARY KEY)`);
+        await sql.unsafe(`CREATE TABLE "migration_invariant_child" ("parent_id" integer)`);
+        await sql.unsafe(`
+          ALTER TABLE "migration_invariant_child"
+          ADD CONSTRAINT "migration_invariant_child_parent_fk"
+          FOREIGN KEY ("parent_id") REFERENCES "migration_invariant_parent"("id") NOT VALID
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const invalidReport = await validatePostMigrationInvariants(connectionString);
+      expect(invalidReport.valid).toBe(false);
+      expect(invalidReport.unvalidatedForeignKeys).toEqual([
+        "migration_invariant_child.migration_invariant_child_parent_fk",
+      ]);
+      expect(invalidReport.issues).toContainEqual(expect.objectContaining({
+        code: "foreign_keys_not_validated",
+      }));
+    },
+    30_000,
+  );
+
   it(
     "normalizes legacy embedded cluster passwords back to rudder",
     async () => {
@@ -637,7 +746,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    40_000,
   );
 
   it(
@@ -785,7 +894,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    40_000,
   );
 
   it(
@@ -858,7 +967,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    40_000,
   );
 
   it(

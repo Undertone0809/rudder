@@ -1,6 +1,7 @@
 /// <reference path="./types/express.d.ts" />
 import {
   applyPendingMigrations,
+  assertPostMigrationInvariants,
   authUsers,
   cleanupStaleSysvSharedMemorySegments,
   createDb,
@@ -18,6 +19,7 @@ import {
   organizations,
   reconcilePendingMigrationHistory,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
+  runDatabaseBackup,
   type Db,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
@@ -433,7 +435,77 @@ async function startServerRuntime(
   
   type EnsureMigrationsOptions = {
     autoApply?: boolean;
+    recoveryPointDir?: string;
+    recoveryPointRetentionDays?: number;
   };
+
+  async function createMigrationRecoveryPoint(
+    connectionString: string,
+    label: string,
+    opts: EnsureMigrationsOptions,
+  ): Promise<string> {
+    const backupDir = opts.recoveryPointDir;
+    if (!backupDir) {
+      throw new Error(
+        `${label} requires a migration recovery point, but no database backup directory is configured. ` +
+          "Refusing to migrate without a restorable pre-migration backup.",
+      );
+    }
+
+    try {
+      const result = await runDatabaseBackup({
+        connectionString,
+        backupDir,
+        retentionDays: Math.max(1, opts.recoveryPointRetentionDays ?? 30),
+        filenamePrefix: "rudder-pre-migration",
+        includeMigrationJournal: true,
+      });
+      logger.info(
+        {
+          label,
+          backupFile: result.backupFile,
+          sizeBytes: result.sizeBytes,
+          prunedCount: result.prunedCount,
+        },
+        `${label} migration recovery point created before schema upgrade`,
+      );
+      return result.backupFile;
+    } catch (error) {
+      throw new Error(
+        `${label} migration recovery point failed; refusing to apply schema changes: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  async function applyMigrationsWithRecoveryPoint(
+    connectionString: string,
+    label: string,
+    pendingMigrations: string[],
+    opts: EnsureMigrationsOptions,
+    requiresRecoveryPoint = true,
+    existingRecoveryPoint?: string | null,
+  ): Promise<void> {
+    const recoveryPoint = existingRecoveryPoint ?? (requiresRecoveryPoint
+      ? await createMigrationRecoveryPoint(connectionString, label, opts)
+      : null);
+    logger.info(
+      { label, pendingMigrations, ...(recoveryPoint ? { recoveryPoint } : {}) },
+      `Applying ${pendingMigrations.length} pending migrations for ${label}`,
+    );
+    await applyPendingMigrations(connectionString);
+    try {
+      await assertPostMigrationInvariants(connectionString);
+    } catch (error) {
+      throw new Error(
+        `${label} migration completed without passing post-migration invariants. ` +
+          `${recoveryPoint ? `Recovery point: ${recoveryPoint}. ` : ""}` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
   
   async function ensureMigrations(
     connectionString: string,
@@ -450,6 +522,13 @@ async function startServerRuntime(
 
     const autoApply = opts?.autoApply === true;
     let state = await inspectMigrations(connectionString);
+    // Journal reconciliation can write history rows. Capture the database before
+    // that repair as well as before SQL migrations so every upgrade mutation has
+    // one recoverable pre-change state.
+    let recoveryPoint: string | null = null;
+    if (state.status === "needsMigrations" && state.reason === "pending-migrations" && state.tableCount > 0) {
+      recoveryPoint = await createMigrationRecoveryPoint(connectionString, label, opts ?? {});
+    }
     if (state.status === "needsMigrations" && state.reason === "pending-migrations") {
       const repair = await reconcilePendingMigrationHistory(connectionString);
       if (repair.repairedMigrations.length > 0) {
@@ -458,7 +537,10 @@ async function startServerRuntime(
           `${label} had drifted migration history; repaired migration journal entries from existing schema state.`,
         );
         state = await inspectMigrations(connectionString);
-        if (state.status === "upToDate") return "already applied";
+        if (state.status === "upToDate") {
+          await assertPostMigrationInvariants(connectionString);
+          return "already applied";
+        }
       }
     }
     if (state.status === "upToDate") return "already applied";
@@ -475,8 +557,7 @@ async function startServerRuntime(
         );
       }
   
-      logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
-      await applyPendingMigrations(connectionString);
+      await applyMigrationsWithRecoveryPoint(connectionString, label, state.pendingMigrations, opts ?? {}, true);
       return "applied (pending migrations)";
     }
   
@@ -488,8 +569,14 @@ async function startServerRuntime(
       );
     }
   
-    logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
-    await applyPendingMigrations(connectionString);
+    await applyMigrationsWithRecoveryPoint(
+      connectionString,
+      label,
+      state.pendingMigrations,
+      opts ?? {},
+      state.tableCount > 0,
+      recoveryPoint,
+    );
     return "applied (pending migrations)";
   }
   
@@ -572,7 +659,10 @@ async function startServerRuntime(
     | { mode: "embedded-postgres"; provider: string; dataDir: string; port: number; postgresBinDir?: string };
   options.onEvent?.({ stage: "database", message: "Preparing database" });
   if (config.databaseUrl) {
-    migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL");
+    migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL", {
+      recoveryPointDir: config.databaseBackupDir,
+      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
+    });
   
     db = createDb(config.databaseUrl);
     logger.info("Using external PostgreSQL via DATABASE_URL/config");
@@ -763,6 +853,8 @@ async function startServerRuntime(
     }
     migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL", {
       autoApply: shouldAutoApplyFirstRunMigrations,
+      recoveryPointDir: config.databaseBackupDir,
+      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
     });
   
     db = createDb(embeddedConnectionString);

@@ -91,6 +91,7 @@ const CLEAR_INHERITED_RUNTIME_ENV_COMMAND =
 export default defineConfig({
   testDir: ".",
   testMatch: "**/*.spec.ts",
+  globalTeardown: "./support/global-teardown.ts",
   timeout: 60_000,
   retries: 0,
   use: {
