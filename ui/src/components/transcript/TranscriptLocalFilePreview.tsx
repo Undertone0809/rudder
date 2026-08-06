@@ -224,9 +224,12 @@ function DesktopLocalTextFileEditor({
     : { frontmatter: null, separator: "", body: draftContent };
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" data-testid="chat-side-panel-local-file-editor">
+    <div
+      className="relative flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
+      data-testid="chat-side-panel-local-file-editor"
+    >
       {preview.previewKind === "markdown" ? (
-        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
+        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
           <div className="rudder-readable-document mx-auto w-full max-w-[880px]">
             {markdownParts.frontmatter !== null ? (
               <details
@@ -266,7 +269,7 @@ function DesktopLocalTextFileEditor({
           </div>
         </div>
       ) : (
-        <div ref={annotationContainerRef} className="min-h-0 flex-1 pb-14">
+        <div ref={annotationContainerRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-14">
           <WorkspaceCodeEditor
             data-testid="chat-side-panel-local-file-source-editor"
             annotationSource={{
@@ -399,7 +402,10 @@ export function TranscriptLocalFilePreview({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-local-file-view">
+    <div
+      className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
+      data-testid="chat-side-panel-local-file-view"
+    >
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-foreground">{preview.fileName || label}</div>

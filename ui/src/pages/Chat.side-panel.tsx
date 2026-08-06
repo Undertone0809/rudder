@@ -1163,14 +1163,14 @@ function ChatSidePanelTextFileEditor({
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 flex-col"
+      className="relative flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
       data-testid={markdown
         ? "chat-side-panel-library-markdown-editor"
         : "chat-side-panel-library-text-editor"}
     >
       {sourceToolbar}
       {markdown ? (
-        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
+        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
           <div className="rudder-readable-document mx-auto w-full max-w-[880px]">
             {markdownParts.frontmatter !== null ? (
               <details
@@ -1213,7 +1213,7 @@ function ChatSidePanelTextFileEditor({
           </div>
         </div>
       ) : (
-        <div ref={annotationContainerRef} className="min-h-0 flex-1 pb-14">
+        <div ref={annotationContainerRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-14">
           <WorkspaceCodeEditor
             data-testid="chat-side-panel-library-text-source-editor"
             annotationSource={{
@@ -1502,7 +1502,10 @@ function ChatSidePanelLibraryFileView({
   const LibraryFileIcon = html ? Globe2 : libraryFile.previewKind === "video" ? FileVideo2 : libraryFile.previewKind === "audio" ? FileAudio2 : FileText;
 
   return (
-    <div className="flex h-full min-h-[420px] flex-col" data-testid="chat-side-panel-library-file-view">
+    <div
+      className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
+      data-testid="chat-side-panel-library-file-view"
+    >
       <div
         className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4"
         data-testid="chat-side-panel-library-file-toolbar"
@@ -2564,7 +2567,9 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || subagentsTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || subagentsTarget || subagentTarget
+            ? "flex h-full flex-col overflow-hidden"
+            : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
