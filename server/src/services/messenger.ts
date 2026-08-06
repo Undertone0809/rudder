@@ -1747,7 +1747,7 @@ export function messengerService(db: Db) {
                     and attention_follow_row.issue_id = issue_row.id
                 )
               )
-              then issue_row.updated_at
+              then issue_row.created_at
             else null
           end as "attentionActivityAt",
           latest_external_comment.body as "latestExternalCommentBody",
@@ -2015,6 +2015,21 @@ export function messengerService(db: Db) {
       where "attentionActivityAt" is not null
     `)) as Array<{ latestActivityAt: Date | null }>;
     return normalizeDate(rows[0]?.latestActivityAt ?? null);
+  }
+
+  async function loadLatestIssueReadAtById(orgId: string, userId: string, issueId: string) {
+    const [issue] = await db
+      .select({ updatedAt: issues.updatedAt })
+      .from(issues)
+      .where(and(
+        eq(issues.orgId, orgId),
+        eq(issues.id, issueId),
+      ))
+      .limit(1);
+    return maxDate(
+      normalizeDate(issue?.updatedAt ?? null),
+      await loadLatestIssueAttentionAtById(orgId, userId, issueId),
+    );
   }
 
   async function loadLatestIssueDisplayEntry(orgId: string, userId: string) {
@@ -2837,7 +2852,7 @@ export function messengerService(db: Db) {
     if (threadKey.startsWith("issue:")) {
       const issueId = threadKey.slice("issue:".length);
       if (!await canUseIssueThread(orgId, userId, issueId)) return null;
-      effectiveReadAt = maxDate(readAt, await loadLatestIssueAttentionAtById(orgId, userId, issueId)) ?? readAt;
+      effectiveReadAt = maxDate(readAt, await loadLatestIssueReadAtById(orgId, userId, issueId)) ?? readAt;
     } else if (threadKey === "issues") {
       effectiveReadAt = maxDate(readAt, await loadLatestIssueAttentionAt(orgId, userId)) ?? readAt;
     }
