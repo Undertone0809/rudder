@@ -6,7 +6,11 @@ import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
-import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
+import {
+  ensureProductAnalyticsWorkCycle,
+  recordProductAnalyticsChatCreated,
+  recordProductAnalyticsEvent,
+} from "./product-analytics.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 
@@ -68,6 +72,14 @@ export async function createChatConversation(db: Db, orgId: string, data: Create
         })))
         .onConflictDoNothing();
     }
+    await recordProductAnalyticsChatCreated(tx as unknown as Db, {
+      orgId,
+      conversationId: conversation.id,
+      createdAt: conversation.createdAt,
+      createdByUserId: conversation.createdByUserId,
+      creationPath: "empty",
+      planMode: conversation.planMode,
+    });
     return conversation;
   });
   return created;
@@ -217,38 +229,16 @@ export async function createChatWithInitialMessage(
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
 
-    const creationPath = chatCreationPath(data);
-    const creationActorType = data.createdByUserId
-      ? "human"
-      : creationPath === "automation"
-        ? "automation"
-        : data.activity?.actorType === "agent"
-          ? "agent"
-          : "system";
-    const creationOrigin = creationActorType === "human"
-      ? "human"
-      : creationActorType === "automation"
-        ? "automation"
-        : "system";
-    await recordProductAnalyticsEvent(client, {
+    await recordProductAnalyticsChatCreated(client, {
       orgId,
-      eventName: "chat_created",
-      occurredAt: conversationRow.createdAt,
-      sourceTransition: "chat.initial_message.create",
-      confidence: "exact",
-      actorType: creationActorType,
-      actorId: data.createdByUserId ?? data.activity?.actorId ?? null,
-      entityType: "chat",
-      entityId: conversationRow.id,
-      workSurface: "chat",
-      workId: conversationRow.id,
-      origin: creationOrigin,
-      dedupeKey: `chat_created:${conversationRow.id}`,
-      properties: {
-        creation_path: creationPath,
-        initial_role: data.initialMessage.role,
-        plan_mode: data.planMode,
-      },
+      conversationId: conversationRow.id,
+      createdAt: conversationRow.createdAt,
+      createdByUserId: data.createdByUserId,
+      actorType: data.activity?.actorType === "user" ? "human" : data.activity?.actorType,
+      actorId: data.activity?.actorId ?? null,
+      creationPath: chatCreationPath(data),
+      planMode: data.planMode,
+      initialRole: data.initialMessage.role,
     });
 
     if (data.initialMessage.role === "user" && data.createdByUserId) {

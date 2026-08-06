@@ -91,7 +91,10 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
-import { completeProductAnalyticsWorkCycle } from "./product-analytics.js";
+import {
+  completeProductAnalyticsWorkCycle,
+  recordProductAnalyticsChatCreated,
+} from "./product-analytics.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -3783,6 +3786,18 @@ export function chatService(db: Db) {
         })
         .returning();
       if (!child) throw new Error("Failed to create forked chat conversation");
+
+      await recordProductAnalyticsChatCreated(tx as unknown as Db, {
+        orgId: input.orgId,
+        conversationId: child.id,
+        createdAt: child.createdAt,
+        createdByUserId: input.createdByUserId,
+        actorType: "human",
+        actorId: input.userId,
+        creationPath: "fork",
+        planMode: child.planMode,
+        initialRole: "system",
+      });
 
       const contextLinks = await tx
         .select()

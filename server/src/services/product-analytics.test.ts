@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
-import { buildProductAnalyticsExportPayload, productAnalyticsRunTerminalEventName, pseudonymizeProductAnalyticsId, recordProductAnalyticsEvent } from "./product-analytics.js";
+import {
+  buildProductAnalyticsExportPayload,
+  productAnalyticsRunTerminalEventName,
+  pseudonymizeProductAnalyticsId,
+  recordProductAnalyticsChatCreated,
+  recordProductAnalyticsEvent,
+} from "./product-analytics.js";
 
 function createInsertDb(returnedRows: Array<{ id: string }>) {
   const returning = vi.fn().mockResolvedValue(returnedRows);
@@ -137,6 +143,30 @@ describe("product analytics local ledger", () => {
       dedupeKey: "chat_created:chat-1",
       properties: { creation_path: "manual", initial_role: "user", plan_mode: true },
     })).resolves.toEqual({ id: "chat-created-event" });
+  });
+
+  it("normalizes chat creation provenance through the shared helper", async () => {
+    const stub = createInsertDb([{ id: "chat-created-event" }]);
+
+    await expect(recordProductAnalyticsChatCreated(stub.db, {
+      orgId: "org-1",
+      conversationId: "chat-1",
+      createdAt: new Date("2026-08-06T10:00:00Z"),
+      createdByUserId: "user-1",
+      actorType: "human",
+      actorId: "user-1",
+      creationPath: "side_chat",
+      planMode: false,
+      initialRole: "system",
+    })).resolves.toEqual({ id: "chat-created-event" });
+    expect(stub.values).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTransition: "chat.side_chat.create",
+      actorType: "human",
+      actorId: "user-1",
+      origin: "human",
+      dedupeKey: "chat_created:chat-1",
+      properties: { creation_path: "side_chat", initial_role: "system", plan_mode: false },
+    }));
   });
 
   it("records work-loop events without treating deferred names as unavailable", async () => {
