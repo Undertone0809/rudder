@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { ensurePostgresDatabase, getPostgresDataDirectory } from "./client.js";
@@ -6,6 +6,8 @@ import {
   cleanupStaleSysvSharedMemorySegments,
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
+  readPostmasterPidFile,
+  removeStalePostmasterPidFile,
 } from "./embedded-postgres-recovery.js";
 import {
   createLocalPostgresInstance,
@@ -19,29 +21,6 @@ export type MigrationConnection = {
   source: string;
   stop: () => Promise<void>;
 };
-
-function readRunningPostmasterPid(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
-  try {
-    const pid = Number(readFileSync(postmasterPidFile, "utf8").split("\n")[0]?.trim());
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null;
-  }
-}
-
-function readPidFilePort(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
-  try {
-    const lines = readFileSync(postmasterPidFile, "utf8").split("\n");
-    const port = Number(lines[3]?.trim());
-    return Number.isInteger(port) && port > 0 ? port : null;
-  } catch {
-    return null;
-  }
-}
 
 async function isPortInUse(port: number): Promise<boolean> {
   return await new Promise((resolve) => {
@@ -97,8 +76,17 @@ async function ensureEmbeddedPostgresConnection(
       recentLogs,
     );
   };
-  const runningPid = readRunningPostmasterPid(postmasterPidFile);
-  const runningPort = readPidFilePort(postmasterPidFile);
+  const postmaster = readPostmasterPidFile(postmasterPidFile);
+  let runningPid: number | null = null;
+  if (postmaster?.pid) {
+    try {
+      process.kill(postmaster.pid, 0);
+      runningPid = postmaster.pid;
+    } catch {
+      runningPid = null;
+    }
+  }
+  const runningPort = postmaster?.port ?? null;
   const preferredAdminConnectionString = `postgres://rudder:rudder@127.0.0.1:${preferredPort}/postgres`;
 
   if (!runningPid && existsSync(pgVersionFile)) {
@@ -166,9 +154,10 @@ async function ensureEmbeddedPostgresConnection(
       );
     }
   }
-  if (existsSync(postmasterPidFile)) {
-    rmSync(postmasterPidFile, { force: true });
-  }
+  removeStalePostmasterPidFile({
+    postmasterPidFile,
+    expectedDataDir: dataDir,
+  });
 
   let startedInstance = instance;
   try {

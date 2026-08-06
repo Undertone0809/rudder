@@ -114,6 +114,31 @@ describe("product analytics local ledger", () => {
     })).resolves.toEqual({ id: "organization-event" });
   });
 
+  it("allows content-free issue and chat creation dimensions", async () => {
+    const issueStub = createInsertDb([{ id: "issue-created-event" }]);
+    await expect(recordProductAnalyticsEvent(issueStub.db, {
+      ...baseEvent,
+      eventName: "issue_created",
+      dedupeKey: "issue_created:issue-1",
+      properties: {
+        creation_path: "manual",
+        has_goal_link: true,
+        has_project_link: false,
+        is_sub_issue: false,
+      },
+    })).resolves.toEqual({ id: "issue-created-event" });
+
+    const chatStub = createInsertDb([{ id: "chat-created-event" }]);
+    await expect(recordProductAnalyticsEvent(chatStub.db, {
+      ...baseEvent,
+      eventName: "chat_created",
+      entityType: "chat",
+      entityId: "chat-1",
+      dedupeKey: "chat_created:chat-1",
+      properties: { creation_path: "manual", initial_role: "user", plan_mode: true },
+    })).resolves.toEqual({ id: "chat-created-event" });
+  });
+
   it("records work-loop events without treating deferred names as unavailable", async () => {
     const stub = createInsertDb([{ id: "loop-event" }]);
     await expect(recordProductAnalyticsEvent(stub.db, {

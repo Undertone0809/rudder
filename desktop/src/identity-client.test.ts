@@ -540,8 +540,10 @@ describe("Desktop Identity client", () => {
       throw new Error(`Unexpected Identity request: ${url.pathname}`);
     });
     const openExternal = vi.fn(async (target: string) => {
-      const authorize = new URL(target);
-      expect(authorize.origin).toBe("https://accounts.rudderhq.dev");
+      const login = new URL(target);
+      expect(login.origin).toBe("https://accounts.rudderhq.dev");
+      expect(login.pathname).toBe("/");
+      const authorize = new URL(login.searchParams.get("next")!, login.origin);
       expect(authorize.pathname).toBe("/api/desktop/authorize");
       expect(authorize.searchParams.get("login_intent")).toBe("opaque_intent_with_enough_random_material");
       const callback = new URL(authorize.searchParams.get("redirect_uri")!);

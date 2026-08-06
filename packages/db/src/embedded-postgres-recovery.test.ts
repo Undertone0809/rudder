@@ -1,9 +1,68 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
   parseSysvSharedMemorySegments,
+  readPostmasterPidFile,
+  removeStalePostmasterPidFile,
 } from "./embedded-postgres-recovery.js";
+
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function createPidFile(contents: string): string {
+  const root = mkdtempSync(path.join(os.tmpdir(), "rudder-postmaster-recovery-"));
+  tempRoots.push(root);
+  const file = path.join(root, "postmaster.pid");
+  writeFileSync(file, contents, "utf8");
+  return file;
+}
+
+function stalePidFileContents(dataDir: string, port = 54329): string {
+  return ["2147483647", dataDir, "0", String(port), "", "127.0.0.1", "", "ready", ""].join("\n");
+}
+
+describe("PostgreSQL postmaster pid recovery", () => {
+  it("parses the data directory and port from a pid file", () => {
+    const file = createPidFile(stalePidFileContents("C:/rudder/db", 54339));
+
+    expect(readPostmasterPidFile(file)).toEqual({
+      pid: 2147483647,
+      dataDir: "C:/rudder/db",
+      port: 54339,
+    });
+  });
+
+  it("removes a dead pid file without touching the database cluster", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "rudder-postmaster-recovery-db-"));
+    tempRoots.push(root);
+    const dataDir = path.join(root, "db");
+    const file = createPidFile(stalePidFileContents(dataDir, 54339));
+
+    expect(removeStalePostmasterPidFile({ postmasterPidFile: file, expectedDataDir: dataDir })).toEqual({
+      pid: 2147483647,
+      dataDir,
+      port: 54339,
+    });
+    expect(() => readFileSync(file)).toThrow();
+  });
+
+  it("refuses to remove a pid file for another data directory", () => {
+    const file = createPidFile(stalePidFileContents("C:/other/db"));
+
+    expect(removeStalePostmasterPidFile({
+      postmasterPidFile: file,
+      expectedDataDir: "C:/rudder/db",
+    })).toBeNull();
+    expect(readFileSync(file, "utf8")).toContain("C:/other/db");
+  });
+});
 
 describe("createEmbeddedPostgresStartupError", () => {
   it("turns an undefined process rejection into an actionable error with buffered logs", () => {
