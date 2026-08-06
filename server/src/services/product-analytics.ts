@@ -161,7 +161,9 @@ export async function recordProductAnalyticsChatCreated(
     orgId: input.orgId,
     eventName: "chat_created",
     occurredAt: input.createdAt,
-    sourceTransition: `chat.${input.creationPath}.create`,
+    sourceTransition: input.creationPath === "manual"
+      ? "chat.initial_message.create"
+      : `chat.${input.creationPath}.create`,
     confidence: "exact",
     actorType,
     actorId: input.createdByUserId ?? input.actorId ?? null,

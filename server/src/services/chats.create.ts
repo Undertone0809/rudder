@@ -229,14 +229,17 @@ export async function createChatWithInitialMessage(
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
 
+    const creationPath = chatCreationPath(data);
     await recordProductAnalyticsChatCreated(client, {
       orgId,
       conversationId: conversationRow.id,
       createdAt: conversationRow.createdAt,
       createdByUserId: data.createdByUserId,
-      actorType: data.activity?.actorType === "user" ? "human" : data.activity?.actorType,
+      actorType: creationPath === "automation"
+        ? "automation"
+        : data.activity?.actorType === "user" ? "human" : data.activity?.actorType,
       actorId: data.activity?.actorId ?? null,
-      creationPath: chatCreationPath(data),
+      creationPath,
       planMode: data.planMode,
       initialRole: data.initialMessage.role,
     });

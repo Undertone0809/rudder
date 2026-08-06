@@ -169,6 +169,25 @@ describe("product analytics local ledger", () => {
     }));
   });
 
+  it("keeps automation chat creation attributed to automation", async () => {
+    const stub = createInsertDb([{ id: "automation-chat-created-event" }]);
+
+    await expect(recordProductAnalyticsChatCreated(stub.db, {
+      orgId: "org-1",
+      conversationId: "automation-chat-1",
+      createdAt: new Date("2026-08-06T10:00:00Z"),
+      createdByUserId: null,
+      actorType: "automation",
+      creationPath: "automation",
+      planMode: true,
+    })).resolves.toEqual({ id: "automation-chat-created-event" });
+    expect(stub.values).toHaveBeenCalledWith(expect.objectContaining({
+      actorType: "automation",
+      origin: "automation",
+      properties: { creation_path: "automation", plan_mode: true },
+    }));
+  });
+
   it("records work-loop events without treating deferred names as unavailable", async () => {
     const stub = createInsertDb([{ id: "loop-event" }]);
     await expect(recordProductAnalyticsEvent(stub.db, {

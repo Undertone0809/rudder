@@ -306,6 +306,51 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  it("records empty and fork chat creation at their service boundaries", async () => {
+    const orgId = randomUUID();
+    const userId = "analytics-chat-boundary-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat boundary analytics",
+      urlKey: deriveOrganizationUrlKey("Chat boundary analytics"),
+      issuePrefix: `B${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const source = await chatSvc.create(orgId, {
+      title: "Boundary source",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const answer = await chatSvc.addMessage(source.id, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      body: "Fork from this answer",
+    });
+    const child = await chatSvc.forkConversation({
+      sourceConversationId: source.id,
+      orgId,
+      userId,
+      sourceMessageId: answer.id,
+      createdByUserId: userId,
+    });
+
+    const sourceEvents = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, source.id));
+    const childEvents = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, child.id));
+    expect(sourceEvents.filter((event) => event.eventName === "chat_created")).toMatchObject([
+      { properties: { creation_path: "empty" } },
+    ]);
+    expect(childEvents.filter((event) => event.eventName === "chat_created")).toMatchObject([
+      { properties: { creation_path: "fork", initial_role: "system" } },
+    ]);
+    expect(sourceEvents.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
+    expect(childEvents.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
+  });
+
   async function createQueuedAnnotationFixture(input: {
     body?: string;
     sourceBody?: string;
