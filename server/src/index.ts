@@ -20,6 +20,7 @@ import {
   reconcilePendingMigrationHistory,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
   runDatabaseBackup,
+  withMigrationAdvisoryLock,
   type Db,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
@@ -494,7 +495,7 @@ async function startServerRuntime(
       { label, pendingMigrations, ...(recoveryPoint ? { recoveryPoint } : {}) },
       `Applying ${pendingMigrations.length} pending migrations for ${label}`,
     );
-    await applyPendingMigrations(connectionString);
+    await applyPendingMigrations(connectionString, { advisoryLockHeld: true });
     try {
       await assertPostMigrationInvariants(connectionString);
     } catch (error) {
@@ -507,7 +508,7 @@ async function startServerRuntime(
     }
   }
   
-  async function ensureMigrations(
+  async function ensureMigrationsUnlocked(
     connectionString: string,
     label: string,
     opts?: EnsureMigrationsOptions,
@@ -543,7 +544,10 @@ async function startServerRuntime(
         }
       }
     }
-    if (state.status === "upToDate") return "already applied";
+    if (state.status === "upToDate") {
+      await assertPostMigrationInvariants(connectionString);
+      return "already applied";
+    }
     if (state.status === "needsMigrations" && state.reason === "no-migration-journal-non-empty-db") {
       logger.warn(
         { tableCount: state.tableCount },
@@ -578,6 +582,17 @@ async function startServerRuntime(
       recoveryPoint,
     );
     return "applied (pending migrations)";
+  }
+
+  async function ensureMigrations(
+    connectionString: string,
+    label: string,
+    opts?: EnsureMigrationsOptions,
+  ): Promise<MigrationSummary> {
+    return withMigrationAdvisoryLock(
+      connectionString,
+      () => ensureMigrationsUnlocked(connectionString, label, opts),
+    );
   }
   
   function isLoopbackHost(host: string): boolean {

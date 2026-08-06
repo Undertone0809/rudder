@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildMigrationManifest,
@@ -34,9 +36,12 @@ function manifest(tags, sqlByTag, label) {
 }
 
 describe("release migration compatibility matrix", () => {
-  it("accepts the checked-in 0.7.2 candidate against immutable release fixtures", () => {
+  it("accepts the committed candidate against immutable release fixtures", () => {
+    const candidateVersion = JSON.parse(
+      readFileSync(join(process.cwd(), "cli/package.json"), "utf8"),
+    ).version;
     const result = runCompatibilityPreflight({
-      candidateVersion: "0.7.2-canary.1",
+      candidateVersion: `${candidateVersion}-canary.1`,
       channel: "canary",
     });
 

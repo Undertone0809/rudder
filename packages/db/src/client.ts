@@ -12,6 +12,15 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL("./migrations", import.meta.url)
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 const MIGRATIONS_JOURNAL_JSON = fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url));
 export const MIGRATION_ADVISORY_LOCK_NAME = "rudder:database-migrations";
+// These hashes belong to migrations that were intentionally superseded by a
+// consolidated migration but remain in existing journals. They are accepted
+// as historical evidence; any other unknown journal hash fails closed.
+const KNOWN_LEGACY_MIGRATION_HISTORY_HASHES = new Set([
+  "e21cac193575f50627e67946ef9afa44ddd17af24627c8799c5024ce534f89e3",
+  "fdf8b69236a60593c52be53ebff89d7f581ddbdbde0227081b11c53b1f6d6578",
+  "fba251275287250b3f05a5533e00d3941a3b1c1a526d0073e5d636a2dd868f80",
+  "a1fc0446af5ec1640890bb9cf36208eab8dce6687c233029bd54e179613e1af7",
+]);
 const LEGACY_COLUMN_RENAMES = [
   { tableName: "agents", from: "adapter_type", to: "agent_runtime_type" },
   { tableName: "agents", from: "adapter_config", to: "agent_runtime_config" },
@@ -997,7 +1006,24 @@ export async function validatePostMigrationInvariants(
           const expectedByActualName = actualName ? expectedByName.get(actualName) : undefined;
           const matchedExpected = expectedByActualHash ?? expectedByActualName;
           if (matchedExpected) {
+            if (matchedExpectedFiles.has(matchedExpected.fileName)) {
+              issues.push({
+                code: "migration_journal_invalid",
+                message: `Migration journal contains duplicate history for ${matchedExpected.fileName}`,
+              });
+            }
             matchedExpectedFiles.add(matchedExpected.fileName);
+          } else {
+            const isKnownLegacyHash = actualHash !== null && (
+              actualHash.startsWith("legacy-")
+              || KNOWN_LEGACY_MIGRATION_HISTORY_HASHES.has(actualHash)
+            );
+            if (!isKnownLegacyHash) {
+              issues.push({
+                code: "migration_journal_invalid",
+                message: `Migration journal entry ${index} does not match any current migration manifest entry`,
+              });
+            }
           }
           if (
             (expectedByActualHash && actualName !== null && actualName !== expectedByActualHash.fileName)
@@ -1129,6 +1155,33 @@ export async function assertPostMigrationInvariants(url: string): Promise<void> 
   }
 }
 
+export async function withMigrationAdvisoryLock<T>(
+  url: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const lockSql = createUtilitySql(url);
+  try {
+    await lockSql`
+      SELECT pg_advisory_lock(
+        hashtext(current_database()),
+        hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+      )
+    `;
+    return await action();
+  } finally {
+    try {
+      await lockSql`
+        SELECT pg_advisory_unlock(
+          hashtext(current_database()),
+          hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+        )
+      `;
+    } finally {
+      await lockSql.end();
+    }
+  }
+}
+
 async function applyPendingMigrationsWithoutLock(url: string): Promise<void> {
   await normalizeLegacyColumnNames(url);
   const initialState = await inspectMigrations(url);
@@ -1204,30 +1257,22 @@ async function applyPendingMigrationsWithoutLock(url: string): Promise<void> {
   }
 }
 
-export async function applyPendingMigrations(url: string): Promise<void> {
-  const lockSql = createUtilitySql(url);
-  try {
-    await lockSql`
-      SELECT pg_advisory_lock(
-        hashtext(current_database()),
-        hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
-      )
-    `;
+export async function applyPendingMigrations(
+  url: string,
+  options: { advisoryLockHeld?: boolean } = {},
+): Promise<void> {
+  const apply = async () => {
     await createMigrationManifest();
     await applyPendingMigrationsWithoutLock(url);
     await assertPostMigrationInvariants(url);
-  } finally {
-    try {
-      await lockSql`
-        SELECT pg_advisory_unlock(
-          hashtext(current_database()),
-          hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
-        )
-      `;
-    } finally {
-      await lockSql.end();
-    }
+  };
+
+  if (options.advisoryLockHeld) {
+    await apply();
+    return;
   }
+
+  await withMigrationAdvisoryLock(url, apply);
 }
 
 export type MigrationBootstrapResult =

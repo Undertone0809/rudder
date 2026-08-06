@@ -11,7 +11,7 @@ export {
 } from "./backup-lib.js";
 export {
   MIGRATION_ADVISORY_LOCK_NAME, applyPendingMigrations, assertPostMigrationInvariants, createDb, ensurePostgresDatabase,
-  ensurePostgresRolePassword, getPostgresDataDirectory, inspectMigrations, migratePostgresIfEmpty, normalizeLegacyColumnNames, reconcilePendingMigrationHistory, validatePostMigrationInvariants, type Db, type EnsurePostgresRolePasswordOptions, type EnsurePostgresRolePasswordResult, type MigrationBootstrapResult, type MigrationHistoryReconcileResult, type MigrationState, type PostMigrationInvariantIssue, type PostMigrationInvariantReport
+  ensurePostgresRolePassword, getPostgresDataDirectory, inspectMigrations, migratePostgresIfEmpty, normalizeLegacyColumnNames, reconcilePendingMigrationHistory, validatePostMigrationInvariants, withMigrationAdvisoryLock, type Db, type EnsurePostgresRolePasswordOptions, type EnsurePostgresRolePasswordResult, type MigrationBootstrapResult, type MigrationHistoryReconcileResult, type MigrationState, type PostMigrationInvariantIssue, type PostMigrationInvariantReport
 } from "./client.js";
 export {
   cleanupStaleSysvSharedMemorySegments,

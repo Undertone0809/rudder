@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -620,8 +621,17 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
 
     // Write the backup file
     mkdirSync(opts.backupDir, { recursive: true });
-    const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-    await writeFile(backupFile, lines.join("\n"), "utf8");
+    const backupFile = resolve(
+      opts.backupDir,
+      `${filenamePrefix}-${timestamp()}-${process.pid}-${randomUUID()}.sql`,
+    );
+    const temporaryBackupFile = `${backupFile}.tmp-${randomUUID()}`;
+    try {
+      await writeFile(temporaryBackupFile, lines.join("\n"), "utf8");
+      await rename(temporaryBackupFile, backupFile);
+    } finally {
+      await rm(temporaryBackupFile, { force: true }).catch(() => undefined);
+    }
 
     const sizeBytes = statSync(backupFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
