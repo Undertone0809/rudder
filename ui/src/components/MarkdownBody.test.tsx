@@ -414,8 +414,8 @@ describe("MarkdownBody", () => {
     const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
     sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:resolved-labels");
     sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "resolved-labels");
-    const issueText = container.querySelector<HTMLElement>('[data-mention-kind="issue"]')!.firstChild!;
-    const skillText = container.querySelector<HTMLElement>('[data-skill-token="true"]')!.firstChild!;
+    const issueText = container.querySelector<HTMLElement>('[data-mention-kind="issue"] .rudder-inline-token-label')!.firstChild!;
+    const skillText = container.querySelector<HTMLElement>('[data-skill-token="true"] .rudder-inline-token-label')!.firstChild!;
     const range = document.createRange();
     range.setStart(issueText, 0);
     range.setEnd(skillText, skillText.textContent!.length);
@@ -812,6 +812,45 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("rudder-entity-preview-wrap");
   });
 
+  it("keeps long special link labels measurable while exposing truncation metadata", () => {
+    const chatTitle = "A very long chat title that should stay available in the DOM for inspection";
+    const websiteLabel = "A very long website label that should stop growing before it pushes the message wider";
+    const fileLabel = "a-very-long-local-file-name-that-should-stop-growing-before-it-pushes-the-message-wider.tsx";
+    const skillLabel = "a-very-long-skill-reference-label-that-should-stop-growing";
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "[@"
+              + chatTitle
+              + "]("
+              + buildChatMentionHref("chat-long", chatTitle)
+              + ")",
+            "["
+              + websiteLabel
+              + "](https://example.com/long-document)",
+            "["
+              + fileLabel
+              + "](/tmp/"
+              + fileLabel
+              + ")",
+            "["
+              + skillLabel
+              + "](skill://local/%2Fworkspace%2F.agents%2Fskills%2Flong-skill?ref="
+              + skillLabel
+              + ")",
+          ].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("title=\"" + chatTitle + "\"");
+    expect(html).toContain("title=\"" + websiteLabel + "\"");
+    expect(html).toContain("title=\"" + fileLabel + "\"");
+    expect(html).toContain("title=\"" + skillLabel + "\"");
+    expect(html.match(/rudder-inline-token-label/g)?.length).toBeGreaterThanOrEqual(4);
+  });
+
   it("renders automation mentions as live Automation links without previews", () => {
     const href = buildAutomationMentionHref("automation-123", "Morning review");
     const html = renderToStaticMarkup(
@@ -1029,16 +1068,16 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/agents/agent-123"');
     expect(html).toContain('data-mention-kind="agent"');
     expect(html).toContain("--rudder-mention-icon-mask");
-    expect(html).toContain(">CodexCoder</a>");
-    expect(html).not.toContain(">@CodexCoder</a>");
+    expect(html).toContain('class="rudder-inline-token-label">CodexCoder</span>');
+    expect(html).not.toContain(">@CodexCoder</span>");
     expect(html).toContain('href="/agents/agt_d573266f"');
-    expect(html).toContain(">ShortRef Agent</a>");
+    expect(html).toContain('class="rudder-inline-token-label">ShortRef Agent</span>');
     expect(html).not.toContain("agent://agt_d573266f");
     expect(html).toContain('href="/projects/project-456"');
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--rudder-mention-project-color:#336699");
-    expect(html).toContain(">Rudder App</a>");
-    expect(html).not.toContain(">@Rudder App</a>");
+    expect(html).toContain('class="rudder-inline-token-label">Rudder App</span>');
+    expect(html).not.toContain(">@Rudder App</span>");
   });
 
   it("uses the current agent avatar when rendering existing agent mention links", () => {
@@ -1059,7 +1098,7 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('data-mention-kind="agent"');
-    expect(html).toContain(">Current CodexCoder</a>");
+    expect(html).toContain('class="rudder-inline-token-label">Current CodexCoder</span>');
     expect(html).toContain("--rudder-mention-agent-avatar-background");
     expect(html).toContain("data:image/svg+xml");
     expect(html).toContain("--rudder-mention-icon-mask:none");
@@ -1111,10 +1150,10 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain(">Renamed Agent</a>");
-    expect(html).toContain(">Renamed Project</a>");
-    expect(html).toContain(">ZST-789 Renamed issue</a>");
-    expect(html).toContain(">Renamed Chat</a>");
+    expect(html).toContain('class="rudder-inline-token-label">Renamed Agent</span>');
+    expect(html).toContain('class="rudder-inline-token-label">Renamed Project</span>');
+    expect(html).toContain('class="rudder-inline-token-label">ZST-789 Renamed issue</span>');
+    expect(html).toContain('class="rudder-inline-token-label">Renamed Chat</span>');
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-status="blocked"');
     expect(html).not.toContain("Old Agent");
@@ -1150,8 +1189,8 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain(">Renamed Agent</a>");
-    expect(html).toContain(">ZST-789 Renamed issue</a>");
+    expect(html).toContain('class="rudder-inline-token-label">Renamed Agent</span>');
+    expect(html).toContain('class="rudder-inline-token-label">ZST-789 Renamed issue</span>');
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-status="in_progress"');
   });
@@ -1166,11 +1205,11 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('href="/issues/843c381d-0b1a-48fb-9015-8c7df88d543f"');
-    expect(html).toContain(">843c381d</a>");
+    expect(html).toContain('class="rudder-inline-token-label">843c381d</span>');
     expect(html).toContain("rudder-entity-preview-wrap");
     expect(html).toContain("rudder-mention-chip");
     expect(html).toContain("CI/Release 巡检完成");
-    expect(html).not.toContain("></a>");
+    expect(html).not.toContain('class="rudder-inline-token-label"></span>');
   });
 
   it("renders whitespace-label issue links without current mention data as readable links", () => {
@@ -1183,8 +1222,8 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('href="/issues/843c381d-0b1a-48fb-9015-8c7df88d543f"');
-    expect(html).toContain(">843c381d</a>");
-    expect(html).not.toContain(">   </a>");
+    expect(html).toContain('class="rudder-inline-token-label">843c381d</span>');
+    expect(html).not.toContain(">   </span>");
   });
 
   it("renders issue mentions as chips that link to the issue route", () => {
@@ -1198,8 +1237,8 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
-    expect(html).toContain(">PAP-123 auth flow</a>");
-    expect(html).not.toContain(">@PAP-123 auth flow</a>");
+    expect(html).toContain('class="rudder-inline-token-label">PAP-123 auth flow</span>');
+    expect(html).not.toContain(">@PAP-123 auth flow</span>");
   });
 
   it("decodes HTML entity spacing in issue mention labels", () => {
@@ -1401,7 +1440,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-comment="true"');
     expect(html).toContain('data-mention-status="backlog"');
     expect(html).toContain("rudder-mention-chip--with-status-icon");
-    expect(html).toContain(">PAP-123 auth flow</a>");
+    expect(html).toContain('class="rudder-inline-token-label">PAP-123 auth flow</span>');
     expect(html).not.toContain("Issue comment c7fe865f");
   });
 
@@ -2050,7 +2089,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/issue-789#comment-comment-123"');
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain('data-mention-status="in_review"');
-    expect(html).toContain(">PAP-123 auth flow</a>");
+    expect(html).toContain('class="rudder-inline-token-label">PAP-123 auth flow</span>');
     expect(html).not.toContain("Issue comment abc12345");
   });
 
@@ -2099,7 +2138,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
     expect(html).toContain('href="/library?skill=skill-1&amp;skillFile=SKILL.md"');
     expect(html).toContain('class="rudder-skill-token"');
-    expect(html).toContain(">build-advisor</a>");
+    expect(html).toContain('class="rudder-inline-token-label">build-advisor</span>');
     expect(html).not.toContain("rudder/build-advisor");
   });
 
@@ -2127,7 +2166,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide"');
     expect(html).toContain("Current skill metadata.");
     expect(html).toContain('href="/library?skill=skill-1&amp;skillFile=SKILL.md"');
-    expect(html).toContain(">renamed-advisor</a>");
+    expect(html).toContain('class="rudder-inline-token-label">renamed-advisor</span>');
     expect(html).not.toContain("build-advisor</a>");
     expect(html).not.toContain("skill://org/skill-1");
   });

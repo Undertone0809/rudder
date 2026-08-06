@@ -46,11 +46,12 @@ export function SkillReferenceToken({
       data-skill-token="true"
       href={tokenHref}
       aria-label={`${displayName} skill`}
+      title={displayName}
       style={skillTokenIconInlineStyle()}
       {...sourceAttributes}
       onClick={(event) => onOpen?.(event, tokenHref, displayName)}
     >
-      {label}
+      <span className="rudder-inline-token-label">{label}</span>
     </a>
   ) : (
     <span
@@ -58,10 +59,11 @@ export function SkillReferenceToken({
       data-skill-token="true"
       tabIndex={hasPreview ? 0 : undefined}
       aria-label={hasPreview ? `${displayName} skill` : undefined}
+      title={displayName}
       style={skillTokenIconInlineStyle()}
       {...sourceAttributes}
     >
-      {label}
+      <span className="rudder-inline-token-label">{label}</span>
     </span>
   );
 

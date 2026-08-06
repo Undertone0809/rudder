@@ -1437,10 +1437,11 @@ function ChatUserIssueMentionLink({
       data-mention-kind="issue"
       data-mention-comment={resolvedMention.commentId ? "true" : undefined}
       data-mention-status={resolvedMention.status ?? undefined}
+      title={label}
       style={mentionChipInlineStyle(resolvedMention)}
       onClick={onClick}
     >
-      {label}
+      <span className="rudder-inline-token-label">{label}</span>
     </Link>
   );
 
@@ -1510,7 +1511,7 @@ export function ChatUserPlainTextBody({
                 onClick={(event) => handlePlainTextLinkClick(event, href, part.label)}
               >
                 <WebsiteLinkIcon url={websiteUrl} />
-                <span className="rudder-website-link-label">{part.label}</span>
+                <span className="rudder-website-link-label rudder-inline-token-label">{part.label}</span>
               </a>
             );
           }
@@ -1571,10 +1572,11 @@ export function ChatUserPlainTextBody({
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
+            title={mentionLabel}
             style={mentionChipInlineStyle(mention)}
             onClick={(event) => handlePlainTextLinkClick(event, targetHref, mentionLabel)}
           >
-            {mentionLabel}
+            <span className="rudder-inline-token-label">{mentionLabel}</span>
           </Link>
         );
         if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;

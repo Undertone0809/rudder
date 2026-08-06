@@ -594,18 +594,44 @@ describe("index.css motion rules", () => {
   });
 
   it("lets website links keep their rendered treatment outside markdown bodies", () => {
+    const inlineTokenLabel = cssBlock(".rudder-inline-token-label");
+    const mentionChip = cssBlock(
+      ".rudder-milkdown-content .rudder-mention-chip,\n.rudder-milkdown-content .rudder-project-mention-chip,\na.rudder-mention-chip,\na.rudder-project-mention-chip",
+    );
+    const skillToken = cssBlock("a.rudder-skill-token");
+    const skillTokenIcon = cssBlock(
+      ".rudder-mdxeditor-content .rudder-skill-token::before,\n.rudder-milkdown-content .rudder-skill-token::before,\n.rudder-markdown .rudder-skill-token::before,\na.rudder-skill-token::before",
+    );
+    const entityPreviewWrap = cssBlock(".rudder-entity-preview-wrap");
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteIcon = cssBlock(".rudder-website-link-icon");
     const websiteLogo = cssBlock(".rudder-website-link-logo");
     const darkWebsiteLogo = cssBlock('.dark .rudder-website-link-logo[data-dark-mode="invert"]');
     const websiteGeneric = cssBlock(".rudder-website-link-generic");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
+    const localFileLink = cssBlock("a.rudder-local-file-link");
 
+    expect(inlineTokenLabel).toContain("display: block");
+    expect(inlineTokenLabel).toContain("min-width: 0");
+    expect(inlineTokenLabel).toContain("text-overflow: ellipsis");
+    expect(inlineTokenLabel).toContain("white-space: nowrap");
+    expect(mentionChip).toContain("max-width: min(30rem, 100%)");
+    expect(mentionChip).toContain("overflow: hidden");
+    expect(mentionChip).toContain("text-overflow: ellipsis");
+    expect(skillToken).toContain("max-width: min(30rem, 100%)");
+    expect(skillToken).toContain("overflow: hidden");
+    expect(skillToken).toContain("text-overflow: ellipsis");
+    expect(skillTokenIcon).toContain("flex: 0 0 auto");
+    expect(entityPreviewWrap).toContain("max-width: min(30rem, 100%)");
     expect(websiteLink).toContain("display: inline-flex");
     expect(websiteLink).toContain("align-items: baseline");
-    expect(websiteLink).toContain("max-width: 100%");
+    expect(websiteLink).toContain("max-width: min(30rem, 100%)");
+    expect(websiteLink).toContain("overflow: hidden");
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
+    expect(localFileLink).toContain("display: inline-flex");
+    expect(localFileLink).toContain("max-width: min(30rem, 100%)");
+    expect(localFileLink).toContain("overflow: hidden");
     expect(websiteIcon).toContain("display: inline-flex");
     expect(websiteIcon).toContain("position: relative");
     expect(websiteIcon).toContain("top: 0.06em");
