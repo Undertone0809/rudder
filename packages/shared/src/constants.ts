@@ -923,6 +923,16 @@ export const WAKEUP_REQUEST_STATUSES = [
 ] as const;
 export type WakeupRequestStatus = (typeof WAKEUP_REQUEST_STATUSES)[number];
 
+export const AGENT_ISSUE_CREATION_REQUEST_STATUSES = [
+  "queued",
+  "running",
+  "deferred",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type AgentIssueCreationRequestStatus = (typeof AGENT_ISSUE_CREATION_REQUEST_STATUSES)[number];
+
 export const HEARTBEAT_RUN_STATUSES = [
   "queued",
   "running",

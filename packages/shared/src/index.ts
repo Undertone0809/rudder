@@ -316,6 +316,17 @@ export {
 } from "./validators/local-account-auth.js";
 
 export {
+  AGENT_ISSUE_CREATION_REQUEST_STATUSES,
+  type AgentIssueCreationRequestStatus
+} from "./constants.js";
+
+export {
+  agentIssueCreationRequestStatusSchema,
+  createAgentIssueCreationRequestSchema,
+  type CreateAgentIssueCreationRequest
+} from "./validators/agent-issue-creation.js";
+
+export {
   DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,
   instancePathPickerResultSchema, instancePathPickerSelectionTypeSchema, keyboardShortcutActionIdSchema,
   keyboardShortcutBindingSchema,
