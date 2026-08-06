@@ -59,6 +59,8 @@ export const adapterLabels: Record<string, string> = {
   opencode_local: "OpenCode (local)",
   pi_local: "Pi (local)",
   openclaw_gateway: "OpenClaw Gateway",
+  hermes_gateway: "Hermes API Server",
+  hermes_local: "Hermes (legacy local)",
   cursor: "Cursor (local)",
   process: "Process",
   http: "HTTP",

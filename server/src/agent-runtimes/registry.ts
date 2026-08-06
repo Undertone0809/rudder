@@ -37,6 +37,14 @@ import {
 } from "@rudderhq/agent-runtime-gemini-local/server";
 import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import {
+  agentConfigurationDoc as hermesGatewayAgentConfigurationDoc,
+  models as hermesGatewayModels,
+} from "@rudderhq/agent-runtime-hermes-gateway";
+import {
+  execute as hermesGatewayExecute,
+  testEnvironment as hermesGatewayTestEnvironment,
+} from "@rudderhq/agent-runtime-hermes-gateway/server";
+import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
 } from "@rudderhq/agent-runtime-openclaw-gateway";
@@ -201,6 +209,15 @@ const openclawGatewayAdapter: ServerAgentRuntimeModule = {
   agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,
 };
 
+const hermesGatewayAdapter: ServerAgentRuntimeModule = {
+  type: "hermes_gateway",
+  execute: hermesGatewayExecute,
+  testEnvironment: hermesGatewayTestEnvironment,
+  models: hermesGatewayModels,
+  supportsLocalAgentJwt: false,
+  agentConfigurationDoc: hermesGatewayAgentConfigurationDoc,
+};
+
 const openCodeLocalAdapter: ServerAgentRuntimeModule = {
   type: "opencode_local",
   execute: openCodeExecute,
@@ -250,6 +267,7 @@ const adaptersByType = new Map<string, ServerAgentRuntimeModule>(
     cursorLocalAdapter,
     geminiLocalAdapter,
     openclawGatewayAdapter,
+    hermesGatewayAdapter,
     hermesLocalAdapter,
     processAdapter,
     httpAdapter,

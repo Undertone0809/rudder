@@ -9,6 +9,7 @@ export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   showDeveloperDiagnostics: boolean;
   experimentalSitesEnabled: boolean;
+  experimentalGoalsEnabled: boolean;
   locale: InstanceLocale;
   productAnalyticsMode: "off" | "anonymous" | "account_linked";
   productAnalyticsConsentEpoch: number;

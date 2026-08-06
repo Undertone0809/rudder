@@ -24,7 +24,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
-import { redactEventPayload } from "../redaction.js";
+import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import {
@@ -93,6 +93,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     preserveInstructionsBundleConfig,
     summarizeAgentUpdateDetails,
     redactAgentConfiguration,
+    redactAgentForResponse,
     stripPersistedSkillSyncConfig,
     withRuntimeSkillEntries,
     DEFAULT_INSTRUCTIONS_PATH_KEYS,
@@ -307,7 +308,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({
+      agent: redactAgentForResponse(agent),
+      approval: omitSecretPayloadFields(approval),
+    });
   });
 
   router.post("/orgs/:orgId/agents", validate(createAgentSchema), async (req, res) => {
@@ -403,7 +407,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       );
     }
 
-    res.status(201).json(agent);
+    res.status(201).json(redactAgentForResponse(agent));
   });
 
   router.post("/agents/:id/readiness", async (req, res) => {
@@ -417,7 +421,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     assertBoard(req);
     const resultCode = typeof req.body?.resultCode === "string" ? req.body.resultCode : "preflight_ok";
     const agent = await svc.markReady(id, { resultCode, isDefaultAgent: req.body?.isDefaultAgent === true });
-    res.json(agent);
+    res.json(redactAgentForResponse(agent));
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
@@ -563,7 +567,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       },
     });
 
-    res.status(201).json(agent);
+    res.status(201).json(redactAgentForResponse(agent));
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
@@ -933,7 +937,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: summarizeAgentUpdateDetails(patchData),
     });
 
-    res.json(agent);
+    res.json(redactAgentForResponse(agent));
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
@@ -956,7 +960,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForResponse(agent));
   });
 
   router.post("/agents/:id/resume", async (req, res) => {
@@ -979,7 +983,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForResponse(agent));
   });
 
   router.post("/agents/:id/terminate", async (req, res) => {
@@ -1002,7 +1006,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForResponse(agent));
   });
 
   router.delete("/agents/:id", async (req, res) => {

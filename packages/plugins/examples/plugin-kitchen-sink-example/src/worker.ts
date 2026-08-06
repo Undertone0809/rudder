@@ -509,28 +509,12 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
       ? params.title.trim()
       : "Kitchen Sink demo goal";
     const description = typeof params.description === "string" ? params.description : undefined;
-    const goal = await ctx.goals.create({ orgId, title, description, level: "team", status: "planned" });
+    const goal = await ctx.goals.create({ orgId, title, description });
     pushRecord({
       level: "info",
       source: "goals.create",
       message: `Created goal ${goal.title}`,
       data: { goalId: goal.id },
-    });
-    return goal;
-  });
-
-  ctx.actions.register("advance-goal-status", async (params) => {
-    const orgId = getCurrentCompanyId(params);
-    const goalId = typeof params.goalId === "string" ? params.goalId : "";
-    const status = typeof params.status === "string" ? params.status : "";
-    if (!goalId || !status) {
-      throw new Error("goalId and status are required");
-    }
-    const goal = await ctx.goals.update(goalId, { status: status as Goal["status"] }, orgId);
-    pushRecord({
-      level: "info",
-      source: "goals.update",
-      message: `Updated goal ${goal.id} to ${goal.status}`,
     });
     return goal;
   });

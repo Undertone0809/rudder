@@ -17,6 +17,8 @@ Don't use when:
 
 Core fields:
 - url (string, required): OpenClaw gateway WebSocket URL (ws:// or wss://)
+- model (string, optional): requested model; forwarded only when the caller has
+  the gateway's operator.admin capability
 - headers (object, optional): handshake headers; supports x-openclaw-token / x-openclaw-auth
 - authToken (string, optional): shared gateway token override
 - password (string, optional): gateway shared password, if configured
@@ -26,11 +28,13 @@ Gateway connect identity fields:
 - clientMode (string, optional): gateway client mode (default backend)
 - clientVersion (string, optional): client version string
 - role (string, optional): gateway role (default operator)
-- scopes (string[] | comma string, optional): gateway scopes (default ["operator.admin"])
+- scopes (string[] | comma string, optional): gateway scopes (default ["operator.read", "operator.write"])
 - disableDeviceAuth (boolean, optional): disable signed device payload in connect params (default false)
 
 Request behavior fields:
-- payloadTemplate (object, optional): additional fields merged into gateway agent params
+- payloadTemplate (object, optional): additional fields merged into gateway agent params;
+  provider/model overrides are removed for the default operator caller unless
+  operator.admin is explicitly granted
 - workspaceRuntime (object, optional): desired runtime service intents; Rudder forwards these in a standardized rudder.workspaceRuntime block for remote execution environments
 - timeoutSec (number, optional): adapter timeout in seconds (default 120)
 - waitTimeoutMs (number, optional): agent.wait timeout override (default timeoutSec * 1000)

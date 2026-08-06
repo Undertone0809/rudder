@@ -49,7 +49,6 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
-  getDefaultCompanyGoal: vi.fn(),
 }));
 
 const mockProjectService = vi.hoisted(() => ({
@@ -216,7 +215,6 @@ describe("issue lifecycle routes", () => {
     mockIssueService.listComments.mockResolvedValue([]);
     mockIssueService.resolveCommentReference.mockImplementation(async (_issueId: string, commentRef: string) => commentRef);
     mockGoalService.getById.mockResolvedValue(null);
-    mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue(null);
     mockProjectService.listByIds.mockResolvedValue([]);
     mockWorkProductService.createForIssue.mockResolvedValue(null);
@@ -274,13 +272,6 @@ describe("issue lifecycle routes", () => {
 
   it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
-    mockGoalService.getDefaultCompanyGoal.mockResolvedValue({
-      id: "dddddddd-dddd-4ddd-dddd-dddddddddddd",
-      orgId: "organization-1",
-      title: "Default organization goal",
-      level: "organization",
-      status: "active",
-    });
 
     const res = await request(createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111");
@@ -288,18 +279,10 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.goalId).toBeNull();
     expect(res.body.goal).toBeNull();
-    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
   });
 
   it("does not synthesize the default goal in heartbeat context for an explicitly goal-less issue", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
-    mockGoalService.getDefaultCompanyGoal.mockResolvedValue({
-      id: "dddddddd-dddd-4ddd-dddd-dddddddddddd",
-      orgId: "organization-1",
-      title: "Default organization goal",
-      level: "organization",
-      status: "active",
-    });
 
     const res = await request(createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
@@ -307,7 +290,6 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.issue.goalId).toBeNull();
     expect(res.body.goal).toBeNull();
-    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
   });
 
   it("returns 410 for retired issue document routes", async () => {

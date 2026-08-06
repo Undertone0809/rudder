@@ -45,6 +45,7 @@ import {
   Repeat,
   Search,
   Settings,
+  Target,
   UsersRound,
 } from "lucide-react";
 import {
@@ -203,6 +204,7 @@ export function PrimaryRail({
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
   const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
+  const goalsEnabled = healthQuery.data?.features?.experimentalGoalsEnabled === true;
   const pinnedLocalAppsQuery = useQuery({
     queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listSavedViews(selectedOrganizationId!, {
@@ -224,10 +226,11 @@ export function PrimaryRail({
   const previousInboxCountRef = useRef<number | null>(null);
   const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
   const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
+  const goalsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "goals", "/goals");
   const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
@@ -251,6 +254,15 @@ export function PrimaryRail({
       icon: CircleCheckBig,
       active: /^\/issues(?:\/|$)/.test(relativePath),
     },
+    ...(goalsEnabled
+      ? [{
+          key: "goals",
+          to: goalsEntryPath,
+          label: "Goals",
+          icon: Target,
+          active: /^\/goals(?:\/|$)/.test(relativePath),
+        }]
+      : []),
     {
       key: "agents",
       to: agentsEntryPath,

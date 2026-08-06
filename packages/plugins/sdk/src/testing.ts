@@ -531,8 +531,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const orgId = requireOrganizationId(input?.orgId);
         let out = [...goals.values()];
         out = out.filter((goal) => goal.orgId === orgId);
-        if (input?.level) out = out.filter((goal) => goal.level === input.level);
-        if (input?.status) out = out.filter((goal) => goal.status === input.status);
+        if (input?.lifecycle) out = out.filter((goal) => goal.lifecycle === input.lifecycle);
+        if (input?.objectiveMode) out = out.filter((goal) => goal.objectiveMode === input.objectiveMode);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
@@ -550,10 +550,12 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           orgId: input.orgId,
           title: input.title,
           description: input.description ?? null,
-          level: input.level ?? "task",
-          status: input.status ?? "planned",
-          parentId: input.parentId ?? null,
-          ownerAgentId: input.ownerAgentId ?? null,
+          level: "task",
+          status: "planned",
+          lifecycle: "draft",
+          objectiveMode: "target",
+          parentId: null,
+          ownerAgentId: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -566,7 +568,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (!isInOrganization(record, orgId)) throw new Error(`Goal not found: ${goalId}`);
         const updated: Goal = {
           ...record,
-          ...patch,
+          title: patch.title ?? record.title,
+          description: patch.description === undefined ? record.description : patch.description,
           updatedAt: new Date(),
         };
         goals.set(goalId, updated);

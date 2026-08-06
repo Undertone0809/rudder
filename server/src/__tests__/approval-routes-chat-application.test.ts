@@ -29,6 +29,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(),
 }));
 
+const mockGoalService = vi.hoisted(() => ({
+  decideChangeProposal: vi.fn(),
+}));
+
 const mockIssueApprovalService = vi.hoisted(() => ({
   listIssuesForApproval: vi.fn(),
   linkManyForApproval: vi.fn(),
@@ -49,6 +53,7 @@ vi.mock("../services/index.js", () => ({
   approvalService: () => mockApprovalService,
   chatService: () => mockChatService,
   heartbeatService: () => mockHeartbeatService,
+  goalService: () => mockGoalService,
   issueApprovalService: () => mockIssueApprovalService,
   issueService: () => mockIssueService,
   organizationIntelligenceProfileService: () => ({
@@ -103,6 +108,82 @@ describe("approval routes chat application", () => {
         },
       },
     });
+  });
+
+  it("routes a generic Goal change approval through the governed Goal command", async () => {
+    const pendingApproval = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "goal_change",
+      status: "pending",
+      payload: { proposalId: "proposal-1" },
+      requestedByAgentId: "agent-1",
+    };
+    const approved = { ...pendingApproval, status: "approved" };
+    mockApprovalService.getById.mockResolvedValueOnce(pendingApproval).mockResolvedValueOnce(approved);
+    mockGoalService.decideChangeProposal.mockResolvedValue({
+      id: "proposal-1",
+      goalId: "goal-1",
+      status: "applied",
+      appliedRevision: 2,
+    });
+
+    const res = await request(createApp())
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Apply the reviewed change" });
+
+    expect(res.status).toBe(200);
+    expect(mockGoalService.decideChangeProposal).toHaveBeenCalledWith("proposal-1", {
+      decision: "approve",
+      note: "Apply the reviewed change",
+    }, "user-1");
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "goal.change_approved",
+      entityId: "goal-1",
+    }));
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "approval.approved",
+      entityId: "approval-1",
+    }));
+  });
+
+  it("routes a generic Goal change rejection through the governed Goal command", async () => {
+    const pendingApproval = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "goal_change",
+      status: "pending",
+      payload: { proposalId: "proposal-1" },
+      requestedByAgentId: "agent-1",
+    };
+    const rejected = { ...pendingApproval, status: "rejected" };
+    mockApprovalService.getById.mockResolvedValueOnce(pendingApproval).mockResolvedValueOnce(rejected);
+    mockGoalService.decideChangeProposal.mockResolvedValue({
+      id: "proposal-1",
+      goalId: "goal-1",
+      status: "rejected",
+      appliedRevision: null,
+    });
+
+    const res = await request(createApp())
+      .post("/api/approvals/approval-1/reject")
+      .send({ decisionNote: "Keep the current Goal" });
+
+    expect(res.status).toBe(200);
+    expect(mockGoalService.decideChangeProposal).toHaveBeenCalledWith("proposal-1", {
+      decision: "reject",
+      note: "Keep the current Goal",
+    }, "user-1");
+    expect(mockApprovalService.reject).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "goal.change_rejected",
+      entityId: "goal-1",
+    }));
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "approval.rejected",
+      entityId: "approval-1",
+    }));
   });
 
   it("applies chat approval side effects when a chat issue proposal is approved", async () => {

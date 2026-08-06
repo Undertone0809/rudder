@@ -259,7 +259,8 @@ Product model:
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
 - External local runtimes are registered as `openclaw_gateway` and
-  `hermes_gateway`. `hermes_local` remains a `Legacy` CLI adapter with its
+  `hermes_gateway`. The supported Hermes API Server matrix currently covers
+  `0.18.2` and `0.19.1`; `hermes_local` remains a `Legacy` CLI adapter with its
   existing configuration semantics; it is not silently reinterpreted as an API
   Server connection.
 - External connection readiness requires an authenticated handshake against the

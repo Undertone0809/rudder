@@ -376,7 +376,7 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   if (/^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath)) return "calendar";
   if (/^\/projects(?:\/|$)/.test(relativePath)) return "org";
   if (/^\/agents(?:\/|$)/.test(relativePath)) return "agents";
-  if (/^\/(?:dashboard|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
+  if (/^\/(?:dashboard|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
   return null;
 }
 
@@ -958,7 +958,7 @@ export function Layout() {
   const useMiddleContextColumn = useMemo(
     () =>
       !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativeBoardPath)
-      && /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+      && /^\/(?:apps|chat|messenger|issues|calendar|dashboard|agents|projects|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isWorkspaceBackupsRoute = useMemo(

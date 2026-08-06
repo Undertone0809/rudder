@@ -40,10 +40,8 @@ import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
-import { getDefaultCompanyGoal } from "./goals.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
-import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
@@ -846,7 +844,6 @@ export function issueService(db: Db) {
         throw unprocessable("in_progress issues require an assignee");
       }
       return db.transaction(async (tx) => {
-        const defaultCompanyGoal = await getDefaultCompanyGoal(tx, orgId);
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
@@ -895,11 +892,7 @@ export function issueService(db: Db) {
         const values = {
           ...issueData,
           originKind: issueData.originKind ?? "manual",
-          goalId: resolveIssueGoalId({
-            projectId: issueData.projectId,
-            goalId: issueData.goalId,
-            defaultGoalId: defaultCompanyGoal?.id ?? null,
-          }),
+          goalId: issueData.goalId ?? null,
           ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
           ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
           orgId,
@@ -1158,14 +1151,7 @@ export function issueService(db: Db) {
       }
 
       return db.transaction(async (tx) => {
-        const defaultCompanyGoal = await getDefaultCompanyGoal(tx, existing.orgId);
-        patch.goalId = resolveNextIssueGoalId({
-          currentProjectId: existing.projectId,
-          currentGoalId: existing.goalId,
-          projectId: issueData.projectId,
-          goalId: issueData.goalId,
-          defaultGoalId: defaultCompanyGoal?.id ?? null,
-        });
+        patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : existing.goalId;
         const updated = await tx
           .update(issues)
           .set(patch)

@@ -1,0 +1,1 @@
+ALTER TABLE "goal_result_proposals" ADD COLUMN "acceptance_idempotency_key" text;

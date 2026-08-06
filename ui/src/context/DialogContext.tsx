@@ -32,8 +32,13 @@ export interface NewIssueDefaults {
   description?: string;
 }
 
-interface NewGoalDefaults {
+export interface NewGoalDefaults {
   parentId?: string;
+  draftId?: string;
+  title?: string;
+  context?: string;
+  ownerAgentId?: string;
+  targetTime?: string;
 }
 
 interface OnboardingOptions {

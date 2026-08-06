@@ -39,8 +39,13 @@ vi.mock("@/context/I18nContext", () => ({
       "experimental.sites.disabledDescription": "Apps are disabled.",
       "experimental.sites.toggle": "Enable Apps",
       "experimental.sites.notice": "Runs Apps on this device.",
-      "experimental.loadFailed": "Load failed.",
+      "experimental.goals.section": "Goals",
+      "experimental.goals.title": "Enable Goals",
+      "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",
+      "experimental.goals.disabledDescription": "Turn this on to try the Goal workspace.",
+      "experimental.goals.toggle": "Enable Goals",
       "experimental.updateFailed": "Update failed.",
+      "experimental.loadFailed": "Load failed.",
     })[key] ?? key,
   }),
 }));
@@ -76,12 +81,14 @@ beforeEach(() => {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
     experimentalSitesEnabled: false,
+    experimentalGoalsEnabled: false,
     locale: "en",
   });
   mocks.updateGeneral.mockResolvedValue({
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
     experimentalSitesEnabled: true,
+    experimentalGoalsEnabled: false,
     locale: "en",
   });
 });
@@ -121,6 +128,7 @@ describe("InstanceExperimentalSettings", () => {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: true,
+      experimentalGoalsEnabled: false,
       locale: "en",
     });
     const stop = vi.fn().mockResolvedValue({ status: "stopped" });
@@ -153,5 +161,25 @@ describe("InstanceExperimentalSettings", () => {
     expect(mocks.updateGeneral).toHaveBeenCalledWith({
       experimentalSitesEnabled: false,
     });
+  });
+
+  it("enables Goals from the dedicated experimental setting", async () => {
+    const container = await renderPage();
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('[data-testid="experimental-goals-toggle"]'))
+          .not.toBeNull();
+      });
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="experimental-goals-toggle"]')
+        ?.click();
+      await vi.waitFor(() => {
+        expect(mocks.updateGeneral).toHaveBeenCalledWith({
+          experimentalGoalsEnabled: true,
+        });
+      });
+    });
+
+    expect(container.textContent).toContain("Enable Goals");
   });
 });

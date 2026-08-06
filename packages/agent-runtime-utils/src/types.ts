@@ -291,6 +291,24 @@ export interface AgentRuntimeExecutionContext {
   abortSignal?: AbortSignal;
   controlCoordinator?: AgentRuntimeControlCoordinator;
   controlAttempt?: AgentRuntimeControlAttemptLease;
+  requestApproval?: (request: AgentRuntimeApprovalRequest) => Promise<AgentRuntimeApprovalHandle>;
+  waitForApproval?: (approvalId: string, timeoutMs: number) => Promise<AgentRuntimeApprovalDecision>;
+}
+
+export interface AgentRuntimeApprovalRequest {
+  type: "agent_runtime";
+  payload: Record<string, unknown>;
+}
+
+export interface AgentRuntimeApprovalHandle {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+}
+
+export interface AgentRuntimeApprovalDecision {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  decisionNote?: string | null;
 }
 
 export interface AgentRuntimeMediaAttachment {
@@ -557,6 +575,9 @@ export interface CreateConfigValues {
   envVars: string;
   envBindings: Record<string, unknown>;
   url: string;
+  /** Optional credentials used by external gateway runtimes. */
+  apiKey?: string;
+  authToken?: string;
   bootstrapPrompt: string;
   payloadTemplateJson?: string;
   workspaceStrategyType?: string;

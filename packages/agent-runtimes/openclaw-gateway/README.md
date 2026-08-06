@@ -55,6 +55,14 @@ The agent request is built as:
   - all `payloadTemplate` fields merged in
   - `agentId` from config if set and not already in template
 
+Provider/model authorization:
+
+- the default caller is `operator` with `operator.read` and `operator.write`
+- current OpenClaw gateways require `operator.admin` for `provider`/`model`
+  overrides
+- Rudder strips those two fields from both adapter config and
+  `payloadTemplate` unless `role=admin` or `scopes` includes `operator.admin`
+
 ## Timeouts
 
 - `timeoutSec` controls adapter-level request budget

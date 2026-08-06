@@ -649,7 +649,13 @@ export interface WorkerToHostMethods {
 
   // Goals
   "goals.list": [
-    params: { orgId: string; level?: string; status?: string; limit?: number; offset?: number },
+    params: {
+      orgId: string;
+      lifecycle?: NonNullable<Goal["lifecycle"]>;
+      objectiveMode?: NonNullable<Goal["objectiveMode"]>;
+      limit?: number;
+      offset?: number;
+    },
     result: Goal[],
   ];
   "goals.get": [
@@ -661,17 +667,13 @@ export interface WorkerToHostMethods {
       orgId: string;
       title: string;
       description?: string;
-      level?: string;
-      status?: string;
-      parentId?: string;
-      ownerAgentId?: string;
     },
     result: Goal,
   ];
   "goals.update": [
     params: {
       goalId: string;
-      patch: Record<string, unknown>;
+      patch: { title?: string; description?: string | null };
       orgId: string;
     },
     result: Goal,

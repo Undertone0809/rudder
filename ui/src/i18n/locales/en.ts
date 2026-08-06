@@ -199,6 +199,11 @@ export const en = {
   "experimental.sites.toggle": "Enable Apps",
   "experimental.sites.notice":
     "Apps are experimental. Apps run project code on this device and are reachable only from this computer unless you configure networking yourself.",
+  "experimental.goals.section": "Goals",
+  "experimental.goals.title": "Enable Goals",
+  "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",
+  "experimental.goals.disabledDescription": "Turn this on to try the Goal workspace.",
+  "experimental.goals.toggle": "Enable Goals",
   "experimental.loadFailed": "Failed to load experimental settings.",
   "experimental.updateFailed": "Failed to save experimental settings.",
   "chat.emptyState.heading": "What can I help with?",

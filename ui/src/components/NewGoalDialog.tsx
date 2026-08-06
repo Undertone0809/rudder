@@ -1,284 +1,338 @@
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { GOAL_LEVELS, GOAL_STATUSES } from "@rudderhq/shared";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useNavigate } from "@/lib/router";
+import type { GoalStartPreview } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Layers,
-  Maximize2,
-  Minimize2,
-  Target,
-} from "lucide-react";
-import { useRef, useState } from "react";
-import { assetsApi } from "../api/assets";
+import { Calendar, Loader2, Target, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
-import { useDialog } from "../context/DialogContext";
+import { useDialog, type NewGoalDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
-import { cn } from "../lib/utils";
-import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
-import { StatusBadge } from "./StatusBadge";
+import { AgentMenuLabel } from "./AssigneeLabel";
+import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 
-const levelLabels: Record<string, string> = {
-  organization: "Organization",
-  team: "Team",
-  agent: "Agent",
-  task: "Task",
+type PreviewInput = {
+  title: string;
+  context: string | null;
+  ownerAgentId: string | null;
+  targetTime: string | null;
 };
 
+const EMPTY_NEW_GOAL_DEFAULTS: NewGoalDefaults = {};
+
+function useDebouncedValue<T>(value: T, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timeout);
+  }, [delay, value]);
+
+  return debounced;
+}
+
+function toIsoTargetTime(value: string) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function PreviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid min-w-0 gap-1 border-t border-border/60 py-2.5 first:border-t-0 sm:grid-cols-[9.5rem_minmax(0,1fr)] sm:gap-3">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="min-w-0 whitespace-pre-wrap break-words text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
 export function NewGoalDialog() {
-  const { newGoalOpen, newGoalDefaults, closeNewGoal } = useDialog();
+  const { newGoalOpen, newGoalDefaults = EMPTY_NEW_GOAL_DEFAULTS, closeNewGoal } = useDialog();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [status, setStatus] = useState("planned");
-  const [level, setLevel] = useState("task");
-  const [parentId, setParentId] = useState("");
-  const [expanded, setExpanded] = useState(false);
-  const [documentSessionId, setDocumentSessionId] = useState(0);
+  const navigate = useNavigate();
+  const [goal, setGoal] = useState("");
+  const [context, setContext] = useState("");
+  const [ownerAgentId, setOwnerAgentId] = useState("");
+  const [targetTime, setTargetTime] = useState("");
+  const requestRef = useRef<{ identity: string; key: string } | null>(null);
+  const contextRef = useRef<HTMLTextAreaElement>(null);
 
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [levelOpen, setLevelOpen] = useState(false);
-  const [parentOpen, setParentOpen] = useState(false);
-  const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  useEffect(() => {
+    if (!newGoalOpen) return;
+    setGoal(newGoalDefaults.title ?? "");
+    setContext(newGoalDefaults.context ?? "");
+    setOwnerAgentId(newGoalDefaults.ownerAgentId ?? "");
+    setTargetTime(newGoalDefaults.targetTime ?? "");
+    requestRef.current = null;
+  }, [newGoalDefaults, newGoalOpen]);
 
-  // Apply defaults when dialog opens
-  const appliedParentId = parentId || newGoalDefaults.parentId || "";
-
-  const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(selectedOrganizationId!),
-    queryFn: () => goalsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && newGoalOpen,
+  const { data: agents = [] } = useQuery({
+    queryKey: queryKeys.agents.list(selectedOrganizationId!),
+    queryFn: () => agentsApi.list(selectedOrganizationId!),
+    enabled: Boolean(newGoalOpen && selectedOrganizationId),
   });
+
+  useEffect(() => {
+    if (!newGoalOpen || ownerAgentId || agents.length === 0) return;
+    const suggested = agents.find((agent) => agent.status !== "paused") ?? agents[0];
+    setOwnerAgentId(suggested?.id ?? "");
+  }, [agents, newGoalOpen, ownerAgentId]);
+
+  const agentOptions = useMemo<InlineEntityOption[]>(
+    () => agents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+      searchText: `${agent.name} ${agent.title ?? ""} ${agent.role}`,
+    })),
+    [agents],
+  );
+  const currentOwner = agents.find((agent) => agent.id === ownerAgentId) ?? null;
+
+  const previewInput = useMemo<PreviewInput>(() => ({
+    title: goal.trim(),
+    context: markdownDocumentOrUndefined(context) ?? null,
+    ownerAgentId: ownerAgentId || null,
+    targetTime: toIsoTargetTime(targetTime),
+  }), [context, goal, ownerAgentId, targetTime]);
+  const debouncedPreviewInput = useDebouncedValue(previewInput, 250);
+  const previewFingerprint = JSON.stringify(debouncedPreviewInput);
+  const previewQuery = useQuery({
+    queryKey: ["goals", "start-preview", selectedOrganizationId, previewFingerprint],
+    queryFn: () => goalsApi.previewStart(selectedOrganizationId!, debouncedPreviewInput),
+    enabled: Boolean(newGoalOpen && selectedOrganizationId && debouncedPreviewInput.title),
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+
+  const preview = previewQuery.data;
+  const canStart = Boolean(preview?.valid && preview.packet && preview.packetHash);
+
+  const requestKeyFor = (candidate: GoalStartPreview) => {
+    const identity = `${previewFingerprint}:${candidate.packetHash ?? "draft"}`;
+    if (requestRef.current?.identity !== identity) {
+      requestRef.current = { identity, key: crypto.randomUUID() };
+    }
+    return requestRef.current.key;
+  };
+
+  const reset = () => {
+    setGoal("");
+    setContext("");
+    setOwnerAgentId("");
+    setTargetTime("");
+    requestRef.current = null;
+  };
+
+  const close = () => {
+    reset();
+    closeNewGoal();
+  };
 
   const createGoal = useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
-      goalsApi.create(selectedOrganizationId!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.goals.list(selectedOrganizationId!) });
+    mutationFn: async () => {
+      if (!selectedOrganizationId) throw new Error("Select an organization before creating a Goal.");
+      if (preview && canStart && preview.packet && preview.packetHash) {
+        return goalsApi.start(selectedOrganizationId, {
+          requestKey: requestKeyFor(preview),
+          packetHash: preview.packetHash,
+          packet: preview.packet,
+          ...(newGoalDefaults.draftId ? { draftGoalId: newGoalDefaults.draftId } : {}),
+        });
+      }
+      if (newGoalDefaults.draftId) {
+        return goalsApi.update(newGoalDefaults.draftId, {
+          title: goal.trim(),
+          description: markdownDocumentOrUndefined(context),
+          alignmentQuestion: preview?.alignmentQuestion,
+        });
+      }
+      return goalsApi.create(selectedOrganizationId, {
+        title: goal.trim(),
+        description: markdownDocumentOrUndefined(context),
+        ownerAgentId: ownerAgentId || null,
+        targetTime: toIsoTargetTime(targetTime),
+        alignmentQuestion: preview?.alignmentQuestion,
+      });
+    },
+    onSuccess: (createdGoal) => {
+      if (selectedOrganizationId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.goals.list(selectedOrganizationId) });
+        queryClient.invalidateQueries({ queryKey: ["goals", "workspace", selectedOrganizationId] });
+      }
+      const goalId = createdGoal.id;
       reset();
       closeNewGoal();
+      navigate(`/goals/${goalId}`);
     },
   });
 
-  const uploadDescriptionImage = useMutation({
-    mutationFn: async (file: File) => {
-      if (!selectedOrganizationId) throw new Error("No organization selected");
-      return assetsApi.uploadImage(selectedOrganizationId, file, "goals/drafts");
-    },
-  });
-
-  function reset() {
-    setDocumentSessionId((current) => current + 1);
-    setTitle("");
-    setDescription("");
-    setStatus("planned");
-    setLevel("task");
-    setParentId("");
-    setExpanded(false);
-  }
-
-  function handleSubmit() {
-    if (!selectedOrganizationId || !title.trim()) return;
-    createGoal.mutate({
-      title: title.trim(),
-      description: markdownDocumentOrUndefined(description),
-      status,
-      level,
-      ...(appliedParentId ? { parentId: appliedParentId } : {}),
-    });
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  }
-
-  const currentParent = (goals ?? []).find((g) => g.id === appliedParentId);
+  const actionLabel = canStart ? "Create and start" : "Save draft";
+  const pendingLabel = canStart ? "Starting..." : "Saving...";
+  const actionDisabled =
+    !goal.trim()
+    || previewQuery.isFetching
+    || (!preview && !previewQuery.error)
+    || createGoal.isPending;
 
   return (
-    <Dialog
-      open={newGoalOpen}
-      onOpenChange={(open) => {
-        if (!open) {
-          reset();
-          closeNewGoal();
-        }
-      }}
-    >
+    <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent
         showCloseButton={false}
-        className={cn("p-0 gap-0", expanded ? "sm:max-w-2xl" : "sm:max-w-lg")}
-        onKeyDown={handleKeyDown}
+        className="max-h-[min(46rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            if (!actionDisabled) createGoal.mutate();
+          }
+        }}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {selectedOrganization && (
-              <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-medium">
-                {selectedOrganization.name.slice(0, 3).toUpperCase()}
-              </span>
-            )}
-            <span className="text-muted-foreground/60">&rsaquo;</span>
-            <span>{newGoalDefaults.parentId ? "New sub-goal" : "New goal"}</span>
+        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
+              {selectedOrganization?.name.slice(0, 3).toUpperCase()}
+            </span>
+            <span aria-hidden="true">/</span>
+            <DialogTitle className="truncate text-sm font-medium text-foreground">New Goal</DialogTitle>
           </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              onClick={() => { reset(); closeNewGoal(); }}
-            >
-              <span className="text-lg leading-none">&times;</span>
-            </Button>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="Close" onClick={close} disabled={createGoal.isPending}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        <div className="scrollbar-auto-hide min-h-0 overflow-x-hidden overflow-y-auto px-4 py-4">
+          <div className="space-y-4">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Goal</span>
+              <textarea
+                aria-label="Goal"
+                className="min-h-16 w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 py-2 text-base font-medium outline-none placeholder:text-muted-foreground/55 focus:border-ring"
+                placeholder="What should become true?"
+                rows={2}
+                value={goal}
+                onChange={(event) => {
+                  setGoal(event.target.value);
+                  event.target.style.height = "auto";
+                  event.target.style.height = `${event.target.scrollHeight}px`;
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                    event.preventDefault();
+                    contextRef.current?.focus();
+                  }
+                }}
+                autoFocus
+              />
+            </label>
+
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Context</span>
+              <textarea
+                ref={contextRef}
+                aria-label="Context"
+                className="min-h-20 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/55 focus:border-ring"
+                placeholder="Optional background or why this matters now"
+                value={context}
+                onChange={(event) => setContext(event.target.value)}
+              />
+            </label>
+
+            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="min-w-0 space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">Assignee</div>
+                <InlineEntitySelector
+                  value={ownerAgentId}
+                  options={agentOptions}
+                  placeholder="Select an Agent"
+                  noneLabel="No assignee"
+                  searchPlaceholder="Search Agents..."
+                  emptyMessage="No Agents found."
+                  ariaLabel="Assignee"
+                  variant="field"
+                  disablePortal
+                  onChange={setOwnerAgentId}
+                  renderTriggerValue={(option) => option && currentOwner
+                    ? <AgentMenuLabel agent={currentOwner} agentAvatarStyle="bare" />
+                    : <span className="text-muted-foreground">No assignee</span>}
+                  renderOption={(option, isSelected) => {
+                    const agent = agents.find((candidate) => candidate.id === option.id);
+                    return (
+                      <span role="option" aria-selected={isSelected} className="flex min-w-0 flex-1">
+                        {agent
+                          ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
+                          : <span className="truncate">{option.label}</span>}
+                      </span>
+                    );
+                  }}
+                />
+              </div>
+              <label className="min-w-0 space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Target time</span>
+                <span className="flex h-10 min-w-0 items-center gap-2 rounded-md border border-border bg-background px-3 focus-within:border-ring">
+                  <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <input
+                    aria-label="Target time"
+                    type="datetime-local"
+                    className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                    value={targetTime}
+                    onChange={(event) => setTargetTime(event.target.value)}
+                  />
+                </span>
+              </label>
+            </div>
+
+            {goal.trim() ? (
+              <section aria-label="Goal start preview" className="border-y border-border">
+                {previewQuery.isFetching ? (
+                  <div className="flex min-h-24 items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Preparing preview...
+                  </div>
+                ) : preview?.review ? (
+                  <div>
+                    <PreviewRow label="Outcome" value={preview.review.outcome} />
+                    <PreviewRow label="How we will know it worked" value={preview.review.success} />
+                    <PreviewRow label="Owner" value={currentOwner?.name ?? preview.review.owner ?? "No Agent selected"} />
+                    <PreviewRow label="Boundary" value={preview.review.boundary} />
+                    <PreviewRow label="First action" value={preview.review.firstAction} />
+                  </div>
+                ) : preview?.alignmentQuestion ? (
+                  <div className="flex min-w-0 gap-3 py-3">
+                    <Target className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-muted-foreground">Needs alignment</div>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-sm">{preview.alignmentQuestion}</p>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {previewQuery.error ? (
+              <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+                <span>{previewQuery.error.message}</span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-sm"
+                  onClick={() => void previewQuery.refetch()}
+                  disabled={previewQuery.isFetching || createGoal.isPending}
+                >
+                  Retry preview
+                </Button>
+              </div>
+            ) : null}
+            {createGoal.error ? <p role="alert" className="text-sm text-destructive">{createGoal.error.message}</p> : null}
           </div>
         </div>
 
-        {/* Title */}
-        <div className="px-4 pt-4 pb-2 shrink-0">
-          <input
-            className="w-full text-lg font-semibold bg-transparent outline-none placeholder:text-muted-foreground/50"
-            placeholder="Goal title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Tab" && !e.shiftKey) {
-                e.preventDefault();
-                descriptionEditorRef.current?.focus();
-              }
-            }}
-            autoFocus
-          />
-        </div>
-
-        {/* Description */}
-        <div className="px-4 pb-2">
-          <MarkdownEditor
-            ref={descriptionEditorRef}
-            engine="codemirror"
-            documentIdentity={`new-goal:${documentSessionId}`}
-            value={description}
-            onChange={setDescription}
-            placeholder="Add description..."
-            bordered={false}
-            contentClassName={cn("text-sm text-muted-foreground", expanded ? "min-h-[220px]" : "min-h-[120px]")}
-            imageUploadHandler={async (file) => {
-              const asset = await uploadDescriptionImage.mutateAsync(file);
-              return asset.contentPath;
-            }}
-          />
-        </div>
-
-        {/* Property chips */}
-        <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
-          {/* Status */}
-          <Popover open={statusOpen} onOpenChange={setStatusOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors">
-                <StatusBadge status={status} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-40 p-1" align="start">
-              {GOAL_STATUSES.map((s) => (
-                <button
-                  key={s}
-                  className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 capitalize",
-                    s === status && "bg-accent"
-                  )}
-                  onClick={() => { setStatus(s); setStatusOpen(false); }}
-                >
-                  {s}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-
-          {/* Level */}
-          <Popover open={levelOpen} onOpenChange={setLevelOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors">
-                <Layers className="h-3 w-3 text-muted-foreground" />
-                {levelLabels[level] ?? level}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-40 p-1" align="start">
-              {GOAL_LEVELS.map((l) => (
-                <button
-                  key={l}
-                  className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-                    l === level && "bg-accent"
-                  )}
-                  onClick={() => { setLevel(l); setLevelOpen(false); }}
-                >
-                  {levelLabels[l] ?? l}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-
-          {/* Parent goal */}
-          <Popover open={parentOpen} onOpenChange={setParentOpen}>
-            <PopoverTrigger asChild>
-              <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors">
-                <Target className="h-3 w-3 text-muted-foreground" />
-                {currentParent ? currentParent.title : "Parent goal"}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-48 p-1" align="start">
-              <button
-                className={cn(
-                  "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-                  !appliedParentId && "bg-accent"
-                )}
-                onClick={() => { setParentId(""); setParentOpen(false); }}
-              >
-                No parent
-              </button>
-              {(goals ?? []).map((g) => (
-                <button
-                  key={g.id}
-                  className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 truncate",
-                    g.id === appliedParentId && "bg-accent"
-                  )}
-                  onClick={() => { setParentId(g.id); setParentOpen(false); }}
-                >
-                  {g.title}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end px-4 py-2.5 border-t border-border">
-          <Button
-            size="sm"
-            disabled={!title.trim() || createGoal.isPending}
-            onClick={handleSubmit}
-          >
-            {createGoal.isPending ? "Creating…" : newGoalDefaults.parentId ? "Create sub-goal" : "Create goal"}
+        <div className="flex items-center justify-end border-t border-border px-4 py-2.5">
+          <Button type="button" size="sm" disabled={actionDisabled} onClick={() => createGoal.mutate()}>
+            {createGoal.isPending ? pendingLabel : actionLabel}
           </Button>
         </div>
       </DialogContent>

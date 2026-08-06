@@ -1921,7 +1921,7 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
-  it("persists an explicit goal clear for projectless issues with a default organization goal", async () => {
+  it("keeps projectless issues unlinked even when an organization-level goal exists", async () => {
     const orgId = randomUUID();
 
     await db.insert(organizations).values({
@@ -1948,7 +1948,8 @@ describe("issueService.list participantAgentId", () => {
       priority: "medium",
     });
 
-    expect(issue.goalId).toBe(defaultGoal!.id);
+    expect(defaultGoal).toBeTruthy();
+    expect(issue.goalId).toBeNull();
 
     const updated = await svc.update(issue.id, { goalId: null });
 

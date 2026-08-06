@@ -890,8 +890,8 @@ export interface PluginAgentSessionsClient {
 export interface PluginGoalsClient {
   list(input: {
     orgId: string;
-    level?: Goal["level"];
-    status?: Goal["status"];
+    lifecycle?: NonNullable<Goal["lifecycle"]>;
+    objectiveMode?: NonNullable<Goal["objectiveMode"]>;
     limit?: number;
     offset?: number;
   }): Promise<Goal[]>;
@@ -900,17 +900,10 @@ export interface PluginGoalsClient {
     orgId: string;
     title: string;
     description?: string;
-    level?: Goal["level"];
-    status?: Goal["status"];
-    parentId?: string;
-    ownerAgentId?: string;
   }): Promise<Goal>;
   update(
     goalId: string,
-    patch: Partial<Pick<
-      Goal,
-      "title" | "description" | "level" | "status" | "parentId" | "ownerAgentId"
-    >>,
+    patch: Partial<Pick<Goal, "title" | "description">>,
     orgId: string,
   ): Promise<Goal>;
 }

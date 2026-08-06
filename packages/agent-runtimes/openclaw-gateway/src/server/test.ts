@@ -6,6 +6,7 @@ import type {
 import { asString, parseObject } from "@rudderhq/agent-runtime-utils/server-utils";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
+import { OPENCLAW_GATEWAY_PROTOCOL_VERSION } from "./execute.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -145,8 +146,8 @@ async function probeGateway(input: {
             id: connectId,
             method: "connect",
             params: {
-              minProtocol: 3,
-              maxProtocol: 3,
+              minProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
+              maxProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
               client: {
                 id: "gateway-client",
                 version: "rudder-probe",
@@ -274,7 +275,7 @@ export async function testEnvironment(
         headers,
         authToken,
         role,
-        scopes: scopes.length > 0 ? scopes : ["operator.admin"],
+        scopes: scopes.length > 0 ? scopes : ["operator.read", "operator.write"],
         timeoutMs: 3_000,
       });
 

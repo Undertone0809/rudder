@@ -572,6 +572,10 @@ describe("applyPendingMigrations", () => {
           "0140_faulty_kitty_pryde.sql",
           "0141_product_analytics_revision_origin.sql",
           "0142_product_analytics_quality_counters.sql",
+          "0143_goal_contract.sql",
+          "0144_eminent_umar.sql",
+          "0145_public_nehzno.sql",
+          "0146_medical_roulette.sql",
         ],
         reason: "pending-migrations",
       });
@@ -735,6 +739,10 @@ describe("applyPendingMigrations", () => {
           "0140_faulty_kitty_pryde.sql",
           "0141_product_analytics_revision_origin.sql",
           "0142_product_analytics_quality_counters.sql",
+          "0143_goal_contract.sql",
+          "0144_eminent_umar.sql",
+          "0145_public_nehzno.sql",
+          "0146_medical_roulette.sql",
         ],
         reason: "pending-migrations",
       });

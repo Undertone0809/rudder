@@ -38,6 +38,7 @@ import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import {
   getGlobalSearchScopeDefinition,
   getPendingGlobalSearchScopeSuggestion,
@@ -83,6 +84,7 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const searchQuery = query.trim();
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const shortcutSettingsQuery = useQuery({
@@ -547,10 +549,12 @@ export function CommandPalette() {
               <Hexagon className="mr-2 h-4 w-4" />
               Projects
             </CommandItem>
-            <CommandItem value="goals targets" onSelect={() => go("/goals")}>
-              <Target className="mr-2 h-4 w-4" />
-              Goals
-            </CommandItem>
+            {goalsEnabled ? (
+              <CommandItem value="goals targets" onSelect={() => go("/goals")}>
+                <Target className="mr-2 h-4 w-4" />
+                Goals
+              </CommandItem>
+            ) : null}
             <CommandItem value="heartbeats activity runs" onSelect={() => go("/heartbeats")}>
               <Clock3 className="mr-2 h-4 w-4" />
               Heartbeats

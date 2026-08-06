@@ -20,6 +20,7 @@ const dialogState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
+    if (queryKey[0] === "health") return { data: { features: { experimentalGoalsEnabled: true } } };
     if (queryKey[0] === "agents" && queryKey[1] === "skills") {
       return {
         data: {

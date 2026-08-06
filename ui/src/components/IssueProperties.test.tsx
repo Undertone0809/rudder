@@ -14,6 +14,7 @@ const openNewIssue = vi.hoisted(() => vi.fn());
 const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
 const mockProjects = vi.hoisted(() => ({ current: [] as Project[] }));
 const mockAgents = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
+const mockGoalsEnabled = vi.hoisted(() => ({ current: true }));
 const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -89,6 +90,15 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("../hooks/useExperimentalGoalsEnabled", () => ({
+  useExperimentalGoalsEnabled: () => ({
+    enabled: mockGoalsEnabled.current,
+    isLoading: false,
+    error: null,
+    retry: vi.fn(),
+  }),
+}));
+
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
     <a href={to} {...props}>{children}</a>
@@ -103,6 +113,7 @@ beforeEach(() => {
   mockIssues.current = [];
   mockProjects.current = [];
   mockAgents.current = [];
+  mockGoalsEnabled.current = true;
 });
 
 afterEach(() => {
@@ -214,6 +225,32 @@ function project(overrides: Partial<Project> = {}): Project {
 }
 
 describe("IssueProperties", () => {
+  it("hides Goal relationships while the experimental feature is disabled", () => {
+    mockGoalsEnabled.current = false;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, goalId: "goal-1" }}
+          onUpdate={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[aria-label^="Change goal:"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Open goal"]')).toBeNull();
+  });
+
   it("renders selected Agents with bare avatars and single-line names", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

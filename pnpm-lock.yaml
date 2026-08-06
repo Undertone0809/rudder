@@ -262,6 +262,19 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/agent-runtimes/hermes-gateway:
+    dependencies:
+      '@rudderhq/agent-runtime-utils':
+        specifier: workspace:*
+        version: link:../../agent-runtime-utils
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.0
+        version: 24.12.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/agent-runtimes/openclaw-gateway:
     dependencies:
       '@rudderhq/agent-runtime-utils':
@@ -655,6 +668,9 @@ importers:
       '@rudderhq/agent-runtime-gemini-local':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/gemini-local
+      '@rudderhq/agent-runtime-hermes-gateway':
+        specifier: workspace:*
+        version: link:../packages/agent-runtimes/hermes-gateway
       '@rudderhq/agent-runtime-openclaw-gateway':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/openclaw-gateway

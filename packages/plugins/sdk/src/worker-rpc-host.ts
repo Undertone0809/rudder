@@ -685,8 +685,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
         async list(input) {
           return callHost("goals.list", {
             orgId: input.orgId,
-            level: input.level,
-            status: input.status,
+            lifecycle: input.lifecycle,
+            objectiveMode: input.objectiveMode,
             limit: input.limit,
             offset: input.offset,
           });
@@ -701,17 +701,13 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             orgId: input.orgId,
             title: input.title,
             description: input.description,
-            level: input.level,
-            status: input.status,
-            parentId: input.parentId,
-            ownerAgentId: input.ownerAgentId,
           });
         },
 
         async update(goalId: string, patch, orgId: string) {
           return callHost("goals.update", {
             goalId,
-            patch: patch as Record<string, unknown>,
+            patch,
             orgId,
           });
         },

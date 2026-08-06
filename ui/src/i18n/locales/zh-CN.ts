@@ -196,6 +196,11 @@ export const zhCN: Messages = {
   "experimental.sites.toggle": "启用 Apps",
   "experimental.sites.notice":
     "Apps 仍处于实验阶段。应用会在此设备上运行项目代码；除非你自行配置网络，否则只能从本机访问。",
+  "experimental.goals.section": "Goals",
+  "experimental.goals.title": "启用 Goals",
+  "experimental.goals.enabledDescription": "Goals 会显示在主导航中。",
+  "experimental.goals.disabledDescription": "开启后即可试用 Goal 工作区。",
+  "experimental.goals.toggle": "启用 Goals",
   "experimental.loadFailed": "加载实验性设置失败。",
   "experimental.updateFailed": "保存实验性设置失败。",
   "chat.emptyState.heading": "想聊点什么？",

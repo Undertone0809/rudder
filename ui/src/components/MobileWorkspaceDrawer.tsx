@@ -1,3 +1,4 @@
+import { healthApi } from "@/api/health";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -32,6 +33,11 @@ export function MobileWorkspaceDrawer() {
     selectedOrganizationId ? `rudder:sidebar-scroll:${selectedOrganizationId}` : undefined,
   );
   const inboxBadge = useInboxBadge(selectedOrganizationId);
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+  });
+  const goalsEnabled = healthQuery.data?.features?.experimentalGoalsEnabled === true;
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedOrganizationId!),
     queryFn: () => agentRunsApi.liveRunsForCompany(selectedOrganizationId!),
@@ -80,7 +86,7 @@ export function MobileWorkspaceDrawer() {
           </Button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
           <SidebarNavItem to="/heartbeats" label="Heartbeats" icon={Clock3} />
-          <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+          {goalsEnabled ? <SidebarNavItem to="/goals" label="Goals" icon={Target} /> : null}
           <SidebarNavItem
             to="/messenger"
             label="Messenger"

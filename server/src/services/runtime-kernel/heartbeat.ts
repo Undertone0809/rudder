@@ -30,6 +30,7 @@ import { logger } from "../../middleware/logger.js";
 import {
   agentRunContextService
 } from "../agent-run-context.js";
+import { approvalService } from "../approvals.js";
 import { publishAutomationRunOutputToChat } from "../automation-chat-output.js";
 import { budgetService, type BudgetEnforcementScope } from "../budgets.js";
 import { costService } from "../costs.js";
@@ -111,6 +112,7 @@ export function heartbeatService(
 
   const runLogStore = getRunLogStore();
   const runContextSvc = agentRunContextService(db);
+  const approvalsSvc = approvalService(db);
   const issuesSvc = issueService(db);
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
@@ -1731,7 +1733,7 @@ export function heartbeatService(
 
 
   const baseContext = {
-    db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
+    db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
     getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });

@@ -84,8 +84,13 @@ type GatewayClientRequestOptions = {
   expectFinal?: boolean;
 };
 
-const PROTOCOL_VERSION = 3;
-const DEFAULT_SCOPES = ["operator.admin"];
+// Current OpenClaw gateways (v2026.6+) require protocol v4. The device
+// signature payload remains the established V3 format and is independent of
+// the transport handshake version.
+export const OPENCLAW_GATEWAY_PROTOCOL_VERSION = 4;
+// Agent execution only needs read/write operator RPCs. Pairing is requested
+// explicitly for the one-time device approval path below.
+const DEFAULT_SCOPES = ["operator.read", "operator.write"];
 const DEFAULT_CLIENT_ID = "gateway-client";
 const DEFAULT_CLIENT_MODE = "backend";
 const DEFAULT_CLIENT_VERSION = "rudder";
@@ -135,13 +140,22 @@ function normalizeSessionKeyStrategy(value: unknown): SessionKeyStrategy {
 function resolveSessionKey(input: {
   strategy: SessionKeyStrategy;
   configuredSessionKey: string | null;
+  configuredAgentId: string | null;
   runId: string;
   issueId: string | null;
 }): string {
   const fallback = input.configuredSessionKey ?? "rudder";
-  if (input.strategy === "run") return `rudder:run:${input.runId}`;
-  if (input.strategy === "issue" && input.issueId) return `rudder:issue:${input.issueId}`;
-  return fallback;
+  const agentId = input.configuredAgentId;
+  const namespace = (key: string) => {
+    // OpenClaw binds a session key to the agent that first created it. Keep
+    // the legacy main-agent keys stable, but namespace explicitly selected
+    // non-main agents so a reused key cannot cross agent identities.
+    if (!agentId || agentId === "main" || key.startsWith(`agent:${agentId}:`)) return key;
+    return `agent:${agentId}:${key}`;
+  };
+  if (input.strategy === "run") return namespace(`rudder:run:${input.runId}`);
+  if (input.strategy === "issue" && input.issueId) return namespace(`rudder:issue:${input.issueId}`);
+  return namespace(fallback);
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -177,6 +191,10 @@ function toStringArray(value: unknown): string[] {
 function normalizeScopes(value: unknown): string[] {
   const parsed = toStringArray(value);
   return parsed.length > 0 ? parsed : [...DEFAULT_SCOPES];
+}
+
+function canOverrideProviderModel(role: string, scopes: string[]): boolean {
+  return role === "admin" || scopes.includes("operator.admin");
 }
 
 function uniqueScopes(scopes: string[]): string[] {
@@ -851,8 +869,8 @@ async function autoApproveDevicePairing(params: {
 
     await client.connect(
       () => ({
-        minProtocol: PROTOCOL_VERSION,
-        maxProtocol: PROTOCOL_VERSION,
+        minProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
+        maxProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
         client: {
           id: params.clientId,
           version: params.clientVersion,
@@ -1092,9 +1110,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);
+  const configuredAgentId = nonEmpty(ctx.config.agentId);
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
+    configuredAgentId,
     runId: ctx.runId,
     issueId: wakePayload.issueId,
   });
@@ -1113,7 +1133,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
   delete agentParams.text;
 
-  const configuredAgentId = nonEmpty(ctx.config.agentId);
+  // OpenClaw treats provider/model selection as an operator.admin capability
+  // in current gateway versions. Rudder's normal operator caller must not
+  // smuggle those fields through either runtime config or payloadTemplate.
+  const configuredModel = nonEmpty(ctx.config.model);
+  const canUseProviderModel = canOverrideProviderModel(role, scopes);
+  if (canUseProviderModel && configuredModel && !nonEmpty(agentParams.model)) {
+    agentParams.model = configuredModel;
+  }
+  if (!canUseProviderModel) {
+    delete agentParams.model;
+    delete agentParams.provider;
+  }
+
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
     agentParams.agentId = configuredAgentId;
   }
@@ -1218,6 +1250,31 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       onEvent,
       onLog: ctx.onLog,
     });
+    let controlLease: { release(): Promise<void> } | null = null;
+    let abortSent = false;
+    let abortAccepted = false;
+    let abortError: string | null = null;
+    let activeProviderRunId = ctx.runId;
+    const abortRemoteRun = async (): Promise<boolean> => {
+      if (abortSent) return abortAccepted;
+      abortSent = true;
+      try {
+        await client.request("sessions.abort", { runId: activeProviderRunId }, { timeoutMs: connectTimeoutMs });
+        abortAccepted = true;
+        await ctx.onLog("stdout", `[openclaw-gateway] sessions.abort accepted runId=${activeProviderRunId}\n`);
+      } catch (firstError) {
+        try {
+          await client.request("chat.abort", { sessionKey, runId: activeProviderRunId }, { timeoutMs: connectTimeoutMs });
+          abortAccepted = true;
+          await ctx.onLog("stdout", `[openclaw-gateway] chat.abort accepted sessionKey=${sessionKey}\n`);
+        } catch (secondError) {
+          abortError = secondError instanceof Error ? secondError.message : firstError instanceof Error ? firstError.message : String(secondError);
+          await ctx.onLog("stderr", "[openclaw-gateway] native abort could not be verified\n");
+        }
+      }
+      return abortAccepted;
+    };
+    const onAbort = () => { void abortRemoteRun(); };
 
     try {
       deviceIdentity = disableDeviceAuth ? null : resolveDeviceIdentity(parseObject(ctx.config));
@@ -1235,8 +1292,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       const hello = await client.connect((nonce) => {
         const signedAtMs = Date.now();
         const connectParams: Record<string, unknown> = {
-          minProtocol: PROTOCOL_VERSION,
-          maxProtocol: PROTOCOL_VERSION,
+          minProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
+          maxProtocol: OPENCLAW_GATEWAY_PROTOCOL_VERSION,
           client: {
             id: clientId,
             version: clientVersion,
@@ -1282,7 +1339,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
       await ctx.onLog(
         "stdout",
-        `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, PROTOCOL_VERSION)}\n`,
+        `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, OPENCLAW_GATEWAY_PROTOCOL_VERSION)}\n`,
       );
 
       const acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
@@ -1293,12 +1350,30 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
       const acceptedStatus = nonEmpty(acceptedPayload?.status)?.toLowerCase() ?? "";
       const acceptedRunId = nonEmpty(acceptedPayload?.runId) ?? ctx.runId;
+      activeProviderRunId = acceptedRunId;
       trackedRunIds.add(acceptedRunId);
 
       await ctx.onLog(
         "stdout",
         `[openclaw-gateway] agent accepted runId=${acceptedRunId} status=${acceptedStatus || "unknown"}\n`,
       );
+
+      if (ctx.controlAttempt) {
+        controlLease = await ctx.controlAttempt.register({
+          runtimeType: "openclaw_gateway",
+          providerThreadId: sessionKey,
+          providerTurnId: acceptedRunId,
+          capabilities: { steer: "interrupt_continue", interrupt: "remote" },
+          async steer() { return { disposition: "unsupported", reason: "OpenClaw Gateway adapter does not expose native steer." }; },
+          async interrupt() { return (await abortRemoteRun()) ? "acknowledged" : "unverified"; },
+          async dispose() {},
+        });
+        if (!controlLease) {
+          await abortRemoteRun();
+          return { exitCode: 1, signal: null, timedOut: false, errorMessage: "OpenClaw runtime control lease was lost.", errorCode: "openclaw_gateway_control_lost", resultJson: acceptedPayload };
+        }
+      }
+      ctx.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
       if (acceptedStatus === "error") {
         const errorMessage =
@@ -1323,6 +1398,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         latestResultPayload = waitPayload;
 
         const waitStatus = nonEmpty(waitPayload?.status)?.toLowerCase() ?? "";
+        if (ctx.abortSignal?.aborted || abortSent) {
+          return {
+            exitCode: 1,
+            signal: "SIGTERM",
+            timedOut: false,
+            errorMessage: abortAccepted ? "OpenClaw run stopped." : "OpenClaw stop was not verified.",
+            errorCode: abortAccepted ? "openclaw_gateway_stopped" : "openclaw_gateway_cancel_unverified",
+            resultJson: { ...waitPayload, control: { abortRequested: true, abortAccepted, abortError } },
+          };
+        }
         if (waitStatus === "timeout") {
           return {
             exitCode: 1,
@@ -1358,6 +1443,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
             resultJson: waitPayload,
           };
         }
+      }
+
+      if (ctx.abortSignal?.aborted || abortSent) {
+        return {
+          exitCode: 1,
+          signal: "SIGTERM",
+          timedOut: false,
+          errorMessage: abortAccepted ? "OpenClaw run stopped." : "OpenClaw stop was not verified.",
+          errorCode: abortAccepted ? "openclaw_gateway_stopped" : "openclaw_gateway_cancel_unverified",
+          resultJson: { ...(asRecord(latestResultPayload) ?? {}), control: { abortRequested: true, abortAccepted, abortError } },
+        };
       }
 
       const summaryFromEvents = assistantChunks.join("").trim();
@@ -1400,7 +1496,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         ...(model ? { model } : {}),
         ...(usage ? { usage } : {}),
         ...(costUsd > 0 ? { costUsd } : {}),
-        resultJson: asRecord(latestResultPayload),
+        resultJson: { ...(asRecord(latestResultPayload) ?? {}), control: { abortRequested: abortSent, abortAccepted, abortError } },
         ...(runtimeServices.length > 0 ? { runtimeServices } : {}),
         ...(summary ? { summary } : {}),
       };
@@ -1465,6 +1561,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         resultJson: asRecord(latestResultPayload),
       };
     } finally {
+      ctx.abortSignal?.removeEventListener("abort", onAbort);
+      await controlLease?.release();
       client.close();
     }
   }

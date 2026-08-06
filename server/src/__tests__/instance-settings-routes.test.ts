@@ -76,6 +76,7 @@ describe("instance settings routes", () => {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: false,
+      experimentalGoalsEnabled: false,
       locale: "en",
     });
     mockInstanceSettingsService.getNotifications.mockResolvedValue({
@@ -94,6 +95,7 @@ describe("instance settings routes", () => {
         censorUsernameInLogs: true,
         showDeveloperDiagnostics: true,
         experimentalSitesEnabled: false,
+        experimentalGoalsEnabled: false,
         locale: "zh-CN",
       },
     });
@@ -203,6 +205,7 @@ describe("instance settings routes", () => {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: false,
+      experimentalGoalsEnabled: false,
       locale: "en",
     });
 

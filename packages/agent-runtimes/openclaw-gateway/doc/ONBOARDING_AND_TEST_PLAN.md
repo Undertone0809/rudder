@@ -43,7 +43,7 @@ Recommended fields:
   "waitTimeoutMs": 120000,
   "sessionKeyStrategy": "issue",
   "role": "operator",
-  "scopes": ["operator.admin"]
+  "scopes": ["operator.read", "operator.write"]
 }
 ```
 
