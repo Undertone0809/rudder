@@ -47,7 +47,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { accessApi } from "../api/access";
 import { activityApi } from "../api/activity";
 import { agentRunsApi } from "../api/agent-runs";
@@ -296,10 +296,22 @@ function issueActivityReferenceLink(reference: IssueActivityReference): string {
 
 function renderIssueActivityReference(reference: IssueActivityReference): ReactNode {
   return (
-    <Link to={issueActivityReferenceLink(reference)} className="underline underline-offset-4 hover:text-foreground">
+    <Link
+      to={issueActivityReferenceLink(reference)}
+      className="underline underline-offset-4 hover:text-foreground"
+      title={issueActivityReferenceLabel(reference)}
+    >
       {issueActivityReferenceLabel(reference)}
     </Link>
   );
+}
+
+function textFromActivityNode(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textFromActivityNode).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return textFromActivityNode(node.props.children);
+  return "";
 }
 
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
@@ -726,7 +738,7 @@ function renderActivityDescription(
     const chatHref = `/chat/${evt.entityId}`;
     const label = issueActivityChatLabel(evt);
     const link = (
-      <Link to={chatHref} className="underline underline-offset-4 hover:text-foreground">
+      <Link to={chatHref} className="underline underline-offset-4 hover:text-foreground" title={label}>
         {label}
       </Link>
     );
@@ -813,6 +825,7 @@ function IssueActivityRow({
 }) {
   const actorName = issueActivityActorName({ evt, agentMap, currentBoardUserId, operatorDisplayName });
   const activityDescription = renderActivityDescription(evt, agentMap, currentBoardUserId);
+  const activityDescriptionTitle = textFromActivityNode(activityDescription).trim();
   const activityTime = relativeTime(evt.createdAt);
 
   return (
@@ -825,8 +838,8 @@ function IssueActivityRow({
         data-testid="issue-activity-summary"
         className="flex min-w-0 items-center gap-1.5 whitespace-nowrap leading-5"
       >
-        <span className="max-w-[9rem] shrink-0 truncate font-medium text-foreground">{actorName}</span>
-        <span className="min-w-0 truncate"> {activityDescription}</span>
+        <span title={actorName} className="max-w-[9rem] shrink-0 truncate font-medium text-foreground">{actorName}</span>
+        <span title={activityDescriptionTitle || undefined} className="min-w-0 truncate"> {activityDescription}</span>
         <span className="shrink-0 tabular-nums text-muted-foreground/90"> · {activityTime}</span>
       </span>
     </div>

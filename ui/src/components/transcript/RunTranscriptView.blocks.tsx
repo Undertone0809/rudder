@@ -992,7 +992,7 @@ export function TranscriptToolCard({
               </span>
             )}
           </div>
-          <div className={cn("mt-1 break-words text-foreground/80", compact ? "text-xs" : "text-sm")}>
+          <div className={cn("mt-1 truncate text-foreground/80", compact ? "text-xs" : "text-sm")} title={summary}>
             {summary}
           </div>
         </div>
@@ -1115,7 +1115,10 @@ export function TranscriptCommandGroup({
           <div className="text-[11px] font-semibold leading-none tracking-[0.05em] text-muted-foreground/70">
             Command activity
           </div>
-          <div className={cn("mt-1 break-words text-foreground/85", compact ? "text-xs" : "text-sm")}>
+          <div
+            className={cn("mt-1 truncate text-foreground/85", compact ? "text-xs" : "text-sm")}
+            title={summary || (isRunning ? "Working with commands" : "Command details")}
+          >
             {summary || (isRunning ? "Working with commands" : "Command details")}
           </div>
         </div>
@@ -1174,10 +1177,13 @@ export function TranscriptActivityRow({
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-500" />
         </span>
       )}
-      <div className={cn(
-        "break-words text-foreground/80",
-        density === "compact" ? "text-xs leading-5" : "text-sm leading-6",
-      )}>
+      <div
+        className={cn(
+          "min-w-0 flex-1 truncate text-foreground/80",
+          density === "compact" ? "text-xs leading-5" : "text-sm leading-6",
+        )}
+        title={block.name}
+      >
         {block.name}
       </div>
     </div>

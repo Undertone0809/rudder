@@ -238,7 +238,10 @@ export function TranscriptChatStdoutActionRow({
         aria-label={open ? "Collapse output details" : "Expand output details"}
       >
         <TranscriptChatActionIconCell category="stdout" status="completed" compact={compact} />
-        <span className={cn("min-w-0 flex-1 break-words text-foreground/82", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+        <span
+          className={cn("min-w-0 flex-1 truncate text-foreground/82", compact ? "text-xs leading-5" : "text-sm leading-6")}
+          title={block.text}
+        >
           {preview}
         </span>
         <span
@@ -359,9 +362,10 @@ export function TranscriptChatToolActionRow({
           <span
             id={summaryLabelId}
             className={cn(
-              "min-w-0 flex-1 break-words text-foreground/84",
+              "min-w-0 flex-1 truncate text-foreground/84",
               compact ? "text-xs leading-5" : "text-sm leading-6",
             )}
+            title={displaySummary}
           >
             {skillTargets.length === 1 ? (() => {
               const target = skillTargets[0]!;
@@ -536,7 +540,11 @@ export function TranscriptChatToolActionRow({
           data-transcript-agent-inspect={inspectAgent ? inspectableAgent?.threadId : undefined}
         >
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+          <span
+            id={summaryLabelId}
+            className={cn("min-w-0 flex-1 truncate text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}
+            title={displaySummary}
+          >
             {displaySummary}
           </span>
           <span
@@ -874,11 +882,11 @@ export function TranscriptChatActionGroup({
             <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
           )}
         </span>
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className={cn(
-            "block break-words text-foreground/82",
+            "block truncate text-foreground/82",
             compact ? "text-xs" : "text-sm",
-          )}>
+          )} title={summary || "Tool details"}>
             {summary || "Tool details"}
           </span>
         </span>

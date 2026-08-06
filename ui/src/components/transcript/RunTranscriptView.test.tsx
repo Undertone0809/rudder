@@ -1512,7 +1512,7 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Marked RUD-38 done");
     expect(html).toContain("added file-backed comment");
-    expect(countOccurrences(html, "Marked RUD-38 done")).toBe(1);
+    expect((html.match(/>Marked RUD-38 done/gu) ?? []).length).toBe(1);
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Ran rudder issue done");
     expect(html).not.toContain("Command activity");
