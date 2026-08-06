@@ -242,10 +242,14 @@ function createCurrentMigrationsFolderThrough(maxIdx: number) {
 }
 
 afterEach(async () => {
-  while (runningInstances.length > 0) {
-    const instance = runningInstances.pop();
-    if (!instance) continue;
-    await instance.stop();
+  const instances = runningInstances.splice(0).reverse();
+  const results = await Promise.allSettled(instances.map((instance) => instance.stop()));
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      `Failed to stop ${failures.length} embedded PostgreSQL test instance(s)`,
+    );
   }
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
