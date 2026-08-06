@@ -4,13 +4,14 @@ import {
   getWorkspaceColumnMaxWidth,
   preserveRememberedSidePanelWidth,
   resolveDefaultSidePanelWidth,
+  resolveDisplayedSidePanelContext,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
-  resolveDisplayedSidePanelContext,
   resolveSidePanelCollapseWidth,
   resolveSidePanelContextKey,
   resolveSidePanelDragWidth,
   resolveSidePanelRouteContextKey,
+  shouldAutoCollapseAgentContextSidebar,
   shouldAutoExpandSidePanel,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
@@ -103,6 +104,33 @@ describe("workspace context column sizing", () => {
 });
 
 describe("side panel route context", () => {
+  it("temporarily collapses the Agent context column only for a ready desktop detail panel", () => {
+    expect(shouldAutoCollapseAgentContextSidebar({
+      isMobile: false,
+      relativePath: "/agents/agent-1/runs/run-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+    })).toBe(true);
+    expect(shouldAutoCollapseAgentContextSidebar({
+      isMobile: false,
+      relativePath: "/agents",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+    })).toBe(false);
+    expect(shouldAutoCollapseAgentContextSidebar({
+      isMobile: false,
+      relativePath: "/agents/agent-1/runs/run-1",
+      sidePanelOpen: false,
+      sidePanelContextReady: true,
+    })).toBe(false);
+    expect(shouldAutoCollapseAgentContextSidebar({
+      isMobile: true,
+      relativePath: "/agents/agent-1/runs/run-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+    })).toBe(false);
+  });
+
   it("scopes side panel state to Messenger chats and issues", () => {
     expect(resolveSidePanelContextKey("/messenger/chat/chat-1")).toBe("chat:chat-1");
     expect(resolveSidePanelContextKey("/messenger/issues/RUD-42")).toBe("issue:RUD-42");

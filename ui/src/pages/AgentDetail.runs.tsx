@@ -542,21 +542,21 @@ export function RunsTab({
 
   // Desktop: detail pane first, compact navigation rail on the right.
   return (
-    <div className="min-w-0">
+    <div className="agent-runs-layout min-w-0">
       {toolbar}
       {activeFilterChips.length > 0 && (
         <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mb-3 justify-end" />
       )}
-      <div className="flex min-w-0 items-start gap-4">
+      <div className="agent-runs-desktop-split min-w-0">
         <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
           <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
         </div>
 
         <div
-          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg"
+          className="agent-runs-list-pane shrink-0 rounded-lg border border-border"
           data-testid="agent-runs-list-pane"
         >
-          <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
+          <div className="agent-runs-list-scroll overflow-y-auto">
             {selectedRunOutsideFilters && (
               <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 Selected run is outside the current filters.
@@ -742,7 +742,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
     <div className="space-y-4 min-w-0">
       {/* Run summary card */}
       <div className="border border-border rounded-lg overflow-hidden" data-testid="run-summary-card">
-        <div className="flex flex-col sm:flex-row">
+        <div className="agent-run-summary-layout flex flex-col">
           {/* Left column: status + timing */}
           <div className="min-w-0 flex-1 p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
@@ -857,7 +857,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
               </div>
             )}
             {facts.length > 0 && (
-              <div className="grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2" data-testid="run-agent-run-facts">
+              <div className="agent-run-facts-grid grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid="run-agent-run-facts">
                 {facts.map((fact) => (
                   <div key={`${fact.label}:${fact.value}`} className="min-w-0">
                     <div className="text-[11px] text-muted-foreground">{fact.label}</div>
@@ -933,7 +933,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
 
           {/* Right column: metrics */}
           {hasMetrics && (
-            <div className="border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
+            <div className="agent-run-summary-metrics grid grid-cols-2 content-center gap-x-4 gap-y-3 border-t border-border p-4 tabular-nums">
               <div>
                 <div className="text-xs text-muted-foreground">Prompt input</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.promptTokens)}</div>
