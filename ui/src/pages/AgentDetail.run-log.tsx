@@ -564,12 +564,8 @@ export function LogViewer({
     }
   }, [activeDetailTab, hasInvocationTab]);
 
-  if (loading && logLoading) {
+  if (loading || logLoading) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
-  }
-
-  if (transcript.length === 0 && !logError) {
-    return <p className="text-xs text-muted-foreground">No log events.</p>;
   }
 
   return (
