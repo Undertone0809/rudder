@@ -2270,6 +2270,7 @@ export function ChatSidePanel({
         sidePanel.closeTarget(sidePanelTargetKey({ ...tab, conversationId: destroyedConversationId }));
       }
     } catch (error) {
+      if (error instanceof Error && error.name === "ChatGenerationCloseSupersededError") return;
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         if (tab.conversationId) {
           const detailQueryKey = queryKeys.chats.detail(

@@ -117,6 +117,7 @@ const mockState = vi.hoisted(() => ({
   keepSideChat: vi.fn(),
   updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
+  chatGenerationClosePending: new Set<string>(),
   setChatSendInFlight: vi.fn(),
   createConversation: vi.fn(),
   draftPreflight: {
@@ -1655,6 +1656,7 @@ beforeEach(() => {
   mockState.destroySideChat.mockResolvedValue(undefined);
   mockState.keepSideChat.mockReset();
   mockState.sendInFlightByChatId = {};
+  mockState.chatGenerationClosePending = new Set();
   mockState.setChatSendInFlight.mockReset();
   mockState.createConversation.mockReset();
   mockState.createConversation.mockResolvedValue(chat({
