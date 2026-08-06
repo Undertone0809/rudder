@@ -90,6 +90,30 @@ describe("release migration compatibility matrix", () => {
     })).toThrow("published migration history must remain immutable");
   });
 
+  it("rejects same-version and newer-version fixtures", () => {
+    const fixture = manifest(["0000_base"], { "0000_base": "SELECT 1;" }, "fixture");
+    const candidate = manifest(
+      ["0000_base", "0001_next"],
+      { "0000_base": "SELECT 1;", "0001_next": "SELECT 2;" },
+      "candidate",
+    );
+
+    for (const fixtureVersion of ["1.1.0", "1.2.0"]) {
+      expect(() => validateCompatibilityMatrix({
+        candidateManifest: candidate,
+        candidateVersion: "1.1.0",
+        channel: "stable",
+        matrix: {
+          "1.1.0": {
+            candidateFingerprint: candidate.fingerprint,
+            fixtures: [{ version: fixtureVersion, ref: `v${fixtureVersion}`, fingerprint: fixture.fingerprint }],
+          },
+        },
+        loadFixture: () => fixture,
+      })).toThrow(`must be newer than fixture ${fixtureVersion}`);
+    }
+  });
+
   it("fingerprints compatibility SQL files that are intentionally outside the journal", () => {
     const fixture = buildMigrationManifest({
       label: "fixture",

@@ -14,6 +14,7 @@ import {
   inspectMigrations,
   listLegacyColumnRenames,
   MIGRATION_ADVISORY_LOCK_NAME,
+  normalizeLegacyColumnNames,
   reconcilePendingMigrationHistory,
   validatePostMigrationInvariants,
 } from "./client.js";
@@ -340,6 +341,26 @@ describe("applyPendingMigrations", () => {
       expect(tamperedReport.valid).toBe(false);
       expect(tamperedReport.issues).toContainEqual(expect.objectContaining({
         code: "migration_journal_invalid",
+      }));
+
+      const unknownLegacyConnectionString = await createTempDatabase();
+      await applyPendingMigrations(unknownLegacyConnectionString);
+
+      const legacyJournalTamperSql = postgres(unknownLegacyConnectionString, { max: 1, onnotice: () => {} });
+      try {
+        await legacyJournalTamperSql.unsafe(`
+          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
+          SELECT 'legacy-corrupt', COALESCE(MAX("created_at"), 0) + 1
+          FROM "drizzle"."__drizzle_migrations"
+        `);
+      } finally {
+        await legacyJournalTamperSql.end();
+      }
+      const unknownLegacyReport = await validatePostMigrationInvariants(unknownLegacyConnectionString);
+      expect(unknownLegacyReport.valid).toBe(false);
+      expect(unknownLegacyReport.issues).toContainEqual(expect.objectContaining({
+        code: "migration_journal_invalid",
+        message: expect.stringContaining("does not match any current migration manifest entry"),
       }));
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
@@ -1621,6 +1642,66 @@ describe("applyPendingMigrations", () => {
         ]);
       } finally {
         await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "rolls back every legacy column rename when a later rename fails",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`ALTER TABLE "agents" RENAME COLUMN "agent_runtime_type" TO "adapter_type"`);
+        await sql.unsafe(`ALTER TABLE "agents" RENAME COLUMN "agent_runtime_config" TO "adapter_config"`);
+        await sql.unsafe(`ALTER TABLE "agent_runtime_state" RENAME COLUMN "agent_runtime_type" TO "adapter_type"`);
+        await sql.unsafe(`
+          CREATE FUNCTION fail_legacy_column_rename() RETURNS event_trigger
+          LANGUAGE plpgsql AS $$
+          BEGIN
+            IF current_query() LIKE '%"agent_runtime_state"%' THEN
+              RAISE EXCEPTION 'intentional legacy rename failure';
+            END IF;
+          END;
+          $$
+        `);
+        await sql.unsafe(`
+          CREATE EVENT TRIGGER fail_legacy_column_rename_trigger
+          ON ddl_command_start
+          EXECUTE FUNCTION fail_legacy_column_rename()
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(normalizeLegacyColumnNames(connectionString)).rejects.toThrow(
+        "intentional legacy rename failure",
+      );
+
+      const cleanupSql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await cleanupSql.unsafe(`DROP EVENT TRIGGER fail_legacy_column_rename_trigger`);
+        await cleanupSql.unsafe(`DROP FUNCTION fail_legacy_column_rename()`);
+        const columns = await cleanupSql.unsafe<{ table_name: string; column_name: string }[]>(`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name IN ('agents', 'agent_runtime_state')
+            AND column_name IN (
+              'agent_runtime_type', 'agent_runtime_config', 'adapter_type', 'adapter_config'
+            )
+          ORDER BY table_name, column_name
+        `);
+        expect(columns).toEqual([
+          { table_name: "agent_runtime_state", column_name: "adapter_type" },
+          { table_name: "agents", column_name: "adapter_config" },
+          { table_name: "agents", column_name: "adapter_type" },
+        ]);
+      } finally {
+        await cleanupSql.end();
       }
     },
     20_000,
