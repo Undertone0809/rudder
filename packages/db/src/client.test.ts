@@ -12,6 +12,7 @@ import {
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
   inspectMigrations,
+  listLegacyColumnRenames,
   MIGRATION_ADVISORY_LOCK_NAME,
   reconcilePendingMigrationHistory,
   validatePostMigrationInvariants,
@@ -1513,6 +1514,15 @@ describe("applyPendingMigrations", () => {
 
       const driftedState = await inspectMigrations(connectionString);
       expect(driftedState.status).toBe("upToDate");
+      await expect(listLegacyColumnRenames(connectionString)).resolves.toEqual([
+        "agents.adapter_type->agent_runtime_type",
+        "agents.adapter_config->agent_runtime_config",
+        "agent_runtime_state.adapter_type->agent_runtime_type",
+        "agent_task_sessions.adapter_type->agent_runtime_type",
+        "join_requests.adapter_type->agent_runtime_type",
+        "finance_events.execution_adapter_type->execution_agent_runtime_type",
+        "issues.assignee_adapter_overrides->assignee_agent_runtime_overrides",
+      ]);
 
       await applyPendingMigrations(connectionString);
 
