@@ -129,6 +129,7 @@ export interface GoalStartPreview {
     targetTime?: Date | string | null;
   } | null;
   alignmentQuestion: string | null;
+  warning: string | null;
 }
 
 export interface GoalStartRequest {
@@ -311,6 +312,7 @@ export interface GoalWorkspaceSummary {
   agentAction?: {
     summary: string;
     sourceIds?: string[];
+    status?: string;
   } | null;
   nextStep?: {
     summary: string;

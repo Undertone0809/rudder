@@ -343,6 +343,34 @@ function summarizeAgreement(value: unknown): string {
   }).join("; ");
 }
 
+function contractChangeImpact(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const impacts = [
+    Object.hasOwn(after, "outcomeStatement") && after.outcomeStatement !== before.outcomeStatement
+      ? "the result the Agent is working toward"
+      : null,
+    (Object.hasOwn(after, "criteria") && JSON.stringify(before.criteria) !== JSON.stringify(after.criteria))
+      || (Object.hasOwn(after, "objectiveMode") && before.objectiveMode !== after.objectiveMode)
+      ? "how success is judged"
+      : null,
+    Object.hasOwn(after, "autonomyEnvelope") && JSON.stringify(before.autonomyEnvelope) !== JSON.stringify(after.autonomyEnvelope)
+      ? "what the Agent can do independently"
+      : null,
+    Object.hasOwn(after, "humanAuthorities") && JSON.stringify(before.humanAuthorities) !== JSON.stringify(after.humanAuthorities)
+      ? "which decisions need your approval"
+      : null,
+    Object.hasOwn(after, "evaluationPolicy") && JSON.stringify(before.evaluationPolicy) !== JSON.stringify(after.evaluationPolicy)
+      ? "what evidence is needed before acceptance"
+      : null,
+    (Object.hasOwn(after, "actionDeadline") && before.actionDeadline !== after.actionDeadline)
+      || (Object.hasOwn(after, "evaluationDeadline") && before.evaluationDeadline !== after.evaluationDeadline)
+      ? "when the work or review is expected"
+      : null,
+  ].filter((value): value is string => Boolean(value));
+  return impacts.length > 0
+    ? `This may require the Agent to replan around ${impacts.join(", ")}.`
+    : "No user-visible impact was found in the proposed Goal update.";
+}
+
 function normalizeTimeline(value: unknown): TimelineView[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -396,7 +424,7 @@ function normalizeChangeProposals(value: unknown): ChangeProposalView[] {
       before: summarizeValue(matchingBefore),
       after: summarizeValue(afterValue),
       rationale: readString(record, "rationale", "reason"),
-      impact: readString(record, "impact", "impactSummary"),
+      impact: readString(record, "impact", "impactSummary") ?? contractChangeImpact(beforeRecord, afterRecord),
       evidenceRefs: readStringArray(record.evidenceRefs),
     }];
   });
@@ -663,7 +691,7 @@ function facetLabel(facet: GoalWorkspaceFacet | string) {
   if (facet === "closed") return "History";
   if (facet === "ready_for_acceptance") return "Ready for acceptance";
   if (facet === "needs_attention" || facet === "needs_your_attention") return "Needs your attention";
-  if (facet === "waiting_focus") return "Waiting for focus";
+  if (facet === "waiting_focus") return "Waiting to start";
   if (facet === "waiting_external" || facet === "waiting_for_external_result") return "Waiting for external result";
   return "Agent advancing";
 }
@@ -691,6 +719,7 @@ function attentionKindLabel(kind: string) {
   if (kind === "result_proposal" || kind === "accept") return "Result ready for review";
   if (kind === "change_proposal" || kind === "approval") return "Goal update needs approval";
   if (kind === "alignment_question" || kind === "clarification") return "Goal needs clarification";
+  if (kind === "owner_blocked") return "Agent needs attention";
   return "Action needed";
 }
 
@@ -799,6 +828,18 @@ export function GoalDetail() {
       focusControlRequestRef.current = null;
       pushToast({ title: error.message, tone: "error" });
     },
+  });
+  const resumeOwner = useMutation({
+    mutationFn: () => {
+      if (!goal?.ownerAgentId || !orgId) throw new Error("This Goal has no available Owner Agent.");
+      return agentsApi.resume(goal.ownerAgentId, orgId);
+    },
+    onSuccess: async () => {
+      await invalidate();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId!) });
+      pushToast({ id: "goal-detail-operation", title: "Agent resumed", tone: "success" });
+    },
+    onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
   });
   const deleteGoal = useMutation({
     mutationFn: () => goalsApi.remove(goalId!),
@@ -1025,7 +1066,11 @@ export function GoalDetail() {
     ?? goal.title;
   const agentActionRecord = asRecord(workspace.agentAction);
   const agentAction = readString(agentActionRecord, "summary")
-    ?? (isDraft ? "Work has not started while this Goal is being aligned." : "No active bounded action is available.");
+    ?? (isDraft ? "Work has not started while this Goal is being aligned." : "No active work has been reported yet.");
+  const agentActionStatus = readString(agentActionRecord, "status");
+  const agentActionHeading = agentActionStatus && ["succeeded", "completed", "failed", "cancelled", "timed_out"].includes(agentActionStatus)
+    ? "Latest Agent activity"
+    : "Agent is doing";
   const nextStepRecord = asRecord(workspace.nextStep);
   const nextStep = readString(nextStepRecord, "summary")
     ?? goal.continuationSummary
@@ -1140,6 +1185,11 @@ export function GoalDetail() {
               {workspace.attention.impact ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.attention.impact}</p> : null}
               <EvidenceList refs={workspace.attention.evidenceRefs ?? []} context={evidenceContext} />
               {isDraft ? <Button type="button" size="sm" className="mt-3" onClick={continueAlignment}>Continue alignment</Button> : null}
+              {workspace.attention.kind === "owner_blocked" && owner?.status === "paused" ? (
+                <Button type="button" size="sm" className="mt-3" onClick={() => resumeOwner.mutate()} disabled={resumeOwner.isPending}>
+                  {resumeOwner.isPending ? "Resuming..." : "Resume Agent"}
+                </Button>
+              ) : null}
             </div>
           ) : null}
 
@@ -1272,9 +1322,9 @@ export function GoalDetail() {
 
       {!isClosed ? (
         <>
-          <Section title="Agent is doing" icon={UserRound}>
+          <Section title={agentActionHeading} icon={UserRound}>
             <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
-            <p className="min-w-0 break-all text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? `Agent ${goal.ownerAgentId.slice(0, 8)}` : "Unassigned")}</p>
+            <p className="min-w-0 break-words text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</p>
           </Section>
 
           <Section title="Next step" icon={ArrowRight}>
@@ -1381,7 +1431,7 @@ export function GoalDetail() {
 
       <Section title="Goal details and related work" icon={Clock3}>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-          <div className="min-w-0"><div className="text-xs text-muted-foreground">Owner</div><div className="mt-1 min-w-0 break-words text-sm">{owner?.name ?? "Unassigned"}</div></div>
+          <div className="min-w-0"><div className="text-xs text-muted-foreground">Owner</div><div className="mt-1 min-w-0 break-words text-sm">{owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</div></div>
           <div className="min-w-0"><div className="text-xs text-muted-foreground">Target time</div><div className="mt-1 min-w-0 break-words text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</div></div>
         </div>
         {goal.criteria && goal.criteria.length > 0 ? (

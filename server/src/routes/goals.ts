@@ -427,6 +427,7 @@ export function goalRoutes(db: Db) {
 
   router.post("/goals/:id/owner", validate(assignGoalOwnerSchema), async (req, res) => {
     const id = req.params.id as string;
+    assertBoard(req);
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
       res.status(404).json({ error: "Goal not found" });

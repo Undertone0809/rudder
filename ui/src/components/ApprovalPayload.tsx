@@ -592,6 +592,33 @@ function goalBoundarySummary(before: Record<string, unknown>, after: Record<stri
   return `This proposal changes ${changes.slice(0, -1).join(", ")}, and ${changes.at(-1)}.`;
 }
 
+function goalChangeImpact(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const impacts = [
+    Object.hasOwn(after, "outcomeStatement") && after.outcomeStatement !== before.outcomeStatement
+      ? "the result the Agent is working toward"
+      : null,
+    (Object.hasOwn(after, "criteria") && !sameGoalAgreementValue(before.criteria, after.criteria))
+      || (Object.hasOwn(after, "objectiveMode") && !sameGoalAgreementValue(before.objectiveMode, after.objectiveMode))
+      ? "how success is judged"
+      : null,
+    Object.hasOwn(after, "autonomyEnvelope") && !sameGoalAgreementValue(before.autonomyEnvelope, after.autonomyEnvelope)
+      ? "what the Agent can do independently"
+      : null,
+    Object.hasOwn(after, "humanAuthorities") && !sameGoalAgreementValue(before.humanAuthorities, after.humanAuthorities)
+      ? "which decisions need your approval"
+      : null,
+    Object.hasOwn(after, "evaluationPolicy") && !sameGoalAgreementValue(before.evaluationPolicy, after.evaluationPolicy)
+      ? "what evidence is needed before acceptance"
+      : null,
+    (Object.hasOwn(after, "actionDeadline") && !sameGoalAgreementValue(before.actionDeadline, after.actionDeadline))
+      || (Object.hasOwn(after, "evaluationDeadline") && !sameGoalAgreementValue(before.evaluationDeadline, after.evaluationDeadline))
+      ? "when the work or review is expected"
+      : null,
+  ].filter((value): value is string => Boolean(value));
+  if (impacts.length === 0) return "No user-visible impact was found in the proposed Goal update.";
+  return `This may require the Agent to replan around ${impacts.join(", ")}.`;
+}
+
 function GoalChangeSummaryField({
   label,
   children,
@@ -632,6 +659,11 @@ export function GoalChangePayload({ payload }: { payload: Record<string, unknown
       <GoalChangeSummaryField label="Boundary">
         <span className="whitespace-pre-wrap text-muted-foreground">
           {goalBoundarySummary(before, after)}
+        </span>
+      </GoalChangeSummaryField>
+      <GoalChangeSummaryField label="Impact">
+        <span className="whitespace-pre-wrap text-foreground/90">
+          {goalChangeImpact(before, after)}
         </span>
       </GoalChangeSummaryField>
       {boundaryChanges.length > 0 ? (

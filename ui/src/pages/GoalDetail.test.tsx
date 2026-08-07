@@ -77,7 +77,7 @@ vi.mock("../components/StatusBadge", () => ({
 
 vi.mock("../components/PageSkeleton", () => ({ PageSkeleton: () => <div>Loading</div> }));
 
-vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn() } }));
+vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn(), resume: vi.fn() } }));
 vi.mock("../api/auth", () => ({ authApi: { getSession: vi.fn() } }));
 vi.mock("../api/issues", () => ({ issuesApi: { list: vi.fn() } }));
 vi.mock("../api/projects", () => ({ projectsApi: { list: vi.fn() } }));
@@ -262,6 +262,7 @@ beforeEach(() => {
   vi.mocked(goalsApi.acceptResultProposal).mockResolvedValue({ ...goal, lifecycle: "closed", status: "achieved" } as never);
   vi.mocked(goalsApi.rejectResultProposal).mockResolvedValue({ id: "result-1", status: "rejected" } as never);
   vi.mocked(agentsApi.list).mockResolvedValue([{ id: "agent-1", name: "Workspace owner" }] as never);
+  vi.mocked(agentsApi.resume).mockResolvedValue({ id: "agent-1", name: "Workspace owner", status: "idle" } as never);
   vi.mocked(projectsApi.list).mockResolvedValue([] as never);
   vi.mocked(issuesApi.list).mockResolvedValue([{
     id: "issue-1",
@@ -485,6 +486,25 @@ describe("GoalDetail", () => {
     expect(text).toContain("Agent working boundaries");
     expect(text).toContain("external publication");
     expect(text).toContain("Decisions that need you");
+  });
+
+  it("lets the user resume a paused Owner from the Goal Workspace", async () => {
+    vi.mocked(agentsApi.list).mockResolvedValue([{ id: "agent-1", name: "Workspace owner", status: "paused" }] as never);
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      attention: {
+        kind: "owner_blocked",
+        reason: "The Agent is paused. Resume it to continue this Goal.",
+        sourceId: "deferred_agent_paused",
+      },
+      changeProposals: [],
+      resultProposals: [],
+    } as never);
+
+    const container = renderPage();
+    await waitUntil(() => expect(button(container, "Resume Agent")).not.toBeNull());
+    act(() => button(container, "Resume Agent")?.click());
+    await waitUntil(() => expect(agentsApi.resume).toHaveBeenCalledWith("agent-1", "org-1"));
   });
 
   it("keeps an active Goal agreement read-only and renders its Markdown context", async () => {

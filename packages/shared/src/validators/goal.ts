@@ -116,6 +116,7 @@ export const startGoalSchema = z.object({
   requestKey: z.string().trim().min(1),
   packetHash: sha256HexSchema,
   packet: goalStartPacketSchema,
+  allowCapabilityMismatch: z.boolean().optional(),
   draftGoalId: z.string().uuid().optional(),
 }).strict();
 export type StartGoal = z.infer<typeof startGoalSchema>;

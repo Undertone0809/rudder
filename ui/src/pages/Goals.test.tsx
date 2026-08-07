@@ -63,7 +63,7 @@ describe("Goals", () => {
   it("renders five read-only derived columns and a mobile attention-sorted list", async () => {
     const container = renderPage();
     await waitUntil(() => expect(container.querySelector('[data-testid="goal-derived-board"]')).not.toBeNull());
-    for (const heading of ["Agent advancing", "Needs your attention", "Waiting for focus", "Waiting for external result", "Ready for acceptance"]) {
+    for (const heading of ["Agent advancing", "Needs your attention", "Waiting to start", "Waiting for external result", "Ready for acceptance"]) {
       expect(Array.from(container.querySelectorAll("h2")).some((element) => element.textContent === heading)).toBe(true);
     }
     const board = container.querySelector<HTMLElement>('[data-testid="goal-derived-board"]')!;

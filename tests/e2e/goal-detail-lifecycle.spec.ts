@@ -66,6 +66,7 @@ type StartPreview = {
     firstAction: string;
   } | null;
   alignmentQuestion: string | null;
+  warning: string | null;
 };
 
 type Workspace = {
@@ -292,6 +293,7 @@ test.describe("Goal Workspace v2", () => {
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(`/${organization.urlKey}/goals`);
 
     await page.getByRole("button", { name: "New Goal" }).first().click();
@@ -307,7 +309,14 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByLabel("Goal start preview").getByText(owner.name, { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Create and start" })).toBeEnabled();
 
-    await page.getByRole("button", { name: "Create and start" }).click();
+    const createAndStart = page.getByRole("button", { name: "Create and start" });
+    const buttonReceivesPointer = await createAndStart.evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit === button || Boolean(hit && button.contains(hit));
+    });
+    expect(buttonReceivesPointer).toBe(true);
+    await createAndStart.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
     await expect(page.getByText("Current Goal", { exact: true })).toBeVisible();
     await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
@@ -414,6 +423,15 @@ test.describe("Goal Workspace v2", () => {
     expect(libraryFileResponse.ok()).toBe(true);
 
     const ownerRunId = wakeups[0]!.runId!;
+    const goalRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
+      const context = run.contextSnapshot as Record<string, unknown> | null;
+      return run.orgId === organization.id
+        && run.agentId === owner.id
+        && context?.goalId === goalId;
+    });
+    for (const run of goalRuns) {
+      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    }
     const progressResponse = await page.request.post(`/api/goals/${goalId}/activities`, {
       headers: {
         Authorization: `Bearer ${ownerKey.token}`,
@@ -541,8 +559,8 @@ test.describe("Goal Workspace v2", () => {
     expect(foreignPreview.alignmentQuestion).toMatch(/agent|assignee|owner/i);
 
     const incapablePreview = await previewGoal(page.request, organization.id, incapableOwner.id);
-    expect(incapablePreview.valid).toBe(false);
-    expect(incapablePreview.alignmentQuestion).toMatch(/better-matched Agent/i);
+    expect(incapablePreview.valid).toBe(true);
+    expect(incapablePreview.warning).toMatch(/not be the best match|choose another Agent/i);
 
     const contextPreview = await previewGoal(
       page.request,
@@ -1222,6 +1240,19 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(issueResponse.ok()).toBe(true);
     const issue = await issueResponse.json() as { id: string };
+    const runId = randomUUID();
+    const checkpointTime = new Date();
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: owner.id,
+      invocationSource: "assignment",
+      triggerDetail: "goal_checkpoint_e2e",
+      status: "succeeded",
+      resultSummaryJson: { summary: "The linked issue produced a reviewable artifact." },
+      createdAt: new Date(checkpointTime.getTime() - 1_000),
+      updatedAt: checkpointTime,
+    });
     const [progressActivity] = await e2eDb.insert(goalActivities).values({
       orgId: organization.id,
       goalId: started.goal!.id,
@@ -1229,6 +1260,7 @@ test.describe("Goal Workspace v2", () => {
       submittedByAgentId: owner.id,
       agentOwnerRefAtTime: owner.id,
       activityKind: "evidence",
+      runRef: runId,
       summary: "The release artifact passed the acceptance workflow.",
       evidenceRefs: ["artifact://goal-workspace/acceptance-pass"],
       idempotencyKey: `goal-board-evidence-${started.goal!.id}`,
@@ -1265,19 +1297,13 @@ test.describe("Goal Workspace v2", () => {
       createdAt: new Date(Date.now() - 120_000),
       updatedAt: new Date(Date.now() - 120_000),
     });
-    const runId = randomUUID();
-    const checkpointTime = new Date();
-    await e2eDb.insert(heartbeatRuns).values({
-      id: runId,
-      orgId: organization.id,
-      agentId: owner.id,
-      invocationSource: "assignment",
-      triggerDetail: "goal_checkpoint_e2e",
-      status: "succeeded",
-      resultSummaryJson: { summary: "The linked issue produced a reviewable artifact." },
-      createdAt: new Date(checkpointTime.getTime() - 1_000),
-      updatedAt: checkpointTime,
+    const startedRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
+      const context = run.contextSnapshot as Record<string, unknown> | null;
+      return run.orgId === organization.id && context?.goalId === started.goal!.id;
     });
+    for (const run of startedRuns) {
+      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    }
     await e2eDb.update(issues).set({ executionRunId: runId, updatedAt: new Date(checkpointTime.getTime() - 500) }).where(eq(issues.id, issue.id));
 
     await page.goto("/");
@@ -1309,7 +1335,7 @@ test.describe("Goal Workspace v2", () => {
     });
     const currentProgress = page.getByRole("heading", { name: "Current progress", exact: true }).locator("..");
     await expect(currentProgress.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
-    const agentAction = page.getByRole("heading", { name: "Agent is doing", exact: true }).locator("..");
+    const agentAction = page.getByRole("heading", { name: /^(Agent is doing|Latest Agent activity)$/ }).locator("..");
     await expect(agentAction.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toBeVisible();
     const history = page.getByRole("heading", { name: "Progress and feedback", exact: true }).locator("..");
     await expect(history.getByText("Excluded current-progress event 101", { exact: true })).toBeVisible();
@@ -1374,7 +1400,7 @@ test.describe("Goal Workspace v2", () => {
       .toBe(false);
 
     await page.goto(`/${organization.urlKey}/goals`);
-    for (const facet of ["Agent advancing", "Needs your attention", "Waiting for focus", "Waiting for external result", "Ready for acceptance"]) {
+    for (const facet of ["Agent advancing", "Needs your attention", "Waiting to start", "Waiting for external result", "Ready for acceptance"]) {
       await expect(page.getByRole("heading", { name: facet })).toBeVisible();
     }
     await expect(page.locator("[draggable=true]")).toHaveCount(0);
@@ -1425,7 +1451,7 @@ test.describe("Goal Workspace v2", () => {
     expect(waitingWorkspace.attention).toBeNull();
 
     await page.goto(`/${organization.urlKey}/goals/${second.goal!.id}`);
-    await expect(page.getByText("Waiting for focus", { exact: true })).toBeVisible();
+    await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
     const setFocus = page.getByRole("button", { name: "Set focus", exact: true });
     await setFocus.focus();
     await page.keyboard.press("Enter");

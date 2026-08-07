@@ -35,6 +35,7 @@ vi.mock("./InlineEntitySelector", () => ({
   }) => <button
     type="button"
     aria-label={ariaLabel}
+    data-option-count={options.length}
     data-disable-portal={disablePortal ? "true" : "false"}
     onClick={() => {
       const currentIndex = options.findIndex((option) => option.id === value);
@@ -87,6 +88,7 @@ const validPreview = {
     firstAction: "Verify the bounded UI journey",
   },
   alignmentQuestion: null,
+  warning: null,
 };
 
 function renderDialog() {
@@ -194,6 +196,32 @@ describe("NewGoalDialog", () => {
     expect(randomUUID).toHaveBeenCalledTimes(1);
   });
 
+  it("does not silently assign the first Agent", async () => {
+    const container = renderDialog();
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.dataset.optionCount).toBe("2"));
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe("No assignee"));
+    expect(goalsApi.previewStart).not.toHaveBeenCalledWith("org-1", expect.objectContaining({ ownerAgentId: agent.id }));
+  });
+
+  it("shows a capability warning without silently downgrading the selected Agent to a Draft", async () => {
+    vi.mocked(goalsApi.previewStart).mockResolvedValue({
+      ...validPreview,
+      warning: "This Agent may not be the best match for this Goal.",
+    } as never);
+    newGoalDefaults = { ownerAgentId: agent.id };
+    const container = renderDialog();
+    change(field("Goal"), "Publish the release notes");
+
+    await waitUntil(() => {
+      expect(container.textContent).toContain("This Agent may not be the best match for this Goal.");
+      expect(button("Create and start with this Agent")?.disabled).toBe(false);
+    });
+    act(() => button("Create and start with this Agent")?.click());
+    await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
+    expect(goalsApi.start).toHaveBeenCalled();
+    expect(goalsApi.create).not.toHaveBeenCalled();
+  });
+
   it("does not start from a stale preview after assignee and target time change", async () => {
     const updatedPreview = {
       ...validPreview,
@@ -208,6 +236,7 @@ describe("NewGoalDialog", () => {
     vi.mocked(goalsApi.previewStart).mockImplementation(async (_orgId, input) => (
       input.ownerAgentId === "agent-2" ? updatedPreview : validPreview
     ) as never);
+    newGoalDefaults = { ownerAgentId: agent.id };
     const container = renderDialog();
     change(field("Goal"), "Ship Goal Workspace");
     await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
@@ -241,32 +270,33 @@ describe("NewGoalDialog", () => {
     vi.mocked(agentsApi.list).mockResolvedValue([pendingAgent, terminatedAgent, agent, alternateAgent] as never);
 
     const container = renderDialog();
-    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe(agent.name));
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.dataset.optionCount).toBe("2"));
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe("No assignee"));
     const assignee = container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')!;
 
     expect(assignee.dataset.disablePortal).toBe("false");
     act(() => assignee.click());
-    expect(assignee.textContent).toBe(alternateAgent.name);
+    await waitUntil(() => expect(assignee.textContent).toBe(agent.name));
     act(() => assignee.click());
-    expect(assignee.textContent).toBe(agent.name);
+    expect(assignee.textContent).toBe(alternateAgent.name);
     expect(container.textContent).not.toContain(pendingAgent.name);
     expect(container.textContent).not.toContain(terminatedAgent.name);
   });
 
   it("saves an invalid preview as a Draft with its alignment question", async () => {
-    vi.mocked(goalsApi.previewStart).mockResolvedValue({ valid: false, packetHash: null, packet: null, review: null, alignmentQuestion: "What external result should change?" } as never);
+    vi.mocked(goalsApi.previewStart).mockResolvedValue({ valid: false, packetHash: null, packet: null, review: null, alignmentQuestion: "What external result should change?", warning: null } as never);
     const container = renderDialog();
     change(field("Goal"), "Explore");
     change(field("Target time"), "2026-08-20T10:00");
     await waitUntil(() => {
-      expect(button("Save draft")).not.toBeNull();
-      expect(button("Save draft")?.disabled).toBe(false);
+      expect(button("Save draft for alignment")).not.toBeNull();
+      expect(button("Save draft for alignment")?.disabled).toBe(false);
     });
     expect(container.textContent).toContain("What external result should change?");
-    act(() => button("Save draft")?.click());
+    act(() => button("Save draft for alignment")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Explore",
-      ownerAgentId: "agent-1",
+      ownerAgentId: null,
       targetTime: new Date("2026-08-20T10:00").toISOString(),
       alignmentQuestion: "What external result should change?",
     })));
@@ -282,10 +312,10 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => {
       expect(container.textContent).toContain("Preview unavailable");
       expect(button("Retry preview")).not.toBeNull();
-      expect(button("Save draft")?.disabled).toBe(false);
+      expect(button("Save draft for alignment")?.disabled).toBe(false);
     });
 
-    act(() => button("Save draft")?.click());
+    act(() => button("Save draft for alignment")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Save despite preview outage",
     })));
@@ -323,14 +353,15 @@ describe("NewGoalDialog", () => {
       packet: null,
       review: null,
       alignmentQuestion: "What external result should change?",
+      warning: null,
     } as never);
     renderDialog();
 
-    await waitUntil(() => expect(button("Save draft")?.disabled).toBe(false));
+    await waitUntil(() => expect(button("Save draft for alignment")?.disabled).toBe(false));
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
     change(field("Target time"), "2026-08-25T14:30");
-    await waitUntil(() => expect(button("Save draft")?.disabled).toBe(false));
-    act(() => button("Save draft")?.click());
+    await waitUntil(() => expect(button("Save draft for alignment")?.disabled).toBe(false));
+    act(() => button("Save draft for alignment")?.click());
 
     await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("draft-1", expect.objectContaining({
       ownerAgentId: "agent-2",

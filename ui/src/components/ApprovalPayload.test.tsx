@@ -258,7 +258,7 @@ describe("ApprovalPayloadRenderer", () => {
     const html = renderGoalChangeApproval();
 
     expect(html).toContain('aria-label="Goal change summary"');
-    for (const label of ["Outcome", "Change", "Boundary", "Reason"]) {
+    for (const label of ["Outcome", "Change", "Boundary", "Impact", "Reason"]) {
       expect(html).toContain(`aria-label="${label} summary"`);
       expect(html).toMatch(new RegExp(`<h4[^>]*>${label}</h4>`));
     }
@@ -267,6 +267,7 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).toContain("Change how success is judged.");
     expect(html).toContain("Set the review target for");
     expect(html).toContain("This proposal changes the agent&#x27;s working limits, human approval responsibilities, and evidence and review expectations.");
+    expect(html).toContain("This may require the Agent to replan around the result the Agent is working toward, how success is judged, what the Agent can do independently, which decisions need your approval, what evidence is needed before acceptance, when the work or review is expected.");
     expect(html).toContain('aria-label="Boundary changes"');
     expect(html).toContain("Current:");
     expect(html).toContain("Proposed:");

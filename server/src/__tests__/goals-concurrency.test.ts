@@ -1,14 +1,14 @@
 import {
   agentWakeupRequests,
   agents,
-  approvals,
   applyPendingMigrations,
+  approvals,
   createDb,
   createLocalPostgresInstance,
   ensurePostgresDatabase,
   goalActivities,
-  goalFeedbackEntries,
   goalChangeProposals,
+  goalFeedbackEntries,
   goals,
   heartbeatRuns,
   organizations,
@@ -16,11 +16,11 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { goalService } from "../services/goals.js";
 import { heartbeatService } from "../services/heartbeat.js";

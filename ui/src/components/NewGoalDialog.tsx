@@ -65,7 +65,14 @@ export function NewGoalDialog() {
     setOwnerAgentId(newGoalDefaults.ownerAgentId ?? "");
     setTargetTime(newGoalDefaults.targetTime ?? "");
     requestRef.current = null;
-  }, [newGoalDefaults, newGoalOpen]);
+  }, [
+    newGoalDefaults.context,
+    newGoalDefaults.draftId,
+    newGoalDefaults.ownerAgentId,
+    newGoalDefaults.targetTime,
+    newGoalDefaults.title,
+    newGoalOpen,
+  ]);
 
   const { data: agents = [], isSuccess: agentsLoaded } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
@@ -80,13 +87,7 @@ export function NewGoalDialog() {
 
   useEffect(() => {
     if (!newGoalOpen || !agentsLoaded) return;
-    if (invokableAgents.length === 0) {
-      if (ownerAgentId) setOwnerAgentId("");
-      return;
-    }
-    if (ownerAgentId && invokableAgents.some((agent) => agent.id === ownerAgentId)) return;
-    const suggested = invokableAgents.find((agent) => agent.status !== "paused") ?? invokableAgents[0];
-    setOwnerAgentId(suggested?.id ?? "");
+    if (ownerAgentId && !invokableAgents.some((agent) => agent.id === ownerAgentId)) setOwnerAgentId("");
   }, [agentsLoaded, invokableAgents, newGoalOpen, ownerAgentId]);
 
   const agentOptions = useMemo<InlineEntityOption[]>(
@@ -152,6 +153,7 @@ export function NewGoalDialog() {
           requestKey: requestKeyFor(preview),
           packetHash: preview.packetHash,
           packet: preview.packet,
+          ...(preview.warning ? { allowCapabilityMismatch: true } : {}),
           ...(newGoalDefaults.draftId ? { draftGoalId: newGoalDefaults.draftId } : {}),
         });
       }
@@ -184,7 +186,9 @@ export function NewGoalDialog() {
     },
   });
 
-  const actionLabel = previewCanStart ? "Create and start" : "Save draft";
+  const actionLabel = previewCanStart
+    ? preview?.warning ? "Create and start with this Agent" : "Create and start"
+    : "Save draft for alignment";
   const pendingLabel = previewCanStart ? "Starting..." : "Saving...";
   const actionDisabled =
     !goal.trim()
@@ -197,7 +201,7 @@ export function NewGoalDialog() {
     <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[min(46rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[min(46rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 sm:max-w-2xl"
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
@@ -309,6 +313,11 @@ export function NewGoalDialog() {
                   </div>
                 ) : preview?.review ? (
                   <div>
+                    {preview.warning ? (
+                      <div role="alert" className="border-b border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm leading-5 text-foreground">
+                        {preview.warning}
+                      </div>
+                    ) : null}
                     <PreviewRow label="Outcome" value={preview.review.outcome} />
                     <PreviewRow label="How we will know it worked" value={preview.review.success} />
                     <PreviewRow label="Owner" value={currentOwner?.name ?? preview.review.owner ?? "No Agent selected"} />

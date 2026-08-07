@@ -63,7 +63,7 @@ import type {
   UpdateGoalPlan,
 } from "@rudderhq/shared";
 import { activateGoalSchema } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
@@ -196,6 +196,7 @@ type ExternalGoalWorkFact = {
   occurredAt: Date;
   sourceId: string;
   sourceRunId: string | null;
+  runStatus: string | null;
   evidenceRefs: string[];
 };
 
@@ -364,6 +365,7 @@ export function compileGoalStartPreview(
       packet: null,
       review: null,
       alignmentQuestion: "What observable result or decision should this Goal produce, and how will we know it worked?",
+      warning: null,
     };
   }
   if (!owner || owner.id !== input.ownerAgentId || NON_INVOKABLE_AGENT_STATUSES.has(owner.status)) {
@@ -373,17 +375,12 @@ export function compileGoalStartPreview(
       packet: null,
       review: null,
       alignmentQuestion: "Which available same-organization Agent should own and advance this Goal?",
+      warning: null,
     };
   }
-  if (!ownerCanAdvanceGoal(owner, input)) {
-    return {
-      valid: false,
-      packetHash: null,
-      packet: null,
-      review: null,
-      alignmentQuestion: "The assigned Agent does not appear to cover this Goal. Which better-matched Agent should own it?",
-    };
-  }
+  const warning = ownerCanAdvanceGoal(owner, input)
+    ? null
+    : "This Agent may not be the best match for this Goal. You selected this Agent, so you can still start it or choose another Agent.";
 
   const mode = goalMode(input);
   const context = input.context?.trim() || null;
@@ -451,6 +448,7 @@ export function compileGoalStartPreview(
       targetTime: input.targetTime,
     },
     alignmentQuestion: null,
+    warning,
   };
 }
 
@@ -889,6 +887,7 @@ export function goalService(db: Db) {
         occurredAt: issue.updatedAt,
         sourceId: issue.id,
         sourceRunId: issue.executionRunId ?? issue.checkoutRunId,
+        runStatus: null,
         evidenceRefs: [],
       })),
       ...linkedProjectFacts.map((project) => ({
@@ -898,6 +897,7 @@ export function goalService(db: Db) {
         occurredAt: project.updatedAt,
         sourceId: project.id,
         sourceRunId: null,
+        runStatus: null,
         evidenceRefs: [],
       })),
       ...runFacts.map((run) => ({
@@ -907,6 +907,7 @@ export function goalService(db: Db) {
         occurredAt: run.updatedAt,
         sourceId: run.id,
         sourceRunId: run.id,
+        runStatus: run.status,
         evidenceRefs: [],
       })),
     ];
@@ -919,9 +920,17 @@ export function goalService(db: Db) {
         occurredAt: run.updatedAt,
         sourceId: run.id,
         sourceRunId: run.id,
+        runStatus: run.status,
         evidenceRefs: [],
       }));
     const allRunFacts = [...relatedFacts, ...directFacts].filter((fact) => fact.sourceId === fact.sourceRunId);
+    const activeRunFacts = allRunFacts.filter((fact) => fact.runStatus && !TERMINAL_RUN_STATUSES.includes(fact.runStatus as typeof TERMINAL_RUN_STATUSES[number]));
+    if (activeRunFacts.length > 0) {
+      return activeRunFacts.sort((left, right) => {
+        const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
+        return timeDelta !== 0 ? timeDelta : right.id.localeCompare(left.id);
+      })[0] ?? null;
+    }
     const preferredRun = preferredRunId
       ? allRunFacts.find((fact) => fact.sourceRunId === preferredRunId) ?? null
       : null;
@@ -1272,6 +1281,10 @@ export function goalService(db: Db) {
       db.select().from(goalActivities).where(and(
         eq(goalActivities.goalId, id),
         inArray(goalActivities.activityKind, [...CURRENT_PROGRESS_ACTIVITY_KINDS]),
+        or(
+          isNotNull(goalActivities.runRef),
+          sql`${goalActivities.idempotencyKey} like 'goal-result-evidence:%'`,
+        ),
         sql`jsonb_array_length(${goalActivities.evidenceRefs}) > 0`,
       )).orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(1)
         .then((rows) => rows[0] ?? null),
@@ -1281,9 +1294,12 @@ export function goalService(db: Db) {
       goal,
       typeof evidenceActivity?.runRef === "string" ? evidenceActivity.runRef : null,
     );
+    const acceptedResult = results.find((proposal) => proposal.status === "accepted") ?? null;
     const progressSource = evidenceActivity
       ? {
-        summary: publicGoalActivitySummary(evidenceActivity),
+        summary: acceptedResult
+          ? publicGoalOutcome(acceptedResult.preflight.outcome)
+          : publicGoalActivitySummary(evidenceActivity),
         sourceActivityId: evidenceActivity.id,
         evidenceRefs: stringEvidenceRefs(evidenceActivity.evidenceRefs),
       }
@@ -1327,10 +1343,12 @@ export function goalService(db: Db) {
           evidenceRefs: [],
         },
       agentAction: externalWorkFact
-        ? { summary: externalWorkFact.summary, sourceIds: [externalWorkFact.sourceId] }
-        : plan
-          ? { summary: plan.summary, sourcePlanId: plan.id, sourceIds: [plan.id] }
-          : null,
+        ? {
+          summary: externalWorkFact.summary,
+          sourceIds: [externalWorkFact.sourceId],
+          ...(externalWorkFact.runStatus ? { status: externalWorkFact.runStatus } : {}),
+        }
+        : null,
       nextStep: goal.continuationKind && goal.continuationSummary
         ? {
           kind: goal.continuationKind,
@@ -1423,8 +1441,8 @@ export function goalService(db: Db) {
           context: input.packet.description,
           ownerAgentId: input.packet.ownerAgentId,
           targetTime: input.packet.activation.evaluationDeadline ?? null,
-        })) {
-          throw unprocessable("Goal owner capabilities no longer match the Goal");
+        }) && !input.allowCapabilityMismatch) {
+          throw unprocessable("Goal owner capabilities no longer match the Goal; confirm the warning before starting");
         }
         const [insertedRequest] = await database.insert(goalStartRequests).values({
           orgId,
@@ -1574,8 +1592,12 @@ export function goalService(db: Db) {
           db.select().from(goalActivities).where(and(
             eq(goalActivities.goalId, goal.id),
             inArray(goalActivities.activityKind, [...CURRENT_PROGRESS_ACTIVITY_KINDS]),
+            or(
+              isNotNull(goalActivities.runRef),
+              sql`${goalActivities.idempotencyKey} like 'goal-result-evidence:%'`,
+            ),
             sql`jsonb_array_length(${goalActivities.evidenceRefs}) > 0`,
-            )).orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(1)
+          )).orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(1)
             .then((rows) => rows[0] ?? null),
           db.select().from(goalChangeProposals).where(and(
             eq(goalChangeProposals.goalId, goal.id),
@@ -1599,7 +1621,7 @@ export function goalService(db: Db) {
         const attentionReason = goal.lifecycle === "closed"
           ? null
           : readyResult
-            ? `Review the proposed Goal result: ${readyResult.preflight.outcome}`
+            ? `Review the proposed Goal result: ${publicGoalOutcome(readyResult.preflight.outcome)}`
             : pendingChange?.rationale
               ?? (goal.lifecycle === "draft" ? goal.alignmentQuestion : null)
               ?? goalWakeupAttentionReason(pendingWakeup);
@@ -1672,6 +1694,9 @@ export function goalService(db: Db) {
         assertGoalOwner(current, actorAgentId);
         if (current.lifecycle === "closed") {
           throw conflict("Closed Goals are read-only");
+        }
+        if (current.lifecycle !== "draft" && actorAgentId) {
+          throw forbidden("Active Goal direction changes require a human-approved Goal change proposal");
         }
         if ((data.ownerAgentId !== undefined || data.targetTime !== undefined) && current.lifecycle !== "draft") {
           throw conflict("Owner and target time can only be edited while a Goal is a Draft");
@@ -1782,6 +1807,9 @@ export function goalService(db: Db) {
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
+        if (actorAgentId && !input.runRef) {
+          throw unprocessable("Goal Activity must be attributed to the acting Agent's Run");
+        }
         if (input.activityKind === "closeout" && !input.runRef) {
           throw unprocessable("A closeout Activity requires a Run reference");
         }

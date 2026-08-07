@@ -313,7 +313,7 @@ describe("Goal contract", () => {
     expect(preview.packet?.activation.outcomeStatement).toBe("Customers renew without manual support");
   });
 
-  it("rejects an available same-organization Agent whose capabilities do not cover the Goal", () => {
+  it("warns when an available Agent may not cover the Goal without blocking explicit user assignment", () => {
     const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
       title: "Publish a verified software release candidate",
       context: "Run automated tests and preserve existing API behavior.",
@@ -325,9 +325,10 @@ describe("Goal contract", () => {
       capabilities: "Schedules interviews and manages candidate communications.",
     }));
 
-    expect(preview.valid).toBe(false);
-    expect(preview.packet).toBeNull();
-    expect(preview.alignmentQuestion).toMatch(/better-matched Agent/i);
+    expect(preview.valid).toBe(true);
+    expect(preview.packet).not.toBeNull();
+    expect(preview.warning).toMatch(/may not be the best match/i);
+    expect(preview.alignmentQuestion).toBeNull();
   });
 
   it("requires a Run reference for closeout Activities", () => {
@@ -528,6 +529,7 @@ describe("Goal contract", () => {
     const { db } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
     const svc = goalService(db);
     await expect(svc.update(GOAL_ID, { title: "Unauthorized rename" }, OTHER_ORG_OWNER_ID)).rejects.toMatchObject({ status: 403 });
+    await expect(svc.update(GOAL_ID, { title: "Silent owner rename" }, OWNER_ID)).rejects.toMatchObject({ status: 403 });
     await expect(svc.updatePlan(GOAL_ID, { summary: "Unauthorized revision" }, OTHER_ORG_OWNER_ID)).rejects.toMatchObject({ status: 403 });
 
     const incomplete = createGoalDb(makeGoal({
@@ -588,6 +590,12 @@ describe("Goal contract", () => {
     });
     expect(retry?.id).toBe(first?.id);
     expect(state.activities).toHaveLength(1);
+
+    await expect(svc.createActivity(GOAL_ID, {
+      summary: "Agent progress without a Run",
+      activityKind: "progress",
+      evidenceRefs: ["artifact://unbound-progress"],
+    }, OWNER_ID)).rejects.toMatchObject({ status: 422 });
 
     await expect(svc.createActivity(GOAL_ID, {
       summary: "Closeout without a Run",

@@ -304,7 +304,7 @@ export function ApprovalDetailDialog({
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Requested by</span>
                         <AgentIdentity
-                          name={agentById.get(approval.requestedByAgentId)?.name ?? approval.requestedByAgentId.slice(0, 8)}
+                          name={agentById.get(approval.requestedByAgentId)?.name ?? "Agent unavailable"}
                           icon={agentById.get(approval.requestedByAgentId)?.icon}
                           role={agentById.get(approval.requestedByAgentId)?.role}
                           size="sm"

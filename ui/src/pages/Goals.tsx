@@ -36,7 +36,7 @@ const facets: Array<{
 }> = [
   { id: "agent_advancing", label: "Agent advancing", empty: "No Agent-owned next action." },
   { id: "needs_attention", label: "Needs your attention", empty: "Nothing needs your input." },
-  { id: "waiting_focus", label: "Waiting for focus", empty: "No Goals are waiting for focus." },
+  { id: "waiting_focus", label: "Waiting to start", empty: "No Goals are waiting to start." },
   { id: "waiting_external", label: "Waiting for external result", empty: "No Goals are waiting externally." },
   { id: "ready_for_acceptance", label: "Ready for acceptance", empty: "No results are ready for review." },
 ];
@@ -200,7 +200,7 @@ export function Goals() {
   if (workspaceQuery.isLoading) return <PageSkeleton variant="list" />;
 
   const ownerNameFor = (card: GoalCardView) => card.ownerName
-    ?? (card.ownerAgentId ? ownerNames.get(card.ownerAgentId) ?? `Agent ${card.ownerAgentId.slice(0, 8)}` : "Unassigned");
+    ?? (card.ownerAgentId ? ownerNames.get(card.ownerAgentId) ?? "Owner unavailable" : "Unassigned");
 
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden pb-6">
