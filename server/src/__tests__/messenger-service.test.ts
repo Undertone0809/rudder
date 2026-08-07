@@ -36,6 +36,7 @@ import {
   messengerThreadUserStates,
   organizations,
   organizationSecrets,
+  productAnalyticsEvents,
   projects,
 } from "@rudderhq/db";
 import {
@@ -223,6 +224,7 @@ describe("messengerService and issue follows", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(productAnalyticsEvents);
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
@@ -260,6 +262,48 @@ describe("messengerService and issue follows", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("records human chat creation separately from the initial work start", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat creation analytics",
+      urlKey: deriveOrganizationUrlKey("Chat creation analytics"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await chatSvc.createWithInitialMessage(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: true,
+      createdByUserId: "analytics-user",
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Trace this new chat",
+      },
+      activity: {
+        actorType: "user",
+        actorId: "analytics-user",
+      },
+    });
+    const events = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, created.conversation.id));
+
+    expect(events.map((event) => event.eventName).sort()).toEqual(["chat_created", "human_work_started"]);
+    expect(events.find((event) => event.eventName === "chat_created")).toMatchObject({
+      actorType: "human",
+      actorId: "analytics-user",
+      origin: "human",
+      sourceTransition: "chat.initial_message.create",
+      properties: {
+        creation_path: "manual",
+        initial_role: "user",
+        plan_mode: true,
+      },
+    });
   });
 
   async function createQueuedAnnotationFixture(input: {
@@ -8644,12 +8688,11 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
-  it("does not count title and description-only issue updates as Messenger attention", async () => {
+  it("keeps the original issue attention when title and description-only updates occur", async () => {
     const orgId = randomUUID();
     const userId = "board-user-content-only";
     const issueId = randomUUID();
     const createdAt = new Date("2026-04-10T09:00:00.000Z");
-    const updatedAt = new Date("2026-04-10T10:00:00.000Z");
 
     await db.insert(organizations).values({
       id: orgId,
@@ -8668,24 +8711,14 @@ describe("messengerService and issue follows", () => {
       assigneeUserId: userId,
       identifier: "DSC-1",
       createdAt,
-      updatedAt,
+      updatedAt: createdAt,
     });
 
-    await db.insert(activityLog).values({
-      orgId,
-      actorType: "agent",
-      actorId: "description-agent",
-      action: "issue.updated",
-      entityType: "issue",
-      entityId: issueId,
-      details: {
-        title: "Renamed issue",
-        description: "New description",
-        identifier: "DSC-1",
-        _previous: { title: "Old issue", description: "Old description" },
-      },
-      createdAt: new Date("2026-04-10T10:00:01.000Z"),
+    const updatedIssue = await issueSvc.update(issueId, {
+      title: "Renamed issue",
+      description: "New description",
     });
+    expect(updatedIssue?.updatedAt.getTime()).toBeGreaterThan(createdAt.getTime());
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
@@ -8693,14 +8726,122 @@ describe("messengerService and issue follows", () => {
     const item = thread.detail.items.find((entry) => entry.issueId === issueId);
 
     expect(item?.metadata).toMatchObject({ assignedToMe: true });
+    expect(thread.detail.unreadCount).toBe(1);
+    expect(thread.detail.needsAttention).toBe(true);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(thread.summary.preview).toContain("Renamed issue");
+    expect(issuesSummary?.unreadCount).toBe(1);
+    expect(issuesSummary?.needsAttention).toBe(true);
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(issuesSummary?.preview).toContain("Renamed issue");
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+  });
+
+  it("keeps ignoring legacy title and description-only activity as Messenger attention", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-legacy-content-only";
+    const issueId = randomUUID();
+    const createdAt = new Date("2026-04-10T09:00:00.000Z");
+    const updatedAt = new Date("2026-04-10T10:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Legacy Content Update Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Legacy Content Update Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Legacy content-only update issue",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      identifier: "LGC-1",
+      createdAt,
+      updatedAt,
+    });
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: "legacy-content-agent",
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        title: "Edited title",
+        description: "Edited description",
+        identifier: "LGC-1",
+        _previous: { title: "Original title", description: "Original description" },
+      },
+      createdAt: new Date(updatedAt.getTime() + 1_000),
+    });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
-    expect(thread.summary.preview).toContain("Title and description-only update issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
-    expect(issuesSummary?.preview).toContain("Title and description-only update issue");
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+  });
+
+  it("does not re-notify a read issue after a title and description-only update", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-read-content-only";
+    const issueId = randomUUID();
+    const createdAt = new Date("2026-04-10T09:00:00.000Z");
+    const readAt = new Date("2026-04-10T10:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Read Content Update Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Read Content Update Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Open issue before read",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    const state = await messengerSvc.setThreadRead(orgId, userId, `issue:${issueId}`, readAt);
+    expect(state?.lastReadAt.toISOString()).toBe(readAt.toISOString());
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+
+    const updatedIssue = await issueSvc.update(issueId, {
+      title: "Open issue after read",
+      description: "Content changed without a new Messenger notification.",
+    });
+    expect(updatedIssue?.updatedAt.getTime()).toBeGreaterThan(readAt.getTime());
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const splitSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const issuesSummary = summaries.find((entry) => entry.threadKey === "issues");
+    const issueSummary = splitSummaries.find((entry) => entry.threadKey === `issue:${issueId}`);
+
+    expect(thread.detail.unreadCount).toBe(0);
+    expect(thread.detail.needsAttention).toBe(false);
+    expect(issuesSummary?.unreadCount).toBe(0);
+    expect(issuesSummary?.needsAttention).toBe(false);
+    expect(issueSummary?.unreadCount).toBe(0);
+    expect(issueSummary?.needsAttention).toBe(false);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
   it("does not count self-authored issue status updates as Messenger attention", async () => {

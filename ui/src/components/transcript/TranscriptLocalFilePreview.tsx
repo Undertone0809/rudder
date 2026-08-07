@@ -341,6 +341,10 @@ export function TranscriptLocalFilePreview({
     desktopShell ? null : "Local file previews are available in the Rudder Desktop app."
   ));
   const [loading, setLoading] = useState(Boolean(desktopShell));
+  const previewRequestRef = useRef<{
+    targetPath: string;
+    promise: Promise<DesktopLocalFilePreview>;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -353,7 +357,13 @@ export function TranscriptLocalFilePreview({
 
     setLoading(true);
     setError(null);
-    void desktopShell.previewLocalFile(targetPath)
+    if (previewRequestRef.current?.targetPath !== targetPath) {
+      previewRequestRef.current = {
+        targetPath,
+        promise: desktopShell.previewLocalFile(targetPath),
+      };
+    }
+    void previewRequestRef.current.promise
       .then((nextPreview) => {
         if (!cancelled) setPreview(nextPreview);
       })
@@ -408,8 +418,9 @@ export function TranscriptLocalFilePreview({
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{preview.fileName || label}</div>
-          <div className="truncate text-xs text-muted-foreground" title={preview.parentPath}>{preview.parentPath}</div>
+          <div className="truncate text-sm font-medium text-foreground" title={preview.canonicalPath}>
+            {preview.fileName || label}
+          </div>
         </div>
         <button
           type="button"

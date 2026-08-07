@@ -414,6 +414,7 @@ describe("desktop update flow", () => {
       status: "started",
     });
     expect(spawnMock.mock.calls[0]?.[1]).toContain("--wait-for-active-runs");
+    expect(spawnMock.mock.calls[0]?.[1]).toContain("--no-runtime");
 
     child.stdout.emit("data", `${JSON.stringify({
       source: "rudder-desktop-update",

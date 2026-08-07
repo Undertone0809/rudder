@@ -1,6 +1,6 @@
 import type { UIAgentRuntimeModule } from "../types";
-import { HermesGatewayConfigFields } from "./config-fields";
 import { buildHermesGatewayConfig } from "./build-config";
+import { HermesGatewayConfigFields } from "./config-fields";
 import { parseHermesGatewayStdoutLine } from "./parse-stdout";
 
 export const hermesGatewayUIAdapter: UIAgentRuntimeModule = {

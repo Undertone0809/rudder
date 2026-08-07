@@ -7,9 +7,11 @@ import {
   E2E_CONFIG_PATH,
   E2E_HOME,
   E2E_INSTANCE_ID,
+  E2E_INSTANCE_ROOT,
   E2E_ROOT,
   E2E_SERVER_PID_PATH,
 } from "./e2e-env";
+import { stopOwnedE2EServer } from "./e2e-postgres-cleanup";
 
 const REPO_ROOT = path.resolve(E2E_ROOT, "../..");
 const SERVER_DIR = path.join(REPO_ROOT, "server");
@@ -66,13 +68,10 @@ function serverEnvironment(): NodeJS.ProcessEnv {
 }
 
 export async function restartE2eServer() {
-  const pid = Number((await fs.readFile(E2E_SERVER_PID_PATH, "utf8")).trim());
-  if (!Number.isInteger(pid) || pid <= 0) throw new Error("E2E server PID file is invalid");
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-  }
+  await stopOwnedE2EServer({
+    instanceRoot: E2E_INSTANCE_ROOT,
+    repositoryRoot: REPO_ROOT,
+  });
   await waitForHealth(false, 30_000);
 
   restartedServer = spawn("pnpm", ["--dir", SERVER_DIR, "dev"], {
@@ -81,7 +80,17 @@ export async function restartE2eServer() {
     env: serverEnvironment(),
     stdio: "ignore",
   });
-  await fs.writeFile(E2E_SERVER_PID_PATH, String(restartedServer.pid), "utf8");
+  if (!restartedServer.pid) throw new Error("Restarted E2E server did not expose a PID");
+  await fs.writeFile(
+    E2E_SERVER_PID_PATH,
+    JSON.stringify({
+      pid: restartedServer.pid,
+      configPath: E2E_CONFIG_PATH,
+      instanceRoot: E2E_INSTANCE_ROOT,
+      port: Number(new URL(E2E_BASE_URL).port),
+    }),
+    "utf8",
+  );
   await waitForHealth(true, 120_000);
 }
 

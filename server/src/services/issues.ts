@@ -923,6 +923,39 @@ export function issueService(db: Db) {
         if (resolvedLabelIds) {
           await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
         }
+        const creationActorType = issue.createdByUserId
+          ? "human"
+          : issue.originKind === "automation_execution"
+            ? "automation"
+            : issue.createdByAgentId
+              ? "agent"
+              : "system";
+        const creationOrigin = creationActorType === "human"
+          ? "human"
+          : creationActorType === "automation"
+            ? "automation"
+            : "system";
+        await recordProductAnalyticsEvent(tx as unknown as Db, {
+          orgId,
+          eventName: "issue_created",
+          occurredAt: issue.createdAt,
+          sourceTransition: "issue.create",
+          confidence: "exact",
+          actorType: creationActorType,
+          actorId: issue.createdByUserId ?? issue.createdByAgentId ?? null,
+          entityType: "issue",
+          entityId: issue.id,
+          workSurface: "issue",
+          workId: issue.id,
+          origin: creationOrigin,
+          dedupeKey: `issue_created:${issue.id}`,
+          properties: {
+            creation_path: issue.originKind,
+            has_goal_link: issue.goalId !== null,
+            has_project_link: issue.projectId !== null,
+            is_sub_issue: issue.parentId !== null,
+          },
+        });
         if (issue.createdByUserId && (issue.status === "in_progress" || issue.executionRunId !== null)) {
           const workCycleId = `issue:${issue.id}`;
           await ensureProductAnalyticsWorkCycle(tx as unknown as Db, {

@@ -1,6 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { parseMentionChipHref } from "@/lib/mention-chips";
-import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
+import type { ChatConversation, ChatInlineAnnotationInput } from "@rudderhq/shared";
 
 export type SidePanelTarget =
   | {
@@ -185,7 +185,7 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "subagent") return `subagent:${target.threadId}`;
   if (target.kind === "side_chat") return target.conversationId
     ? `side-chat:${target.conversationId}`
-    : `side-chat:draft:${target.clientMutationId}`;
+    : `side-chat:draft:${target.sourceConversationId}:${target.clientMutationId}`;
   if (target.kind === "run_feedback_chat") {
     return `run-feedback-chat:${target.organizationId}:${target.agentId}`;
   }
@@ -203,6 +203,34 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
   if (target.kind === "browser") return `browser-tab:${target.tabId}`;
   return `placeholder:${target.targetKind}`;
+}
+
+export function sideChatGenerationScopeKey(
+  organizationId: string,
+  target: Pick<Extract<SidePanelTarget, { kind: "side_chat" }>, "sourceConversationId" | "clientMutationId">,
+) {
+  return `side-chat:${organizationId}:${target.sourceConversationId}:${target.clientMutationId}`;
+}
+
+export function chatGenerationScopeKey(
+  organizationId: string,
+  conversation: Pick<
+    ChatConversation,
+    "id" | "orgId" | "conversationKind" | "forkedFromConversationId" | "sideChatClientMutationId"
+  >,
+) {
+  if (
+    conversation.orgId === organizationId
+    && conversation.conversationKind === "side_chat"
+    && conversation.forkedFromConversationId
+    && conversation.sideChatClientMutationId
+  ) {
+    return sideChatGenerationScopeKey(organizationId, {
+      sourceConversationId: conversation.forkedFromConversationId,
+      clientMutationId: conversation.sideChatClientMutationId,
+    });
+  }
+  return conversation.id;
 }
 
 export function sidePanelTargetSupportsSavedView(

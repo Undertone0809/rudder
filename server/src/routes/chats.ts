@@ -1915,6 +1915,7 @@ export function chatRoutes(
       action: "chat.side_chat_created",
       entityType: "chat",
       entityId: sideChat.id,
+      idempotencyKey: `chat.side_chat_created:${sideChat.id}`,
       details: {
         sourceConversationId: existing.id,
         sourceMessageId: req.body.sourceMessageId,

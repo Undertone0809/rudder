@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/agent-runtime-hermes-gateway",
-  "version": "0.6.6",
+  "version": "0.7.2",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "exports": {
@@ -12,7 +12,9 @@
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

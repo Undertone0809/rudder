@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
   chatMessages,
@@ -40,7 +40,7 @@ function threadTestId(threadKey: string) {
 async function seedSideChatSource(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
-  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
   const agent = await createE2EChatAgent(page.request, organization.id, {
     name: "Sidekick",
     command: E2E_CODEX_STUB,
@@ -385,6 +385,94 @@ test("keeps an in-flight Side Chat stream visible after the panel is collapsed a
   const { menu } = await openSideChatTabContextMenu(page, reopenedPanel);
   await menu.getByRole("menuitem", { name: "Close" }).click();
   await expect(reopenedPanel).toBeHidden();
+});
+
+test("keeps an in-flight Side Chat stream visible after navigating away and back", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const source = await seedSideChatSource(page, `Side-Chat-Navigate-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+
+  await sideComposerEditor(panel).fill("Keep this Side Chat stream alive across navigation.");
+  await sideComposerSendButton(panel).click();
+  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 30_000,
+  });
+
+  await page.getByTestId("primary-rail").getByRole("link", { name: "Issue" }).click();
+  await expect(page).toHaveURL(new RegExp(`/${source.organization.urlKey}/issues(?:/.*)?$`), {
+    timeout: 15_000,
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${source.conversationId}$`), {
+    timeout: 15_000,
+  });
+
+  const returnedPanel = page.getByTestId("chat-side-panel");
+  await expect(returnedPanel).toBeVisible();
+  await expect(returnedPanel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 5_000,
+  });
+  await expect(
+    returnedPanel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.screenshot({ path: testInfo.outputPath("side-chat-stream-survives-navigation.png"), fullPage: true });
+
+  const { menu } = await openSideChatTabContextMenu(page, returnedPanel);
+  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await expect(returnedPanel).toBeHidden();
+});
+
+test("completes a Side Chat after para-memory-files tool activity without duplicate sends", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const source = await seedSideChatSource(page, `Side-Chat-Memory-Tool-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const createResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+
+  await sideComposerEditor(panel).fill("Use para-memory-files before answering this Side Chat.");
+  const sendButton = sideComposerSendButton(panel);
+  await sendButton.evaluate((button) => {
+    (button as HTMLButtonElement).click();
+    (button as HTMLButtonElement).click();
+  });
+
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok(), await createResponse.text()).toBe(true);
+  const sideChat = await createResponse.json() as { id: string };
+  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", {
+    timeout: 20_000,
+  });
+  await expect(
+    panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }),
+  ).toBeVisible({ timeout: 35_000 });
+  const transcriptToggle = panel.getByRole("button", { name: /Worked for/ });
+  await expect(transcriptToggle).toBeVisible({ timeout: 20_000 });
+  const transcriptItem = panel.getByTestId("chat-transcript-item");
+  await expect(transcriptItem).toHaveCount(1, { timeout: 20_000 });
+  await transcriptToggle.click();
+  await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(transcriptItem.getByText("TRANSCRIPT_TOOL_OUTPUT_E2E", { exact: false })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /Expand command details.*Ran echo chat/ })).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const userMessages = await e2eDb
+    .select({ id: chatMessages.id, body: chatMessages.body })
+    .from(chatMessages)
+    .where(and(
+      eq(chatMessages.orgId, source.organization.id),
+      eq(chatMessages.conversationId, sideChat.id),
+      eq(chatMessages.role, "user"),
+      eq(chatMessages.body, "Use para-memory-files before answering this Side Chat."),
+    ));
+  expect(userMessages).toHaveLength(1);
+  await page.screenshot({ path: testInfo.outputPath("side-chat-para-memory-tool-completes.png"), fullPage: true });
+
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await expect(panel).toBeHidden();
 });
 
 test("keeps concurrent Side Chat streams isolated when switching tabs", async ({ page }, testInfo) => {
