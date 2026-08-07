@@ -193,6 +193,135 @@ describe("managed MCP connection organization routes", () => {
     );
   });
 
+  it("connects GitHub with a transient PAT without entering the OAuth flow", async () => {
+    const github = {
+      ...connectionSummary(),
+      provider: "github",
+      status: "active",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+    };
+    mockService.ensureOfficial.mockResolvedValueOnce(github);
+    mockService.get.mockResolvedValueOnce(github);
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const pat = "github_pat_12345678901234567890";
+
+    const response = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/providers/github/connect`)
+      .send({ scope: "organization", pat });
+
+    expect(response.status).toBe(200);
+    expect(mockService.ensureOfficial).toHaveBeenCalledWith(
+      orgId,
+      "github",
+      {
+        scope: "organization",
+        ownerAgentId: null,
+        accessMode: undefined,
+        pat,
+      },
+      { userId: "owner-1", agentId: null },
+    );
+    expect(mockService.refreshTools).toHaveBeenCalledWith(
+      orgId,
+      connectionId,
+      { userId: "owner-1", agentId: null },
+    );
+    expect(mockOAuthService.start).not.toHaveBeenCalled();
+    expect(response.body.safeConfig).not.toHaveProperty("pat");
+  });
+
+  it("rejects official providers from the generic connection create endpoint", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const pat = "github_pat_12345678901234567890";
+
+    const response = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections`)
+      .send({
+        name: "github-generic",
+        displayName: "GitHub",
+        provider: "github",
+        scope: "organization",
+        transport: "streamable_http",
+        safeConfig: {
+          endpoint: "https://api.githubcopilot.com/mcp/",
+          scopeMode: "account",
+        },
+        secrets: { bearerToken: pat },
+      });
+
+    expect(response.status).toBe(400);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+    expect(JSON.stringify(capturedErrorBody)).not.toContain(pat);
+    expect(mockService.create).not.toHaveBeenCalled();
+    expect(mockService.ensureOfficial).not.toHaveBeenCalled();
+  });
+
+  it("rejects GitHub from generic patch before it can persist a PAT or activate", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const github = {
+      ...connectionSummary(),
+      provider: "github",
+      status: "disabled",
+      enabled: false,
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+    };
+    const pat = "github_pat_12345678901234567890";
+    mockService.get.mockResolvedValueOnce(github);
+
+    const response = await request(app)
+      .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}`)
+      .send({ enabled: true, secrets: { bearerToken: pat } });
+
+    expect(response.status).toBe(422);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+    expect(JSON.stringify(capturedErrorBody)).not.toContain(pat);
+    expect(mockService.update).not.toHaveBeenCalled();
+    expect(mockService.reconnect).not.toHaveBeenCalled();
+    expect(mockService.refreshTools).not.toHaveBeenCalled();
+  });
+
+  it("marks a GitHub PAT connect request sensitive and rejects missing credentials", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const response = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/providers/github/connect`)
+      .send({ scope: "organization", pat: "github_pat_short" });
+
+    expect(response.status).toBe(400);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+    expect(JSON.stringify(capturedErrorBody)).not.toContain("github_pat_short");
+    expect(mockService.ensureOfficial).not.toHaveBeenCalled();
+  });
+
   it("rejects an official provider connect request without an explicit scope", async () => {
     const app = createApp({
       type: "board",
@@ -257,6 +386,34 @@ describe("managed MCP connection organization routes", () => {
       { requestedAccessMode: "read_write" },
     );
     expect(mockService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects GitHub connections from OAuth start and reauthorization routes", async () => {
+    mockService.get.mockResolvedValue({
+      ...connectionSummary(),
+      provider: "github",
+      status: "active",
+    });
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const start = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/oauth/start`)
+      .send({});
+    const reauthorize = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/reauthorize-access`)
+      .send({ accessMode: "read_write" });
+
+    expect(start.status).toBe(422);
+    expect(reauthorize.status).toBe(422);
+    expect(start.body.error).toContain("personal access tokens");
+    expect(reauthorize.body.error).toContain("personal access tokens");
+    expect(mockOAuthService.start).not.toHaveBeenCalled();
   });
 
   it("rejects agent API keys and cross-organization board access for all management reads", async () => {
@@ -587,5 +744,56 @@ describe("managed MCP connection organization routes", () => {
     expect(mockOAuthService.start).toHaveBeenCalledOnce();
     expect(mockService.disconnect).not.toHaveBeenCalled();
     expect(mockService.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("reconnects and disconnects GitHub through the managed PAT lifecycle", async () => {
+    const github = {
+      ...connectionSummary(),
+      provider: "github",
+      status: "error",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+    };
+    mockService.get.mockResolvedValue(github);
+    mockService.reconnect.mockResolvedValue({ ...github, status: "active" });
+    mockService.disconnect.mockResolvedValue({ ...github, status: "disabled", enabled: false });
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const pat = "github_pat_12345678901234567890";
+
+    const reconnectResponse = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/reconnect`)
+      .send({ pat });
+    const disconnectResponse = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/disconnect`)
+      .send({});
+
+    expect(reconnectResponse.status).toBe(200);
+    expect(mockService.reconnect).toHaveBeenCalledWith(
+      orgId,
+      connectionId,
+      { userId: "owner-1", agentId: null },
+      { githubPat: pat },
+    );
+    expect(mockService.refreshTools).toHaveBeenCalledWith(
+      orgId,
+      connectionId,
+      { userId: "owner-1", agentId: null },
+    );
+    expect(mockOAuthService.start).not.toHaveBeenCalled();
+    expect(disconnectResponse.status).toBe(200);
+    expect(mockService.disconnect).toHaveBeenCalledWith(
+      orgId,
+      connectionId,
+      { userId: "owner-1", agentId: null },
+    );
+    expect(mockOAuthService.revoke).not.toHaveBeenCalled();
   });
 });

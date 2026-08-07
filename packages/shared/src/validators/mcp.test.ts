@@ -14,7 +14,7 @@ function exportedSchema(name: string): RuntimeSchema | null {
 describe("managed MCP shared contracts", () => {
   it("exports the complete provider, transport, access, and lifecycle catalogs", () => {
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_PROVIDERS)
-      .toEqual(["supabase", "linear", "notion", "custom"]);
+      .toEqual(["supabase", "linear", "notion", "github", "custom"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_TRANSPORTS)
       .toEqual(["stdio", "streamable_http", "legacy_manual"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_ACCESS_MODES)
@@ -25,6 +25,8 @@ describe("managed MCP shared contracts", () => {
       .toEqual(["canonical", "superseded"]);
     expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_SCOPE_MODES)
       .toEqual(["account", "workspace", "legacy_project"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_CREDENTIAL_MODES)
+      .toEqual(["oauth", "pat", "custom"]);
     expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_ORGANIZATION_STATES)
       .toEqual(["not_connected", "connecting", "connected", "needs_attention", "disconnected"]);
     expect((shared as unknown as Record<string, unknown>).MCP_TOOL_CAPABILITY_CLASSES)
@@ -59,20 +61,26 @@ describe("managed MCP shared contracts", () => {
         defaultAccessMode: "provider_default",
       }),
       expect.objectContaining({
+        id: "github",
+        credentialMode: "pat",
+        accessModes: ["read_only", "read_write"],
+        defaultAccessMode: "read_only",
+      }),
+      expect.objectContaining({
         id: "custom",
         transports: ["stdio", "streamable_http"],
       }),
     ]));
   });
 
-  it("accepts curated HTTP and custom STDIO connection inputs with safe config only", () => {
+  it("accepts custom connection inputs and rejects curated provider create input", () => {
     const schema = exportedSchema("createMcpConnectionSchema");
     if (!schema) return;
 
     expect(schema.safeParse({
-      name: "team-supabase",
-      displayName: "Team Supabase",
-      provider: "supabase",
+      name: "team-github",
+      displayName: "Team GitHub",
+      provider: "github",
       scope: "organization",
       transport: "streamable_http",
       accessMode: "read_only",
@@ -81,7 +89,7 @@ describe("managed MCP shared contracts", () => {
       toolTimeoutMs: 60_000,
       enabled: true,
       required: false,
-    }).success).toBe(true);
+    }).success).toBe(false);
 
     expect(schema.safeParse({
       name: "local-tools",
@@ -104,6 +112,35 @@ describe("managed MCP shared contracts", () => {
       enabled: true,
       required: true,
     }).success).toBe(true);
+  });
+
+  it("keeps GitHub PAT validation separate from generic connection create", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    const safeConfigSchema = exportedSchema("mcpGitHubSafeConfigSchema");
+    const patSchema = exportedSchema("mcpGitHubPatSchema");
+    if (!schema || !safeConfigSchema || !patSchema) return;
+
+    const base = {
+      name: "github-account",
+      displayName: "GitHub account",
+      provider: "github",
+      scope: "organization",
+      transport: "streamable_http",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+      secrets: { bearerToken: `github_pat_${"a".repeat(30)}` },
+    };
+
+    expect(schema.safeParse(base).success).toBe(false);
+    expect(safeConfigSchema.safeParse(base.safeConfig).success).toBe(true);
+    expect(patSchema.safeParse(base.secrets?.bearerToken).success).toBe(true);
+    expect(safeConfigSchema.safeParse({
+      endpoint: "https://github.com/mcp",
+      scopeMode: "account",
+    }).success).toBe(false);
+    expect(patSchema.safeParse("not-a-github-pat").success).toBe(false);
   });
 
   it("rejects internal runtime server names when creating external MCP connections", () => {
@@ -427,73 +464,36 @@ describe("managed MCP shared contracts", () => {
     }).success).toBe(false);
   });
 
-  it("enforces the curated provider access and configuration matrix", () => {
+  it("rejects curated providers from generic create and validates persisted matrix", () => {
     const createSchema = exportedSchema("createMcpConnectionSchema");
     const updateSchema = exportedSchema("updateMcpConnectionSchema");
     const mergedConfigSchema = exportedSchema("mcpConnectionMergedConfigSchema");
     if (!createSchema || !updateSchema || !mergedConfigSchema) return;
 
-    const supabaseBase = {
-      name: "supabase-team",
-      displayName: "Supabase Team",
-      provider: "supabase",
+    const curatedBases = ["supabase", "linear", "notion", "github"].map((provider) => ({
+      name: `${provider}-team`,
+      displayName: provider,
+      provider,
       scope: "organization",
       transport: "streamable_http",
       safeConfig: {},
-    };
-    const supabaseDefault = createSchema.safeParse(supabaseBase);
-    expect(supabaseDefault.success).toBe(true);
-    if (supabaseDefault.success) {
-      expect((supabaseDefault.data as { accessMode?: string }).accessMode).toBe("read_write");
-    }
-    expect(createSchema.safeParse({ ...supabaseBase, accessMode: "read_write" }).success).toBe(true);
-    expect(createSchema.safeParse({ ...supabaseBase, accessMode: "provider_default" }).success).toBe(false);
-
-    const linearBase = {
-      name: "linear-team",
-      displayName: "Linear Team",
-      provider: "linear",
-      scope: "organization",
-      transport: "streamable_http",
-      safeConfig: {},
-    };
-    expect(createSchema.safeParse({ ...linearBase, accessMode: "read_only" }).success).toBe(true);
-    expect(createSchema.safeParse({ ...linearBase, accessMode: "read_write" }).success).toBe(true);
-    expect(createSchema.safeParse({ ...linearBase, accessMode: "provider_default" }).success).toBe(false);
-    const linearDefault = createSchema.safeParse(linearBase);
-    expect(linearDefault.success).toBe(true);
-    if (linearDefault.success) {
-      expect((linearDefault.data as { accessMode?: string }).accessMode).toBe("read_write");
+    }));
+    for (const base of curatedBases) {
+      expect(createSchema.safeParse(base).success).toBe(false);
     }
 
-    const notionBase = {
-      name: "notion-team",
-      displayName: "Notion Team",
-      provider: "notion",
+    const customBase = {
+      name: "custom-team",
+      displayName: "Custom Team",
+      provider: "custom",
       scope: "organization",
       transport: "streamable_http",
-      safeConfig: {},
+      safeConfig: { url: "https://mcp.example.com" },
     };
-    expect(createSchema.safeParse({ ...notionBase, accessMode: "provider_default" }).success).toBe(true);
-    expect(createSchema.safeParse({ ...notionBase, accessMode: "read_only" }).success).toBe(false);
-    expect(createSchema.safeParse({ ...notionBase, accessMode: "read_write" }).success).toBe(false);
-    expect(createSchema.safeParse({
-      ...supabaseBase,
-      scope: undefined,
-    }).success).toBe(false);
-
-    for (const override of [
-      { safeConfig: { url: "https://override.example.com" } },
-      { safeConfig: { staticHeaders: { Accept: "application/json" } } },
-      { transport: "stdio", safeConfig: { command: "node" } },
-      { transport: "legacy_manual", enabled: false, safeConfig: { legacyConfigRetained: true } },
-      { secrets: { bearerToken: "curated-secret-override" } },
-    ]) {
-      expect(createSchema.safeParse({
-        ...supabaseBase,
-        accessMode: "read_only",
-        ...override,
-      }).success).toBe(false);
+    const customDefault = createSchema.safeParse(customBase);
+    expect(customDefault.success).toBe(true);
+    if (customDefault.success) {
+      expect((customDefault.data as { accessMode?: string }).accessMode).toBe("provider_default");
     }
 
     expect(updateSchema.safeParse({
@@ -736,6 +736,28 @@ describe("managed MCP shared contracts", () => {
         activeRunUsesOlderPolicy: false,
       },
     }).success).toBe(true);
+
+    expect(availabilitySchema.safeParse({
+      provider: "github",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "account",
+        revision: 1,
+      },
+    }).success).toBe(true);
+
+    expect(availabilitySchema.safeParse({
+      provider: "github",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "legacy_project",
+        revision: 1,
+      },
+    }).success).toBe(false);
 
     expect(availabilitySchema.safeParse({
       provider: "supabase",

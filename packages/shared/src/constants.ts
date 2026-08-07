@@ -396,7 +396,7 @@ export type CustomIntegrationBindingStatus = (typeof CUSTOM_INTEGRATION_BINDING_
 export const CUSTOM_INTEGRATION_TOOL_CALL_STATUSES = ["success", "error", "blocked"] as const;
 export type CustomIntegrationToolCallStatus = (typeof CUSTOM_INTEGRATION_TOOL_CALL_STATUSES)[number];
 
-export const MCP_CONNECTION_PROVIDERS = ["supabase", "linear", "notion", "custom"] as const;
+export const MCP_CONNECTION_PROVIDERS = ["supabase", "linear", "notion", "github", "custom"] as const;
 export type McpConnectionProvider = (typeof MCP_CONNECTION_PROVIDERS)[number];
 
 export const MCP_CONNECTION_TRANSPORTS = ["stdio", "streamable_http", "legacy_manual"] as const;
@@ -422,6 +422,9 @@ export type McpConnectionCanonicalState = (typeof MCP_CONNECTION_CANONICAL_STATE
 
 export const MCP_PROVIDER_SCOPE_MODES = ["account", "workspace", "legacy_project"] as const;
 export type McpProviderScopeMode = (typeof MCP_PROVIDER_SCOPE_MODES)[number];
+
+export const MCP_PROVIDER_CREDENTIAL_MODES = ["oauth", "pat", "custom"] as const;
+export type McpProviderCredentialMode = (typeof MCP_PROVIDER_CREDENTIAL_MODES)[number];
 
 export const MCP_PROVIDER_ORGANIZATION_STATES = [
   "not_connected",
@@ -470,6 +473,7 @@ export const MCP_PROVIDER_CATALOG = [
     label: "Supabase",
     curated: true,
     requiresOAuth: true,
+    credentialMode: "oauth",
     requiresScopeSelection: false,
     scopeLabel: "Account",
     transports: ["streamable_http"],
@@ -481,6 +485,7 @@ export const MCP_PROVIDER_CATALOG = [
     label: "Linear",
     curated: true,
     requiresOAuth: true,
+    credentialMode: "oauth",
     requiresScopeSelection: false,
     scopeLabel: "Workspace",
     transports: ["streamable_http"],
@@ -492,6 +497,7 @@ export const MCP_PROVIDER_CATALOG = [
     label: "Notion",
     curated: true,
     requiresOAuth: true,
+    credentialMode: "oauth",
     requiresScopeSelection: false,
     scopeLabel: "Workspace",
     transports: ["streamable_http"],
@@ -499,10 +505,23 @@ export const MCP_PROVIDER_CATALOG = [
     defaultAccessMode: "provider_default",
   },
   {
+    id: "github",
+    label: "GitHub",
+    curated: true,
+    requiresOAuth: false,
+    credentialMode: "pat",
+    requiresScopeSelection: false,
+    scopeLabel: "Account",
+    transports: ["streamable_http"],
+    accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_only",
+  },
+  {
     id: "custom",
     label: "Custom MCP",
     curated: false,
     requiresOAuth: false,
+    credentialMode: "custom",
     requiresScopeSelection: false,
     scopeLabel: "Server",
     transports: ["stdio", "streamable_http"],
