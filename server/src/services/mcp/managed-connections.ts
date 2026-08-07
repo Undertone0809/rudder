@@ -1035,11 +1035,7 @@ export function managedMcpConnectionService(
             provider: input.provider,
             transport: input.transport,
             externalScope: input.externalScope ?? null,
-            scopeMode: input.provider === "supabase"
-              ? "account"
-              : input.provider === "custom"
-                ? null
-                : "workspace",
+            scopeMode: null,
             accessMode: input.accessMode,
             status: "draft",
             safeConfig: input.safeConfig,

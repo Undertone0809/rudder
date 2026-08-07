@@ -16,6 +16,7 @@ supersedes: []
 related_code:
   - packages/shared/src/constants.ts
   - packages/shared/src/validators/mcp.ts
+  - server/src/routes/managed-mcp-connections.ts
   - server/src/services/mcp/managed-connections.ts
   - server/src/services/mcp/managed-bindings.ts
   - server/src/services/mcp/managed-runtime.ts
@@ -23,7 +24,7 @@ related_code:
   - ui/src/pages/AgentDetail.integrations.tsx
   - docs/reference/permissions-and-platforms.mdx
 commit_refs:
-  - "c5fcce941 feat: complete GitHub managed MCP PAT integration"
+  - "pending: GitHub managed MCP review follow-up"
 updated_at: 2026-08-07
 ---
 
@@ -55,18 +56,22 @@ connections or orphaning secrets.
 
 ## Product Logic Alignment
 
-The guarded Product Logic Registry under `doc/product/**` was read but is not
-edited by this implementation. Its managed MCP contract predates the GitHub
-provider and therefore remains the source of the existing behavior for the
-previous providers. This issue plan and the public permissions reference record
-the additive GitHub PAT behavior until a separately authorized Product Logic
-Registry synchronization is scheduled.
+The current user explicitly authorized the reviewer-requested Product Logic
+delta in Issue R6Z-63. `AGENT.CUSTOM.INTEGRATIONS.001` now covers GitHub's
+curated account-scoped PAT lifecycle and Custom-only generic create boundary;
+`AGENT.RUNTIME.PERMISSIONS.001` covers encrypted server-side PAT handling and
+Bearer-only runtime forwarding; `AGENT.CONTROL.TOOLS.001` records that the
+provider-specific endpoint and credential remain outside the provider-neutral
+runtime descriptor. The registry, contract pages, traceability, and test lists
+are updated together.
 
 ## Acceptance
 
 - Organization and Agent setup accept a PAT without opening OAuth.
 - Public summaries, logs, runtime descriptors, and screenshots contain no PAT.
 - GitHub accepts only `account` scope and uses the fixed curated endpoint.
+- Generic connection create rejects every curated provider; GitHub uses only
+  the provider-specific connect/reconnect path.
 - Concurrent reconnect and disconnect operations leave one consistent final
   connection state with no orphan credential records.
 - Mocked upstream discovery proves Bearer forwarding without real GitHub access.

@@ -253,34 +253,31 @@ describe("managedMcpConnectionService", () => {
     };
   }
 
-  it("creates curated providers from registry defaults without accepting client endpoints or credentials", async () => {
+  it("ensures curated providers from registry defaults without accepting client endpoints or credentials", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
 
-    const supabase = await svc.create(orgId, {
-      name: "supabase-main",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
-    const linear = await svc.create(orgId, {
-      name: "linear-main",
-      displayName: "Linear",
-      provider: "linear",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
-    const notion = await svc.create(orgId, {
-      name: "notion-main",
-      displayName: "Notion",
-      provider: "notion",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const supabase = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
+    const linear = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
+    const notion = await svc.ensureOfficial(
+      orgId,
+      "notion",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
 
     expect([supabase.accessMode, linear.accessMode, notion.accessMode]).toEqual([
-      "read_write",
+      "read_only",
       "read_write",
       "provider_default",
     ]);
@@ -297,7 +294,26 @@ describe("managedMcpConnectionService", () => {
       transport: "streamable_http",
       safeConfig: { url: "https://attacker.test/mcp" },
       secrets: { bearerToken: "never-persist-this" },
-    }, { userId: "owner-1" })).rejects.toThrow();
+    } as never, { userId: "owner-1" })).rejects.toThrow(/custom|curated/i);
+  });
+
+  it("rejects GitHub from the generic create service before persistence", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+
+    await expect(svc.create(orgId, {
+      name: "github-generic",
+      displayName: "GitHub",
+      provider: "github",
+      transport: "streamable_http",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+      secrets: { bearerToken: "github_pat_12345678901234567890" },
+    } as never, { userId: "owner-1" })).rejects.toThrow(/custom|curated/i);
+    expect(await db.select().from(mcpConnections)).toHaveLength(0);
+    expect(await db.select().from(organizationSecrets)).toHaveLength(0);
   });
 
   it("single-flights concurrent official provider ensure calls to one canonical connection", async () => {
@@ -797,13 +813,12 @@ describe("managedMcpConnectionService", () => {
       purpose: "managed_mcp_oauth",
     });
     const svc = service({ createOAuthCredential: undefined });
-    const connection = await svc.create(orgId, {
-      name: "linear-no-factory",
-      displayName: "Linear no factory",
-      provider: "linear",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const connection = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     await db.insert(mcpOAuthGrants).values({
       orgId,
       connectionId: connection.id,
@@ -1448,13 +1463,12 @@ describe("managedMcpConnectionService", () => {
     failingClient.discoverTools.mockRejectedValue(new Error("temporary provider outage"));
     createClient.mockResolvedValueOnce(firstClient).mockResolvedValueOnce(failingClient);
     const svc = service();
-    const connection = await svc.create(orgId, {
-      name: "supabase-stable",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const connection = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     const oauthSecret = await secretService(db).create(orgId, {
       name: "Supabase stable OAuth",
       provider: "local_encrypted",
@@ -1527,13 +1541,12 @@ describe("managedMcpConnectionService", () => {
     ]);
     createClient.mockResolvedValueOnce(firstClient).mockResolvedValueOnce(secondClient);
     const svc = service();
-    const connection = await svc.create(orgId, {
-      name: "supabase-policy-refresh",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const connection = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     const oauthSecret = await secretService(db).create(orgId, {
       name: "Supabase policy refresh OAuth",
       provider: "local_encrypted",
@@ -1979,13 +1992,12 @@ describe("managedMcpConnectionService", () => {
     const client = clientWithTools([]);
     createClient.mockResolvedValue(client);
     const svc = service();
-    const connection = await svc.create(orgId, {
-      name: "linear-reconnect",
-      displayName: "Linear reconnect",
-      provider: "linear",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const connection = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     await db.insert(mcpOAuthGrants).values({
       orgId,
       connectionId: connection.id,
@@ -2047,20 +2059,18 @@ describe("managedMcpConnectionService", () => {
   it("creates account-scoped Supabase without a project and enforces centralized access-mode rules", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const supabase = await svc.create(orgId, {
-      name: "supabase",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
-    const notion = await svc.create(orgId, {
-      name: "notion",
-      displayName: "Notion",
-      provider: "notion",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const supabase = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
+    const notion = await svc.ensureOfficial(
+      orgId,
+      "notion",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
 
     const [storedSupabase] = await db.select().from(mcpConnections)
       .where(eq(mcpConnections.id, supabase.id));
@@ -2079,13 +2089,12 @@ describe("managedMcpConnectionService", () => {
   it("requires the dedicated access-mode path and reauthorization for Linear write escalation", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const linear = await svc.create(orgId, {
-      name: "linear-permissions",
-      displayName: "Linear",
-      provider: "linear",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const linear = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
 
     await expect(svc.update(
       orgId,
@@ -2138,14 +2147,12 @@ describe("managedMcpConnectionService", () => {
   it("does not let direct updates bypass OAuth for active official access changes", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const supabase = await svc.create(orgId, {
-      name: "supabase-access",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      accessMode: "read_only",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const supabase = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null, accessMode: "read_only" },
+      { userId: "owner-1" },
+    );
     await db.update(mcpConnections).set({
       status: "active",
       enabled: true,
@@ -2167,13 +2174,12 @@ describe("managedMcpConnectionService", () => {
   it("does not let a superseded official connection be re-enabled", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const supabase = await svc.create(orgId, {
-      name: "supabase-superseded",
-      displayName: "Supabase",
-      provider: "supabase",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const supabase = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     await db.update(mcpConnections).set({
       canonicalState: "superseded",
       enabled: false,
@@ -2195,14 +2201,12 @@ describe("managedMcpConnectionService", () => {
   it("rejects Linear access-mode changes while OAuth is authorizing", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const linear = await svc.create(orgId, {
-      name: "linear-racing-permissions",
-      displayName: "Linear",
-      provider: "linear",
-      transport: "streamable_http",
-      accessMode: "read_only",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const linear = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null, accessMode: "read_only" },
+      { userId: "owner-1" },
+    );
     await db.update(mcpConnections).set({ status: "authorizing" })
       .where(eq(mcpConnections.id, linear.id));
 
@@ -2226,13 +2230,12 @@ describe("managedMcpConnectionService", () => {
     const lookupEntered = deferred<void>();
     const releaseLookup = deferred<void>();
     const svc = service();
-    const linear = await svc.create(orgId, {
-      name: "linear-racing-activation",
-      displayName: "Linear",
-      provider: "linear",
-      transport: "streamable_http",
-      safeConfig: {},
-    }, { userId: "owner-1" });
+    const linear = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
     await db.update(mcpConnections).set({ status: "authorizing" })
       .where(eq(mcpConnections.id, linear.id));
 

@@ -129,7 +129,8 @@ ordinary Chat replies, or non-MCP work.
   revision, required behavior, startup timeout, and tool timeout. The fixed
   Rudder proxy URL and run-owned proxy authorization are derived outside the
   binding array. Provider scope, connection identity, and provider credentials
-  remain server-side.
+  remain server-side. This includes GitHub's account-scoped endpoint and PAT;
+  neither provider-specific value becomes part of the runtime descriptor.
 
 ### Entry Points / Inputs
 
@@ -348,6 +349,8 @@ semantics, or related traceability.
 - Plan: `doc/plans/2026-07-12-built-in-browser.md`
 - Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 - Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
+- Plan: `doc/plans/2026-08-07-github-managed-mcp.md`
+- Plan: `doc/plans/2026-08-07-github-mcp-pat.md`
 - Plan: `doc/plans/2026-07-27-agent-tool-contract-reliability.md`
 - Related active contracts:
   - `AGENT.BROWSER.001` for Browser settings, profile, tab lease, and lifecycle

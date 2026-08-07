@@ -20,6 +20,9 @@ related_code:
   - packages/agent-runtimes/pi-local/src/server/execute.ts
   - server/src/services/agent-run-context.ts
   - server/src/services/managed-workspace-preflight.ts
+  - server/src/services/mcp/managed-client.ts
+  - server/src/services/mcp/managed-connections.ts
+  - server/src/services/mcp/managed-runtime.ts
   - desktop/src/main.ts
   - desktop/src/navigation-guard.ts
   - desktop/src/preload.ts
@@ -31,6 +34,8 @@ related_tests:
   - packages/agent-runtime-utils/src/server-utils.test.ts
   - packages/shared/src/validators/mcp.test.ts
   - scripts/managed-mcp-product-contract.test.mjs
+  - server/src/__tests__/managed-mcp-connections-service.test.ts
+  - server/src/__tests__/managed-mcp-runtime-routes.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/cursor-local-execute.test.ts
@@ -50,6 +55,8 @@ related_plans:
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
   - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+  - doc/plans/2026-08-07-github-managed-mcp.md
+  - doc/plans/2026-08-07-github-mcp-pat.md
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
@@ -115,14 +122,17 @@ profile belongs to Desktop, not to adapter-managed runtime state.
 
 Managed external MCP adds distinct OAuth token, runtime identity, network,
 STDIO process, and environment variable boundaries. Provider tokens and
-temporary OAuth material remain encrypted on the Rudder server. A runtime
-receives only a run-scoped proxy identity and provider-neutral tool
-descriptors; it never receives provider access/refresh tokens, PKCE verifiers,
-dynamic client secrets, or organization secret identifiers. Organization and
-Agent connections for the same provider have independent grants and encrypted
-credentials. Runtime source resolution selects the owner Agent's non-revoked
-connection before the Organization connection; explicit `No access` blocks
-fallback, while revocation restores an available Organization source.
+temporary OAuth material remain encrypted on the Rudder server. GitHub PATs
+follow the same server-side secret boundary: they enter only through a
+mutation request, are encrypted before connection activation, and are used
+only to build the upstream Bearer header. A runtime receives only a run-scoped
+proxy identity and provider-neutral tool descriptors; it never receives
+provider access/refresh tokens, PATs, PKCE verifiers, dynamic client secrets,
+or organization secret identifiers. Organization and Agent connections for the
+same provider have independent grants or managed credentials. Runtime source
+resolution selects the owner Agent's non-revoked connection before the
+Organization connection; explicit `No access` blocks fallback, while
+revocation restores an available Organization source.
 The runtime authorization boundary also includes a persisted run-start policy
 snapshot. Current binding and provider policy can immediately reduce that
 snapshot, while permission increases wait for the next run.
@@ -269,10 +279,12 @@ because it represents the same user.
    what permission, path, login, or configuration needs repair.
 
 12. Provider OAuth access tokens, refresh tokens, client secrets, PKCE
-    verifiers, and temporary dynamic-client metadata stay in encrypted
-    organization secrets. They are never written into prompts, tool arguments,
-    adapter config, command lines, child environment variables, or audit
-    outcomes.
+    verifiers, temporary dynamic-client metadata, and GitHub PATs stay in
+    encrypted organization secrets. They are never written into prompts, tool
+    arguments, adapter config, command lines, child environment variables, or
+    audit outcomes. A GitHub PAT is accepted only by the provider-specific
+    setup/reconnect mutation and is used server-side to construct the upstream
+    Bearer header.
 
     Reauthorization is a two-phase replacement. Rudder retains the prior usable
     grant while the new OAuth session is pending and atomically swaps credentials

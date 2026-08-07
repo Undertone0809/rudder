@@ -433,7 +433,13 @@ function validateConnectionSecretMutation(
   }
 }
 
-export const createMcpConnectionSchema = z.object(mcpConnectionInputFields)
+// Curated providers have provider-specific setup semantics (OAuth or PAT,
+// canonical target identity, and lifecycle activation). The generic create
+// contract is intentionally limited to custom connections.
+export const createMcpConnectionSchema = z.object({
+  ...mcpConnectionInputFields,
+  provider: z.literal("custom"),
+})
   .strict()
   .superRefine((value, ctx) => {
     if (value.scope === "organization" && value.ownerAgentId) {
