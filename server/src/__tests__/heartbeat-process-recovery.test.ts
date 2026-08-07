@@ -1038,6 +1038,117 @@ describe("heartbeat orphaned process recovery", () => {
     expect(runs).toHaveLength(1);
   });
 
+  it("stops a locally tracked child when takeover precedes the orphan watchdog query", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const initialAt = new Date("2026-03-19T00:01:00.000Z");
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapOrphanedRuns({
+      now: initialAt,
+      recoveryCutoff: initialAt,
+    })).resolves.toEqual({ reaped: 0, runIds: [] });
+
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: takeoverOwnerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:15:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeat.reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    })).resolves.toEqual({ reaped: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T00:15:00.000Z");
+  });
+
+  it("stops a locally tracked child when takeover precedes the wake-grace watchdog query", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const afterTakeoverAt = new Date("2026-03-19T13:00:30.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+      recoveryCutoff: wakeAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: takeoverOwnerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T13:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: afterTakeoverAt,
+      recoveryCutoff: afterTakeoverAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+      updatedAt: wakeAt,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T13:05:00.000Z");
+  });
+
   it("preserves a live local execution through inactivity recovery after sleep", async () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);

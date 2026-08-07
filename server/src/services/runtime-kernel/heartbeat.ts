@@ -90,6 +90,7 @@ const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
 const activeRunExecutions = new Set<string>();
 const runAbortControllers = new Map<string, AbortController>();
 const localExecutionLeaseStates = new Map<string, {
+  executionOwnerToken: string | null;
   lastRenewedAtMs: number;
   sleepRecoveryUsed: boolean;
   sleepRecoveryPending: boolean;
@@ -102,6 +103,7 @@ function getLocalExecutionLeaseState(runId: string, nowMs: number) {
   const existing = localExecutionLeaseStates.get(runId);
   if (existing) return existing;
   const state = {
+    executionOwnerToken: null,
     lastRenewedAtMs: nowMs,
     sleepRecoveryUsed: false,
     sleepRecoveryPending: false,
@@ -109,6 +111,11 @@ function getLocalExecutionLeaseState(runId: string, nowMs: number) {
   };
   localExecutionLeaseStates.set(runId, state);
   return state;
+}
+
+function localExecutionOwnerMatches(runId: string, ownerToken: string | null) {
+  const state = localExecutionLeaseStates.get(runId);
+  return !state || state.executionOwnerToken === null || state.executionOwnerToken === ownerToken;
 }
 
 function observeLocalExecutionLease(runId: string, now: Date) {
@@ -886,14 +893,26 @@ export function heartbeatService(
     opts?: { observeSleep?: boolean; touchActivity?: boolean },
   ) {
     await testHooks?.beforeRunExecutionLeaseRenewal?.({ runId, ownerToken });
+    const knownState = localExecutionLeaseStates.get(runId);
+    if (knownState && knownState.executionOwnerToken !== null && knownState.executionOwnerToken !== ownerToken) {
+      knownState.sleepRecoveryPending = false;
+      return null;
+    }
     const sleepRecoveryDetected = opts?.observeSleep !== false
       ? observeLocalExecutionLease(runId, now)
       : false;
+    const state = localExecutionLeaseStates.get(runId);
+    if (state && state.executionOwnerToken === null) {
+      state.executionOwnerToken = ownerToken;
+    }
+    if (state && state.executionOwnerToken !== ownerToken) {
+      state.sleepRecoveryPending = false;
+      return null;
+    }
     const renewed = await renewHeartbeatRunExecutionLease(db, runId, ownerToken, now, {
       touchActivity: opts?.touchActivity || sleepRecoveryDetected,
     });
     if (!renewed) {
-      const state = localExecutionLeaseStates.get(runId);
       if (state) state.sleepRecoveryPending = false;
     }
     return renewed;
@@ -903,11 +922,19 @@ export function heartbeatService(
     run: typeof heartbeatRuns.$inferSelect,
     now: Date,
   ): Promise<boolean> {
-    if (!run.executionOwnerToken || !run.executionLeaseExpiresAt) return false;
     if (!activeRunExecutions.has(run.id) && !runningProcesses.has(run.id)) return false;
+
+    if (!localExecutionOwnerMatches(run.id, run.executionOwnerToken)) {
+      abortRunExecution(run.id);
+      return true;
+    }
+    if (!run.executionOwnerToken || !run.executionLeaseExpiresAt) return false;
 
     observeLocalExecutionLease(run.id, now);
     const state = localExecutionLeaseStates.get(run.id);
+    if (state && state.executionOwnerToken === null) {
+      state.executionOwnerToken = run.executionOwnerToken;
+    }
     const nowMs = now.getTime();
     if (
       state
@@ -1284,6 +1311,10 @@ export function heartbeatService(
       // and this server's execution registry can remain alive. Preserve that
       // local execution instead of turning it into a process-loss retry.
       if (activeRunExecutions.has(run.id) || runningProcesses.has(run.id)) {
+        if (!localExecutionOwnerMatches(run.id, run.executionOwnerToken)) {
+          abortRunExecution(run.id);
+          continue;
+        }
         if (run.executionOwnerToken) {
           const renewed = await renewRunExecutionLease(run.id, run.executionOwnerToken, now);
           if (!renewed) abortRunExecution(run.id);
