@@ -18,6 +18,35 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+## v0.7.2
+
+发布时间：2026-08-07
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.2)
+
+这个版本提供更连续的 Agent 工作台、更清晰的 Goal 进展与验收流程，以及更丰富的运行证据查看能力。
+
+### 新功能
+
+- 增加 Messenger 工作台，可在可排序的标签页中统一管理 Browser、Library、Automation、本地应用和已保存视图，并在 Side Panel 与主工作台之间保留实时界面。
+- 增加 Goal 工作区，按下一步行动者或状态组织工作，包括 Agent 推进、需要你关注、等待外部结果、待验收和历史记录。
+- 增加 Goal 对齐与契约流程，在开始工作前预览结果、成功标准、负责人、边界和第一步行动，并支持反馈、证据、变更审阅和结果验收。
+- 增加运行产物检查，可在 Agent transcript 中查看文件变更、统一 diff、图片证据和本地文件预览。
+- 增加 Hermes API Server Agent 运行环境。
+
+### 改进
+
+- 改进 Agent 运行环境配置，使推理控制、模型发现、回退顺序与所选模型能力保持一致，并刷新 OpenClaw Gateway 兼容性。
+- 改进 Messenger 连续性，让 Side Chat 流、已保存视图和工作台实时界面在导航过程中保留上下文。
+- 改进 Desktop 和本地工作区的启动与升级可靠性，增强打包服务兼容性和嵌入式 PostgreSQL 迁移处理。
+
+### 问题修复
+
+- 修复 Side Chat 在导航过程中丢失流身份，以及 Messenger 中过期 Issue 提醒仍然显示的问题。
+- 修复窄屏下运行产物检查、过长内联标签和 Side Panel 源码滚动的问题。
+- 修复编辑 Issue 时内联图片无法继续预览的问题，并修复 Chat 滚动和流式输入边界状态。
+- 修复未明确调用 Rudder Browser 时仍可能触发 Browser 操作的问题。
+
 ## v0.7.1
 
 发布时间：2026-08-04

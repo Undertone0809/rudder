@@ -18,6 +18,35 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+## v0.7.2
+
+Released: 2026-08-07
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.2)
+
+This release gives teams a more continuous agent workbench, clearer Goal progress and acceptance, and richer run evidence.
+
+### New
+
+- Added the Messenger Workbench for keeping Browser, Library, Automation, Local App, and saved views together in reorderable tabs while retaining live surfaces across the Side Panel and main workbench.
+- Added a Goal workspace that groups work by the next actor or state, including Agent advancing, needs your attention, waiting for an external result, ready for acceptance, and history.
+- Added Goal alignment and contract flows that preview the outcome, success signal, owner, boundary, and first action before work starts, with feedback, evidence, change review, and result acceptance.
+- Added structured run-artifact inspection for file changes, unified diffs, image evidence, and local file previews in agent transcripts.
+- Added Hermes API Server as an Agent runtime.
+
+### Improved
+
+- Improved Agent runtime configuration with model-aware reasoning controls, model discovery, fallback ordering, and refreshed OpenClaw Gateway compatibility.
+- Improved Messenger continuity so Side Chat streams, saved views, and live workbench surfaces retain their context across navigation.
+- Improved Desktop and local workspace startup and upgrade reliability around packaged server compatibility and embedded PostgreSQL migrations.
+
+### Fixed
+
+- Fixed Side Chat streams losing their identity during navigation and stale Messenger issue attention remaining visible.
+- Fixed transcript artifact inspection on narrow screens, long inline labels, and Side Panel source scrolling.
+- Fixed inline issue images disappearing from preview while editing, along with chat scrolling and streaming composer boundary states.
+- Fixed Browser actions being triggered without an explicit Rudder Browser invocation.
+
 ## v0.7.1
 
 Released: 2026-08-04
