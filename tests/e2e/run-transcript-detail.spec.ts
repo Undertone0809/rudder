@@ -697,7 +697,14 @@ test.describe("Run transcript detail", () => {
 
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible();
     await expect(projectSelector).toBeDisabled();
-    await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(sidePanel).toBeHidden();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-runs-detail-pane").getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toBeHidden();
+
+    const reloadedDetailPane = page.getByTestId("agent-runs-detail-pane");
+    await reloadedDetailPane.getByTestId("run-transcript-annotation-trigger").first().click();
     await expect(annotationEditor).toBeVisible();
     await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();

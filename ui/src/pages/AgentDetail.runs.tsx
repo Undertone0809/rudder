@@ -485,7 +485,9 @@ export function RunsTab({
         label: "Run feedback",
       };
       feedbackTargetRef.current = restoredTarget;
-      sidePanel.openTargetForContext(contextKey, restoredTarget);
+      if (sidePanel.open) {
+        sidePanel.openTargetForContext(contextKey, restoredTarget);
+      }
     } catch {
       // Ignore malformed or unavailable local draft storage.
     }
