@@ -40,8 +40,8 @@ describe("release migration compatibility matrix", () => {
       channel: "canary",
     });
 
-    expect(result.candidateMigrations).toBe(147);
-    expect(result.candidateSqlFiles).toBe(149);
+    expect(result.candidateMigrations).toBe(148);
+    expect(result.candidateSqlFiles).toBe(150);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.1",
       "0.7.0",

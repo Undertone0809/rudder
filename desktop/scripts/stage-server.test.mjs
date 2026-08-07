@@ -67,6 +67,15 @@ function createStageServerRepo() {
   ].join("\n"));
 
   const sharedManifestPath = join(repo, "packages", "shared", "package.json");
+  const rootManifestPath = join(repo, "package.json");
+  writeJson(rootManifestPath, {
+    name: "stage-server-fixture",
+    private: true,
+    pnpm: {
+      allowNonAppliedPatches: false,
+      patchedDependencies: { "fixture-package@1.0.0": "patches/fixture.patch" },
+    },
+  });
   const sharedManifest = {
     name: "@rudderhq/shared",
     version: "0.2.10",
@@ -123,6 +132,12 @@ function createStageServerRepo() {
     "  console.error('pnpm deploy requires force-legacy-deploy config for non-injected workspace packages');",
     "  process.exit(43);",
     "}",
+    "const rootManifest = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));",
+    "if (rootManifest.pnpm?.allowNonAppliedPatches !== true) {",
+    "  console.error('stage-server must enable allowNonAppliedPatches for the deploy');",
+    "  process.exit(44);",
+    "}",
+    "fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'mutated-root', pnpm: { allowNonAppliedPatches: 'deploy-mutated' } }, null, 2) + '\\n');",
     "const target = process.argv.at(-1);",
     "const publishedShared = {",
     "  name: '@rudderhq/shared',",
@@ -154,7 +169,7 @@ function createStageServerRepo() {
   }
   chmodSync(pnpmPath, 0o755);
 
-  return { repo, binDir, sharedManifestPath };
+  return { repo, binDir, rootManifestPath, sharedManifestPath };
 }
 
 afterEach(() => {
@@ -435,8 +450,9 @@ describe("desktop stage-server", () => {
   }, 15_000);
 
   it("restores source package manifests after pnpm deploy rewrites them", () => {
-    const { repo, binDir, sharedManifestPath } = createStageServerRepo();
-    const before = readFileSync(sharedManifestPath, "utf8");
+    const { repo, binDir, rootManifestPath, sharedManifestPath } = createStageServerRepo();
+    const rootBefore = readFileSync(rootManifestPath, "utf8");
+    const sharedBefore = readFileSync(sharedManifestPath, "utf8");
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
       cwd: repo,
@@ -449,7 +465,8 @@ describe("desktop stage-server", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(readFileSync(sharedManifestPath, "utf8")).toBe(before);
+    expect(readFileSync(rootManifestPath, "utf8")).toBe(rootBefore);
+    expect(readFileSync(sharedManifestPath, "utf8")).toBe(sharedBefore);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',
     );

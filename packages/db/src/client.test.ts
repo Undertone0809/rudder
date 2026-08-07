@@ -18,31 +18,16 @@ import {
   reconcilePendingMigrationHistory,
   validatePostMigrationInvariants,
 } from "./client.js";
+import { createLocalPostgresInstance } from "./local-postgres-provider.js";
 
-type EmbeddedPostgresInstance = {
+type LocalPostgresInstance = {
   initialise(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 };
 
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
-
 const tempPaths: string[] = [];
-const runningInstances: EmbeddedPostgresInstance[] = [];
-
-async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  const mod = await import("embedded-postgres");
-  return mod.default as EmbeddedPostgresCtor;
-}
+const runningInstances: LocalPostgresInstance[] = [];
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -72,8 +57,7 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-db-client-"));
   tempPaths.push(dataDir);
   const port = await getAvailablePort();
-  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
-  const instance = new EmbeddedPostgres({
+  const selection = await createLocalPostgresInstance({
     databaseDir: dataDir,
     user: "rudder",
     password,
@@ -83,6 +67,7 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
     onLog: () => {},
     onError: () => {},
   });
+  const instance = selection.instance;
   await instance.initialise();
   await instance.start();
   runningInstances.push(instance);
@@ -711,6 +696,7 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
+          "0147_github_mcp_provider.sql",
         ],
         reason: "pending-migrations",
       });
@@ -878,6 +864,7 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
+          "0147_github_mcp_provider.sql",
         ],
         reason: "pending-migrations",
       });

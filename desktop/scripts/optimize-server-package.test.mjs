@@ -67,6 +67,7 @@ function createFixture() {
     name: "runtime-root",
     version: "1.0.0",
     dependencies: {
+      "nested-runtime": "1.0.0",
       "runtime-leaf": "1.0.0",
     },
     optionalDependencies: {
@@ -100,6 +101,17 @@ function createFixture() {
     "index.js.map": "{}\n",
     "tests/runtime.test.js": "throw new Error('must not ship');\n",
   });
+  const nestedRuntime = path.join(runtimeRoot, "node_modules", "nested-runtime");
+  mkdirSync(nestedRuntime, { recursive: true });
+  writeJson(path.join(nestedRuntime, "package.json"), {
+    name: "nested-runtime",
+    version: "1.0.0",
+    main: "index.js",
+    dependencies: {
+      "runtime-leaf": "1.0.0",
+    },
+  });
+  writeFileSync(path.join(nestedRuntime, "index.js"), "exports.nested = true;\n");
   const optionalRuntime = createStorePackage(serverPackageDir, "optional-runtime@1.0.0", {
     name: "optional-runtime",
     version: "1.0.0",
@@ -164,6 +176,7 @@ function createFixture() {
 
   return {
     embeddedPostgres,
+    nestedRuntime,
     runtimeLeaf,
     peerRuntime,
     serverPackageDir,
@@ -213,6 +226,7 @@ describe("Desktop production server package optimizer", () => {
     expect(existsSync(fixture.vite)).toBe(false);
     expect(existsSync(fixture.embeddedPostgres)).toBe(false);
     expect(existsSync(fixture.runtimeLeaf)).toBe(true);
+    expect(existsSync(fixture.nestedRuntime)).toBe(true);
     expect(existsSync(fixture.peerRuntime)).toBe(true);
     expect(existsSync(path.join(fixture.runtimeLeaf, "index.js"))).toBe(true);
     expect(existsSync(path.join(fixture.runtimeLeaf, "index.d.ts"))).toBe(false);

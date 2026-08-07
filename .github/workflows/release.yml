@@ -105,8 +105,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -126,6 +124,54 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: pnpm install --frozen-lockfile
+
+      - name: Cache PostgreSQL 18.4 runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/release.yml') }}
+
+      - name: Prepare PostgreSQL 18.4 runtime
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            runtime_arch="$(node -p 'process.arch')"
+            runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${runtime_arch}"
+            bin_dir="${runtime_root}/bin"
+            if [ ! -x "${bin_dir}/postgres" ]; then
+              source_url="https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+              source_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+              source_archive="${RUNNER_TEMP}/postgresql-18.4.tar.bz2"
+              source_root="${RUNNER_TEMP}/postgresql-18.4"
+              build_root="${RUNNER_TEMP}/postgresql-18.4-build"
+              curl --fail --location --output "${source_archive}" "${source_url}"
+              actual_sha256="$(shasum -a 256 "${source_archive}" | awk '{print $1}')"
+              test "${actual_sha256}" = "${source_sha256}"
+              tar -xjf "${source_archive}" -C "${RUNNER_TEMP}"
+              mkdir -p "${build_root}"
+              cd "${build_root}"
+              "${source_root}/configure" \
+                --prefix="${runtime_root}" \
+                --without-icu \
+                --without-readline \
+                --without-zlib
+              make -j2
+              make install
+            fi
+            test -f "${runtime_root}/share/postgres.bki"
+            test -f "${runtime_root}/share/postgresql.conf.sample"
+            test -d "${runtime_root}/share/timezone"
+            test -x "${bin_dir}/pg_config"
+            postgres_configure="$("${bin_dir}/pg_config" --configure)"
+            if grep -q -- '--with-system-tzdata' <<< "${postgres_configure}"; then
+              echo "Linux portable PostgreSQL must bundle its own timezone database." >&2
+              exit 1
+            fi
+          else
+            bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          fi
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+          RUDDER_POSTGRES_BIN_DIR="${bin_dir}" node -e "const {execFileSync}=require('node:child_process'); const path=require('node:path'); const exe=process.platform==='win32'?'postgres.exe':'postgres'; console.log(execFileSync(path.join(process.env.RUDDER_POSTGRES_BIN_DIR, exe), ['--version'], {encoding:'utf8'}).trim())"
 
       - name: Verify locked migration compatibility
         shell: bash
@@ -165,8 +211,6 @@ jobs:
     environment: npm-canary
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
@@ -257,8 +301,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -306,8 +348,6 @@ jobs:
     environment: npm-stable
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
