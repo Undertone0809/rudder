@@ -2,12 +2,23 @@
 
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { ToastViewport } from "@/components/ToastViewport";
+import {
+  ChatGenerationCloseSupersededError,
+  ChatGenerationProvider,
+  useChatGenerationActions,
+  useChatGenerations,
+  type ChatStreamDraft as ChatGenerationStreamDraft,
+} from "@/context/ChatGenerationContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
-import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import {
+  sideChatGenerationScopeKey,
+  type SidePanelTarget,
+} from "@/lib/side-panel-targets";
 import type {
   Agent,
   ChatConversation,
@@ -173,10 +184,38 @@ const target: Extract<SidePanelTarget, { kind: "side_chat" }> = {
   label: "Side Chat",
 };
 
+function streamDraft(overrides: Partial<ChatGenerationStreamDraft> = {}): ChatGenerationStreamDraft {
+  const createdAt = new Date("2026-05-06T10:00:00.000Z");
+  return {
+    chatId: sideConversation.id,
+    streamKey: "stream-1",
+    userBody: "hello",
+    userCreatedAt: createdAt,
+    userMessageId: null,
+    chatTurnId: null,
+    turnVariant: 0,
+    editedFromCreatedAt: null,
+    body: "partial",
+    state: "streaming",
+    createdAt,
+    transcript: [],
+    replyingAgentId: null,
+    ...overrides,
+  };
+}
+
 let root: Root;
 let host: HTMLDivElement;
 let queryClient: QueryClient;
 let onReplaceTarget: ReturnType<typeof vi.fn>;
+let latestGenerationActions: ReturnType<typeof useChatGenerationActions> | null = null;
+let latestGenerations: ReturnType<typeof useChatGenerations> | null = null;
+
+function GenerationProbe() {
+  latestGenerationActions = useChatGenerationActions();
+  latestGenerations = useChatGenerations();
+  return null;
+}
 
 beforeAll(() => {
   notifyManager.setNotifyFunction((callback) => act(callback));
@@ -194,6 +233,8 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   onReplaceTarget = vi.fn();
+  latestGenerationActions = null;
+  latestGenerations = null;
   vi.mocked(agentsApi.list).mockReset().mockResolvedValue([defaultAgent]);
   vi.mocked(agentsApi.adapterModels).mockReset().mockResolvedValue([]);
   vi.mocked(agentsApi.skills).mockReset().mockResolvedValue({
@@ -230,6 +271,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   queryClient.clear();
+  latestGenerationActions = null;
+  latestGenerations = null;
   host.remove();
 });
 
@@ -243,16 +286,18 @@ async function renderView({
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <SideChatPanelView
-            organizationId={sourceConversation.orgId}
-            target={viewTarget}
-            onRegisterCloseHandler={vi.fn()}
-            onReplaceTarget={onReplaceTarget}
-            onSelectResponseAnnotation={onSelectResponseAnnotation}
-          />
-          <ToastViewport />
-        </ToastProvider>
+        <ChatGenerationProvider>
+          <ToastProvider>
+            <SideChatPanelView
+              organizationId={sourceConversation.orgId}
+              target={viewTarget}
+              onRegisterCloseHandler={vi.fn()}
+              onReplaceTarget={onReplaceTarget}
+              onSelectResponseAnnotation={onSelectResponseAnnotation}
+            />
+            <ToastViewport />
+          </ToastProvider>
+        </ChatGenerationProvider>
       </QueryClientProvider>,
     );
   });
@@ -361,6 +406,436 @@ describe("SideChatPanelView composer controls", () => {
 });
 
 describe("SideChatPanelView streaming reconciliation", () => {
+  it("keeps the active stream when the Side Chat view is unmounted and mounted again", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000020";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000020",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Keep streaming while I change pages.",
+      chatTurnId: "90000000-0000-4000-8000-000000000020",
+      turnVariant: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    let releaseStream!: () => void;
+    const streamPending = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "The answer is still streaming.",
+        generationId,
+      });
+      await streamPending;
+      await options.onEvent({ type: "final", messages: [] });
+    });
+
+    const viewTarget = {
+      ...target,
+      conversationId: sideConversation.id,
+      inlineAnnotations: [],
+    };
+    const renderProvidedView = (showView: boolean) => {
+      act(() => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <ChatGenerationProvider>
+              <ToastProvider>
+                {showView ? (
+                  <SideChatPanelView
+                    organizationId={sourceConversation.orgId}
+                    target={viewTarget}
+                    onRegisterCloseHandler={vi.fn()}
+                    onReplaceTarget={onReplaceTarget}
+                    onSelectResponseAnnotation={vi.fn()}
+                  />
+                ) : null}
+              </ToastProvider>
+            </ChatGenerationProvider>
+          </QueryClientProvider>,
+        );
+      });
+    };
+
+    renderProvidedView(true);
+    await vi.waitFor(() => expect(host.textContent).toContain("Rudder Agent"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, userMessage.body);
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+
+    renderProvidedView(false);
+    expect(host.querySelector('[data-testid="side-chat-process"]')).toBeNull();
+
+    renderProvidedView(true);
+    await vi.waitFor(() => expect(host.querySelector(
+      '[data-testid="side-chat-process"]',
+    )).not.toBeNull());
+
+    await act(async () => {
+      releaseStream();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(host.querySelector('[aria-label="Sending Side Chat message"]')).toBeNull();
+  });
+
+  it("deduplicates a rapid send and retries an acknowledged turn by editing its user message", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000022";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000022",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Retry the same Side Chat turn.",
+      chatTurnId: "90000000-0000-4000-8000-000000000022",
+      turnVariant: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    const assistantMessage = {
+      id: "70000000-0000-4000-8000-000000000023",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "The retried answer.",
+      generationId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    const sendOptions: Array<{ editUserMessageId?: string | null }> = [];
+    let retried = false;
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.listMessages).mockImplementation(async () => (
+      retried ? [userMessage, assistantMessage] : []
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementation(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      sendOptions.push(options);
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      if (sendOptions.length === 1) throw new Error("first stream failed after ack");
+      retried = true;
+      await options.onEvent({ type: "final", messages: [assistantMessage] });
+    });
+
+    const viewTarget = {
+      ...target,
+      conversationId: sideConversation.id,
+      inlineAnnotations: [],
+    };
+    await renderView({ viewTarget });
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, userMessage.body);
+    await act(async () => {
+      const sendButton = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )!;
+      sendButton.click();
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(sendOptions).toHaveLength(1));
+    await vi.waitFor(() => expect(host.textContent).toContain("first stream failed after ack"));
+    expect(chatsApi.sendMessageStream).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(sendOptions).toHaveLength(2));
+    expect(sendOptions[1]?.editUserMessageId).toBe(userMessage.id);
+    await vi.waitFor(() => expect(host.textContent).toContain("The retried answer."));
+    expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("destroys a provisional Side Chat created after an unmount/remount close", async () => {
+    let resolveCreate!: (conversation: ChatConversation) => void;
+    const createPending = new Promise<ChatConversation>((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(chatsApi.createSideChat).mockImplementationOnce(() => createPending);
+    const closeHandlers = new Map<string, (() => Promise<string | null>)>();
+    const registerCloseHandler = vi.fn((clientMutationId: string, handler: (() => Promise<string | null>) | null) => {
+      if (handler) closeHandlers.set(clientMutationId, handler);
+      else closeHandlers.delete(clientMutationId);
+    });
+    const viewTarget = {
+      ...target,
+      inlineAnnotations: [],
+    };
+    const renderProvidedView = (showView: boolean) => {
+      act(() => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <ChatGenerationProvider>
+              <ToastProvider>
+                {showView ? (
+                  <SideChatPanelView
+                    organizationId={sourceConversation.orgId}
+                    target={viewTarget}
+                    onRegisterCloseHandler={registerCloseHandler}
+                    onReplaceTarget={onReplaceTarget}
+                    onSelectResponseAnnotation={vi.fn()}
+                  />
+                ) : null}
+              </ToastProvider>
+            </ChatGenerationProvider>
+          </QueryClientProvider>,
+        );
+      });
+    };
+
+    renderProvidedView(true);
+    await vi.waitFor(() => expect(host.textContent).toContain("Rudder Agent"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, "Close while the Side Chat is still being created.");
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(chatsApi.createSideChat).toHaveBeenCalledOnce());
+
+    renderProvidedView(false);
+    renderProvidedView(true);
+    const closeHandler = closeHandlers.get(sideChatGenerationScopeKey(sourceConversation.orgId, target));
+    expect(closeHandler).toBeDefined();
+    await act(async () => {
+      await closeHandler?.();
+    });
+    expect(chatsApi.destroySideChat).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCreate(sideConversation);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(chatsApi.destroySideChat).toHaveBeenCalledWith(sideConversation.id));
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it("fences sends and provider cleanup while a Side Chat close is pending", async () => {
+    let resolveDestroy!: (result: { id: string }) => void;
+    const destroyPending = new Promise<{ id: string }>((resolve) => {
+      resolveDestroy = resolve;
+    });
+    vi.mocked(chatsApi.destroySideChat).mockImplementationOnce(() => destroyPending);
+
+    const closeHandlers = new Map<string, (() => Promise<string | null>)>();
+    const registerCloseHandler = vi.fn((clientMutationId: string, handler: (() => Promise<string | null>) | null) => {
+      if (handler) closeHandlers.set(clientMutationId, handler);
+      else closeHandlers.delete(clientMutationId);
+    });
+    const viewTarget = {
+      ...target,
+      conversationId: sideConversation.id,
+      inlineAnnotations: [],
+    };
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ChatGenerationProvider>
+            <GenerationProbe />
+            <ToastProvider>
+              <SideChatPanelView
+                organizationId={sourceConversation.orgId}
+                target={viewTarget}
+                onRegisterCloseHandler={registerCloseHandler}
+                onReplaceTarget={onReplaceTarget}
+                onSelectResponseAnnotation={vi.fn()}
+              />
+            </ToastProvider>
+          </ChatGenerationProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Rudder Agent"));
+    const streamScopeKey = sideChatGenerationScopeKey(sourceConversation.orgId, target);
+    await vi.waitFor(() => expect(closeHandlers.get(streamScopeKey)).toBeDefined());
+
+    act(() => {
+      latestGenerationActions?.setStreamDraftForChat(streamScopeKey, streamDraft({
+        chatId: sideConversation.id,
+        streamKey: "old-generation",
+        body: "Old generation",
+      }));
+    });
+    await vi.waitFor(() => expect(latestGenerations?.streamDrafts[streamScopeKey]?.body)
+      .toBe("Old generation"));
+
+    let closePromise!: Promise<string | null>;
+    act(() => {
+      closePromise = closeHandlers.get(streamScopeKey)!();
+    });
+    expect(chatsApi.destroySideChat).toHaveBeenCalledWith(sideConversation.id);
+
+    const draft = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!;
+    changeTextarea(draft, "Do not start while close is pending.");
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
+      await Promise.resolve();
+    });
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+
+    act(() => {
+      latestGenerationActions?.beginChatGeneration(streamScopeKey, sideConversation.id);
+      latestGenerationActions?.setStreamDraftForChat(streamScopeKey, streamDraft({
+        chatId: sideConversation.id,
+        streamKey: "new-generation",
+        body: "New generation",
+      }));
+    });
+    await vi.waitFor(() => expect(latestGenerations?.streamDrafts[streamScopeKey]?.body)
+      .toBe("New generation"));
+
+    await act(async () => {
+      resolveDestroy({ id: sideConversation.id });
+      await expect(closePromise).rejects.toBeInstanceOf(ChatGenerationCloseSupersededError);
+    });
+    expect(latestGenerations?.streamDrafts[streamScopeKey]?.body).toBe("New generation");
+  });
+
+  it.each([404, 409, 500])("clears provider-owned streaming state when close returns %s", async (status) => {
+    const generationId = "80000000-0000-4000-8000-000000000021";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000021",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Close this stream after the backend response.",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "This should be cleared.",
+        generationId,
+      });
+      await new Promise<void>((resolve) => {
+        options.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+    });
+    vi.mocked(chatsApi.destroySideChat).mockClear().mockRejectedValueOnce(
+      new ApiError(`Close failed with ${status}`, status, null),
+    );
+    const closeHandlers = new Map<string, (() => Promise<string | null>)>();
+    const registerCloseHandler = vi.fn((clientMutationId: string, handler: (() => Promise<string | null>) | null) => {
+      if (handler) closeHandlers.set(clientMutationId, handler);
+      else closeHandlers.delete(clientMutationId);
+    });
+    const viewTarget = {
+      ...target,
+      conversationId: sideConversation.id,
+      inlineAnnotations: [],
+    };
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ChatGenerationProvider>
+            <ToastProvider>
+              <SideChatPanelView
+                organizationId={sourceConversation.orgId}
+                target={viewTarget}
+                onRegisterCloseHandler={registerCloseHandler}
+                onReplaceTarget={onReplaceTarget}
+                onSelectResponseAnnotation={vi.fn()}
+              />
+            </ToastProvider>
+          </ChatGenerationProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Rudder Agent"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, userMessage.body);
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+
+    const closeHandler = closeHandlers.get(sideChatGenerationScopeKey(sourceConversation.orgId, target));
+    expect(closeHandler).toBeDefined();
+    await act(async () => {
+      await expect(closeHandler?.()).rejects.toMatchObject({ status });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(host.querySelector("[data-testid=\"side-chat-streaming-reply\"]")).toBeNull();
+    expect(host.querySelector('[aria-label="Sending Side Chat message"]')).toBeNull();
+
+    if (status === 500) {
+      await act(async () => {
+        await expect(closeHandler?.()).resolves.toBe(sideConversation.id);
+      });
+      expect(chatsApi.destroySideChat).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("keeps the acknowledged user message ahead of the assistant when a stale refresh replaces the cache", async () => {
     const generationId = "80000000-0000-4000-8000-000000000000";
     const userMessage = {

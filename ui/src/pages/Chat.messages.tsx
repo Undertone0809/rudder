@@ -3014,7 +3014,7 @@ export function StreamTranscriptItem({
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
     [entries, steerMessages],
   );
-  const streamingActive = state === "streaming" || state === "finalizing";
+  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
   const [internalProcessOpen, setInternalProcessOpen] = useState(
     () => streamingActive || defaultOpen || hasSteerInterjection,
@@ -3139,7 +3139,7 @@ export function AssistantDraftItem({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
-  const streamingActive = state === "streaming" || state === "finalizing";
+  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
 
   if (!body.trim() && !streamingActive) {

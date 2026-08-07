@@ -8,6 +8,7 @@ import {
   useChatGenerationActions,
   useChatGenerationActive,
   useChatGenerations,
+  type ChatGenerationScopeStart,
   type ChatStreamDraft,
 } from "./ChatGenerationContext";
 
@@ -196,5 +197,46 @@ describe("ChatGenerationProvider", () => {
     });
 
     expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("rejects stale callbacks after a generation scope is released", () => {
+    renderProvider("chat-route-a");
+    let generation!: ChatGenerationScopeStart;
+
+    act(() => {
+      generation = latestContext!.beginChatGeneration("side-chat:released", "chat-1");
+      latestContext!.releaseChatGenerationScope("side-chat:released", generation.epoch);
+    });
+
+    expect(latestContext!.setChatGenerationConversation(
+      "side-chat:released",
+      generation.epoch,
+      "chat-2",
+    )).toBe(false);
+    expect(latestContext!.isChatGenerationCurrent("side-chat:released", generation.epoch)).toBe(false);
+
+    let nextGeneration!: ChatGenerationScopeStart;
+    act(() => {
+      nextGeneration = latestContext!.beginChatGeneration("side-chat:released", "chat-1");
+    });
+    expect(nextGeneration.epoch).not.toBe(generation.epoch);
+  });
+
+  it("claims a scope synchronously so duplicate sends cannot start another generation", () => {
+    renderProvider("chat-route-a");
+
+    let first: ChatGenerationScopeStart | null = null;
+    let duplicate: ChatGenerationScopeStart | null = null;
+    act(() => {
+      first = latestContext!.tryBeginChatGeneration("side-chat:org:source:mutation", null);
+      duplicate = latestContext!.tryBeginChatGeneration("side-chat:org:source:mutation", null);
+    });
+
+    expect(first).not.toBeNull();
+    expect(duplicate).toBeNull();
+    expect(latestContext!.isChatGenerationCurrent(
+      "side-chat:org:source:mutation",
+      first!.epoch,
+    )).toBe(true);
   });
 });

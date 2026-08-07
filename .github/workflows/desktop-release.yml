@@ -194,6 +194,14 @@ jobs:
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
 
+      - name: Smoke packaged startup and database recovery
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            xvfb-run --auto-servernum node desktop/scripts/smoke.mjs --mode=packaged --scenario=upgrade
+          else
+            node desktop/scripts/smoke.mjs --mode=packaged --scenario=upgrade
+          fi
+
       - name: Collect release asset
         id: collect
         run: |

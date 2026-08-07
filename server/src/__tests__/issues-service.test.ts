@@ -16,6 +16,7 @@ import {
   organizations,
   projects,
   projectWorkspaces,
+  productAnalyticsEvents,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -122,6 +123,7 @@ describe("issueService.list participantAgentId", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(productAnalyticsEvents);
     await db.delete(issueComments);
     await db.delete(organizationMemberships);
     await db.delete(activityLog);
@@ -140,6 +142,41 @@ describe("issueService.list participantAgentId", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("records backlog issue creation separately from work start", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue creation analytics",
+      urlKey: deriveOrganizationUrlKey("Issue creation analytics"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await svc.create(orgId, {
+      title: "Trace a new backlog issue",
+      status: "backlog",
+      priority: "medium",
+      createdByUserId: "analytics-user",
+    });
+    const events = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, created.id));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventName: "issue_created",
+      actorType: "human",
+      actorId: "analytics-user",
+      origin: "human",
+      sourceTransition: "issue.create",
+      properties: {
+        creation_path: "manual",
+        has_goal_link: false,
+        has_project_link: false,
+        is_sub_issue: false,
+      },
+    });
   });
 
   it("keeps pending terminal runs visible without leaking terminal state from the issue list route", async () => {

@@ -1,5 +1,7 @@
 import { execFile as execFileCb } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
@@ -16,6 +18,64 @@ export type CleanupStaleSysvSharedMemoryResult = {
   removedIds: string[];
   skippedIds: string[];
 };
+
+export type PostmasterPidFile = {
+  pid: number | null;
+  dataDir: string | null;
+  port: number | null;
+};
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function readPostmasterPidFile(postmasterPidFile: string): PostmasterPidFile | null {
+  if (!existsSync(postmasterPidFile)) return null;
+  try {
+    const lines = readFileSync(postmasterPidFile, "utf8").split(/\r?\n/);
+    const pidValue = Number(lines[0]?.trim());
+    const dataDir = lines[1]?.trim() || null;
+    const portValue = Number(lines[3]?.trim());
+    return {
+      pid: Number.isInteger(pidValue) && pidValue > 0 ? pidValue : null,
+      dataDir,
+      port: Number.isInteger(portValue) && portValue > 0 ? portValue : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Remove only a dead PostgreSQL lock file; the database cluster is untouched. */
+export function removeStalePostmasterPidFile(options: {
+  postmasterPidFile: string;
+  expectedDataDir?: string;
+}): PostmasterPidFile | null {
+  const parsed = readPostmasterPidFile(options.postmasterPidFile);
+  if (!parsed) {
+    if (!existsSync(options.postmasterPidFile)) return null;
+    rmSync(options.postmasterPidFile, { force: true });
+    return { pid: null, dataDir: null, port: null };
+  }
+
+  if (
+    options.expectedDataDir
+    && parsed.dataDir
+    && path.resolve(parsed.dataDir) !== path.resolve(options.expectedDataDir)
+  ) {
+    return null;
+  }
+  if (parsed.pid !== null && isProcessAlive(parsed.pid)) return null;
+
+  rmSync(options.postmasterPidFile, { force: true });
+  return parsed;
+}
 
 export function createEmbeddedPostgresStartupError(
   error: unknown,
@@ -52,16 +112,6 @@ export function createEmbeddedPostgresStartupError(
     (wrapped as Error & { code?: unknown }).code = base.code;
   }
   return wrapped;
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function parseSysvSharedMemorySegments(output: string): SysvSharedMemorySegment[] {

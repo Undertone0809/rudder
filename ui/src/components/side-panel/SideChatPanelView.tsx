@@ -1,7 +1,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import type { HealthStatus } from "@/api/health";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
@@ -20,7 +20,11 @@ import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
-import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import {
+  ChatGenerationCloseSupersededError,
+  useChatGenerationActions,
+  useChatGenerations,
+} from "@/context/ChatGenerationContext";
 import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -36,7 +40,11 @@ import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-
 import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
-import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import {
+  sideChatGenerationScopeKey,
+  sidePanelTargetKey,
+  type SidePanelTarget,
+} from "@/lib/side-panel-targets";
 import { PendingAttachmentPreview } from "@/pages/Chat.attachments";
 import {
   ChatComposerFileDropOverlay,
@@ -63,6 +71,7 @@ import {
   mergeChatMessages,
   pendingAttachmentKey,
 } from "@/pages/Chat.parts";
+import { EMPTY_CHAT_BODY_SHA256, applyChatStreamProgressEvent } from "@/pages/Chat.workspace-helpers";
 import type {
   Agent,
   ChatConversation,
@@ -83,18 +92,6 @@ import {
 import { createPortal } from "react-dom";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
-
-type SideChatStream = {
-  body: string;
-  createdAt: Date;
-  generationId: string | null;
-  replyingAgentId: string | null;
-  state: ChatStreamDraftState;
-  transcript: TranscriptEntry[];
-  userBody: string;
-  userCreatedAt: Date;
-  userMessageId: string | null;
-};
 
 const EMPTY_SKILL_REFERENCES: MarkdownSkillReferencePreview[] = [];
 
@@ -131,10 +128,28 @@ export function SideChatPanelView({
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const { sendInFlightByChatId, streamDrafts } = useChatGenerations();
+  const {
+    abortChatStream,
+    clearChatGenerationConversation,
+    destroyChatGenerationConversation,
+    isChatGenerationClosePending,
+    isChatGenerationCurrent,
+    rememberChatGenerationConversation,
+    requestChatGenerationClose,
+    releaseChatGenerationScope,
+    resetChatGenerationClose,
+    setChatGenerationConversation,
+    setChatSendInFlight,
+    setStreamAbortController,
+    setStreamDraftForChat,
+    tryBeginChatGeneration,
+  } = useChatGenerationActions();
+  const streamScopeKey = sideChatGenerationScopeKey(organizationId, target);
+  const stream = streamDrafts[streamScopeKey] ?? null;
+  const sending = Boolean(sendInFlightByChatId[streamScopeKey]);
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [stream, setStream] = useState<SideChatStream | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -158,44 +173,92 @@ export function SideChatPanelView({
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftAgentInitializedRef = useRef(false);
-  const closeRequestedRef = useRef(false);
-  const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
-  const destroyPromiseRef = useRef<Promise<void> | null>(null);
-  const streamAbortControllerRef = useRef<AbortController | null>(null);
-  conversationIdRef.current = target.conversationId ?? conversationIdRef.current;
+  const conversationScopeKeyRef = useRef(streamScopeKey);
+  const retryUserMessageIdRef = useRef<string | null>(null);
+  if (conversationScopeKeyRef.current !== streamScopeKey) {
+    conversationScopeKeyRef.current = streamScopeKey;
+    conversationIdRef.current = target.conversationId;
+    retryUserMessageIdRef.current = null;
+  } else {
+    conversationIdRef.current = target.conversationId ?? conversationIdRef.current;
+  }
 
-  const destroyForClose = useCallback(async () => {
-    closeRequestedRef.current = true;
-    streamAbortControllerRef.current?.abort();
-    let conversationId = conversationIdRef.current;
-    if (!conversationId && createPromiseRef.current) {
-      const created = await createPromiseRef.current.catch(() => null);
-      if (!created) return null;
-      conversationId = created.id;
-      conversationIdRef.current = created.id;
-    }
-    if (!conversationId) return null;
-    if (!destroyPromiseRef.current) {
-      const request = chatsApi.destroySideChat(conversationId).then(() => undefined);
-      destroyPromiseRef.current = request;
-      try {
-        await request;
-      } catch (error) {
-        if (destroyPromiseRef.current === request) destroyPromiseRef.current = null;
-        closeRequestedRef.current = false;
-        throw error;
-      }
-    } else {
-      await destroyPromiseRef.current;
-    }
-    return conversationId;
-  }, []);
+  const clearProviderOwnedGeneration = useCallback(() => {
+    retryUserMessageIdRef.current = null;
+    setStreamAbortController(streamScopeKey, null);
+    setChatSendInFlight(streamScopeKey, false);
+    setStreamDraftForChat(streamScopeKey, null);
+  }, [
+    setChatSendInFlight,
+    setStreamAbortController,
+    setStreamDraftForChat,
+    streamScopeKey,
+  ]);
 
   useEffect(() => {
-    onRegisterCloseHandler(target.clientMutationId, destroyForClose);
-    return () => onRegisterCloseHandler(target.clientMutationId, null);
-  }, [destroyForClose, onRegisterCloseHandler, target.clientMutationId]);
+    if (target.conversationId) {
+      rememberChatGenerationConversation(streamScopeKey, target.conversationId);
+    }
+  }, [rememberChatGenerationConversation, streamScopeKey, target.conversationId]);
+
+  const destroyForClose = useCallback(async () => {
+    const close = requestChatGenerationClose(streamScopeKey, conversationIdRef.current);
+    abortChatStream(streamScopeKey);
+    const conversationId = close.conversationId;
+    if (!conversationId) {
+      if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
+        throw new ChatGenerationCloseSupersededError();
+      }
+      clearProviderOwnedGeneration();
+      releaseChatGenerationScope(streamScopeKey, close.epoch);
+      return null;
+    }
+    try {
+      await destroyChatGenerationConversation(
+        streamScopeKey,
+        conversationId,
+        async () => {
+          await chatsApi.destroySideChat(conversationId);
+        },
+      );
+    } catch (error) {
+      if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
+        throw new ChatGenerationCloseSupersededError();
+      }
+      clearProviderOwnedGeneration();
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        clearChatGenerationConversation(streamScopeKey, conversationId);
+        releaseChatGenerationScope(streamScopeKey, close.epoch);
+        // Let the parent reconcile the tab and query cache using its existing 404/409 path.
+        throw error;
+      }
+      resetChatGenerationClose(streamScopeKey, close.epoch);
+      throw error;
+    }
+    if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
+      throw new ChatGenerationCloseSupersededError();
+    }
+    clearChatGenerationConversation(streamScopeKey, conversationId);
+    clearProviderOwnedGeneration();
+    releaseChatGenerationScope(streamScopeKey, close.epoch);
+    return conversationId;
+  }, [
+    abortChatStream,
+    clearChatGenerationConversation,
+    clearProviderOwnedGeneration,
+    destroyChatGenerationConversation,
+    isChatGenerationClosePending,
+    releaseChatGenerationScope,
+    requestChatGenerationClose,
+    resetChatGenerationClose,
+    streamScopeKey,
+  ]);
+
+  useEffect(() => {
+    onRegisterCloseHandler(streamScopeKey, destroyForClose);
+    return () => onRegisterCloseHandler(streamScopeKey, null);
+  }, [destroyForClose, onRegisterCloseHandler, streamScopeKey]);
 
   useEffect(() => {
     const streamActive = stream !== null;
@@ -415,6 +478,7 @@ export function SideChatPanelView({
     if (
       (pendingFiles.length === 0 && !canSubmitChatResponseAnnotations(body, annotationState))
       || sending
+      || isChatGenerationClosePending(streamScopeKey)
       || readOnly
       || !sourceMessageId
     ) return;
@@ -429,41 +493,68 @@ export function SideChatPanelView({
       pushToast,
     })) return;
     const createdAt = new Date();
+    const retryUserMessageId = retryUserMessageIdRef.current;
+    const retrySourceDraft = stream?.state === "failed" ? stream : null;
+    const generation = tryBeginChatGeneration(streamScopeKey, target.conversationId);
+    if (!generation) return;
+    retryUserMessageIdRef.current = null;
+    const generationEpoch = generation.epoch;
+    const streamKey = `${streamScopeKey}:${createdAt.getTime()}:${Math.random().toString(36).slice(2)}`;
     let acknowledged = false;
+    let receivedAckEvent = false;
+    let acknowledgedUserMessageId: string | null = retryUserMessageId;
     let receivedFinal = false;
-    setSending(true);
+    setChatSendInFlight(streamScopeKey, true);
     setSendError(null);
     setDraft("");
-    setStream({
-      body: "",
-      createdAt,
-      generationId: null,
-      replyingAgentId: selectedAgentId,
-      state: "streaming",
-      transcript: [],
+    setStreamDraftForChat(streamScopeKey, {
+      chatId: generation.conversationId,
+      streamKey,
       userBody: body,
       userCreatedAt: createdAt,
-      userMessageId: null,
+      userMessageId: retryUserMessageId,
+      chatTurnId: retrySourceDraft?.chatTurnId ?? null,
+      turnVariant: retrySourceDraft?.turnVariant ?? 0,
+      editedFromCreatedAt: retrySourceDraft?.userCreatedAt ?? null,
+      body: "",
+      generationId: null,
+      attemptEpoch: null,
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256,
+      state: "streaming",
+      createdAt,
+      transcript: [],
+      replyingAgentId: selectedAgentId,
     });
-    let conversationId = target.conversationId;
+    let conversationId = generation.conversationId;
+    const destroyCreatedConversation = async (createdConversationId: string) => {
+      await destroyChatGenerationConversation(
+        streamScopeKey,
+        createdConversationId,
+        async () => {
+          await chatsApi.destroySideChat(createdConversationId);
+        },
+      );
+      clearChatGenerationConversation(streamScopeKey, createdConversationId);
+    };
     try {
       if (!conversationId) {
-        const createPromise = chatsApi.createSideChat(target.sourceConversationId, {
+        const created = await chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
           clientMutationId: target.clientMutationId,
           preferredAgentId: selectedAgentId ?? undefined,
           modelOverride: activeRuntimeOverrides.modelOverride,
           effortOverride: activeRuntimeOverrides.effortOverride,
         });
-        createPromiseRef.current = createPromise;
-        const created = await createPromise;
-        createPromiseRef.current = null;
-        conversationId = created.id;
-        conversationIdRef.current = created.id;
-        if (closeRequestedRef.current) {
-          await destroyForClose();
+        if (
+          !setChatGenerationConversation(streamScopeKey, generationEpoch, created.id)
+          || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+        ) {
+          await destroyCreatedConversation(created.id);
           return;
         }
+        conversationId = created.id;
+        conversationIdRef.current = created.id;
         setConversationCache(created);
         queryClient.setQueryData(queryKeys.chats.messages(organizationId, created.id), []);
         onReplaceTarget(sidePanelTargetKey(target), {
@@ -473,26 +564,37 @@ export function SideChatPanelView({
           conversationId: created.id,
         });
       }
-      if (closeRequestedRef.current) {
-        await destroyForClose();
+      if (!conversationId || !isChatGenerationCurrent(streamScopeKey, generationEpoch)) {
+        if (conversationId) await destroyCreatedConversation(conversationId);
         return;
       }
       const abortController = new AbortController();
-      streamAbortControllerRef.current = abortController;
+      setStreamAbortController(streamScopeKey, abortController);
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
+        editUserMessageId: retryUserMessageId,
         files: [...regularFiles, ...serializedAnnotations.files],
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         onEvent: async (event) => {
+          if (!isChatGenerationCurrent(streamScopeKey, generationEpoch)) return;
           if (event.type === "ack") {
             acknowledged = true;
+            receivedAckEvent = true;
+            acknowledgedUserMessageId = event.userMessage.id;
+            retryUserMessageIdRef.current = null;
             upsertMessage(conversationId!, event.userMessage);
-            setStream((current) => current ? {
+            setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? {
               ...current,
+              chatId: conversationId,
               generationId: event.generationId ?? current.generationId,
               userBody: event.userMessage.body,
               userCreatedAt: new Date(event.userMessage.createdAt),
               userMessageId: event.userMessage.id,
+              chatTurnId: event.userMessage.chatTurnId ?? current.chatTurnId,
+              turnVariant: event.userMessage.turnVariant ?? current.turnVariant,
+              attemptEpoch: event.attemptEpoch ?? current.attemptEpoch ?? null,
+              lastCommittedRenderSeq: event.generationSeq ?? current.lastCommittedRenderSeq ?? 0,
+              renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
             } : current);
             dispatchAnnotation({ type: "clear" });
             setPendingFiles([]);
@@ -509,36 +611,25 @@ export function SideChatPanelView({
               },
             );
           }
-          if (event.type === "assistant_delta") {
-            setStream((current) => current ? {
-              ...current,
-              body: `${current.body}${event.delta}`,
-              generationId: event.generationId ?? current.generationId,
-            } : current);
-          }
-          if (event.type === "assistant_state") {
-            setStream((current) => current ? { ...current, state: event.state } : current);
-          }
-          if (event.type === "transcript_entry") {
-            setStream((current) => {
-              if (!current) return current;
-              const transcript = [...current.transcript];
-              appendTranscriptEntry(transcript, event.entry);
-              return {
-                ...current,
-                generationId: event.generationId ?? current.generationId,
-                transcript,
-              };
-            });
+          if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
+            setStreamDraftForChat(
+              streamScopeKey,
+              (current) => applyChatStreamProgressEvent(current, streamKey, event),
+            );
           }
           if (event.type === "final") {
             receivedFinal = true;
+            retryUserMessageIdRef.current = null;
             for (const message of event.messages) upsertMessage(conversationId!, message);
-            setStream(null);
+            setStreamDraftForChat(
+              streamScopeKey,
+              (current) => current?.streamKey === streamKey ? null : current,
+            );
           }
           if (event.type === "error") {
             if (!acknowledged && event.messageId) {
               acknowledged = true;
+              acknowledgedUserMessageId = event.messageId;
               dispatchAnnotation({ type: "clear" });
               setPendingFiles([]);
               setAnnotationsExpanded(false);
@@ -566,8 +657,16 @@ export function SideChatPanelView({
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
       ]);
     } catch (error) {
-      if (closeRequestedRef.current) return;
-      if (!acknowledged) setDraft((current) => current || body);
+      if (!isChatGenerationCurrent(streamScopeKey, generationEpoch)) return;
+      if (!acknowledged) {
+        retryUserMessageIdRef.current = retryUserMessageId;
+        setDraft((current) => current || body);
+      } else if (receivedAckEvent && conversationId) {
+        retryUserMessageIdRef.current = acknowledgedUserMessageId;
+        setDraft((current) => current || body);
+      } else {
+        retryUserMessageIdRef.current = acknowledgedUserMessageId;
+      }
       if (acknowledged && conversationId) {
         await Promise.all([
           queryClient.invalidateQueries({
@@ -578,11 +677,17 @@ export function SideChatPanelView({
           }),
         ]).catch(() => undefined);
       }
-      setStream((current) => current ? { ...current, state: "failed" } : current);
+      setStreamDraftForChat(
+        streamScopeKey,
+        (current) => current?.streamKey === streamKey ? { ...current, state: "failed" } : current,
+      );
       setSendError(error instanceof Error ? error.message : "Could not send this message.");
     } finally {
-      streamAbortControllerRef.current = null;
-      setSending(false);
+      if (isChatGenerationCurrent(streamScopeKey, generationEpoch)) {
+        setStreamAbortController(streamScopeKey, null);
+        setChatSendInFlight(streamScopeKey, false);
+        releaseChatGenerationScope(streamScopeKey, generationEpoch);
+      }
     }
   };
 

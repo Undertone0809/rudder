@@ -18,6 +18,34 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+## v0.7.1
+
+发布时间：2026-08-04
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.1)
+
+这个版本提供更直接的隐私控制、更丰富的账号与 Agent 配置，并提升 Desktop 登录和工作审阅流程的可靠性。
+
+### 新功能
+
+- 增加“隐私与遥测”设置，可选择关闭、匿名或账号关联共享，并查看明确的数据边界和本地传输状态。
+- Desktop 账号设置支持上传 Rudder Account 头像。
+- 为 Claude、Codex、OpenCode 和 Pi Agent 增加思考强度控制，并为 Cursor 增加执行模式控制。
+- 未 @ Agent 时，发送 Issue 评论前会请求确认，减少可能无人处理的评论。
+
+### 改进
+
+- 强化遥测同意处理：默认不上传，账号关联共享必须明确同意，撤回同意后会清除对应范围内未发送的数据。
+- 改进 Desktop 账号设置，提供更清晰的登录进度、资料管理和浏览器跳转。
+- 改进运行环境设置和 Automation 选择器，让 Pi 托管认证、模型选择和推理选项保持一致。
+
+### 问题修复
+
+- 修复浏览器尚未建立 Rudder Account 会话时 Desktop 登录失败的问题，并为未签名的 macOS 构建提供安全回退。
+- 修复 Markdown 实时预览中的可见文本选择和区块操作，并保持运行批注编辑器清晰可读。
+- 修复 Automation 模型菜单对齐问题，并让较早活动的时间显示更明确。
+- 修复浏览器代理注册中断后 Browser 会话无法恢复的问题。
+
 ## v0.7.0
 
 发布时间：2026-08-03

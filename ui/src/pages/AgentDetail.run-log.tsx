@@ -33,8 +33,11 @@ import { PageTabBar } from "../components/PageTabBar";
 import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
+import { useSidePanel } from "../context/SidePanelContext";
+import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import { queryKeys } from "../lib/queryKeys";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
+import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
@@ -63,6 +66,21 @@ export function runDateToIso(value: Date | string | null | undefined): string | 
   return typeof value === "string" ? value : value.toISOString();
 }
 
+export function openRunTranscriptLocalFile(
+  openTarget: (target: SidePanelTarget) => unknown,
+  closeTranscriptDialog: () => void,
+  targetPath: string,
+  label: string,
+) {
+  closeTranscriptDialog();
+  const fileName = (label.trim() || targetPath).split(/[\\/]/u).filter(Boolean).at(-1) ?? targetPath;
+  openTarget({
+    kind: "local_file",
+    filePath: targetPath,
+    label: fileName,
+  });
+}
+
 export function LogViewer({
   run,
   agentRuntimeType,
@@ -82,6 +100,7 @@ export function LogViewer({
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
+  const { openTarget: openSidePanelTarget } = useSidePanel();
   const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
     fromX: "0px",
     fromY: "-16px",
@@ -91,6 +110,14 @@ export function LogViewer({
     fromScaleY: "0.96",
   });
   const transcriptVisible = activeDetailTab === "transcript";
+  const openTranscriptFile = useCallback((targetPath: string, label: string) => {
+    openRunTranscriptLocalFile(
+      openSidePanelTarget,
+      () => setTranscriptModalOpen(false),
+      targetPath,
+      label,
+    );
+  }, [openSidePanelTarget]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const persistedEventCursorRef = useRef(0);
@@ -537,12 +564,8 @@ export function LogViewer({
     }
   }, [activeDetailTab, hasInvocationTab]);
 
-  if (loading && logLoading) {
+  if (loading || logLoading) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
-  }
-
-  if (transcript.length === 0 && !logError) {
-    return <p className="text-xs text-muted-foreground">No log events.</p>;
   }
 
   return (
@@ -634,6 +657,7 @@ export function LogViewer({
                 sourceAgentId: run.agentId,
                 onAnnotate: handleAnnotate,
               } : undefined}
+              onOpenFile={openTranscriptFile}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -774,6 +798,7 @@ export function LogViewer({
                 sourceAgentId: run.agentId,
                 onAnnotate: handleAnnotate,
               } : undefined}
+              onOpenFile={openTranscriptFile}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">

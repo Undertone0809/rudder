@@ -156,6 +156,7 @@ export function RunTranscriptView({
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
           runAnnotationContext={runAnnotationContext}
+          onOpenFile={handleOpenFile}
         />
       </div>
     );
