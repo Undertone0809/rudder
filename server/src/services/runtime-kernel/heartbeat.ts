@@ -93,8 +93,10 @@ const localExecutionLeaseStates = new Map<string, {
   lastRenewedAtMs: number;
   sleepRecoveryUsed: boolean;
   sleepRecoveryPending: boolean;
+  sleepRecoveryGraceUntilMs: number | null;
 }>();
 const LOCAL_EXECUTION_SLEEP_GAP_MS = RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS * 2;
+const heartbeatRecoveryTails = new WeakMap<object, Promise<void>>();
 
 function getLocalExecutionLeaseState(runId: string, nowMs: number) {
   const existing = localExecutionLeaseStates.get(runId);
@@ -103,6 +105,7 @@ function getLocalExecutionLeaseState(runId: string, nowMs: number) {
     lastRenewedAtMs: nowMs,
     sleepRecoveryUsed: false,
     sleepRecoveryPending: false,
+    sleepRecoveryGraceUntilMs: null,
   };
   localExecutionLeaseStates.set(runId, state);
   return state;
@@ -905,6 +908,14 @@ export function heartbeatService(
 
     observeLocalExecutionLease(run.id, now);
     const state = localExecutionLeaseStates.get(run.id);
+    const nowMs = now.getTime();
+    if (
+      state
+      && state.sleepRecoveryGraceUntilMs !== null
+      && nowMs < state.sleepRecoveryGraceUntilMs
+    ) {
+      return true;
+    }
     const wakeGracePending = state?.sleepRecoveryPending === true;
     if (wakeGracePending) {
       state.sleepRecoveryPending = false;
@@ -920,8 +931,29 @@ export function heartbeatService(
       observeSleep: false,
       touchActivity: true,
     });
-    if (!renewed) abortRunExecution(run.id);
+    if (!renewed) {
+      abortRunExecution(run.id);
+    } else if (state) {
+      state.sleepRecoveryGraceUntilMs = nowMs + RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS;
+    }
     return true;
+  }
+
+  async function withHeartbeatRecoveryLock<T>(task: () => Promise<T>): Promise<T> {
+    const dbKey = db as object;
+    const previous = heartbeatRecoveryTails.get(dbKey) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    heartbeatRecoveryTails.set(dbKey, current);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (heartbeatRecoveryTails.get(dbKey) === current) heartbeatRecoveryTails.delete(dbKey);
+    }
   }
 
   async function countRunningRunsForAgent(agentId: string, excludeRunId?: string) {
@@ -1211,7 +1243,7 @@ export function heartbeatService(
     }
   }
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
+  async function reapOrphanedRunsLocked(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
     pruneLocalExecutionLeaseStates();
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = opts?.now ?? new Date();
@@ -1347,7 +1379,7 @@ export function heartbeatService(
     return { reaped: reaped.length, runIds: reaped };
   }
 
-  async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
+  async function reapInactiveRunsLocked(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
     pruneLocalExecutionLeaseStates();
     const maxInactivityMs = opts?.maxInactivityMs ?? DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS;
     if (!Number.isFinite(maxInactivityMs) || maxInactivityMs <= 0) {
@@ -1444,7 +1476,7 @@ export function heartbeatService(
     return { timedOut: timedOut.length, runIds: timedOut };
   }
 
-  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
+  async function reapTimedOutRunsLocked(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
     pruneLocalExecutionLeaseStates();
     const maxRuntimeMs = opts?.maxRuntimeMs ?? DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS;
     if (!Number.isFinite(maxRuntimeMs) || maxRuntimeMs <= 0) {
@@ -1522,6 +1554,18 @@ export function heartbeatService(
     }
 
     return { timedOut: timedOut.length, runIds: timedOut };
+  }
+
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    return withHeartbeatRecoveryLock(() => reapOrphanedRunsLocked(opts));
+  }
+
+  async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    return withHeartbeatRecoveryLock(() => reapInactiveRunsLocked(opts));
+  }
+
+  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    return withHeartbeatRecoveryLock(() => reapTimedOutRunsLocked(opts));
   }
 
   async function resumeQueuedRuns() {

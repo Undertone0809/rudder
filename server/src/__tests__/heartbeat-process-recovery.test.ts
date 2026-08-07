@@ -1203,6 +1203,67 @@ describe("heartbeat orphaned process recovery", () => {
     expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
   });
 
+  it("serializes overlapping watchdog recovery while a wake lease renewal is in flight", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    let releaseRenewal!: () => void;
+    let signalRenewalStarted!: () => void;
+    const renewalStarted = new Promise<void>((resolve) => {
+      signalRenewalStarted = resolve;
+    });
+    const renewalBlocked = new Promise<void>((resolve) => {
+      releaseRenewal = resolve;
+    });
+    const heartbeat = heartbeatService(db, {
+      beforeRunExecutionLeaseRenewal: async () => {
+        signalRenewalStarted();
+        await renewalBlocked;
+      },
+    });
+
+    const first = heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    });
+    await renewalStarted;
+
+    let secondFinished = false;
+    const second = heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    }).then((result) => {
+      secondFinished = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(secondFinished).toBe(false);
+
+    releaseRenewal();
+    await expect(first).resolves.toEqual({ timedOut: 0, runIds: [] });
+    await expect(second).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+  });
+
   it("queues exactly one retry when the recorded local pid is dead", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
