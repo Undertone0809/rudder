@@ -687,6 +687,20 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("centers the assistant message column within the chat content area", () => {
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Centered answer",
+    }));
+
+    const messageColumn = container.querySelector(
+      '[data-testid="chat-assistant-message"] > [data-message-highlight-target="true"]',
+    );
+    expect(messageColumn?.classList.contains("mx-auto")).toBe(true);
+  });
+
   it("marks only stable visible assistant bodies as response annotation sources", () => {
     const completed = renderChatMessageItem(message({
       id: "assistant-completed",
