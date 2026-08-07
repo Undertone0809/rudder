@@ -369,6 +369,63 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeTransportDisconnectResumeCodexCommand(
+  commandPath: string,
+  invocationPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(invocationPath)}, JSON.stringify(args) + "\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  if (args.includes("resume")) {
+    console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-transport" }));
+    console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "resumed" } }));
+    console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 2 } }));
+    return;
+  }
+
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-transport" }));
+  console.error("stream disconnected before completion: error sending request for url (https://sub.zeeland.studio/v1/responses)");
+  process.exit(1);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeNonRetryableCodexFailureCommand(commandPath: string, invocationPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(invocationPath)}, "invoked\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.error("authentication failed: invalid credentials");
+  process.exit(1);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeTerminalTransportFailureCodexCommand(commandPath: string, invocationPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(invocationPath)}, JSON.stringify(args) + "\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-terminal-failure" }));
+  console.log(JSON.stringify({ type: "turn.failed", error: { message: "provider turn failed" } }));
+  console.error("stream disconnected before completion: error sending request for url (https://sub.zeeland.studio/v1/responses)");
+  process.exit(1);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeGitIdentityCaptureCodexCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const { execFileSync } = require("node:child_process");
@@ -3568,6 +3625,165 @@ describe("codex execute", { timeout: 20_000 }, () => {
         }),
       );
       expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("continues once from the same Codex session after a responses transport disconnect", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-transport-recovery-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeTransportDisconnectResumeCodexCommand(commandPath, invocationPath);
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-transport-recovery",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
+          promptTemplate: "Continue the assigned work.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        errorMessage: null,
+        sessionId: "codex-session-transport",
+        summary: "resumed",
+      });
+      expect(result.resultJson).toMatchObject({
+        transportRecovery: {
+          kind: "codex_transport_disconnect",
+          outcome: "succeeded",
+          sessionId: "codex-session-transport",
+        },
+      });
+      const invocations = (await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u).map((line) => JSON.parse(line) as string[]);
+      expect(invocations).toHaveLength(2);
+      expect(invocations[0]).not.toContain("resume");
+      expect(invocations[1]).toContain("resume");
+      expect(invocations[1]).toContain("codex-session-transport");
+      expect(logs).toContainEqual(expect.objectContaining({
+        stream: "stdout",
+        chunk: expect.stringContaining("continuing Codex session"),
+      }));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry authentication failures as transport recovery", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-no-transport-recovery-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeNonRetryableCodexFailureCommand(commandPath, invocationPath);
+
+    try {
+      const result = await execute({
+        runId: "run-no-transport-recovery",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
+          promptTemplate: "Continue the assigned work.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.errorMessage).toContain("authentication failed");
+      expect(result.resultJson).not.toHaveProperty("transportRecovery");
+      expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not continue after an explicit terminal provider failure", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-terminal-transport-failure-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeTerminalTransportFailureCodexCommand(commandPath, invocationPath);
+
+    try {
+      const result = await execute({
+        runId: "run-terminal-transport-failure",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
+          promptTemplate: "Continue the assigned work.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.errorMessage).toBe("provider turn failed");
+      expect(result.resultJson).not.toHaveProperty("transportRecovery");
+      expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

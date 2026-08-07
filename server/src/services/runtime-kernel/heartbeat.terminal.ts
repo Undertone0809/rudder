@@ -424,11 +424,13 @@ export async function renewHeartbeatRunExecutionLease(
   runId: string,
   ownerToken: string,
   now = new Date(),
+  opts?: { touchActivity?: boolean },
 ) {
   return db
     .update(heartbeatRuns)
     .set({
       executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+      ...(opts?.touchActivity ? { updatedAt: now } : {}),
     })
     .where(and(
       eq(heartbeatRuns.id, runId),

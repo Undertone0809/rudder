@@ -14,7 +14,7 @@ import {
   organizationSkills,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -938,6 +938,441 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, wakeupRequestId))
       .then((rows) => rows[0] ?? null);
     expect(wakeup?.status).toBe("failed");
+  });
+
+  it("preserves a live locally tracked child when its execution lease expires", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const result = await heartbeatService(db).reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    });
+
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: ownerToken,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T00:15:00.000Z");
+  });
+
+  it("stops a locally tracked child when another owner takes its execution lease", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId, agentId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db, {
+      beforeRunExecutionLeaseRenewal: async ({ runId: renewedRunId, ownerToken: renewedOwnerToken }) => {
+        await db
+          .update(heartbeatRuns)
+          .set({
+            executionOwnerToken: takeoverOwnerToken,
+            executionLeaseExpiresAt: new Date("2026-03-19T00:15:00.000Z"),
+          })
+          .where(and(
+            eq(heartbeatRuns.id, renewedRunId),
+            eq(heartbeatRuns.executionOwnerToken, renewedOwnerToken),
+          ));
+        expect(renewedOwnerToken).toBe(ownerToken);
+      },
+    });
+    const result = await heartbeat.reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    });
+
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+    });
+    const runs = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+  });
+
+  it("stops a locally tracked child when takeover precedes the orphan watchdog query", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const initialAt = new Date("2026-03-19T00:01:00.000Z");
+    const now = new Date("2026-03-19T00:10:00.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapOrphanedRuns({
+      now: initialAt,
+      recoveryCutoff: initialAt,
+    })).resolves.toEqual({ reaped: 0, runIds: [] });
+
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: takeoverOwnerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:15:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeat.reapOrphanedRuns({
+      now,
+      recoveryCutoff: now,
+    })).resolves.toEqual({ reaped: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T00:15:00.000Z");
+  });
+
+  it("stops a locally tracked child when takeover precedes the wake-grace watchdog query", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const afterTakeoverAt = new Date("2026-03-19T13:00:30.000Z");
+    const ownerToken = randomUUID();
+    const takeoverOwnerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+      recoveryCutoff: wakeAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: takeoverOwnerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T13:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: afterTakeoverAt,
+      recoveryCutoff: afterTakeoverAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: takeoverOwnerToken,
+      updatedAt: wakeAt,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T13:05:00.000Z");
+  });
+
+  it("preserves a live local execution through inactivity recovery after sleep", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const now = new Date("2026-03-19T00:31:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const result = await heartbeatService(db).reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now,
+    });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      status: "running",
+      executionOwnerToken: ownerToken,
+      updatedAt: now,
+    });
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T00:36:00.000Z");
+  });
+
+  it("does not grant a second sleep grace when the max duration is already exceeded", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const firstWakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const secondWakeAt = new Date("2026-03-19T13:06:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: firstWakeAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: secondWakeAt,
+    })).resolves.toEqual({ timedOut: 1, runIds: [runId] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+  });
+
+  it("keeps a lease-timer wake renewal from racing the max-duration watchdog", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const initialRenewalAt = new Date("2026-03-19T00:01:00.000Z");
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapOrphanedRuns({ now: initialRenewalAt })).resolves.toEqual({ reaped: 0, runIds: [] });
+    await expect(heartbeat.reapOrphanedRuns({ now: wakeAt })).resolves.toEqual({ reaped: 0, runIds: [] });
+
+    const renewed = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(renewed?.updatedAt).toEqual(wakeAt);
+
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+  });
+
+  it("gives a live local execution one wake grace before max duration recovery", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    })).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(current?.executionLeaseExpiresAt?.toISOString()).toBe("2026-03-19T13:05:00.000Z");
+
+    await expect(heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: new Date("2026-03-19T13:01:00.000Z"),
+    })).resolves.toEqual({ timedOut: 1, runIds: [runId] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+  });
+
+  it("serializes overlapping watchdog recovery while a wake lease renewal is in flight", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const wakeAt = new Date("2026-03-19T13:00:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    let releaseRenewal!: () => void;
+    let signalRenewalStarted!: () => void;
+    const renewalStarted = new Promise<void>((resolve) => {
+      signalRenewalStarted = resolve;
+    });
+    const renewalBlocked = new Promise<void>((resolve) => {
+      releaseRenewal = resolve;
+    });
+    const heartbeat = heartbeatService(db, {
+      beforeRunExecutionLeaseRenewal: async () => {
+        signalRenewalStarted();
+        await renewalBlocked;
+      },
+    });
+
+    const first = heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    });
+    await renewalStarted;
+
+    let secondFinished = false;
+    const second = heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: wakeAt,
+    }).then((result) => {
+      secondFinished = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(secondFinished).toBe(false);
+
+    releaseRenewal();
+    await expect(first).resolves.toEqual({ timedOut: 0, runIds: [] });
+    await expect(second).resolves.toEqual({ timedOut: 0, runIds: [] });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
   });
 
   it("queues exactly one retry when the recorded local pid is dead", async () => {

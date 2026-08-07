@@ -3,7 +3,7 @@ import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 export * from "./app-server-client.js";
 export { estimateCodexCostUsd, resolveCodexTokenPrice } from "./cost.js";
 export { execute } from "./execute.js";
-export { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
+export { isCodexTransportDisconnectError, isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
 export {
   codexHomeDir, fetchCodexQuota,
   fetchCodexRpcQuota, fetchWithTimeout, getQuotaWindows, mapCodexRpcQuota, readCodexAuthInfo,
