@@ -141,6 +141,7 @@ describe("official provider card actions", () => {
     expect(officialAccessChangeRequiresAuthorization("linear", "read_only", "read_write")).toBe(true);
     expect(officialAccessChangeRequiresAuthorization("linear", "read_write", "read_only")).toBe(true);
     expect(officialAccessChangeRequiresAuthorization("notion", "provider_default", "provider_default")).toBe(false);
+    expect(officialAccessChangeRequiresAuthorization("github", "read_only", "read_write")).toBe(false);
     expect(officialAccessChangeRequiresAuthorization("custom", "provider_default", "read_only")).toBe(false);
   });
 });
@@ -152,6 +153,7 @@ describe("organization MCP interaction", () => {
       label: "Supabase",
       curated: true,
       requiresOAuth: true,
+      credentialMode: "oauth",
       requiresScopeSelection: false,
       scopeLabel: "Account",
       transports: ["streamable_http"],
@@ -222,6 +224,7 @@ describe("organization MCP interaction", () => {
       label: "Supabase",
       curated: true,
       requiresOAuth: true,
+      credentialMode: "oauth",
       requiresScopeSelection: false,
       scopeLabel: "Account",
       transports: ["streamable_http"],
@@ -284,6 +287,46 @@ describe("organization MCP interaction", () => {
     expect(dialog?.textContent).toContain("1 historical authorization");
     expect(dialog?.textContent).toContain("Disconnect historical access");
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Discover");
+
+    cleanup();
+    document.body.innerHTML = "";
+  });
+
+  it("asks for a GitHub PAT before starting a provider connection", () => {
+    mockOrganizationMcpData.catalog = [{
+      id: "github",
+      label: "GitHub",
+      curated: true,
+      requiresOAuth: false,
+      credentialMode: "pat",
+      requiresScopeSelection: false,
+      scopeLabel: "Account",
+      transports: ["streamable_http"],
+      accessModes: ["read_only", "read_write"],
+      defaultAccessMode: "read_only",
+    }];
+    mockOrganizationMcpData.statuses = [{
+      provider: "github",
+      organization: {
+        state: "not_connected",
+        connectionId: null,
+        maxAccess: null,
+        scopeMode: null,
+        revision: null,
+        agentConnectionCount: 0,
+      },
+    }];
+    mockOrganizationMcpData.connections = [];
+    mockOrganizationMcpData.agents = [];
+    const { container, cleanup } = render(createElement(OrganizationMcpSettings, { orgId: "org-1" }));
+    const card = container.querySelector('[data-testid="mcp-provider-github"]')!;
+    act(() => [...card.querySelectorAll("button")]
+      .find((button) => button.textContent === "Connect")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const pat = document.body.querySelector('input[type="password"]') as HTMLInputElement | null;
+    expect(pat?.getAttribute("placeholder")).toBe("github_pat_...");
+    expect(document.body.textContent).toContain("GitHub personal access token");
 
     cleanup();
     document.body.innerHTML = "";

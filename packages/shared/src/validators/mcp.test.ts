@@ -783,6 +783,28 @@ describe("managed MCP shared contracts", () => {
     }).success).toBe(true);
 
     expect(availabilitySchema.safeParse({
+      provider: "github",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "account",
+        revision: 1,
+      },
+    }).success).toBe(true);
+
+    expect(availabilitySchema.safeParse({
+      provider: "github",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "legacy_project",
+        revision: 1,
+      },
+    }).success).toBe(false);
+
+    expect(availabilitySchema.safeParse({
       provider: "supabase",
       organization: {
         state: "connected",

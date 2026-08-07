@@ -744,6 +744,8 @@ export const mcpProviderAvailabilitySchema = z.object({
   const validScope = scopeMode === null
     || (value.provider === "supabase"
       ? scopeMode === "account" || scopeMode === "legacy_project"
+      : value.provider === "github"
+        ? scopeMode === "account"
       : scopeMode === "workspace");
   if (!validScope) {
     ctx.addIssue({

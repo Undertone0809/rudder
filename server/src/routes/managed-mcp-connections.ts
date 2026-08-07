@@ -3,13 +3,14 @@ import {
   createMcpConnectionSchema,
   mcpConnectionAccessModeSchema,
   mcpConnectionScopeSchema,
+  mcpGitHubPatSchema,
   mcpOAuthCallbackSchema,
   mcpOAuthStartSchema,
   updateMcpConnectionSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { forbidden } from "../errors.js";
+import { forbidden, unprocessable } from "../errors.js";
 import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -28,8 +29,12 @@ const updateAccessModeSchema = z.object({
 }).strict();
 const ensureOfficialProviderSchema = z.object({
   accessMode: mcpConnectionAccessModeSchema.optional(),
+  pat: mcpGitHubPatSchema.optional(),
   scope: mcpConnectionScopeSchema,
   ownerAgentId: z.string().uuid().optional().nullable(),
+}).strict();
+const reconnectMcpConnectionSchema = z.object({
+  pat: mcpGitHubPatSchema.optional(),
 }).strict();
 const reauthorizeAccessSchema = z.object({
   accessMode: z.enum(["read_only", "read_write"]),
@@ -110,6 +115,10 @@ export function managedMcpConnectionRoutes(
     markHttpRequestBodySensitive(req);
     next();
   });
+  router.use("/orgs/:orgId/mcp/providers/:provider/connect", (req, _res, next) => {
+    markHttpRequestBodySensitive(req);
+    next();
+  });
 
   router.get("/orgs/:orgId/mcp/providers", (req, res) => {
     const orgId = req.params.orgId as string;
@@ -122,19 +131,29 @@ export function managedMcpConnectionRoutes(
     validate(ensureOfficialProviderSchema),
     async (req, res) => {
       const orgId = req.params.orgId as string;
-      const provider = z.enum(["supabase", "linear", "notion"])
+      const provider = z.enum(["supabase", "linear", "notion", "github"])
         .parse(req.params.provider);
       await assertCanManage(req, orgId);
-      res.json(await svc.ensureOfficial(
+      if (provider === "github" && !req.body.pat) {
+        throw unprocessable("GitHub connections require a personal access token");
+      }
+      const connection = await svc.ensureOfficial(
         orgId,
         provider,
         {
           scope: req.body.scope,
           ownerAgentId: req.body.ownerAgentId ?? null,
           accessMode: req.body.accessMode,
+          ...(provider === "github" ? { pat: req.body.pat } : {}),
         },
         mutationActor(req),
-      ));
+      );
+      if (provider === "github") {
+        await svc.refreshTools(orgId, connection.id, mutationActor(req));
+        res.json(await svc.get(orgId, connection.id));
+        return;
+      }
+      res.json(connection);
     },
   );
 
@@ -238,6 +257,12 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
+      const connection = await svc.get(orgId, connectionId);
+      if (connection.provider === "github") {
+        throw unprocessable(
+          "GitHub connections use personal access tokens and do not support managed OAuth",
+        );
+      }
       res.status(201).json(await oauth.start(
         orgId,
         connectionId,
@@ -272,6 +297,12 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
+      const connection = await svc.get(orgId, connectionId);
+      if (connection.provider === "github") {
+        throw unprocessable(
+          "GitHub connections use personal access tokens and do not support managed OAuth",
+        );
+      }
       res.status(201).json(await oauth.start(
         orgId,
         connectionId,
@@ -306,6 +337,7 @@ export function managedMcpConnectionRoutes(
 
   router.post(
     "/orgs/:orgId/mcp/connections/:connectionId/reconnect",
+    validate(reconnectMcpConnectionSchema),
     async (req, res) => {
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
@@ -313,6 +345,20 @@ export function managedMcpConnectionRoutes(
       const connection = await svc.get(orgId, connectionId);
       if (connection.provider === "custom") {
         res.json(await svc.reconnect(orgId, connectionId, mutationActor(req)));
+        return;
+      }
+      if (connection.provider === "github") {
+        if (!req.body.pat) {
+          throw unprocessable("GitHub reconnection requires a personal access token");
+        }
+        await svc.reconnect(
+          orgId,
+          connectionId,
+          mutationActor(req),
+          { githubPat: req.body.pat },
+        );
+        await svc.refreshTools(orgId, connectionId, mutationActor(req));
+        res.json(await svc.get(orgId, connectionId));
         return;
       }
       res.status(201).json(await oauth.start(orgId, connectionId, oauthActor(req)));
@@ -326,7 +372,7 @@ export function managedMcpConnectionRoutes(
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
       const connection = await svc.get(orgId, connectionId);
-      res.json(connection.provider === "custom"
+      res.json(connection.provider === "custom" || connection.provider === "github"
         ? await svc.disconnect(orgId, connectionId, mutationActor(req))
         : await oauth.revoke(orgId, connectionId, oauthActor(req)));
     },
