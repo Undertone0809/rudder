@@ -49,9 +49,9 @@ Prompt 不能自己获得更多访问权。
 - Notion：无访问，或使用服务商授权的访问
 - GitHub：无访问、只读或读写
 
-GitHub 管理型 MCP 连接使用 GitHub Personal Access Token，固定连接到 GitHub
-账户级端点，默认是只读。Rudder 只在连接或重新连接时接收 Token，并在服务端加密
-保存；连接摘要和运行时配置都不会返回 Token。GitHub 连接不使用 Rudder 的托管
+GitHub 管理型 MCP 连接使用 GitHub 的个人访问令牌，固定连接到 GitHub
+账户级端点，默认是只读。Rudder 只在连接或重新连接时接收令牌，并在服务端加密
+保存；连接摘要和运行时配置都不会返回令牌。GitHub 连接不使用 Rudder 的托管
 OAuth 流程。
 
 “读写”不包括破坏性、计费、管理或未知工具。同一正式服务商同时有 Agent 连接
