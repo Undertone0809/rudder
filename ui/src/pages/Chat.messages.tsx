@@ -2527,7 +2527,7 @@ export function ChatMessageItem({
   if (!isUser) {
     return (
       <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
-        <div data-message-highlight-target="true" className="group mx-auto w-full max-w-3xl px-1 py-1">
+        <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
           <ChatAssistantAttributionRow
             replyingAgentId={message.replyingAgentId ?? null}
             conversation={conversation}
@@ -2576,7 +2576,7 @@ export function ChatMessageItem({
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
-            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground md:ml-6">
               <TextDots text="Thinking" className="text-muted-foreground" />
             </div>
           ) : (
@@ -2588,7 +2588,7 @@ export function ChatMessageItem({
                 "data-annotation-surface": "assistant_body",
                 "data-message-id": message.id,
               } : {})}
-              className="relative"
+              className="relative md:ml-6"
             >
               <ChatLongMessageBody
                 body={message.body}
