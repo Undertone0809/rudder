@@ -49,6 +49,13 @@ Organization connections can give each Agent a simple access level:
 
 - Supabase and Linear: no access, read only, or read and write
 - Notion: no access or the access granted by the provider
+- GitHub: no access, read only, or read and write
+
+GitHub managed MCP connections use a GitHub personal access token, are fixed
+to the GitHub account endpoint, and default to read only. Rudder accepts the
+token only during connection or reconnection, stores it encrypted on the
+server, and never returns it in connection summaries or runtime configuration.
+GitHub connections do not use Rudder's managed OAuth flow.
 
 Read and write does not include destructive, billing, administrative, or
 unknown tools. An Agent-specific connection is used before an organization

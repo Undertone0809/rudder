@@ -236,7 +236,7 @@ async function seedOwner(db: ReturnType<typeof createDb>) {
 async function seedConnection(
   db: ReturnType<typeof createDb>,
   orgId: string,
-  provider: "supabase" | "linear" | "notion",
+  provider: "supabase" | "linear" | "notion" | "github",
   accessMode: "provider_default" | "read_only" | "read_write",
 ) {
   return db.insert(mcpConnections).values({
@@ -461,6 +461,19 @@ describe("managedMcpOAuthService", () => {
       .where(eq(mcpConnections.id, connection.id))
       .then((rows) => rows[0]!);
     expect(updated.status).toBe("authorizing");
+  });
+
+  it("rejects GitHub connections from the managed OAuth service", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "github", "read_only");
+    const svc = managedMcpOAuthService(db, serviceOptions());
+
+    await expect(svc.start(orgId, connection.id, { userId }))
+      .rejects.toMatchObject({
+        status: 422,
+        message: "GitHub connections use personal access tokens and do not support managed OAuth",
+      });
+    expect(await db.select().from(mcpOAuthSessions)).toHaveLength(0);
   });
 
   it("activates account-scoped Supabase without discovering or selecting a project", async () => {

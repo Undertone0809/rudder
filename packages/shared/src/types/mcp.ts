@@ -7,6 +7,7 @@ import type {
   McpConnectionStatus,
   McpConnectionTransport,
   McpOAuthGrantStatus,
+  McpProviderCredentialMode,
   McpProviderOrganizationState,
   McpProviderScopeMode,
   McpToolCapabilityClass,
@@ -51,10 +52,16 @@ export interface McpCuratedSafeConfig {
   };
 }
 
+export interface McpGitHubSafeConfig {
+  endpoint: "https://api.githubcopilot.com/mcp/";
+  scopeMode: "account";
+}
+
 export type McpConnectionSafeConfig =
   | McpStdioSafeConfig
   | McpStreamableHttpSafeConfig
   | McpLegacyManualSafeConfig
+  | McpGitHubSafeConfig
   | McpCuratedSafeConfig;
 
 export interface McpConnectionSummary {
@@ -88,6 +95,7 @@ export interface McpProviderCatalogEntry {
   label: string;
   curated: boolean;
   requiresOAuth: boolean;
+  credentialMode: McpProviderCredentialMode;
   requiresScopeSelection: boolean;
   scopeLabel: string;
   transports: McpConnectionTransport[];

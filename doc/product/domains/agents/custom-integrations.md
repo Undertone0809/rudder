@@ -72,20 +72,21 @@ edit_policy: user_confirmed_only
 ### Contract Summary
 
 Rudder supports the existing `custom_api` and legacy `mcp_server` records plus
-organization-owned managed MCP connections for Supabase, Linear, Notion, and
-custom servers. Managed connections own provider, transport, external scope,
-access mode, lifecycle, safe non-secret configuration, discovered tools, agent
-bindings, and redacted dispatch evidence. OAuth grants and temporary OAuth
-sessions are separate encrypted credential records. Public connection
-summaries expose credential presence only, never secret identifiers or values.
-External MCP credentials stay server-side throughout authorization, discovery,
-and dispatch. Every managed connection has immutable `organization` or `agent`
-scope and its own credential boundary. Supabase, Linear, and Notion allow one
-canonical connection per provider and target: one Organization connection plus
-one independent connection for each Agent. Custom MCP remains multi-instance
-within either scope. When both official scopes exist, the Agent connection
-takes precedence. Operators assign coarse-grained Agent access instead of
-managing individual tool checkboxes.
+organization-owned managed MCP connections for Supabase, Linear, Notion, GitHub,
+and custom servers. Managed connections own provider, transport, external
+scope, access mode, lifecycle, safe non-secret configuration, discovered tools,
+agent bindings, and redacted dispatch evidence. OAuth grants and temporary
+OAuth sessions are separate encrypted credential records; GitHub uses a
+personal access token stored in the same encrypted managed-secret boundary.
+Public connection summaries expose credential presence only, never secret
+identifiers or values. External MCP credentials stay server-side throughout
+authorization, discovery, and dispatch. Every managed connection has immutable
+`organization` or `agent` scope and its own credential boundary. Supabase,
+Linear, Notion, and GitHub allow one canonical connection per provider and
+target: one Organization connection plus one independent connection for each
+Agent. Custom MCP remains multi-instance within either scope. When both
+official scopes exist, the Agent connection takes precedence. Operators assign
+coarse-grained Agent access instead of managing individual tool checkboxes.
 
 ### Intent / User Job
 
@@ -151,6 +152,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
 - OAuth session: one-time, 10-minute authorization record with hashed state,
   redirect URI, expiry and consumption timestamps, and encrypted PKCE or
   temporary client metadata stored through an organization-secret reference.
+- GitHub PAT credential: a mutation-only personal access token accepted by the
+  GitHub provider setup/reconnect paths, encrypted as a managed organization
+  secret, and never returned to the UI or runtime descriptor.
 - Rudder MCP tools: built-in, runtime-managed Rudder tools represented
   as a read-only Agent Detail Manage row, not persisted custom integration rows.
 
@@ -171,10 +175,12 @@ tool naming, identity, and fallback semantics for that built-in surface.
   not expand a page-sized tool list.
 - Agent Detail Integrations Manage exposes a read-only built-in `Rudder MCP
   tools` row for the first-party `rudder-tools` Agent V1 MCP server.
-- Organization integration management exposes managed connection CRUD,
-  provider catalog, OAuth start/callback, external-scope selection, discovery,
-  refresh, disable, and revoke actions only to organization owners and instance
-  administrators.
+- Organization integration management exposes Custom-only generic connection
+  create, curated provider setup, provider catalog, OAuth start/callback,
+  external-scope selection, discovery, refresh, disable, and revoke actions
+  only to organization owners and instance administrators. Curated providers
+  use their provider-specific connect endpoint; GitHub setup and reconnect
+  accept a PAT mutation instead of opening OAuth.
 
 ### Product Logic Flow
 
@@ -205,17 +211,24 @@ tool naming, identity, and fallback semantics for that built-in surface.
     `Organization` or one Agent. Organization Settings defaults to
     `Organization` and offers every eligible Agent; Agent Detail defaults to
     the current Agent and also offers `Organization`. The scope is immutable
-    after creation. For an official provider, Rudder atomically ensures the
-    canonical connection for the selected target instead of creating a
-    duplicate. It starts a one-time 10-minute OAuth session bound to that
-    connection and keeps PKCE, temporary client metadata, access tokens, and
-    refresh tokens in that connection's independent encrypted secret.
-11. The OAuth callback consumes the session once, associates the authorizing
-    Rudder user with provider subject/scope metadata, and moves the connection
-    through `authorizing`, `active`, `needs_reauth`, `disabled`, `revoked`, or
-    `error` without putting provider credentials in connection rows or public
-    responses. Reauthorization is two-phase: an existing usable grant remains
-    active until a replacement grant succeeds and is atomically swapped in.
+    after creation. For an OAuth-backed official provider, Rudder atomically
+    ensures the canonical connection for the selected target instead of
+    creating a duplicate. It starts a one-time 10-minute OAuth session bound
+    to that connection and keeps PKCE, temporary client metadata, access
+    tokens, and refresh tokens in that connection's independent encrypted
+    secret. GitHub uses the same canonical target ensure operation, but its
+    provider-specific connect/reconnect path accepts a PAT mutation and
+    activates the connection only after the PAT is encrypted.
+11. The OAuth callback consumes an OAuth session once, associates the
+    authorizing Rudder user with provider subject/scope metadata, and moves the
+    OAuth connection through `authorizing`, `active`, `needs_reauth`,
+    `disabled`, `revoked`, or `error` without putting provider credentials in
+    connection rows or public responses. Reauthorization is two-phase: an
+    existing usable grant remains active until a replacement grant succeeds and
+    is atomically swapped in. GitHub has no managed OAuth session: PAT
+    replacement and provider discovery move its connection through the same
+    active/error/disabled lifecycle while keeping the token in the encrypted
+    managed-secret record.
 12. Supabase authorizes account scope and defaults to `read_write`; setup does
     not select or persist one project. The Agent supplies `project_id` on
     project-specific calls, and Rudder does not inject `project_ref` into the
@@ -224,7 +237,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
     upgrade resets affected Agent access to `none` to prevent silent expansion.
     Linear binds one authorized workspace with `read_only` or `read_write`.
     Notion exposes only provider-granted workspace access and must not be
-    mislabeled as enforceable provider-native read-only access.
+    mislabeled as enforceable provider-native read-only access. GitHub uses the
+    fixed `https://api.githubcopilot.com/mcp/` endpoint, `account` scope, and
+    `read_only` default; `read_write` remains an explicit operator choice.
 13. Real MCP tool discovery stores raw schemas for evidence, sanitized schemas
     for exposure, a catalog revision, and a server-owned capability class:
     `read`, `normal_write`, `destructive`, `admin_or_billing`, or `unknown`.
@@ -295,13 +310,16 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Existing `mcp_server` row is migrated | Represented by a disabled, non-executable `legacy_manual` connection; its existing row, tools, bindings, audit history, and credentials remain readable. |
 | OAuth callback state is replayed or older than 10 minutes | Rejected without exchanging or exposing credentials. |
 | Managed connection becomes unauthorized | Moves to `needs_reauth`; calls remain blocked until a valid grant is restored. |
+| Generic managed connection create receives Supabase, Linear, Notion, or GitHub | Rejected; curated providers must use their provider-specific connect semantics. |
+| GitHub connect or reconnect receives a PAT | Encrypt it as a managed organization secret, activate only after replacement is ready, and forward it only as a runtime Bearer credential. |
+| GitHub PAT is absent or invalid | Reject setup/reconnect without creating or reactivating a usable connection. |
 | Managed MCP descriptor is malformed | Omit that binding, preserve a bounded diagnostic, and continue Agent runtime startup without accepting unknown fields. |
 | Managed MCP authentication, proxy preflight, or schema discovery fails | Omit the affected tool surface and continue model execution; `required` changes operator attention, not runtime admission. |
 | Managed MCP admission check reaches its short runtime-owned budget | Stop waiting, omit the affected tool surface, record a bounded secret-free diagnostic, and start the Agent without it. |
 | Discovery finds a destructive, administrative, billing, or unclassified tool | Tool is persisted for evidence but unavailable under V1 coarse access. |
 | Discovery no longer returns a prior tool | Tool is marked removed and cannot be dispatched; history remains. |
-| Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, tokens, client secrets, or PKCE material. |
-| Curated provider create or update supplies URL, headers, STDIO, legacy config, or manual secrets | Rejected; curated endpoints, transport, and OAuth credential handling are Rudder-managed. |
+| Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, PATs, tokens, client secrets, or PKCE material. |
+| Curated provider create or update supplies URL, headers, STDIO, legacy config, or manual secrets | Rejected; curated endpoints, transport, and OAuth/PAT credential handling are Rudder-managed. |
 | Custom safe config marks an environment or header value secret | The public config retains only its name, mapping, or presence; the value must arrive in the mutation-only encrypted `secrets` payload. |
 | Custom HTTP config selects more than one manual Authorization/Bearer source | Rejected before persistence. |
 
@@ -311,6 +329,10 @@ The operator supplies display name, optional description, scope, endpoint
 configuration, optional credential value or credential secret reference, and at
 least one tool definition. The runtime agent sees only prompt-safe tool
 summaries for enabled tools.
+
+For GitHub, the operator supplies a PAT only in the provider-specific connect or
+reconnect mutation. The PAT is never part of the persisted safe configuration,
+public response, prompt, transcript, or runtime binding.
 
 ### Operator-Visible Output
 
@@ -333,7 +355,7 @@ Rudder persists:
 - `mcp_connections`
 - `mcp_oauth_grants`
 - `mcp_oauth_sessions`
-- organization secret rows and versions for inline credentials
+- organization secret rows and versions for OAuth and GitHub PAT credentials
 - activity log events for create and revoke mutations
 
 ### Canonical Scenarios
@@ -348,6 +370,10 @@ Rudder persists:
   revoked, or non-allowlisted tools.
 - A Chat run whose Agent has an unavailable or malformed managed MCP binding
   still reaches model execution and can reply without that MCP capability.
+- An operator connects GitHub for an Organization or one Agent with a PAT.
+  Rudder stores only encrypted credential material, discovers through the fixed
+  account-scoped endpoint, and resolves the Agent target before the Organization
+  target without exposing the PAT to the Agent runtime.
 - Agent Detail Integrations shows Custom API and MCP Server controls alongside
   fixed-provider setup rows, and E2E covers agent-scoped, organization-scoped,
   and cross-organization boundary behavior from that surface.
@@ -369,6 +395,10 @@ Rudder persists:
 - Managed connections, grants, sessions, tools, bindings, and dispatch audits
   are organization-owned; identifiers supplied by a runtime do not establish
   organization membership or authorization.
+- GitHub canonical connections always use `account` scope and the fixed
+  provider endpoint. PAT values enter only through setup/reconnect mutation
+  input, are encrypted before activation, and never become safe config,
+  runtime descriptor, prompt, transcript, or audit content.
 - Curated provider canonical identity is unique by organization, provider,
   scope, and owner target. Organization scope has no owner; Agent scope has
   exactly one same-organization owner. Multiple named Custom MCP connections
@@ -396,6 +426,9 @@ Rudder persists:
 - Provider OAuth identity is separate from the authorizing Rudder user and from
   run-scoped runtime identity. Revoking one boundary must not be mistaken for
   revoking or authorizing another.
+- GitHub PAT identity is separate from Rudder user, Organization/Agent target,
+  and run-scoped proxy identity; replacing or revoking it must not widen scope
+  or authorize another target.
 
 ### Drift Boundaries
 
@@ -411,6 +444,8 @@ semantics remain governed by their provider contracts, not this page.
 - Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
 - Plan: `doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md`
 - Plan: `doc/plans/2026-07-27-managed-mcp-connection-scopes.md`
+- Plan: `doc/plans/2026-08-07-github-managed-mcp.md`
+- Plan: `doc/plans/2026-08-07-github-mcp-pat.md`
 - Related active contracts:
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.

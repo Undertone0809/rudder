@@ -34,11 +34,12 @@ export const managedMcpApi = {
     api.post<McpConnectionSummary>(connectionPath(orgId), input),
   ensureOfficialConnection: (
     orgId: string,
-    provider: "supabase" | "linear" | "notion",
+    provider: "supabase" | "linear" | "notion" | "github",
     target: {
       scope: McpConnectionScope;
       ownerAgentId?: string | null;
       accessMode?: McpConnectionAccessMode;
+      pat?: string;
     },
   ) => api.post<McpConnectionSummary>(
     `/orgs/${encodeURIComponent(orgId)}/mcp/providers/${provider}/connect`,
@@ -86,10 +87,10 @@ export const managedMcpApi = {
       `${connectionPath(orgId, connectionId)}/refresh-tools`,
       {},
     ),
-  reconnect: (orgId: string, connectionId: string) =>
+  reconnect: (orgId: string, connectionId: string, input: { pat?: string } = {}) =>
     api.post<McpConnectionSummary | McpOAuthStartResponse>(
       `${connectionPath(orgId, connectionId)}/reconnect`,
-      {},
+      input,
     ),
   disconnect: (orgId: string, connectionId: string) =>
     api.post<McpConnectionSummary>(

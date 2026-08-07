@@ -421,7 +421,8 @@ export function managedMcpBindingService(db: Db) {
     agentId?: string,
   ): Promise<McpProviderAvailability[]> {
     if (agentId) await assertAgentInOrg(orgId, agentId);
-    const providers = ["supabase", "linear", "notion"] as const;
+    const providers = ["supabase", "linear", "notion", "github"] as const;
+    const oauthProviders = ["supabase", "linear", "notion"] as const;
     const [connections, bindings, runningRuns, historicalGrants] = await Promise.all([
       db.select().from(mcpConnections)
         .where(and(
@@ -451,7 +452,7 @@ export function managedMcpBindingService(db: Db) {
         )
         .where(and(
           eq(mcpConnections.orgId, orgId),
-          inArray(mcpConnections.provider, [...providers]),
+          inArray(mcpConnections.provider, [...oauthProviders]),
           eq(mcpConnections.canonicalState, "superseded"),
           eq(mcpOAuthGrants.orgId, orgId),
           eq(mcpOAuthGrants.status, "active"),
@@ -494,7 +495,12 @@ export function managedMcpBindingService(db: Db) {
     }
     const connectionState = (connection: ConnectionRow | undefined) => {
       if (!connection) return "not_connected" as const;
-      if (connection.status === "active" && connection.enabled) return "connected" as const;
+      if (connection.status === "active" && connection.enabled) {
+        if (connection.provider === "github" && !connection.credentialSecretId) {
+          return "needs_attention" as const;
+        }
+        return "connected" as const;
+      }
       if (connection.status === "authorizing" || connection.status === "draft") {
         return "connecting" as const;
       }
@@ -855,7 +861,7 @@ export function managedMcpBindingService(db: Db) {
           eq(mcpConnections.ownerAgentId, agentId),
           eq(mcpConnections.canonicalState, "canonical"),
           notInArray(mcpConnections.status, ["disabled", "revoked"]),
-          inArray(mcpConnections.provider, ["supabase", "linear", "notion"]),
+          inArray(mcpConnections.provider, ["supabase", "linear", "notion", "github"]),
         ))).map((row) => row.provider),
     );
 
@@ -910,6 +916,10 @@ export function managedMcpBindingService(db: Db) {
         && connection.transport !== "legacy_manual"
         && (
           connection.provider === "custom"
+          || (
+            connection.provider === "github"
+            && Boolean(connection.credentialSecretId)
+          )
           || (
             grant?.status === "active"
             && Boolean(grant.credentialSecretId)

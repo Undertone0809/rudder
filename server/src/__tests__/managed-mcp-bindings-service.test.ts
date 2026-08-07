@@ -1179,6 +1179,100 @@ describe("managedMcpBindingService", () => {
     expect(persisted).toContain("***REDACTED***");
   });
 
+  it("treats GitHub as credential-backed runtime access without requiring an OAuth grant", async () => {
+    const fixture = await seed(db);
+    const [secret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-github-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_connection",
+      latestVersion: 1,
+    }).returning();
+    await db.update(mcpConnections).set({
+      provider: "github",
+      accessMode: "read_write",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+      credentialSecretId: secret!.id,
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "read",
+    }).where(eq(customIntegrationTools.id, fixture.alphaRead.id));
+
+    const binding = await managedMcpBindingService(db).upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {},
+    );
+    const runtimeBindings = await managedMcpBindingService(db)
+      .listRuntimeBindings(fixture.orgId, fixture.agentId);
+    expect(runtimeBindings).toEqual([
+      expect.objectContaining({
+        serverName: "alpha",
+        accessMode: "read_write",
+      }),
+    ]);
+    expect((await managedMcpBindingService(db).listProviderAvailability(fixture.orgId))
+      .find((row) => row.provider === "github")?.organization).toMatchObject({
+      state: "connected",
+      connectionId: fixture.first.id,
+    });
+
+    const [run] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: runtimeBindings },
+    }).returning();
+    const requireUsableGrant = vi.fn().mockRejectedValue(new Error("OAuth grant must not be read"));
+    const callTool = vi.fn().mockResolvedValue({ content: [] });
+    const openClient = vi.fn().mockResolvedValue({
+      discoverTools: vi.fn(),
+      callTool,
+      close: vi.fn().mockResolvedValue(undefined),
+    } satisfies ManagedMcpClient);
+    const runtime = managedMcpRuntimeService(db, {
+      openClient,
+      requireUsableGrant,
+    });
+
+    const identity = {
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      runId: run!.id,
+    };
+    await runtime.callTool(identity, binding.binding!.id, "external.alpha.read", {});
+    expect(requireUsableGrant).not.toHaveBeenCalled();
+    expect(openClient).toHaveBeenCalledWith(fixture.orgId, fixture.first.id, "read_write");
+  });
+
+  it("reports a disconnected GitHub connection as disconnected after credential removal", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "github",
+      accessMode: "read_only",
+      scopeMode: "account",
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+      status: "disabled",
+      enabled: false,
+      credentialSecretId: null,
+    }).where(eq(mcpConnections.id, fixture.first.id));
+
+    expect((await managedMcpBindingService(db).listProviderAvailability(fixture.orgId))
+      .find((row) => row.provider === "github")?.organization).toMatchObject({
+      state: "disconnected",
+      connectionId: fixture.first.id,
+      scopeMode: "account",
+    });
+  });
+
   it("revalidates the signed run, binding, connection, and current tool allowlist", async () => {
     const fixture = await seed(db);
     const summary = await managedMcpBindingService(db).upsert(

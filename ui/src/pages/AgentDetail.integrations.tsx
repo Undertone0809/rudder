@@ -35,7 +35,6 @@ import {
   ChevronDown,
   ExternalLink,
   FolderOpen,
-  Github,
   Inbox,
   KeyRound,
   Loader2,
@@ -67,8 +66,7 @@ type IntegrationState = "not_configured" | "active" | "revoked" | "error";
 type UpcomingIntegrationId =
   | "gmail"
   | "google_calendar"
-  | "google_drive"
-  | "github";
+  | "google_drive";
 
 type IntegrationCategory = "message" | "productivity" | "developer";
 type IntegrationsView = "discover" | "manage";
@@ -116,20 +114,10 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     logoSrc: "/brands/google-drive-logo.svg",
     Icon: FolderOpen,
   },
-  {
-    id: "github",
-    name: "GitHub",
-    description: "Clone and inspect repositories during agent runs.",
-    connectionScope: "Developer",
-    actionLabel: "Coming soon",
-    category: "developer",
-    logoSrc: "/brands/github-logo.svg",
-    Icon: Github,
-  },
 ];
 
 type ManagedMcpProviderDefinition = {
-  id: "supabase" | "notion" | "linear";
+  id: "supabase" | "notion" | "linear" | "github";
   name: string;
   description: string;
   category: Extract<IntegrationCategory, "productivity" | "developer">;
@@ -152,6 +140,12 @@ const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
     id: "linear",
     name: "Linear",
     description: "Work with the organization’s Linear workspace through managed MCP tools.",
+    category: "developer",
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Search and inspect GitHub repositories through a securely stored personal access token.",
     category: "developer",
   },
 ];
@@ -270,6 +264,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     scope: McpConnectionScope;
     ownerAgentId: string | null;
   }>({ scope: "agent", ownerAgentId: agent.id });
+  const [connectionTargetPat, setConnectionTargetPat] = useState("");
   const managedProviderTriggerRef = useRef<HTMLElement | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
@@ -360,36 +355,55 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const connectManagedProvider = useMutation({
     mutationFn: async () => {
       if (!orgId || !connectionTargetProvider) throw new Error("Connection target is unavailable");
-      const launcher = reserveAuthorizationLauncher();
+      const isGitHub = connectionTargetProvider.provider === "github";
+      const pat = connectionTargetPat.trim();
+      if (isGitHub && !pat) throw new Error("Enter a GitHub personal access token");
+      const launcher = isGitHub ? null : reserveAuthorizationLauncher();
       try {
         const connection = await managedMcpApi.ensureOfficialConnection(
           orgId,
           connectionTargetProvider.provider as Exclude<McpConnectionProvider, "custom">,
-          connectionTarget,
+          {
+            ...connectionTarget,
+            ...(isGitHub ? { pat } : {}),
+          },
         );
-        const result = await managedMcpApi.startOAuth(orgId, connection.id);
-        await launcher.navigate(result.authorizationUrl);
+        if (!isGitHub && launcher) {
+          const result = await managedMcpApi.startOAuth(orgId, connection.id);
+          await launcher.navigate(result.authorizationUrl);
+        }
         return connection;
       } catch (error) {
-        launcher.close();
+        launcher?.close();
         throw error;
       }
     },
     onSuccess: async () => {
       setConnectionTargetProvider(null);
+      setConnectionTargetPat("");
       setManagedProvider(null);
-      pushToast({
-        title: "Authorization opened",
-        body: "Finish provider authorization in the browser.",
-        tone: "info",
-      });
+      if (connectionTargetProvider?.provider === "github") {
+        pushToast({
+          title: "GitHub connected",
+          body: "GitHub tools are ready for this agent.",
+          tone: "success",
+        });
+      } else {
+        pushToast({
+          title: "Authorization opened",
+          body: "Finish provider authorization in the browser.",
+          tone: "info",
+        });
+      }
       await Promise.all([
         managedMcpConnectionsQuery.refetch(),
         managedMcpProviderStatusQuery.refetch(),
       ]);
     },
     onError: (error) => pushToast({
-      title: "Could not start authorization",
+      title: connectionTargetProvider?.provider === "github"
+        ? "Could not connect GitHub"
+        : "Could not start authorization",
       body: error instanceof Error ? error.message : undefined,
       tone: "error",
     }),
@@ -841,6 +855,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         onAddConnection={() => {
           if (!managedProvider) return;
           setConnectionTarget({ scope: "agent", ownerAgentId: agent.id });
+          setConnectionTargetPat("");
           setConnectionTargetProvider(managedProvider);
           setManagedProvider(null);
         }}
@@ -859,10 +874,16 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         target={connectionTarget}
         pending={connectManagedProvider.isPending}
         connections={managedMcpConnections.map((row) => row.connection)}
+        pat={connectionTargetPat}
+        onPatChange={setConnectionTargetPat}
         onTargetChange={setConnectionTarget}
-        onClose={() => setConnectionTargetProvider(null)}
+        onClose={() => {
+          setConnectionTargetProvider(null);
+          setConnectionTargetPat("");
+        }}
         onManageExisting={() => {
           setConnectionTargetProvider(null);
+          setConnectionTargetPat("");
           setManagedProvider(connectionTargetProvider);
         }}
         onConfirm={() => connectManagedProvider.mutate()}
@@ -1107,6 +1128,8 @@ function AgentConnectionTargetDialog({
   target,
   pending,
   connections,
+  pat,
+  onPatChange,
   onTargetChange,
   onClose,
   onManageExisting,
@@ -1122,6 +1145,8 @@ function AgentConnectionTargetDialog({
     ownerAgentId: string | null;
     status: string;
   }>;
+  pat: string;
+  onPatChange: (pat: string) => void;
   onTargetChange: (target: { scope: McpConnectionScope; ownerAgentId: string | null }) => void;
   onClose: () => void;
   onManageExisting: () => void;
@@ -1135,6 +1160,7 @@ function AgentConnectionTargetDialog({
     && connection.ownerAgentId === target.ownerAgentId
     && connection.status !== "revoked"
   ));
+  const isGitHub = provider.provider === "github";
   return (
     <Dialog open onOpenChange={(open) => {
       if (!open && !pending) onClose();
@@ -1146,7 +1172,9 @@ function AgentConnectionTargetDialog({
             <DialogTitle>{name}</DialogTitle>
           </div>
           <DialogDescription>
-            Connect a separate credential for this agent or share one with the organization.
+            {isGitHub
+              ? "Connect GitHub with a personal access token for this target."
+              : "Connect a separate credential for this agent or share one with the organization."}
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border border-dashed border-border p-4">
@@ -1172,9 +1200,31 @@ function AgentConnectionTargetDialog({
             </span>
           </label>
         </div>
+        {isGitHub && !existing ? (
+          <div className="space-y-2">
+            <label htmlFor="agent-github-pat" className="text-sm font-medium text-foreground">
+              GitHub personal access token
+            </label>
+            <Input
+              id="agent-github-pat"
+              type="password"
+              autoComplete="new-password"
+              placeholder="github_pat_..."
+              value={pat}
+              disabled={pending}
+              onChange={(event) => onPatChange(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stored encrypted on the server and used only for this managed connection.
+            </p>
+          </div>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-          <Button disabled={pending} onClick={existing ? onManageExisting : onConfirm}>
+          <Button
+            disabled={pending || (isGitHub && !existing && pat.trim().length === 0)}
+            onClick={existing ? onManageExisting : onConfirm}
+          >
             {pending ? <Loader2 className="size-4 animate-spin" /> : null}
             {existing ? "Manage" : "Connect"}
           </Button>

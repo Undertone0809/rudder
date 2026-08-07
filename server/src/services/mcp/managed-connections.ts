@@ -14,6 +14,7 @@ import {
   MCP_PROVIDER_CATALOG,
   mcpConnectionMergedConfigSchema,
   mcpConnectionMutationConfigSchema,
+  mcpGitHubPatSchema,
   updateMcpConnectionSchema,
   type CreateMcpConnection,
   type McpAgentAccessMode,
@@ -111,6 +112,10 @@ const RECONNECT_REQUIRED_STATUSES = new Set([
   "needs_reauth",
   "error",
 ]);
+
+function requiresManagedMcpOAuth(provider: string): boolean {
+  return provider === "supabase" || provider === "linear" || provider === "notion";
+}
 
 export class ManagedMcpConnectionPolicyError extends HttpError {
   readonly code = "managed_mcp_policy_rejected";
@@ -518,13 +523,13 @@ export function managedMcpConnectionService(
           return;
         }
         const endpoint = resolveCuratedMcpEndpoint({
-          provider: input.provider as "supabase" | "linear" | "notion",
+          provider: input.provider as "supabase" | "linear" | "notion" | "github",
           accessMode: input.accessMode as "provider_default" | "read_only" | "read_write",
           externalScope: input.externalScope,
         });
         url = endpoint.href;
         curatedOrigin = new URL(MCP_PROVIDER_REGISTRY[
-          input.provider as "supabase" | "linear" | "notion"
+          input.provider as "supabase" | "linear" | "notion" | "github"
         ].endpoint).origin;
       }
       await resolveMcpHttpTarget(url, {
@@ -627,30 +632,37 @@ export function managedMcpConnectionService(
       assertCustomHttpHeaderPolicy(config, credential);
     } else {
       const endpoint = resolveCuratedMcpEndpoint({
-        provider: row.provider as "supabase" | "linear" | "notion",
+        provider: row.provider as "supabase" | "linear" | "notion" | "github",
         accessMode: effectiveAccessMode as "provider_default" | "read_only" | "read_write",
         externalScope: row.externalScope,
       });
       url = endpoint.href;
       curatedOrigin = new URL(MCP_PROVIDER_REGISTRY[
-        row.provider as "supabase" | "linear" | "notion"
+        row.provider as "supabase" | "linear" | "notion" | "github"
       ].endpoint).origin;
-      const grant = await db
-        .select()
-        .from(mcpOAuthGrants)
-        .where(and(
-          eq(mcpOAuthGrants.orgId, row.orgId),
-          eq(mcpOAuthGrants.connectionId, row.id),
-          eq(mcpOAuthGrants.status, "active"),
-        ))
-        .then((rows) => rows[0] ?? null);
-      if (!grant?.credentialSecretId) {
-        throw unprocessable("Managed MCP OAuth authorization is required");
+      if (row.provider === "github") {
+        credential = await resolveCredentialPayload(row);
+        if (!credential.bearerToken) {
+          throw unprocessable("Managed MCP GitHub credentials are required");
+        }
+      } else {
+        const grant = await db
+          .select()
+          .from(mcpOAuthGrants)
+          .where(and(
+            eq(mcpOAuthGrants.orgId, row.orgId),
+            eq(mcpOAuthGrants.connectionId, row.id),
+            eq(mcpOAuthGrants.status, "active"),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (!grant?.credentialSecretId) {
+          throw unprocessable("Managed MCP OAuth authorization is required");
+        }
+        if (!options.createOAuthCredential) {
+          throw unprocessable("Managed MCP OAuth credential factory is not configured");
+        }
+        oauthCredential = options.createOAuthCredential(row.orgId, row.id);
       }
-      if (!options.createOAuthCredential) {
-        throw unprocessable("Managed MCP OAuth credential factory is not configured");
-      }
-      oauthCredential = options.createOAuthCredential(row.orgId, row.id);
     }
 
     const config = asHttpConfig(row.safeConfig);
@@ -711,6 +723,7 @@ export function managedMcpConnectionService(
         scope: McpConnectionScope;
         ownerAgentId: string | null;
         accessMode?: McpConnectionAccessMode;
+        pat?: string;
       },
       actor: ManagedMcpMutationActor = {},
     ) => {
@@ -727,6 +740,14 @@ export function managedMcpConnectionService(
       if (!accessModeIsValid) {
         throw unprocessable("Official MCP access mode is invalid");
       }
+      const githubCredential = provider === "github" && target.pat
+        ? await prepareCredentialReplacement(
+            target.scope === "organization"
+              ? catalog.label
+              : `${catalog.label} - ${target.ownerAgentId ?? "agent"}`,
+            { bearerToken: mcpGitHubPatSchema.parse(target.pat) },
+          )
+        : null;
       const row = await db.transaction(async (tx) => {
         await tx.execute(sql`
           select pg_advisory_xact_lock(
@@ -745,7 +766,84 @@ export function managedMcpConnectionService(
           ))
           .for("update")
           .then((rows) => rows[0] ?? null);
-        if (existing) return existing;
+        if (existing) {
+          if (!githubCredential) return existing;
+          const now = nextConnectionMutationTime(existing);
+          await tx.insert(organizationSecrets).values({
+            id: githubCredential.id,
+            orgId,
+            name: githubCredential.name,
+            provider: "local_encrypted",
+            purpose: "managed_mcp_connection",
+            externalRef: githubCredential.externalRef,
+            latestVersion: 1,
+            description: "Encrypted managed MCP credentials",
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+          await tx.insert(organizationSecretVersions).values({
+            secretId: githubCredential.id,
+            version: 1,
+            material: githubCredential.material,
+            valueSha256: githubCredential.valueSha256,
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+          const replaced = await tx.update(mcpConnections).set({
+            credentialSecretId: githubCredential.id,
+            status: "active",
+            enabled: true,
+            activatedAt: existing.activatedAt ?? now,
+            disabledAt: null,
+            revokedAt: null,
+            lifecycleRevision: existing.lifecycleRevision + 1,
+            updatedAt: now,
+          }).where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.id, existing.id),
+          )).returning().then((rows) => rows[0] ?? null);
+          if (!replaced) throw notFound("MCP connection not found");
+          if (existing.credentialSecretId) {
+            await tx.delete(organizationSecrets)
+              .where(eq(organizationSecrets.id, existing.credentialSecretId));
+          }
+          await tx.insert(activityLog).values(managedMcpActivityValues({
+            orgId,
+            connectionId: replaced.id,
+            action: "mcp_connection.credentials_replaced",
+            actor,
+            details: {
+              provider: replaced.provider,
+              status: replaced.status,
+              scope: replaced.scope,
+              ownerAgentId: replaced.ownerAgentId,
+            },
+          }));
+          return replaced;
+        }
+        const now = new Date();
+        if (githubCredential) {
+          await tx.insert(organizationSecrets).values({
+            id: githubCredential.id,
+            orgId,
+            name: githubCredential.name,
+            provider: "local_encrypted",
+            purpose: "managed_mcp_connection",
+            externalRef: githubCredential.externalRef,
+            latestVersion: 1,
+            description: "Encrypted managed MCP credentials",
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+          await tx.insert(organizationSecretVersions).values({
+            secretId: githubCredential.id,
+            version: 1,
+            material: githubCredential.material,
+            valueSha256: githubCredential.valueSha256,
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+        }
         const created = await tx.insert(mcpConnections).values({
           orgId,
           scope: target.scope,
@@ -757,15 +855,19 @@ export function managedMcpConnectionService(
           provider,
           transport: "streamable_http",
           externalScope: null,
-          scopeMode: provider === "supabase" ? "account" : "workspace",
+          scopeMode: definition.scopeMode ?? "workspace",
           accessMode,
-          status: "draft",
-          safeConfig: "featureGroups" in definition
-            ? { featureGroups: definition.featureGroups }
-            : {},
+          status: githubCredential ? "active" : "draft",
+          safeConfig: "safeConfig" in definition
+            ? definition.safeConfig
+            : "featureGroups" in definition
+              ? { featureGroups: definition.featureGroups }
+              : {},
+          credentialSecretId: githubCredential?.id ?? null,
           enabled: true,
           required: false,
           canonicalState: "canonical",
+          activatedAt: githubCredential ? now : null,
         }).returning().then((rows) => rows[0]!);
         await tx.insert(activityLog).values(managedMcpActivityValues({
           orgId,
@@ -933,11 +1035,7 @@ export function managedMcpConnectionService(
             provider: input.provider,
             transport: input.transport,
             externalScope: input.externalScope ?? null,
-            scopeMode: input.provider === "supabase"
-              ? "account"
-              : input.provider === "custom"
-                ? null
-                : "workspace",
+            scopeMode: null,
             accessMode: input.accessMode,
             status: "draft",
             safeConfig: input.safeConfig,
@@ -982,6 +1080,16 @@ export function managedMcpConnectionService(
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
       const patch = updateMcpConnectionSchema.parse(rawPatch);
+      if (existing.provider === "github" && patch.secrets) {
+        throw unprocessable(
+          "GitHub PAT rotation must use the provider-specific reconnect operation",
+        );
+      }
+      if (existing.provider === "github" && !control.allowCuratedAccessMode) {
+        throw unprocessable(
+          "GitHub connections must be updated through provider-specific operations",
+        );
+      }
       if (
         existing.provider === "supabase"
         && existing.scopeMode === "legacy_project"
@@ -1015,7 +1123,7 @@ export function managedMcpConnectionService(
       mcpConnectionMergedConfigSchema.parse(merged);
       if (
         patch.accessMode !== undefined
-        && existing.provider !== "custom"
+        && requiresManagedMcpOAuth(existing.provider)
         && !control.allowCuratedAccessMode
       ) {
         throw unprocessable(
@@ -1023,7 +1131,7 @@ export function managedMcpConnectionService(
         );
       }
       if (
-        existing.provider !== "custom"
+        requiresManagedMcpOAuth(existing.provider)
         && patch.accessMode !== undefined
         && patch.accessMode !== existing.accessMode
         && (existing.status === "active" || existing.status === "authorizing")
@@ -1093,7 +1201,7 @@ export function managedMcpConnectionService(
           throw reconnectRequiredError();
         }
         if (
-          locked.provider !== "custom"
+          requiresManagedMcpOAuth(locked.provider)
           && patch.accessMode !== undefined
           && patch.accessMode !== locked.accessMode
           && (locked.status === "active" || locked.status === "authorizing")
@@ -1140,6 +1248,13 @@ export function managedMcpConnectionService(
               status: patch.enabled ? locked.status : "disabled",
             } : {}),
             ...(patch.required !== undefined ? { required: patch.required } : {}),
+            ...(locked.provider === "github" && patch.secrets && patch.enabled !== false ? {
+              status: "active",
+              enabled: true,
+              disabledAt: null,
+              revokedAt: null,
+              activatedAt: locked.activatedAt ?? nextConnectionMutationTime(locked),
+            } : {}),
             lifecycleRevision: locked.lifecycleRevision + 1,
             updatedAt: nextConnectionMutationTime(locked),
           })
@@ -1172,26 +1287,81 @@ export function managedMcpConnectionService(
       orgId: string,
       connectionId: string,
       actor: ManagedMcpMutationActor = {},
+      reconnectOptions: { githubPat?: string } = {},
     ) => {
-      const existing = await findRow(orgId, connectionId);
-      assertLegacyMutable(existing);
-      const now = nextConnectionMutationTime(existing);
       const row = await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtextextended(${`managed-mcp-connection:${orgId}:${connectionId}`}, 0)
+          )
+        `);
+        const locked = await tx
+          .select()
+          .from(mcpConnections)
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("MCP connection not found");
+        assertLegacyMutable(locked);
+        if (locked.provider === "github" && !reconnectOptions.githubPat) {
+          throw unprocessable("GitHub reconnection requires a personal access token");
+        }
+        const githubCredential = locked.provider === "github"
+          ? await prepareCredentialReplacement(
+              locked.name,
+              { bearerToken: mcpGitHubPatSchema.parse(reconnectOptions.githubPat) },
+            )
+          : null;
+        const now = nextConnectionMutationTime(locked);
+        if (githubCredential) {
+          await tx.insert(organizationSecrets).values({
+            id: githubCredential.id,
+            orgId,
+            name: githubCredential.name,
+            provider: "local_encrypted",
+            purpose: "managed_mcp_connection",
+            externalRef: githubCredential.externalRef,
+            latestVersion: 1,
+            description: "Encrypted managed MCP credentials",
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+          await tx.insert(organizationSecretVersions).values({
+            secretId: githubCredential.id,
+            version: 1,
+            material: githubCredential.material,
+            valueSha256: githubCredential.valueSha256,
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+        }
         const updated = await tx
           .update(mcpConnections)
           .set({
-            status: existing.provider === "custom" ? "draft" : "authorizing",
+            status: locked.provider === "custom"
+              ? "draft"
+              : locked.provider === "github"
+                ? "active"
+                : "authorizing",
             enabled: true,
+            ...(githubCredential ? {
+              credentialSecretId: githubCredential.id,
+              activatedAt: locked.activatedAt ?? now,
+            } : {}),
             disabledAt: null,
             revokedAt: null,
             lifecycleRevision: sql`${mcpConnections.lifecycleRevision} + 1`,
             updatedAt: now,
           })
-          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.id, connectionId),
+            eq(mcpConnections.lifecycleRevision, locked.lifecycleRevision),
+          ))
           .returning()
           .then((rows) => rows[0] ?? null);
         if (!updated) throw notFound("MCP connection not found");
-        if (existing.provider !== "custom") {
+        if (requiresManagedMcpOAuth(locked.provider)) {
           const activeGrant = await tx.select().from(mcpOAuthGrants)
             .where(and(
               eq(mcpOAuthGrants.orgId, orgId),
@@ -1215,6 +1385,10 @@ export function managedMcpConnectionService(
             }
           }
         }
+        if (githubCredential && locked.credentialSecretId) {
+          await tx.delete(organizationSecrets)
+            .where(eq(organizationSecrets.id, locked.credentialSecretId));
+        }
         await tx.insert(activityLog).values(managedMcpActivityValues({
           orgId,
           connectionId,
@@ -1235,23 +1409,43 @@ export function managedMcpConnectionService(
       connectionId: string,
       actor: ManagedMcpMutationActor = {},
     ) => {
-      const existing = await findRow(orgId, connectionId);
-      assertLegacyMutable(existing);
-      const now = nextConnectionMutationTime(existing);
       const row = await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtextextended(${`managed-mcp-connection:${orgId}:${connectionId}`}, 0)
+          )
+        `);
+        const locked = await tx
+          .select()
+          .from(mcpConnections)
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("MCP connection not found");
+        assertLegacyMutable(locked);
+        const now = nextConnectionMutationTime(locked);
         const updated = await tx
           .update(mcpConnections)
           .set({
+            ...(locked.provider === "github" ? { credentialSecretId: null } : {}),
             status: "disabled",
             enabled: false,
             disabledAt: now,
             lifecycleRevision: sql`${mcpConnections.lifecycleRevision} + 1`,
             updatedAt: now,
           })
-          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.id, connectionId),
+            eq(mcpConnections.lifecycleRevision, locked.lifecycleRevision),
+          ))
           .returning()
           .then((rows) => rows[0] ?? null);
         if (!updated) throw notFound("MCP connection not found");
+        if (locked.provider === "github" && locked.credentialSecretId) {
+          await tx.delete(organizationSecrets)
+            .where(eq(organizationSecrets.id, locked.credentialSecretId));
+        }
         await tx.insert(activityLog).values(managedMcpActivityValues({
           orgId,
           connectionId,
@@ -1436,6 +1630,7 @@ export function managedMcpConnectionService(
           assertDiscoverySnapshot(locked, snapshot);
           const now = nextConnectionMutationTime(locked);
           const preserveLastKnownGood = locked.provider !== "custom"
+            && locked.provider !== "github"
             && locked.canonicalState === "canonical"
             && locked.status === "active"
             && locked.enabled;

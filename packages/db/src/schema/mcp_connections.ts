@@ -59,10 +59,10 @@ export const mcpConnections = pgTable(
     orgNameUq: uniqueIndex("mcp_connections_org_name_uq").on(table.orgId, table.name),
     orgOfficialCanonicalUq: uniqueIndex("mcp_connections_org_official_canonical_uq")
       .on(table.orgId, table.provider)
-      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'organization'`),
+      .where(sql`${table.provider} in ('supabase', 'linear', 'notion', 'github') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'organization'`),
     agentOfficialCanonicalUq: uniqueIndex("mcp_connections_agent_official_canonical_uq")
       .on(table.orgId, table.ownerAgentId, table.provider)
-      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'agent'`),
+      .where(sql`${table.provider} in ('supabase', 'linear', 'notion', 'github') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'agent'`),
     orgStatusIdx: index("mcp_connections_org_status_idx").on(table.orgId, table.status),
     orgProviderIdx: index("mcp_connections_org_provider_idx").on(table.orgId, table.provider),
     legacyIntegrationUq: uniqueIndex("mcp_connections_legacy_integration_uq")
