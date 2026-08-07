@@ -211,6 +211,12 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
+      const connection = await svc.get(orgId, connectionId);
+      if (connection.provider === "github") {
+        throw unprocessable(
+          "GitHub connections must be updated through provider-specific operations",
+        );
+      }
       const updated = await svc.update(orgId, connectionId, req.body, mutationActor(req));
       res.json(updated);
     },

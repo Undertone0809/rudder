@@ -271,6 +271,39 @@ describe("managed MCP connection organization routes", () => {
     expect(mockService.ensureOfficial).not.toHaveBeenCalled();
   });
 
+  it("rejects GitHub from generic patch before it can persist a PAT or activate", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const github = {
+      ...connectionSummary(),
+      provider: "github",
+      status: "disabled",
+      enabled: false,
+      safeConfig: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        scopeMode: "account",
+      },
+    };
+    const pat = "github_pat_12345678901234567890";
+    mockService.get.mockResolvedValueOnce(github);
+
+    const response = await request(app)
+      .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}`)
+      .send({ enabled: true, secrets: { bearerToken: pat } });
+
+    expect(response.status).toBe(422);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+    expect(JSON.stringify(capturedErrorBody)).not.toContain(pat);
+    expect(mockService.update).not.toHaveBeenCalled();
+    expect(mockService.reconnect).not.toHaveBeenCalled();
+    expect(mockService.refreshTools).not.toHaveBeenCalled();
+  });
+
   it("marks a GitHub PAT connect request sensitive and rejects missing credentials", async () => {
     const app = createApp({
       type: "board",

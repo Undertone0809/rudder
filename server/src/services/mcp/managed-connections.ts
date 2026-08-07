@@ -1080,6 +1080,16 @@ export function managedMcpConnectionService(
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
       const patch = updateMcpConnectionSchema.parse(rawPatch);
+      if (existing.provider === "github" && patch.secrets) {
+        throw unprocessable(
+          "GitHub PAT rotation must use the provider-specific reconnect operation",
+        );
+      }
+      if (existing.provider === "github" && !control.allowCuratedAccessMode) {
+        throw unprocessable(
+          "GitHub connections must be updated through provider-specific operations",
+        );
+      }
       if (
         existing.provider === "supabase"
         && existing.scopeMode === "legacy_project"
