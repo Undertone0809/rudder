@@ -17,6 +17,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { floorDateToMinuteIso, resolvePresetDateRange } from "../lib/date-range-cache";
@@ -133,6 +134,7 @@ export function Dashboard() {
   const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const currentBoardUserAvatarUrl = useCurrentUserAvatar();
   const operatorDisplayName = useOperatorDisplayName();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
   const seenActivityIdsRef = useRef<Set<string>>(new Set());
@@ -638,6 +640,7 @@ export function Dashboard() {
                         entityNameMap={entityNameMap}
                         entityTitleMap={entityTitleMap}
                         currentBoardUserId={currentBoardAccess?.user?.id ?? currentBoardAccess?.userId}
+                        currentBoardUserAvatarUrl={currentBoardUserAvatarUrl}
                         operatorDisplayName={operatorDisplayName}
                         className={animatedActivityIds.has(event.id) ? "activity-row-enter" : undefined}
                       />

@@ -17,6 +17,7 @@ import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -70,6 +71,7 @@ function capitalize(value: string): string {
 export function Activity() {
   const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const currentBoardUserAvatarUrl = useCurrentUserAvatar();
   const operatorDisplayName = useOperatorDisplayName();
   const [entityTypeFilter, setEntityTypeFilter] = useState("all");
   const [principalFilter, setPrincipalFilter] = useState<PrincipalFilter>("all");
@@ -283,6 +285,7 @@ export function Activity() {
               entityNameMap={entityNameMap}
               entityTitleMap={entityTitleMap}
               currentBoardUserId={currentBoardUserId}
+              currentBoardUserAvatarUrl={currentBoardUserAvatarUrl}
               operatorDisplayName={operatorDisplayName}
             />
           ))}
