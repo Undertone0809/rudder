@@ -1,6 +1,7 @@
 import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
   FORBIDDEN_PRODUCTION_PACKAGES,
@@ -8,7 +9,6 @@ import {
   embeddedPostgresPlatformPackage,
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));

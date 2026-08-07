@@ -34,7 +34,6 @@ import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInp
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { useSidePanel } from "../context/SidePanelContext";
-import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import { queryKeys } from "../lib/queryKeys";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
 import type { SidePanelTarget } from "../lib/side-panel-targets";

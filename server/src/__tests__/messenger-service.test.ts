@@ -36,8 +36,8 @@ import {
   messengerThreadUserStates,
   organizations,
   organizationSecrets,
-  projects,
   productAnalyticsEvents,
+  projects,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,

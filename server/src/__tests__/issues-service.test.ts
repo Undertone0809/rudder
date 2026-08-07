@@ -14,9 +14,9 @@ import {
   labels,
   organizationMemberships,
   organizations,
+  productAnalyticsEvents,
   projects,
   projectWorkspaces,
-  productAnalyticsEvents,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
