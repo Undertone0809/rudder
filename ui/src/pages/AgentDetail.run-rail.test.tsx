@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SidePanelProvider } from "../context/SidePanelContext";
+import { SidePanelProvider, useSidePanel } from "../context/SidePanelContext";
 import { RunConversationListItem, RunRailList, RunsTab, type RunRailEntry } from "./AgentDetail.runs";
 
 const testState = vi.hoisted(() => ({
@@ -145,6 +145,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   queryClient.clear();
+  localStorage.removeItem("rudder.run-feedback-draft:org-1:agent-1");
   container.remove();
 });
 
@@ -155,6 +156,17 @@ function expectRoundedClipPane(pane: HTMLElement | null) {
   expect(pane?.classList.contains("overflow-x-hidden")).toBe(false);
   expect(pane?.classList.contains("overflow-hidden")).toBe(false);
   expect(pane?.classList.contains("overflow-y-auto")).toBe(false);
+}
+
+function SidePanelStateProbe() {
+  const sidePanel = useSidePanel();
+  return (
+    <output
+      data-testid="side-panel-state"
+      data-open={String(sidePanel.open)}
+      data-tab-count={String(sidePanel.tabs.length)}
+    />
+  );
 }
 
 describe("RunConversationListItem", () => {
@@ -251,6 +263,41 @@ describe("RunsTab shared rail branches", () => {
     run({ id: "grouped-run-2", createdAt: new Date("2026-07-21T11:00:00.000Z") }),
     run({ id: "grouped-run-1", createdAt: new Date("2026-07-21T10:00:00.000Z") }),
   ];
+
+  it("does not reopen a recovered feedback draft when the panel was closed", async () => {
+    localStorage.setItem("rudder.run-feedback-draft:org-1:agent-1", JSON.stringify({
+      agentId: "agent-1",
+      organizationId: "org-1",
+      conversationId: null,
+      projectLocked: false,
+      clientMutationId: "mutation-1",
+      projectId: null,
+      body: "Draft feedback",
+      inlineAnnotations: [],
+    }));
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <SidePanelStateProbe />
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={null}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const probe = container.querySelector<HTMLOutputElement>("[data-testid='side-panel-state']");
+    expect(probe?.dataset.open).toBe("false");
+    expect(probe?.dataset.tabCount).toBe("0");
+  });
 
   it("renders grouped rows through the mobile list branch", () => {
     testState.isMobile = true;
