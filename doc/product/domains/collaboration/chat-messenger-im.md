@@ -3393,7 +3393,10 @@ Why:
   grouped row is still the same Messenger item for navigation, unread state,
   pin ordering, and attention semantics.
 - Operators must be able to remove one grouped Chat, Issue, or Saved View
-  without dismantling the group or changing any sibling member.
+  without changing any sibling member or the owning object. Removing the
+  final membership deletes the now-empty custom group; a directly created
+  group that has never had a membership remains available until explicitly
+  deleted.
 
 Product model:
 
@@ -3421,6 +3424,9 @@ Product model:
 - A Messenger member can belong to at most one custom group per operator.
   Moving a member into a group removes its previous custom group membership for
   that operator.
+- Removing the final membership from a custom group deletes that now-empty
+  group in the same placement transaction. A directly created empty group
+  with no removed membership is not implicitly deleted.
 - Group membership is keyed by the stable Messenger directory-item key, not by
   chat-only identity. Existing members use thread keys and Saved Views use
   `saved-view:<id>`. Supported members include chat rows such as `chat:<id>`, aggregate
@@ -3488,7 +3494,8 @@ Flow:
 11. Every grouped Chat, Issue, and Saved View row exposes `Move out of group`
     from its `Move to group` menu. The action removes only that selected
     member's operator-scoped membership, returns it to the loose directory,
-    and leaves the group plus all sibling members intact. It does not delete or
+    and leaves all sibling members intact. If that was the final membership,
+    the now-empty custom group is deleted atomically. It does not delete or
     mutate the owning Chat, Issue, or Saved View. A loose member can then be
     reordered, moved into an existing group, or merged with another eligible
     loose Chat or Issue through the same pointer and keyboard placement model.
@@ -3537,8 +3544,10 @@ Invariants:
   loose Messenger directory. Thread-backed items retain existing read/unread
   and attention state; Saved Views retain their non-thread identity.
 - `Move out of group` is a per-member operation for grouped Chat, Issue, and
-  Saved View rows. It must not delete the custom group, remove sibling
-  memberships, or delete the selected owning-domain object.
+  Saved View rows. It must not remove sibling memberships or delete the
+  selected owning-domain object. Moving out the final membership deletes only
+  the now-empty custom group; moving out a non-final membership leaves that
+  group intact.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
   View rows preserve their Saved View route, target kind, title, and manual
   order, but must not inherit unread badges, attention state, mark-read actions,

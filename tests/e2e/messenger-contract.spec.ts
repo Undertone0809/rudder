@@ -1724,7 +1724,7 @@ test.describe("Messenger unified threads contract", () => {
     }).toBeGreaterThanOrEqual(2);
   });
 
-  test("keeps group siblings intact after its final item moves out", async ({ page }, testInfo) => {
+  test("removes a group after its final item moves out", async ({ page }, testInfo) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Move-Out-${Date.now()}`);
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1854,7 +1854,7 @@ test.describe("Messenger unified threads contract", () => {
       expect(groupsRes.ok()).toBe(true);
       const payload = await groupsRes.json() as { groups: Array<{ id: string }> };
       return payload.groups.some((candidate) => candidate.id === group.id);
-    }).toBe(true);
+    }).toBe(false);
     expect(await e2eDb
       .select({ id: messengerCustomGroupEntries.id })
       .from(messengerCustomGroupEntries)
@@ -1862,8 +1862,8 @@ test.describe("Messenger unified threads contract", () => {
     expect(await e2eDb
       .select({ id: messengerCustomGroups.id })
       .from(messengerCustomGroups)
-      .where(eq(messengerCustomGroups.id, group.id))).toHaveLength(1);
-    await expect(page.getByTestId(groupSectionId)).toBeVisible();
+      .where(eq(messengerCustomGroups.id, group.id))).toHaveLength(0);
+    await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
     await expect(groupedSavedViewRow).toHaveCount(0);
     await expect(savedViewRow).toBeVisible();
     await expect(page.getByTestId(chatRowId)).toBeVisible();
