@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
+import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import {
   ensureProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
@@ -210,6 +212,8 @@ export async function createChatWithInitialMessage(
     }
 
     const structuredPayload = sanitizeChatStructuredPayload(canonicalInitialPayload);
+    const transcript = chatTranscriptFromPayload(structuredPayload);
+    const persistedStructuredPayload = stripChatMetadataFromPayload(structuredPayload);
     const [messageRow] = await client
       .insert(chatMessages)
       .values({
@@ -219,7 +223,7 @@ export async function createChatWithInitialMessage(
         kind: data.initialMessage.kind,
         status: data.initialMessage.status,
         body: normalizedBody,
-        structuredPayload,
+        structuredPayload: persistedStructuredPayload,
         replyingAgentId: data.initialMessage.replyingAgentId ?? null,
         chatTurnId: data.initialMessage.chatTurnId ?? (data.initialMessage.role === "user" ? randomUUID() : null),
         turnVariant: 0,
@@ -228,6 +232,13 @@ export async function createChatWithInitialMessage(
       })
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
+    if (transcript.length > 0) {
+      await replaceDetachedChatTranscript(client, {
+        orgId,
+        messageId: messageRow.id,
+        entries: transcript,
+      });
+    }
 
     const creationPath = chatCreationPath(data);
     await recordProductAnalyticsChatCreated(client, {
@@ -330,10 +341,10 @@ export async function createChatWithInitialMessage(
       role: messageRow.role as ChatMessage["role"],
       kind: messageRow.kind as ChatMessage["kind"],
       status: messageRow.status as ChatMessage["status"],
-      structuredPayload,
+      structuredPayload: persistedStructuredPayload,
       approval: null,
       attachments: [],
-      transcript: [],
+      transcript,
     } as ChatMessage;
     return { conversation, message };
   };

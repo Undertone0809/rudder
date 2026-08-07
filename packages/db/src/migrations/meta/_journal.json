@@ -1037,6 +1037,13 @@
       "when": 1786056000000,
       "tag": "0147_github_mcp_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1786096800000,
+      "tag": "0148_chat_message_transcript_entries",
+      "breakpoints": true
     }
   ]
 }

@@ -8,7 +8,8 @@ import {
   issues,
 } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
-import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
+import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
+import { CHAT_TRANSCRIPT_KEY, chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import { chatService } from "./chats.js";
 
 function automationRunOutputBody(input: {
@@ -146,6 +147,20 @@ export async function publishAutomationRunOutputToChat(
     }
 
     const now = new Date();
+    const structuredPayload = {
+      eventType: "automation_run_result",
+      automationId: row.automationId,
+      automationTitle: row.automationTitle,
+      runId: row.runId,
+      issueId: row.issueId,
+      status: input.status ?? null,
+      links: {
+        automation: `/automations/${row.automationId}`,
+        issue: `/issues/${row.issueId}`,
+      },
+      [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
+    };
+    const transcript = chatTranscriptFromPayload(structuredPayload);
     const [message] = await tx
       .insert(chatMessages)
       .values({
@@ -156,24 +171,19 @@ export async function publishAutomationRunOutputToChat(
       status: chatMessageStatus(input.status),
       body: automationRunOutputBody(input),
       replyingAgentId: row.assigneeAgentId,
-      structuredPayload: {
-        eventType: "automation_run_result",
-        automationId: row.automationId,
-        automationTitle: row.automationTitle,
-        runId: row.runId,
-        issueId: row.issueId,
-        status: input.status ?? null,
-        links: {
-          automation: `/automations/${row.automationId}`,
-          issue: `/issues/${row.issueId}`,
-        },
-        [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
-      },
+      structuredPayload: stripChatMetadataFromPayload(structuredPayload),
       createdAt: now,
       updatedAt: now,
       })
       .returning();
     if (!message) return null;
+    if (transcript.length > 0) {
+      await replaceDetachedChatTranscript(tx, {
+        orgId: row.orgId,
+        messageId: message.id,
+        entries: transcript,
+      });
+    }
 
     await tx
       .update(chatConversations)

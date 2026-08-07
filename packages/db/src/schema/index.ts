@@ -32,6 +32,7 @@ export { chatConversations } from "./chat_conversations.js";
 export { chatGenerationEvents } from "./chat_generation_events.js";
 export { chatGenerationTerminalOutbox } from "./chat_generation_terminal_outbox.js";
 export { chatGenerations } from "./chat_generations.js";
+export { chatMessageTranscriptEntries } from "./chat_message_transcript_entries.js";
 export { chatMessages } from "./chat_messages.js";
 export { chatQueuedMessages } from "./chat_queued_messages.js";
 export { chatWorkManifestItems } from "./chat_work_manifest_items.js";
