@@ -247,7 +247,7 @@ export type {
   CostTrendGranularity, CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
   GoalActivity, GoalChangeProposal, GoalContinuation, GoalContractPatch, GoalContractSnapshot, GoalCriterion, GoalDependencies,
-  GoalDependencyPreview, GoalEvaluationCandidate, GoalFeedbackAttachment, GoalFeedbackEntry, GoalOwnerAssignment, GoalPlan, GoalResultProposal, GoalResultReducerPreflight, GoalStartPacket, GoalStartPreview, GoalStartRequest, GoalWorkspaceCard, GoalWorkspaceSummary, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode,
+  GoalDependencyPreview, GoalEvaluationCandidate, GoalFeedbackAttachment, GoalFeedbackEntry, GoalHistoryAttachment, GoalHistoryItem, GoalHistoryPage, GoalOwnerAssignment, GoalPlan, GoalResultProposal, GoalResultReducerPreflight, GoalStartPacket, GoalStartPreview, GoalStartRequest, GoalWorkspaceCard, GoalWorkspaceSummary, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode,
   HeartbeatRecoveryTrigger,
   HeartbeatRun,
   HeartbeatRunContextSnapshot,

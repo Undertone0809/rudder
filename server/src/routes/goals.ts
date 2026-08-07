@@ -20,12 +20,38 @@ import {
 } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
-import { goalService, logActivity } from "../services/index.js";
+import { goalService, heartbeatService, logActivity } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function goalRoutes(db: Db) {
   const router = Router();
   const svc = goalService(db);
+  const heartbeat = heartbeatService(db);
+
+  async function dispatchGoalWakeup(dispatch: {
+    ownerAgentId: string;
+    wakeupRequestId: string;
+    source: "on_demand";
+    triggerDetail: "system";
+    reason: "goal_started" | "goal_feedback" | "goal_change_decided";
+    payload: Record<string, unknown>;
+    contextSnapshot: Record<string, unknown>;
+    requestedByActorType: "user" | "agent" | "system";
+    requestedByActorId: string | null;
+    idempotencyKey: string;
+  }) {
+    return heartbeat.wakeup(dispatch.ownerAgentId, {
+      existingWakeupRequestId: dispatch.wakeupRequestId,
+      source: dispatch.source,
+      triggerDetail: dispatch.triggerDetail,
+      reason: dispatch.reason,
+      payload: dispatch.payload,
+      contextSnapshot: dispatch.contextSnapshot,
+      requestedByActorType: dispatch.requestedByActorType,
+      requestedByActorId: dispatch.requestedByActorId,
+      idempotencyKey: dispatch.idempotencyKey,
+    });
+  }
 
   async function loadAuthorizedGoal(req: Parameters<typeof assertCompanyAccess>[0], id: string) {
     if (!isUuidLike(id)) return null;
@@ -64,6 +90,17 @@ export function goalRoutes(db: Db) {
       return;
     }
     res.json(await svc.workspace(id));
+  });
+
+  router.get("/goals/:id/history", async (req, res) => {
+    const id = req.params.id as string;
+    if (!await loadAuthorizedGoal(req, id)) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    res.json(await svc.history(id, { cursor, limit }));
   });
 
   router.get("/goals/:id/dependencies", async (req, res) => {
@@ -116,8 +153,12 @@ export function goalRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertBoard(req);
     assertCompanyAccess(req, orgId);
-    const { goal, replayed } = await svc.start(orgId, req.body);
     const actor = getActorInfo(req);
+    const { goal, replayed, dispatch } = await svc.start(orgId, req.body, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+    });
+    await dispatchGoalWakeup(dispatch);
     await logActivity(db, {
       orgId,
       actorType: actor.actorType,
@@ -210,7 +251,11 @@ export function goalRoutes(db: Db) {
       return;
     }
     const actor = getActorInfo(req);
-    const activity = await svc.createActivity(id, req.body, actor.agentId);
+    const activity = await svc.createActivity(
+      id,
+      actor.runId ? { ...req.body, runRef: actor.runId } : req.body,
+      actor.agentId,
+    );
     await logActivity(db, {
       orgId: existing.orgId,
       actorType: actor.actorType,
@@ -235,7 +280,8 @@ export function goalRoutes(db: Db) {
       return;
     }
     const actor = getActorInfo(req);
-    const feedback = await svc.feedback(id, req.body, actor.actorId);
+    const { feedback, dispatch } = await svc.feedback(id, req.body, actor.actorId);
+    await dispatchGoalWakeup(dispatch);
     await logActivity(db, {
       orgId: existing.orgId,
       actorType: actor.actorType,
@@ -285,7 +331,8 @@ export function goalRoutes(db: Db) {
     }
     assertCompanyAccess(req, existing.orgId);
     const actor = getActorInfo(req);
-    const proposal = await svc.decideChangeProposal(proposalId, req.body, actor.actorId);
+    const { proposal, dispatch } = await svc.decideChangeProposal(proposalId, req.body, actor.actorId);
+    await dispatchGoalWakeup(dispatch);
     await logActivity(db, {
       orgId: existing.orgId,
       actorType: actor.actorType,
@@ -309,7 +356,7 @@ export function goalRoutes(db: Db) {
       return;
     }
     const actor = getActorInfo(req);
-    const proposal = await svc.createResultProposal(id, req.body, actor.agentId);
+    const proposal = await svc.createResultProposal(id, req.body, actor.agentId, actor.runId);
     await logActivity(db, {
       orgId: existing.orgId,
       actorType: actor.actorType,
@@ -361,7 +408,8 @@ export function goalRoutes(db: Db) {
     }
     assertCompanyAccess(req, existing.orgId);
     const actor = getActorInfo(req);
-    const proposal = await svc.rejectResultProposal(proposalId, req.body, actor.actorId);
+    const { proposal, dispatch } = await svc.rejectResultProposal(proposalId, req.body, actor.actorId);
+    if (dispatch) await dispatchGoalWakeup(dispatch);
     await logActivity(db, {
       orgId: existing.orgId,
       actorType: actor.actorType,
@@ -420,6 +468,7 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: { focus: goal?.focus ?? false },
     });
+    await heartbeat.resumePendingWakeupRequests({ orgId: existing.orgId });
     res.json(goal);
   });
 

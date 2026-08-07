@@ -40,7 +40,7 @@ export const createGoalSchema = z.object({
   title: z.string().trim().min(1),
   description: z.string().optional().nullable(),
   alignmentQuestion: z.string().trim().min(1).optional().nullable(),
-  /** Accepted for legacy clients but intentionally ignored by the canonical create command. */
+  targetTime: z.coerce.date().optional().nullable(),
   level: z.string().optional(),
   status: z.string().optional(),
   parentId: z.string().uuid().optional().nullable(),
@@ -53,6 +53,8 @@ export const updateGoalSchema = z.object({
   title: z.string().trim().min(1).optional(),
   description: z.string().optional().nullable(),
   alignmentQuestion: z.string().trim().min(1).optional().nullable(),
+  ownerAgentId: z.string().uuid().optional().nullable(),
+  targetTime: z.coerce.date().optional().nullable(),
 }).strict();
 
 export type UpdateGoal = z.infer<typeof updateGoalSchema>;

@@ -64,6 +64,24 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   },
   {
+    "capabilityId": "goal.progress",
+    "name": "rudder_goal_progress",
+    "description": "Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "goal.result.propose",
+    "name": "rudder_goal_result_propose",
+    "description": "Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
     "capabilityId": "issue.get",
     "name": "rudder_issue_get",
     "description": "Read a full issue by UUID or identifier.",
@@ -856,5 +874,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "8494e4678d53860a8b3d71f8d1a0c87d75360d4bf7184ba93b0a3c8d98acda58";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "76a4ea9171d683ea0916c74f9c94636f2a7be75f86d854f9974f3141e4fa0f46";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

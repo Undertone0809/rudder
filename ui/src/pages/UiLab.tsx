@@ -16,8 +16,6 @@ import { EntityRow } from "@/components/EntityRow";
 import { FilterBar, type FilterValue } from "@/components/FilterBar";
 import { FinanceKindCard } from "@/components/FinanceKindCard";
 import { FinanceTimelineCard } from "@/components/FinanceTimelineCard";
-import { GoalProperties } from "@/components/GoalProperties";
-import { GoalTree } from "@/components/GoalTree";
 import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { Identity } from "@/components/Identity";
@@ -255,13 +253,11 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "ApprovalPayload", category: "product", sourcePath: "ui/src/components/ApprovalPayload.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ApprovalPayloadRenderer", category: "product", sourcePath: "ui/src/components/ApprovalPayload.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "DashboardDateRangeControl", category: "product", sourcePath: "ui/src/components/DashboardDateRangeControl.tsx", status: "covered", exampleKind: "direct" },
-  { componentId: "GoalTree", category: "product", sourcePath: "ui/src/components/GoalTree.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "HeartbeatEnabledButtons", category: "product", sourcePath: "ui/src/components/HeartbeatEnabledButtons.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "JsonSchemaForm", category: "product", sourcePath: "ui/src/components/JsonSchemaForm.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "MarkdownBody", category: "product", sourcePath: "ui/src/components/MarkdownBody.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "PackageFileTree", category: "product", sourcePath: "ui/src/components/PackageFileTree.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "PageTabBar", category: "product", sourcePath: "ui/src/components/PageTabBar.tsx", status: "covered", exampleKind: "direct" },
-  { componentId: "GoalProperties", category: "product", sourcePath: "ui/src/components/GoalProperties.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ProjectProperties", category: "product", sourcePath: "ui/src/components/ProjectProperties.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ResourceLocatorField", category: "product", sourcePath: "ui/src/components/ResourceLocatorField.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "ScheduleEditor", category: "product", sourcePath: "ui/src/components/ScheduleEditor.tsx", status: "covered", exampleKind: "direct" },
@@ -1854,18 +1850,12 @@ function CommonComponentsSection() {
                 }}
               />
             </p>
-            <GoalTree goals={fixtureGoals} onSelect={() => {}} />
           </div>
         </LabExample>
 
-        <LabExample title="Goal and project properties">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-md border border-border p-3">
-              <GoalProperties goal={fixtureGoals[0]!} />
-            </div>
-            <div className="rounded-md border border-border p-3">
-              <ProjectProperties project={fixtureProject} />
-            </div>
+        <LabExample title="Project properties">
+          <div className="rounded-md border border-border p-3">
+            <ProjectProperties project={fixtureProject} />
           </div>
         </LabExample>
 

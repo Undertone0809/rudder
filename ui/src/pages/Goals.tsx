@@ -36,6 +36,7 @@ const facets: Array<{
 }> = [
   { id: "agent_advancing", label: "Agent advancing", empty: "No Agent-owned next action." },
   { id: "needs_attention", label: "Needs your attention", empty: "Nothing needs your input." },
+  { id: "waiting_focus", label: "Waiting for focus", empty: "No Goals are waiting for focus." },
   { id: "waiting_external", label: "Waiting for external result", empty: "No Goals are waiting externally." },
   { id: "ready_for_acceptance", label: "Ready for acceptance", empty: "No results are ready for review." },
 ];
@@ -45,9 +46,10 @@ const historyFacet = { id: "closed" as const, label: "History", empty: "No accep
 const mobileFacetOrder: Record<BoardFacet, number> = {
   ready_for_acceptance: 0,
   needs_attention: 1,
-  waiting_external: 2,
-  agent_advancing: 3,
-  closed: 4,
+  waiting_focus: 2,
+  waiting_external: 3,
+  agent_advancing: 4,
+  closed: 5,
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -69,6 +71,7 @@ function normalizeFacet(value: unknown): BoardFacet | null {
   if (value === "closed") return "closed";
   if (value === "ready_for_acceptance") return value;
   if (value === "needs_attention" || value === "needs_your_attention") return "needs_attention";
+  if (value === "waiting_focus") return value;
   if (value === "waiting_external" || value === "waiting_for_external_result") return "waiting_external";
   return "agent_advancing";
 }
@@ -118,6 +121,7 @@ function FacetLabel({ facet }: { facet: BoardFacet }) {
       "inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium",
       facet === "ready_for_acceptance" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
       facet === "needs_attention" && "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      facet === "waiting_focus" && "border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200",
       facet === "waiting_external" && "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-200",
       facet === "agent_advancing" && "border-border bg-muted/35 text-muted-foreground",
     )}>
@@ -222,7 +226,7 @@ export function Goals() {
         <EmptyState icon={Target} message="No Goals yet." action="New Goal" onAction={() => openNewGoal()} />
       ) : (
         <>
-          <div data-testid="goal-derived-board" className="hidden min-w-0 grid-cols-2 gap-3 md:grid lg:grid-cols-4">
+          <div data-testid="goal-derived-board" className="hidden min-w-0 grid-cols-2 gap-3 md:grid xl:grid-cols-5">
             {facets.map((facet) => {
               const facetCards = cards.filter((card) => card.facet === facet.id);
               return (

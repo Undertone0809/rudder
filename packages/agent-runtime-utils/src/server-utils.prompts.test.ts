@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   COMMENT_MENTION_PROMPT_TEMPLATE,
   DEFAULT_AGENT_PROMPT_TEMPLATE,
+  GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
+  GOAL_FEEDBACK_PROMPT_TEMPLATE,
+  GOAL_STARTED_PROMPT_TEMPLATE,
   ISSUE_ASSIGN_PROMPT_TEMPLATE,
   ISSUE_ASSIGNEE_EXECUTION_RAIL,
   ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
@@ -18,6 +21,192 @@ import {
 } from "./server-utils.js";
 
 describe("server-utils prompt contracts", () => {
+  it("keeps Rudder Goal wakes away from Codex internal Goal tools and preserves human acceptance", () => {
+    for (const template of [
+      GOAL_STARTED_PROMPT_TEMPLATE,
+      GOAL_FEEDBACK_PROMPT_TEMPLATE,
+      GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
+    ]) {
+      expect(template).toContain("This is a Rudder product Goal, not a Codex internal goal.");
+      expect(template).toContain("Do not call Codex `create_goal`, `update_goal`, or `get_goal`");
+      expect(template).toContain("call that typed tool directly");
+      expect(template).toContain("Do not load `rudder-docs`, inspect skill files, or run discovery commands");
+      expect(template).toContain("instead of using shell, Bash, curl, or the `rudder` CLI");
+      expect(template).toContain("`rudder_goal_progress`");
+      expect(template).toContain("`rudder_goal_result_propose`");
+      expect(template).toContain("automatically attributes progress to this Run");
+      expect(template).toContain("A human must accept every terminal Goal result.");
+    }
+  });
+
+  it("renders a Goal start wake with the outcome, current contract, and continuation", () => {
+    const context = {
+      wakeReason: "goal_started",
+      goal: {
+        id: "goal-started-1",
+        title: "Publish a verified release",
+        outcomeStatement: "Customers can install the verified release.",
+        contractRevision: 3,
+        criteria: [{ id: "install", label: "Public install succeeds", evaluator: "human" }],
+        autonomyEnvelope: { allowed: ["prepare_candidate"] },
+      },
+      goalContinuation: {
+        kind: "action",
+        summary: "Run the public installation verification.",
+        wakeCondition: null,
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-goal-owner", name: "Wesley" },
+      context,
+    });
+
+    expect(GOAL_STARTED_PROMPT_TEMPLATE).toContain("**Goal outcome:**");
+    expect(template).not.toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
+    expect(rendered).toContain("A Goal has started and you are responsible for advancing it.");
+    expect(rendered).toContain("**Goal ID:** goal-started-1");
+    expect(rendered).toContain("Customers can install the verified release.");
+    expect(rendered).toContain('"contractRevision":3');
+    expect(rendered).toContain("action: Run the public installation verification.");
+    expect(rendered).not.toContain("Continue your Rudder work.");
+  });
+
+  it("renders a Goal feedback wake with runtime feedback body and id", () => {
+    const context = {
+      wakeReason: "goal_feedback",
+      goal: {
+        id: "goal-feedback-1",
+        title: "Keep activation reliable",
+        outcomeStatement: "Goal activation remains reliable after restart.",
+        contractRevision: 5,
+        criteria: ["Restart preserves activation"],
+        autonomyEnvelope: { allowed: ["verify"] },
+      },
+      goalContinuation: {
+        kind: "verification",
+        summary: "Repeat the restart acceptance run.",
+        wakeCondition: null,
+      },
+      goalFeedback: {
+        id: "feedback-77",
+        body: "Verify the restart path before proposing completion.",
+        kind: "course_correction",
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-feedback-owner", name: "Kepler" },
+      context,
+    });
+
+    expect(GOAL_FEEDBACK_PROMPT_TEMPLATE).toContain("**Feedback body:**");
+    expect(template).not.toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
+    expect(rendered).toContain("New feedback requires your review on a Goal you own.");
+    expect(rendered).toContain("Goal activation remains reliable after restart.");
+    expect(rendered).toContain('"contractRevision":5');
+    expect(rendered).toContain("verification: Repeat the restart acceptance run.");
+    expect(rendered).toContain("**Feedback ID:** feedback-77");
+    expect(rendered).toContain("Verify the restart path before proposing completion.");
+    expect(rendered).not.toContain("Continue your Rudder work.");
+  });
+
+  it("selects the Goal prompt when only a nested payload indicates the wake kind", () => {
+    const context = {
+      payload: {
+        event: "goal_feedback",
+        goal: {
+          id: "goal-payload-1",
+          title: "Payload Goal",
+          outcomeStatement: "Payload-only wakes preserve Goal context.",
+          currentContract: { contractRevision: 2 },
+        },
+        goalContinuation: {
+          kind: "action",
+          summary: "Continue from the payload packet.",
+        },
+        goalFeedback: {
+          id: "feedback-payload-1",
+          body: "Use the payload feedback body.",
+        },
+      },
+    };
+
+    const rendered = renderTemplate(selectPromptTemplate(undefined, context), {
+      agent: { id: "agent-payload", name: "Payload Runner" },
+      context,
+    });
+
+    expect(rendered).toContain("Payload-only wakes preserve Goal context.");
+    expect(rendered).toContain("action: Continue from the payload packet.");
+    expect(rendered).toContain("**Feedback ID:** feedback-payload-1");
+    expect(rendered).toContain("Use the payload feedback body.");
+    expect(rendered).not.toContain("Continue your Rudder work.");
+  });
+
+  it("renders a Goal change decision with the latest contract and human note", () => {
+    const context = {
+      wakeReason: "goal_change_decided",
+      goal: {
+        id: "goal-decision-1",
+        title: "Ship the verified release",
+        outcomeStatement: "Customers can install the verified release.",
+        contractRevision: 4,
+        criteria: [{ id: "install", label: "Public install succeeds", evaluator: "artifact" }],
+      },
+      goalContinuation: {
+        kind: "action",
+        summary: "Continue with the approved release boundary.",
+      },
+      goalDecision: {
+        proposalId: "proposal-1",
+        decision: "approve",
+        status: "applied",
+        note: "Keep rollback evidence visible in the final result.",
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-decision-owner", name: "Ada" },
+      context,
+    });
+
+    expect(template).not.toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
+    expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("## Goal Change Decision");
+    expect(rendered).toContain("A human decided a proposed change");
+    expect(rendered).toContain('"contractRevision":4');
+    expect(rendered).toContain("**Decision:** approve");
+    expect(rendered).toContain("**Decision status:** applied");
+    expect(rendered).toContain("Keep rollback evidence visible in the final result.");
+    expect(rendered).toContain("action: Continue with the approved release boundary.");
+  });
+
+  it("keeps unrelated heartbeat payloads on the generic fallback", () => {
+    expect(selectPromptTemplate(undefined, {
+      wakeReason: "heartbeat_timer",
+      payload: { event: "daily_check" },
+    })).toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
+  });
+
+  it("turns missing Goal context into a named blocker instead of a retrieval instruction", () => {
+    const rendered = renderTemplate(selectPromptTemplate(undefined, {
+      wakeReason: "goal_feedback",
+      goal: { id: "goal-missing-context" },
+    }), {
+      agent: { id: "agent-missing-context", name: "Fallback Guard" },
+      context: {},
+    });
+
+    expect(rendered).toContain("report the missing outcome as a named blocker");
+    expect(rendered).toContain("report the missing continuation as a named blocker");
+    expect(rendered).toContain("report the missing feedback body as a named blocker");
+    expect(rendered).not.toContain("load the Goal's current");
+    expect(rendered).not.toContain("load the triggering feedback entry");
+  });
+
   it("renders explicit issue ownership and timestamp metadata for issue-aware wakes", () => {
     const issue = {
       id: "issue-575",
@@ -394,6 +583,40 @@ describe("server-utils prompt contracts", () => {
     expect(reviewer).toBe(custom);
     expect(reviewerRecovery).toBe(custom);
     expect(generic).toBe(custom);
+  });
+
+  it("composes the Goal runtime rail after a custom agent persona", () => {
+    const custom = "Use the release operator persona and preserve rollback evidence.";
+    const context = {
+      wakeReason: "goal_feedback",
+      goal: {
+        id: "goal-custom-owner",
+        title: "Publish a verified release",
+        outcomeStatement: "Customers can install the verified release.",
+        contractRevision: 6,
+      },
+      goalContinuation: {
+        kind: "verification",
+        summary: "Verify the public package before proposing completion.",
+      },
+      goalFeedback: {
+        id: "feedback-custom-owner",
+        body: "Include rollback evidence in the result proposal.",
+      },
+    };
+
+    const template = selectPromptTemplate(custom, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-custom-owner", name: "Release Operator" },
+      context,
+    });
+
+    expect(template.indexOf(custom)).toBeLessThan(template.indexOf("New feedback requires"));
+    expect(rendered).toContain(custom);
+    expect(rendered).toContain("**Goal ID:** goal-custom-owner");
+    expect(rendered).toContain("Customers can install the verified release.");
+    expect(rendered).toContain("Include rollback evidence in the result proposal.");
+    expect(rendered).toContain("A human must accept every terminal Goal result.");
   });
 
   it("gives reviewer context precedence over stale assignee wake reasons", () => {

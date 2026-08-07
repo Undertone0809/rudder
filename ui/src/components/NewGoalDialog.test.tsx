@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, type ReactNode } from "react";
+import { act, forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentsApi } from "../api/agents";
@@ -26,17 +26,55 @@ vi.mock("../context/OrganizationContext", () => ({
 }));
 vi.mock("./AssigneeLabel", () => ({ AgentMenuLabel: ({ agent }: { agent: { name: string } }) => <span>{agent.name}</span> }));
 vi.mock("./InlineEntitySelector", () => ({
-  InlineEntitySelector: ({ value, options, ariaLabel, onChange }: {
+  InlineEntitySelector: ({ value, options, ariaLabel, onChange, disablePortal }: {
     value: string;
     options: Array<{ id: string; label: string }>;
     ariaLabel: string;
     onChange: (id: string) => void;
-  }) => <button type="button" aria-label={ariaLabel} onClick={() => onChange(options[0]?.id ?? "")}>{options.find((option) => option.id === value)?.label ?? "No assignee"}</button>,
+    disablePortal?: boolean;
+  }) => <button
+    type="button"
+    aria-label={ariaLabel}
+    data-disable-portal={disablePortal ? "true" : "false"}
+    onClick={() => {
+      const currentIndex = options.findIndex((option) => option.id === value);
+      onChange(options[(currentIndex + 1) % options.length]?.id ?? "");
+    }}
+  >{options.find((option) => option.id === value)?.label ?? "No assignee"}</button>,
+}));
+vi.mock("./MarkdownEditor", () => ({
+  MarkdownEditor: forwardRef(function MarkdownEditorMock({
+    value,
+    onChange,
+    ariaLabel,
+    documentIdentity,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    ariaLabel?: string;
+    documentIdentity: string;
+  }, ref) {
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    useImperativeHandle(ref, () => ({
+      focus: () => inputRef.current?.focus(),
+      insertTextAtSelection: () => false,
+    }));
+    return (
+      <textarea
+        ref={inputRef}
+        aria-label={ariaLabel}
+        data-document-identity={documentIdentity}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    );
+  }),
 }));
 vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn() } }));
 vi.mock("../api/goals", () => ({ goalsApi: { previewStart: vi.fn(), start: vi.fn(), create: vi.fn(), update: vi.fn() } }));
 
 const agent = { id: "agent-1", name: "Workspace owner", title: "Operator", role: "engineer", status: "idle" };
+const alternateAgent = { id: "agent-2", name: "Verification owner", title: "Reviewer", role: "engineer", status: "idle" };
 const validPreview = {
   valid: true,
   packetHash: "a".repeat(64),
@@ -96,7 +134,7 @@ function button(label: string) {
 }
 
 beforeEach(() => {
-  vi.mocked(agentsApi.list).mockResolvedValue([agent] as never);
+  vi.mocked(agentsApi.list).mockResolvedValue([agent, alternateAgent] as never);
   vi.mocked(goalsApi.previewStart).mockResolvedValue(validPreview as never);
   vi.mocked(goalsApi.start).mockResolvedValue({ id: "goal-1" } as never);
   vi.mocked(goalsApi.create).mockResolvedValue({ id: "draft-1" } as never);
@@ -116,6 +154,15 @@ afterEach(() => {
 });
 
 describe("NewGoalDialog", () => {
+  it("changes the Markdown document identity between create sessions", () => {
+    renderDialog();
+    const firstIdentity = field("Context").dataset.documentIdentity;
+
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click());
+
+    expect(field("Context").dataset.documentIdentity).not.toBe(firstIdentity);
+  });
+
   it("previews and starts without internal Contract fields, retaining the request key on retry", async () => {
     vi.mocked(goalsApi.start).mockRejectedValueOnce(new Error("The response was lost")).mockResolvedValueOnce({ id: "goal-1" } as never);
     const container = renderDialog();
@@ -147,10 +194,70 @@ describe("NewGoalDialog", () => {
     expect(randomUUID).toHaveBeenCalledTimes(1);
   });
 
+  it("does not start from a stale preview after assignee and target time change", async () => {
+    const updatedPreview = {
+      ...validPreview,
+      packetHash: "b".repeat(64),
+      packet: {
+        ...validPreview.packet,
+        ownerAgentId: "agent-2",
+        targetTime: new Date("2026-08-25T14:30").toISOString(),
+      },
+      review: { ...validPreview.review, owner: "Verification owner" },
+    };
+    vi.mocked(goalsApi.previewStart).mockImplementation(async (_orgId, input) => (
+      input.ownerAgentId === "agent-2" ? updatedPreview : validPreview
+    ) as never);
+    const container = renderDialog();
+    change(field("Goal"), "Ship Goal Workspace");
+    await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
+
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
+    change(field("Target time"), "2026-08-25T14:30");
+
+    expect(button("Create and start")?.disabled).toBe(true);
+    act(() => button("Create and start")?.click());
+    expect(goalsApi.start).not.toHaveBeenCalled();
+
+    await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
+    act(() => button("Create and start")?.click());
+    await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
+
+    expect(goalsApi.previewStart).toHaveBeenLastCalledWith("org-1", expect.objectContaining({
+      ownerAgentId: "agent-2",
+      targetTime: new Date("2026-08-25T14:30").toISOString(),
+    }));
+    expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({
+      packetHash: updatedPreview.packetHash,
+      packet: updatedPreview.packet,
+    }));
+    expect(container.querySelector("[role=alert]")).toBeNull();
+  });
+
+  it("keeps the eligible Goal-owner menu portaled and excludes invalid defaults", async () => {
+    const pendingAgent = { id: "agent-pending", name: "Pending owner", title: null, role: "engineer", status: "pending_approval" };
+    const terminatedAgent = { id: "agent-terminated", name: "Terminated owner", title: null, role: "engineer", status: "terminated" };
+    newGoalDefaults = { ownerAgentId: pendingAgent.id };
+    vi.mocked(agentsApi.list).mockResolvedValue([pendingAgent, terminatedAgent, agent, alternateAgent] as never);
+
+    const container = renderDialog();
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe(agent.name));
+    const assignee = container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')!;
+
+    expect(assignee.dataset.disablePortal).toBe("false");
+    act(() => assignee.click());
+    expect(assignee.textContent).toBe(alternateAgent.name);
+    act(() => assignee.click());
+    expect(assignee.textContent).toBe(agent.name);
+    expect(container.textContent).not.toContain(pendingAgent.name);
+    expect(container.textContent).not.toContain(terminatedAgent.name);
+  });
+
   it("saves an invalid preview as a Draft with its alignment question", async () => {
     vi.mocked(goalsApi.previewStart).mockResolvedValue({ valid: false, packetHash: null, packet: null, review: null, alignmentQuestion: "What external result should change?" } as never);
     const container = renderDialog();
     change(field("Goal"), "Explore");
+    change(field("Target time"), "2026-08-20T10:00");
     await waitUntil(() => {
       expect(button("Save draft")).not.toBeNull();
       expect(button("Save draft")?.disabled).toBe(false);
@@ -159,6 +266,8 @@ describe("NewGoalDialog", () => {
     act(() => button("Save draft")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Explore",
+      ownerAgentId: "agent-1",
+      targetTime: new Date("2026-08-20T10:00").toISOString(),
       alignmentQuestion: "What external result should change?",
     })));
     expect(goalsApi.start).not.toHaveBeenCalled();
@@ -189,6 +298,7 @@ describe("NewGoalDialog", () => {
       title: "Continue the Goal alignment",
       context: "Clarify the external result before work starts.",
       ownerAgentId: "agent-1",
+      targetTime: "2026-08-20T10:00",
     };
     const container = renderDialog();
     await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
@@ -197,5 +307,35 @@ describe("NewGoalDialog", () => {
     expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({ draftGoalId: "draft-1" }));
     expect(goalsApi.create).not.toHaveBeenCalled();
     expect(goalsApi.update).not.toHaveBeenCalled();
+  });
+
+  it("persists changed assignee and target time when an existing Draft still needs alignment", async () => {
+    newGoalDefaults = {
+      draftId: "draft-1",
+      title: "Explore the release path",
+      context: "Keep the draft while the outcome is clarified.",
+      ownerAgentId: "agent-1",
+      targetTime: "2026-08-20T10:00",
+    };
+    vi.mocked(goalsApi.previewStart).mockResolvedValue({
+      valid: false,
+      packetHash: null,
+      packet: null,
+      review: null,
+      alignmentQuestion: "What external result should change?",
+    } as never);
+    renderDialog();
+
+    await waitUntil(() => expect(button("Save draft")?.disabled).toBe(false));
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
+    change(field("Target time"), "2026-08-25T14:30");
+    await waitUntil(() => expect(button("Save draft")?.disabled).toBe(false));
+    act(() => button("Save draft")?.click());
+
+    await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("draft-1", expect.objectContaining({
+      ownerAgentId: "agent-2",
+      targetTime: new Date("2026-08-25T14:30").toISOString(),
+      alignmentQuestion: "What external result should change?",
+    })));
   });
 });

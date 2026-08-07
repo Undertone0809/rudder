@@ -7,6 +7,7 @@ import {
   agents,
   agentTaskSessions,
   agentWakeupRequests,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -47,7 +48,7 @@ import { workspaceOperationService } from "../workspace-operations.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
-import type { SessionCompactionDecision, UsageTotals } from "./heartbeat.core.js";
+import type { SessionCompactionDecision, UsageTotals, WakeupOptions } from "./heartbeat.core.js";
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
@@ -103,6 +104,7 @@ export function heartbeatService(
   db: Db,
   testHooks?: {
     afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
+    beforeRunClaim?: (run: typeof heartbeatRuns.$inferSelect) => Promise<void> | void;
   },
 ) {
   const instanceSettings = instanceSettingsService(db);
@@ -948,6 +950,42 @@ export function heartbeatService(
       if (!currentRun || currentRun.status !== "queued") return null;
 
       const currentContext = parseObject(currentRun.contextSnapshot);
+      const goalContext = parseObject(currentContext.goal);
+      const goalId = readNonEmptyString(currentContext.goalId) ?? readNonEmptyString(goalContext.id);
+      const wakeReason = readNonEmptyString(currentContext.wakeReason) ?? readNonEmptyString(wakeup?.reason);
+      if (
+        currentRun.wakeupRequestId
+        && goalId
+        && wakeReason
+        && ["goal_started", "goal_feedback", "goal_change_decided"].includes(wakeReason)
+      ) {
+        await tx.execute(sql`select id from organizations where id = ${currentRun.orgId} for update`);
+        const focusedGoal = await tx.select({ id: goals.id }).from(goals).where(and(
+          eq(goals.orgId, currentRun.orgId),
+          eq(goals.lifecycle, "active"),
+          eq(goals.focus, true),
+        )).limit(1).then((rows) => rows[0] ?? null);
+        if (focusedGoal && focusedGoal.id !== goalId) {
+          const deferred = await tx.update(agentWakeupRequests).set({
+            status: "deferred_goal_focus",
+            runId: null,
+            claimedAt: null,
+            finishedAt: null,
+            error: "goal.focused_elsewhere",
+            updatedAt: new Date(),
+          }).where(and(
+            eq(agentWakeupRequests.id, currentRun.wakeupRequestId),
+            eq(agentWakeupRequests.runId, currentRun.id),
+            eq(agentWakeupRequests.status, "queued"),
+          )).returning().then((rows) => rows[0] ?? null);
+          if (!deferred) return null;
+          await tx.delete(heartbeatRuns).where(and(
+            eq(heartbeatRuns.id, currentRun.id),
+            eq(heartbeatRuns.status, "queued"),
+          ));
+          return null;
+        }
+      }
       const currentTaskKey = deriveTaskKey(currentContext, null);
       const resetTaskSession = shouldResetTaskSessionForWake(currentContext);
       const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
@@ -1710,6 +1748,7 @@ export function heartbeatService(
         activeRunExecutions.add(queuedRun.id);
         runAbortControllers.set(queuedRun.id, new AbortController());
         try {
+          await testHooks?.beforeRunClaim?.(queuedRun);
           const claimed = await claimQueuedRun(queuedRun);
           if (claimed) {
             claimedRuns.push(claimed);
@@ -1756,6 +1795,74 @@ export function heartbeatService(
   const { releaseIssueExecutionAndPromote } = releaseHandlers;
   const { executeRun } = executeHandlers;
   const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
+
+  async function resumePendingWakeupRequests(opts: { orgId?: string; startImmediately?: boolean } = {}) {
+    const pendingWakeups = await db.select().from(agentWakeupRequests).where(and(
+      opts.orgId ? eq(agentWakeupRequests.orgId, opts.orgId) : undefined,
+      inArray(agentWakeupRequests.status, [
+        "queued",
+        "deferred_agent_paused",
+        "deferred_goal_focus",
+        "deferred_goal_blocked",
+      ]),
+      sql`${agentWakeupRequests.runId} is null`,
+      lte(agentWakeupRequests.requestedAt, new Date()),
+    )).orderBy(asc(agentWakeupRequests.requestedAt)).limit(100);
+    let resumed = 0;
+    let deferred = 0;
+    let terminalized = 0;
+
+    for (const pending of pendingWakeups) {
+      const source = ["timer", "assignment", "review", "on_demand", "automation"].includes(pending.source)
+        ? pending.source as WakeupOptions["source"]
+        : "on_demand";
+      const triggerDetail = pending.triggerDetail
+        && ["manual", "ping", "callback", "system"].includes(pending.triggerDetail)
+        ? pending.triggerDetail as WakeupOptions["triggerDetail"]
+        : undefined;
+      const requestedByActorType = pending.requestedByActorType
+        && ["user", "agent", "system"].includes(pending.requestedByActorType)
+        ? pending.requestedByActorType as WakeupOptions["requestedByActorType"]
+        : undefined;
+      try {
+        const run = await enqueueWakeup(pending.agentId, {
+          existingWakeupRequestId: pending.id,
+          source,
+          triggerDetail,
+          reason: pending.reason,
+          payload: readDeferredWakePayload(pending.payload),
+          contextSnapshot: readDeferredWakeContext(pending.payload),
+          requestedByActorType,
+          requestedByActorId: pending.requestedByActorId,
+          idempotencyKey: pending.idempotencyKey,
+          startImmediately: opts.startImmediately,
+        });
+        if (run) resumed += 1;
+        else deferred += 1;
+      } catch (error) {
+        const current = await db.select({ status: agentWakeupRequests.status })
+          .from(agentWakeupRequests)
+          .where(eq(agentWakeupRequests.id, pending.id))
+          .then((rows) => rows[0] ?? null);
+        if (current && [
+          "queued",
+          "deferred_agent_paused",
+          "deferred_goal_focus",
+          "deferred_goal_blocked",
+        ].includes(current.status)) {
+          await setWakeupStatus(pending.id, "failed", {
+            finishedAt: new Date(),
+            error: error instanceof Error ? error.message : String(error),
+            runId: null,
+            claimedAt: null,
+          });
+        }
+        terminalized += 1;
+      }
+    }
+    return { checked: pendingWakeups.length, resumed, deferred, terminalized };
+  }
+
   return {
     overview: async (orgId: string) => {
       const [latestRows, recentRows] = await Promise.all([
@@ -2031,6 +2138,7 @@ export function heartbeatService(
 
     reapTimedOutRuns,
 
+    resumePendingWakeupRequests,
     resumeQueuedRuns,
 
     tickTimers: async (now = new Date()) => {

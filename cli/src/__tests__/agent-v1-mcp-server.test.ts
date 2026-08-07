@@ -35,6 +35,20 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
   rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder-docs"] },
   rudder_agent_skills_sync: { desiredSkills: "rudder/rudder-docs" },
+  rudder_goal_progress: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    summary: "Verified the external result.",
+    evidenceRefs: ["artifact://goal/progress"],
+    idempotencyKey: "goal-progress-1",
+  },
+  rudder_goal_result_propose: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    contractRevision: 1,
+    criteria: [{ id: "criterion-1", status: "met" }],
+    evidenceRefs: ["artifact://goal/result"],
+    riskSummary: "No known gap.",
+    idempotencyKey: "goal-result-1",
+  },
   rudder_issue_get: { issue: "ZST-123" },
   rudder_issue_list: { status: "todo,in_progress" },
   rudder_issue_search: { query: "checkout" },
@@ -1002,6 +1016,38 @@ describe("agent-v1 MCP server", () => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.endsWith("/api/goals/goal-1/activities")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          summary: "Verified the Goal result.",
+          activityKind: "progress",
+          evidenceRefs: ["artifact://goal/progress"],
+          idempotencyKey: "goal-progress-1",
+        });
+        return new Response(JSON.stringify({ id: "activity-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/goals/goal-1/result-proposals")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          contractRevision: 3,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://goal/result"],
+          resultPayload: {},
+          riskSummary: "No known gap.",
+          idempotencyKey: "goal-result-1",
+        });
+        return new Response(JSON.stringify({ id: "proposal-1", status: "ready" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
       throw new Error(`Unexpected fetch ${url}`);
     });
 
@@ -1029,8 +1075,37 @@ describe("agent-v1 MCP server", () => {
         arguments: { issue: "ISSUE-1", expectedStatuses: "todo,blocked" },
       },
     }, env);
+    const progressResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_progress",
+        arguments: {
+          goal: "goal-1",
+          summary: "Verified the Goal result.",
+          evidenceRefs: ["artifact://goal/progress"],
+          idempotencyKey: "goal-progress-1",
+        },
+      },
+    }, env);
+    const resultResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_result_propose",
+        arguments: {
+          goal: "goal-1",
+          contractRevision: 3,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://goal/result"],
+          riskSummary: "No known gap.",
+          idempotencyKey: "goal-result-1",
+        },
+      },
+    }, env);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(meResponse?.result).toMatchObject({
       isError: false,
       structuredContent: { id: "runtime-agent", ok: true },
@@ -1039,6 +1114,17 @@ describe("agent-v1 MCP server", () => {
       isError: false,
       structuredContent: { id: "ISSUE-1", status: "in_progress" },
     });
+    expect(progressResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "activity-1" },
+    });
+    const resultEnvelope = resultResponse?.result as {
+      isError?: boolean;
+      structuredContent?: Record<string, unknown>;
+    } | undefined;
+    expect(resultEnvelope?.isError, JSON.stringify(resultEnvelope?.structuredContent)).toBe(false);
+    expect(resultEnvelope?.structuredContent).toMatchObject({ id: "proposal-1", status: "ready" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("dispatches run inspection tools directly with CLI-equivalent bounded queries", async () => {

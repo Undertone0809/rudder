@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { appendStderrExcerpt, formatWorkerFailureMessage } from "../services/plugin-worker-manager.js";
+import {
+  appendStderrExcerpt,
+  formatWorkerFailureMessage,
+  isExpectedWorkerStdinShutdownError,
+} from "../services/plugin-worker-manager.js";
 
 describe("plugin-worker-manager stderr failure context", () => {
   it("appends worker stderr context to failure messages", () => {
@@ -39,5 +43,14 @@ describe("plugin-worker-manager stderr failure context", () => {
     expect(excerpt).not.toContain("first line");
     expect(excerpt).not.toContain("second line");
     expect(excerpt.length).toBeLessThanOrEqual(8_000);
+  });
+
+  it("ignores EPIPE only after an intentional worker stop begins", () => {
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const reset = Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+
+    expect(isExpectedWorkerStdinShutdownError(epipe, true)).toBe(true);
+    expect(isExpectedWorkerStdinShutdownError(epipe, false)).toBe(false);
+    expect(isExpectedWorkerStdinShutdownError(reset, true)).toBe(false);
   });
 });

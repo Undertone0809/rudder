@@ -90,6 +90,7 @@ for await (const line of lines) {
     process.exit(3);
   }
   if (request.method === "initialize") {
+    if (mode === "delayed-ok") await new Promise((resolve) => setTimeout(resolve, 3_100));
     const version = mode.startsWith("version") ? "0.4.5" : "0.4.6";
     const hash = mode === "contract" ? "stale-contract" : ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)};
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
@@ -235,6 +236,16 @@ describe("preflightRudderMcpServer", () => {
     expect(result).not.toHaveProperty("browserAvailable");
     expect(result).not.toHaveProperty("contractHash");
   });
+
+  it("allows a loaded development CLI to complete after the old three-second window", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("delayed-ok"),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({ available: true, diagnosticCode: null });
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+  }, 20_000);
 
   it("accepts the recursive schema dialect emitted by the canonical registry", async () => {
     const result = await preflightRudderMcpServer({

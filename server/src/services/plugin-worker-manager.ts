@@ -629,6 +629,14 @@ export function createPluginWorkerHandle(
   }
 
   function attachStdioHandlers(child: ChildProcess): void {
+    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      if (isExpectedWorkerStdinShutdownError(err, intentionalStop)) {
+        log.debug({ code: err.code }, "worker stdin closed during intentional stop");
+        return;
+      }
+      log.error({ err: err.message, code: err.code }, "worker stdin error");
+    });
+
     // Read NDJSON from stdout
     if (child.stdout) {
       readline = createInterface({ input: child.stdout });
@@ -1167,6 +1175,13 @@ export function createPluginWorkerHandle(
   };
 
   return handle;
+}
+
+export function isExpectedWorkerStdinShutdownError(
+  error: NodeJS.ErrnoException,
+  intentionalStop: boolean,
+): boolean {
+  return intentionalStop && error.code === "EPIPE";
 }
 
 // ---------------------------------------------------------------------------

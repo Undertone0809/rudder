@@ -1,4 +1,4 @@
-import { agents, calendarEvents, goalActivities, goalOwnerAssignments, goalPlans, goals, heartbeatRuns } from "@rudderhq/db";
+import { agents, calendarEvents, goalActivities, goalChangeProposals, goalOwnerAssignments, goalPlans, goalResultProposals, goals, heartbeatRuns } from "@rudderhq/db";
 import {
   activateGoalSchema,
   createGoalActivitySchema,
@@ -75,9 +75,20 @@ function createGoalDb(initialGoal = makeGoal()) {
       makePreviewOwner(),
       makePreviewOwner({ id: OTHER_ORG_OWNER_ID, orgId: OTHER_ORG_ID }),
     ],
-    runs: [{ id: RUN_ID, orgId: ORG_ID, status: "running" }],
+    runs: [{
+      id: RUN_ID,
+      orgId: ORG_ID,
+      status: "running",
+      contextSnapshot: { goalId: GOAL_ID },
+      resultJson: null,
+      resultSummaryJson: null,
+      error: null,
+      updatedAt: new Date("2026-08-04T00:01:00.000Z"),
+    }],
     calendarEvents: [] as Array<Record<string, unknown>>,
     activities: [] as Array<Record<string, unknown>>,
+    changeProposals: [] as Array<Record<string, unknown>>,
+    resultProposals: [] as Array<Record<string, unknown>>,
     ownerAssignments: [] as Array<Record<string, unknown>>,
     plans: [] as Array<Record<string, unknown>>,
     selectedGoalId: initialGoal.id,
@@ -103,6 +114,9 @@ function createGoalDb(initialGoal = makeGoal()) {
         return builder;
       },
       limit() {
+        return builder;
+      },
+      for() {
         return builder;
       },
       then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
@@ -131,6 +145,10 @@ function createGoalDb(initialGoal = makeGoal()) {
           } else {
             rows = state.activities;
           }
+        } else if (table === goalChangeProposals) {
+          rows = state.changeProposals;
+        } else if (table === goalResultProposals) {
+          rows = state.resultProposals;
         }
         return Promise.resolve(rows).then(resolve, reject);
       },
@@ -220,6 +238,7 @@ function createGoalDb(initialGoal = makeGoal()) {
     select: () => selectBuilder(),
     insert: (table: unknown) => insertBuilder(table),
     update: (table: unknown) => updateBuilder(table),
+    execute: async () => [],
     transaction: async (callback: (tx: any) => unknown) => callback(db),
   };
   return { db, state };
@@ -280,6 +299,18 @@ describe("Goal contract", () => {
       expect(preview.packet?.activation.objectiveMode).toBe(objectiveMode);
       expect(preview.packet?.activation.criteria[0]?.evaluator).toBe(evaluator);
     }
+  });
+
+  it("accepts a clear desired state without requiring command-style wording", () => {
+    const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+      title: "Customers renew without manual support",
+      context: null,
+      ownerAgentId: OWNER_ID,
+      targetTime: null,
+    }), makePreviewOwner());
+
+    expect(preview.valid).toBe(true);
+    expect(preview.packet?.activation.outcomeStatement).toBe("Customers renew without manual support");
   });
 
   it("rejects an available same-organization Agent whose capabilities do not cover the Goal", () => {
@@ -469,7 +500,13 @@ describe("Goal contract", () => {
   it("does not expose legacy lifecycle fields through Goal updates", () => {
     expect(updateGoalSchema.parse({ title: "Renamed Goal" })).toEqual({ title: "Renamed Goal" });
     expect(() => updateGoalSchema.parse({ status: "achieved" })).toThrow();
-    expect(() => updateGoalSchema.parse({ ownerAgentId: OWNER_ID })).toThrow();
+    expect(updateGoalSchema.parse({
+      ownerAgentId: OWNER_ID,
+      targetTime: "2026-08-20T10:00:00.000Z",
+    })).toEqual({
+      ownerAgentId: OWNER_ID,
+      targetTime: new Date("2026-08-20T10:00:00.000Z"),
+    });
   });
 
   it("rejects an Owner from another organization", async () => {
@@ -504,6 +541,33 @@ describe("Goal contract", () => {
       continuationSummary: null,
     }));
     await expect(goalService(incomplete.db).evaluate(GOAL_ID, evaluationInput({ criteria: [{ id: "result", status: "met" }] }))).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("keeps closed Goals immutable and suppresses stale History attention", async () => {
+    const { db, state } = createGoalDb(makeGoal({
+      lifecycle: "closed",
+      status: "achieved",
+      ownerAgentId: OWNER_ID,
+      planRevision: 1,
+    }));
+    state.changeProposals.push({
+      id: "stale-change-proposal",
+      goalId: GOAL_ID,
+      status: "pending",
+      rationale: "This obsolete decision must not appear in History.",
+      createdAt: new Date("2026-08-03T00:00:00.000Z"),
+    });
+    const svc = goalService(db);
+
+    await expect(svc.update(GOAL_ID, {
+      title: "Rewrite an accepted result",
+      description: "This must remain immutable.",
+    })).rejects.toMatchObject({ status: 409 });
+    expect(state.goals[0]!.title).toBe("Ship the verified result");
+
+    const [card] = await svc.workspaceCards(ORG_ID);
+    expect(card?.facet).toBe("closed");
+    expect(card?.attentionReason).toBeNull();
   });
 
   it("makes activity submission idempotent and requires a terminal Run for closeout", async () => {
@@ -576,6 +640,19 @@ describe("Goal contract", () => {
     const retry = await svc.createActivity(GOAL_ID, payload);
     expect(retry?.id).toBe(first?.id);
     expect(state.activities).toHaveLength(1);
+  });
+
+  it("rejects Activity attribution to a Run linked to another Goal", async () => {
+    const { db, state } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
+    state.runs[0]!.contextSnapshot = { goalId: SECOND_GOAL_ID };
+
+    await expect(goalService(db).createActivity(GOAL_ID, {
+      summary: "Progress from another Goal must stay isolated",
+      activityKind: "progress",
+      runRef: RUN_ID,
+      evidenceRefs: ["artifact://other-goal/progress"],
+    }, OWNER_ID)).rejects.toMatchObject({ status: 422 });
+    expect(state.activities).toHaveLength(0);
   });
 
   it("blocks deletion when a live Calendar event still references the Goal", async () => {

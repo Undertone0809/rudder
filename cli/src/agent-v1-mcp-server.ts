@@ -5,7 +5,12 @@ import {
   rudderMcpSemanticToolContract,
 } from "@rudderhq/agent-runtime-utils";
 import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
-import { addIssueCommentSchema, checkoutIssueSchema } from "@rudderhq/shared";
+import {
+  addIssueCommentSchema,
+  checkoutIssueSchema,
+  createGoalActivitySchema,
+  createGoalResultProposalSchema,
+} from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -89,6 +94,8 @@ const LEGACY_ARGUMENT_ALIASES: Record<string, Record<string, string>> = {
     selections: "selectionRefs",
     skills: "selectionRefs",
   },
+  "goal.progress": { goalId: "goal" },
+  "goal.result.propose": { goalId: "goal" },
   "issue.get": { issueId: "issue" },
   "issue.context": { issueId: "issue" },
   "issue.checkout": { issueId: "issue" },
@@ -508,6 +515,35 @@ async function callToolDirectlyIfSupported(
       return success(await api.get("/api/agents/me"));
     case "agent.inbox":
       return success(await api.get("/api/agents/me/inbox-lite"));
+    case "goal.progress": {
+      const payload = createGoalActivitySchema.parse({
+        summary: requiredString(input, "summary"),
+        activityKind: optionalString(input.activityKind) ?? "progress",
+        evidenceRefs: input.evidenceRefs,
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/activities`,
+        payload,
+      ));
+    }
+    case "goal.result.propose": {
+      const decision = optionalString(input.decision);
+      const payload = createGoalResultProposalSchema.parse({
+        contractRevision: input.contractRevision,
+        criteria: input.criteria,
+        evidenceRefs: input.evidenceRefs,
+        resultValue: input.resultValue,
+        ...(decision ? { decision } : {}),
+        resultPayload: input.resultPayload,
+        riskSummary: requiredString(input, "riskSummary"),
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/result-proposals`,
+        payload,
+      ));
+    }
     case "issue.get":
       return success(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
     case "issue.context": {
@@ -874,6 +910,43 @@ function cliArgsForCapability(
       const args = ["agent", "skills", "sync"];
       pushRuntimeAgentArg(args, input, env, true);
       pushOptional(args, "--desired-skills", input.desiredSkills);
+      return args;
+    }
+    case "goal.progress": {
+      const args = [
+        "goal",
+        "progress",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--summary",
+        requiredString(input, "summary"),
+        "--evidence-refs",
+        JSON.stringify(input.evidenceRefs),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      pushOptional(args, "--activity-kind", input.activityKind);
+      return args;
+    }
+    case "goal.result.propose": {
+      const args = [
+        "goal",
+        "result",
+        "propose",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--contract-revision",
+        String(input.contractRevision),
+        "--criteria",
+        JSON.stringify(input.criteria),
+        "--evidence-refs",
+        JSON.stringify(input.evidenceRefs),
+        "--risk-summary",
+        requiredString(input, "riskSummary"),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      if (input.resultValue !== undefined) args.push("--result-value", JSON.stringify(input.resultValue));
+      pushOptional(args, "--decision", input.decision);
+      if (input.resultPayload !== undefined) args.push("--result-payload", JSON.stringify(input.resultPayload));
       return args;
     }
     case "issue.get":

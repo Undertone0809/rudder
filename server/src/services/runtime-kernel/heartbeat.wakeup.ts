@@ -2,6 +2,7 @@
 import {
   agents,
   agentWakeupRequests,
+  goals,
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
@@ -40,6 +41,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
       triggerDetail,
       payload,
     });
+    const goalContext = enrichedContextSnapshot.goal && typeof enrichedContextSnapshot.goal === "object"
+      ? enrichedContextSnapshot.goal as Record<string, unknown>
+      : null;
+    const goalId = readNonEmptyString(enrichedContextSnapshot.goalId)
+      ?? readNonEmptyString(goalContext?.id)
+      ?? readNonEmptyString(payload?.goalId);
+    const isGoalWake = Boolean(
+      existingWakeupRequestId
+      && goalId
+      && ["goal_started", "goal_feedback", "goal_change_decided"].includes(reason ?? ""),
+    );
     heartbeatSessions.writeSessionReuseSuppression(
       enrichedContextSnapshot,
       heartbeatSessions.readSessionReuseSuppression(enrichedContextSnapshot),
@@ -199,7 +211,37 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }).onConflictDoNothing();
     };
 
+    const deferGoalRequest = async (
+      status: "deferred_goal_focus" | "deferred_goal_blocked",
+      blockReason: string,
+    ) => {
+      if (!isGoalWake || !existingWakeupRequestId) return false;
+      await setWakeupStatus(existingWakeupRequestId, status, {
+        reason,
+        payload: buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId),
+        finishedAt: null,
+        runId: null,
+        claimedAt: null,
+        error: blockReason,
+      });
+      return true;
+    };
+
+    if (isGoalWake && goalId) {
+      const focusedGoal = await db.select({ id: goals.id }).from(goals).where(and(
+        eq(goals.orgId, agent.orgId),
+        eq(goals.lifecycle, "active"),
+        eq(goals.focus, true),
+      )).limit(1).then((rows) => rows[0] ?? null);
+      if (focusedGoal && focusedGoal.id !== goalId) {
+        await deferGoalRequest("deferred_goal_focus", "goal.focused_elsewhere");
+        return null;
+      }
+    }
+
     if (agent.status === "terminated" || agent.status === "pending_approval") {
+      if (await deferGoalRequest("deferred_goal_blocked", "agent.unavailable")) return null;
+      if (existingWakeupRequestId) await writeSkippedRequest("agent.unavailable");
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
     }
 
@@ -217,6 +259,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       projectId,
     });
     if (budgetBlock) {
+      if (await deferGoalRequest("deferred_goal_blocked", "budget.blocked")) return null;
       await writeSkippedRequest("budget.blocked");
       throw conflict(budgetBlock.reason, {
         scopeType: budgetBlock.scopeType,
@@ -302,6 +345,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return null;
     }
     if (source !== "timer" && !policy.wakeOnDemand) {
+      if (await deferGoalRequest("deferred_goal_blocked", "heartbeat.wakeOnDemand.disabled")) return null;
       await writeSkippedRequest("heartbeat.wakeOnDemand.disabled");
       return null;
     }

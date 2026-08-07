@@ -1,17 +1,26 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import type { GoalDependencies, GoalWorkspaceFacet, Issue, Project } from "@rudderhq/shared";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
+import {
+  parseLibraryEntryMentionHref,
+  parseLibraryFileMentionHref,
+  type GoalDependencies,
+  type GoalWorkspaceFacet,
+  type Issue,
+  type Project,
+} from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Check,
   CircleDot,
   Clock3,
+  ExternalLink,
   FileCheck2,
   Focus,
   History,
   MessageSquareText,
+  Paperclip,
   Pencil,
   ShieldCheck,
   Sparkles,
@@ -19,12 +28,14 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { agentsApi } from "../api/agents";
+import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { InlineEditor } from "../components/InlineEditor";
+import { MarkdownBody } from "../components/MarkdownBody";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -32,7 +43,9 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
+import { toDateTimeLocalValue } from "../lib/datetime-local";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
+import { findOrganizationByPrefix, getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDate, issueUrl, projectUrl } from "../lib/utils";
 
@@ -43,6 +56,15 @@ type TimelineView = {
   createdAt: Date | string | null;
   evidenceRefs: string[];
   actorName: string | null;
+  actorType: string | null;
+  actorId: string | null;
+  status: string | null;
+  attachments: Array<{
+    name: string;
+    mimeType: string | null;
+    size: number | null;
+    contentPath: string | null;
+  }>;
 };
 
 type ChangeProposalView = {
@@ -59,9 +81,28 @@ type ResultProposalView = {
   id: string;
   status: string;
   outcome: string;
+  outcomeKind: string;
   risks: string | null;
-  evidenceRefs: string[];
+  criteria: Array<{
+    label: string;
+    status: "met" | "unmet" | "breached" | "unknown";
+    statusLabel: string;
+  }>;
+  evidenceCheck: string;
+  evidence: EvidenceItem[];
   gaps: string[];
+};
+
+type EvidenceItem = {
+  label: string;
+  href: string | null;
+  external: boolean;
+};
+
+type EvidenceContext = {
+  issues: Issue[];
+  projects: Project[];
+  runAgentId: string | null;
 };
 
 type PendingFeedback = {
@@ -74,10 +115,23 @@ type PendingFeedback = {
 };
 
 type ResultDecisionInput = {
+  goalId: string;
   id: string;
   decision: "accept" | "reject";
   feedback?: string;
   idempotencyKey: string;
+};
+
+type DecisionFocusRequest = {
+  goalId: string;
+  kind: "change" | "result";
+  id: string;
+};
+
+type ChangeDecisionInput = {
+  goalId: string;
+  id: string;
+  decision: "approve" | "reject";
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -100,6 +154,150 @@ function readStringArray(value: unknown) {
     : [];
 }
 
+const criterionStatusLabels = {
+  met: "Met",
+  unmet: "Not met",
+  breached: "Breached",
+  unknown: "Not verified",
+} as const;
+
+function readCriterionStatus(value: unknown): keyof typeof criterionStatusLabels {
+  return value === "met" || value === "unmet" || value === "breached" || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function parseEvidenceReference(reference: string) {
+  try {
+    const url = new URL(reference);
+    const scheme = url.protocol.replace(/:$/, "").toLowerCase();
+    const hasSimplePath = url.pathname === "" || url.pathname === "/";
+    const entityId = !url.username
+      && !url.password
+      && !url.port
+      && hasSimplePath
+      && /^[a-z0-9][a-z0-9._-]*$/i.test(url.hostname)
+      ? url.hostname
+      : null;
+    return { scheme, entityId, url };
+  } catch {
+    return { scheme: "", entityId: null, url: null };
+  }
+}
+
+function evidenceType(reference: string) {
+  const { scheme } = parseEvidenceReference(reference);
+  if (scheme === "artifact") return "Artifact evidence";
+  if (scheme === "run") return "Agent run evidence";
+  if (scheme === "issue") return "Issue evidence";
+  if (scheme === "project") return "Project evidence";
+  if (scheme === "approval") return "Approval evidence";
+  if (scheme === "decision") return "Decision evidence";
+  if (scheme === "file") return "File evidence";
+  if (scheme === "measurement") return "Measurement evidence";
+  if (scheme === "library-file") return "Library file evidence";
+  if (scheme === "library-entry") return "Library entry evidence";
+  if (scheme === "http" || scheme === "https") return "External link evidence";
+  return "Other evidence";
+}
+
+function evidenceItems(refs: string[], context: EvidenceContext): EvidenceItem[] {
+  return refs.map((reference, index) => {
+    const libraryFile = parseLibraryFileMentionHref(reference);
+    if (libraryFile) {
+      const search = new URLSearchParams({ path: libraryFile.filePath });
+      return {
+        label: `Library file: ${libraryFile.filePath}`,
+        href: `/library?${search.toString()}`,
+        external: false,
+      };
+    }
+    const libraryEntry = parseLibraryEntryMentionHref(reference);
+    if (libraryEntry) {
+      const search = new URLSearchParams({ entry: libraryEntry.entryId });
+      if (libraryEntry.path) search.set("path", libraryEntry.path);
+      return {
+        label: libraryEntry.path
+          ? `Library entry: ${libraryEntry.path}`
+          : `Library entry evidence ${index + 1}`,
+        href: `/library?${search.toString()}`,
+        external: false,
+      };
+    }
+    const { scheme, entityId, url } = parseEvidenceReference(reference);
+    if (scheme === "issue" && entityId) {
+      const issue = context.issues.find((candidate) => candidate.id === entityId);
+      return {
+        label: issue
+          ? `Issue ${issue.identifier ? `${issue.identifier}: ` : ""}${issue.title}`
+          : `Issue evidence ${index + 1}`,
+        href: issueUrl(issue ?? { id: entityId }),
+        external: false,
+      };
+    }
+    if (scheme === "project" && entityId) {
+      const project = context.projects.find((candidate) => candidate.id === entityId);
+      return {
+        label: project ? `Project: ${project.name}` : `Project evidence ${index + 1}`,
+        href: projectUrl(project ?? { id: entityId }),
+        external: false,
+      };
+    }
+    if (scheme === "approval" && entityId) {
+      return {
+        label: `Approval evidence ${index + 1}`,
+        href: `/messenger/approvals/${encodeURIComponent(entityId)}`,
+        external: false,
+      };
+    }
+    if (scheme === "run" && entityId && context.runAgentId) {
+      return {
+        label: `Agent run evidence ${index + 1}`,
+        href: `/agents/${encodeURIComponent(context.runAgentId)}/runs/${encodeURIComponent(entityId)}`,
+        external: false,
+      };
+    }
+    if (scheme === "https" && url && !url.username && !url.password) {
+      return {
+        label: `External link evidence ${index + 1}`,
+        href: url.href,
+        external: true,
+      };
+    }
+    return { label: `${evidenceType(reference)} ${index + 1}`, href: null, external: false };
+  });
+}
+
+function outcomeLabel(outcome: string, preflight: Record<string, unknown>, candidate: Record<string, unknown>) {
+  const resultValue = preflight.resultValue ?? candidate.resultValue;
+  const decision = readString(preflight, "decision") ?? readString(candidate, "decision");
+  if (outcome === "achieved") return "Goal achieved";
+  if (outcome === "not_achieved") return "Goal not achieved";
+  if (outcome === "maintained") return "Goal maintained";
+  if (outcome === "breached") return "Goal condition breached";
+  if (outcome === "completed_with_result") {
+    return typeof resultValue === "string" || typeof resultValue === "number" || typeof resultValue === "boolean"
+      ? `Completed with result: ${String(resultValue)}`
+      : "Completed with a measured result";
+  }
+  if (outcome === "decided") return decision ? `Decision reached: ${decision}` : "Decision reached";
+  return "Result is not conclusive yet";
+}
+
+function evidenceCheck(outcome: string, criteria: Array<{ status: keyof typeof criterionStatusLabels }>) {
+  const unknownCount = criteria.filter((criterion) => criterion.status === "unknown").length;
+  const unknownSuffix = unknownCount > 0
+    ? ` ${unknownCount} ${unknownCount === 1 ? "criterion remains" : "criteria remain"} unverified.`
+    : "";
+  if (outcome === "achieved") return "The submitted evidence supports every success criterion.";
+  if (outcome === "not_achieved") return `The submitted evidence supports closing this Goal as not achieved.${unknownSuffix}`;
+  if (outcome === "maintained") return "The submitted evidence supports every condition that must remain true.";
+  if (outcome === "breached") return `The submitted evidence confirms that a required condition was breached.${unknownSuffix}`;
+  if (outcome === "completed_with_result") return "The submitted evidence supports closing this Goal with the recorded result.";
+  if (outcome === "decided") return "The submitted evidence supports closing this Goal with the recorded decision.";
+  return `The result cannot be verified yet.${unknownSuffix}`;
+}
+
 function summarizeValue(value: unknown) {
   if (typeof value === "string" && value.trim()) return value;
   const record = asRecord(value);
@@ -111,12 +309,38 @@ function summarizeValue(value: unknown) {
     })
     : [];
   const target = readString(record, "evaluationDeadline", "actionDeadline", "targetTime");
+  const boundaryParts = [
+    Object.hasOwn(record, "autonomyEnvelope") ? `Agent working boundaries: ${summarizeAgreement(record.autonomyEnvelope)}` : null,
+    Object.hasOwn(record, "humanAuthorities") ? `Decisions that need you: ${summarizeAgreement(record.humanAuthorities)}` : null,
+    Object.hasOwn(record, "evaluationPolicy") ? `Evidence and acceptance: ${summarizeAgreement(record.evaluationPolicy)}` : null,
+  ];
   const parts = [
     direct ? `Outcome: ${direct}` : null,
     labels.length > 0 ? `Success: ${labels.join("; ")}` : null,
     target ? `Target time: ${target}` : null,
+    ...boundaryParts,
   ].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join("\n") : Object.keys(record).length === 0 ? "Not provided" : "The Goal direction would change.";
+}
+
+function summarizeAgreement(value: unknown): string {
+  if (value === null || value === undefined) return "not set";
+  if (typeof value === "boolean") return value ? "required" : "not required";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") {
+    const known: Record<string, string> = {
+      bounded_reversible_work: "bounded, reversible work",
+      external_or_irreversible_action: "external or irreversible actions",
+      authority_expansion: "expanding authority",
+      board_human: "you",
+    };
+    return known[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+  }
+  if (Array.isArray(value)) return value.map(summarizeAgreement).join(", ");
+  return Object.entries(asRecord(value)).map(([key, entry]) => {
+    const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+    return `${label}: ${summarizeAgreement(entry)}`;
+  }).join("; ");
 }
 
 function normalizeTimeline(value: unknown): TimelineView[] {
@@ -127,6 +351,17 @@ function normalizeTimeline(value: unknown): TimelineView[] {
     const summary = readString(record, "summary", "body");
     if (!id || !summary) return [];
     const createdAt = record.createdAt ?? record.occurredAt ?? null;
+    const attachments = Array.isArray(record.attachments) ? record.attachments.flatMap((attachment) => {
+      const attachmentRecord = asRecord(attachment);
+      const name = readString(attachmentRecord, "name");
+      if (!name) return [];
+      return [{
+        name,
+        mimeType: readString(attachmentRecord, "mimeType"),
+        size: typeof attachmentRecord.size === "number" && attachmentRecord.size >= 0 ? attachmentRecord.size : null,
+        contentPath: readString(attachmentRecord, "contentPath"),
+      }];
+    }) : [];
     return [{
       id,
       kind: readString(record, "kind", "activityKind", "feedbackKind") ?? "update",
@@ -134,6 +369,10 @@ function normalizeTimeline(value: unknown): TimelineView[] {
       createdAt: typeof createdAt === "string" || createdAt instanceof Date ? createdAt : null,
       evidenceRefs: readStringArray(record.evidenceRefs),
       actorName: readString(record, "actorName", "submittedByName"),
+      actorType: readString(record, "actorType"),
+      actorId: readString(record, "actorId"),
+      status: readString(record, "status"),
+      attachments,
     }];
   });
 }
@@ -144,11 +383,18 @@ function normalizeChangeProposals(value: unknown): ChangeProposalView[] {
     const record = asRecord(item);
     const id = readString(record, "id");
     if (!id) return [];
+    const beforeValue = record.beforeSummary ?? record.before ?? record.beforeSnapshot ?? record.beforeContract;
+    const afterValue = record.afterSummary ?? record.after ?? record.afterContract ?? record.afterPatch;
+    const afterRecord = asRecord(afterValue);
+    const beforeRecord = asRecord(beforeValue);
+    const matchingBefore = Object.keys(afterRecord).length > 0
+      ? Object.fromEntries(Object.keys(afterRecord).map((key) => [key, beforeRecord[key]]))
+      : beforeValue;
     return [{
       id,
       status: readString(record, "status") ?? "pending",
-      before: summarizeValue(record.beforeSummary ?? record.before ?? record.beforeSnapshot ?? record.beforeContract),
-      after: summarizeValue(record.afterSummary ?? record.after ?? record.afterContract ?? record.afterPatch),
+      before: summarizeValue(matchingBefore),
+      after: summarizeValue(afterValue),
       rationale: readString(record, "rationale", "reason"),
       impact: readString(record, "impact", "impactSummary"),
       evidenceRefs: readStringArray(record.evidenceRefs),
@@ -156,38 +402,63 @@ function normalizeChangeProposals(value: unknown): ChangeProposalView[] {
   });
 }
 
-function normalizeResultProposals(value: unknown): ResultProposalView[] {
+function normalizeResultProposals(
+  value: unknown,
+  goalCriteria: unknown,
+  context: { issues: Issue[]; projects: Project[]; ownerAgentId: string | null },
+): ResultProposalView[] {
   if (!Array.isArray(value)) return [];
+  const criterionLabels = new Map(
+    (Array.isArray(goalCriteria) ? goalCriteria : []).flatMap((criterion) => {
+      const record = asRecord(criterion);
+      const id = readString(record, "id");
+      const label = readString(record, "label");
+      return id && label ? [[id, label] as const] : [];
+    }),
+  );
   return value.flatMap((item) => {
     const record = asRecord(item);
     const id = readString(record, "id");
     if (!id) return [];
     const preflight = asRecord(record.preflight);
     const candidate = asRecord(record.candidate);
-    const criteria = Array.isArray(preflight.criteria) ? preflight.criteria : [];
-    const gaps = criteria.flatMap((criterion) => {
+    const criteria = (Array.isArray(preflight.criteria) ? preflight.criteria : []).map((criterion, index) => {
       const criterionRecord = asRecord(criterion);
-      const missingEvidence = readStringArray(criterionRecord.missingEvidence);
-      if (missingEvidence.length > 0) return missingEvidence;
-      if (criterionRecord.status === "unknown") {
-        const criterionId = readString(criterionRecord, "id");
-        return criterionId ? [`${criterionId} remains unknown`] : ["A success judgment remains unknown"];
-      }
-      return [];
+      const criterionId = readString(criterionRecord, "id");
+      const status = readCriterionStatus(criterionRecord.status);
+      return {
+        label: criterionId ? criterionLabels.get(criterionId) ?? `Success criterion ${index + 1}` : `Success criterion ${index + 1}`,
+        status,
+        statusLabel: criterionStatusLabels[status],
+        missingEvidence: readStringArray(criterionRecord.missingEvidence),
+      };
     });
+    const gaps = criteria.flatMap((criterion) => {
+      const missingTypes = Array.from(new Set(criterion.missingEvidence.map((reference) => evidenceType(reference).toLowerCase())));
+      if (missingTypes.length > 0) {
+        return [`${criterion.label} still needs ${missingTypes.join(" and ")}.`];
+      }
+      return criterion.status === "unknown" ? [`${criterion.label} is not verified.`] : [];
+    });
+    const outcomeKind = readString(preflight, "outcome") ?? "inconclusive";
+    const evidenceRefs = readStringArray(candidate.evidenceRefs).length > 0
+      ? readStringArray(candidate.evidenceRefs)
+      : readStringArray(preflight.evidenceRefs);
+    const publicCriteria = criteria.map(({ label, status, statusLabel }) => ({ label, status, statusLabel }));
     return [{
       id,
       status: readString(record, "status") ?? "ready",
-      outcome: readString(record, "outcomeSummary", "summary")
-        ?? readString(preflight, "outcome")
-        ?? "The Agent has proposed a terminal result.",
-      risks: readString(record, "riskSummary", "risks"),
-      evidenceRefs: readStringArray(record.evidenceRefs).length > 0
-        ? readStringArray(record.evidenceRefs)
-        : readStringArray(candidate.evidenceRefs),
-      gaps: readStringArray(preflight.gaps ?? record.gaps).length > 0
-        ? readStringArray(preflight.gaps ?? record.gaps)
-        : gaps,
+      outcome: outcomeLabel(outcomeKind, preflight, candidate),
+      outcomeKind,
+      risks: readString(record, "riskSummary"),
+      criteria: publicCriteria,
+      evidenceCheck: evidenceCheck(outcomeKind, publicCriteria),
+      evidence: evidenceItems(evidenceRefs, {
+        issues: context.issues,
+        projects: context.projects,
+        runAgentId: readString(record, "proposedByAgentId") ?? context.ownerAgentId,
+      }),
+      gaps,
     }];
   });
 }
@@ -197,15 +468,17 @@ function Section({
   icon: Icon,
   children,
   id,
+  headingRef,
 }: {
   title: string;
   icon: typeof CircleDot;
   children: ReactNode;
   id?: string;
+  headingRef?: Ref<HTMLHeadingElement>;
 }) {
   return (
     <section id={id} className="min-w-0 space-y-3 border-t border-border pt-4">
-      <h2 className="flex items-center gap-2 text-sm font-semibold">
+      <h2 ref={headingRef} tabIndex={headingRef ? -1 : undefined} className="flex items-center gap-2 rounded-sm text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         {title}
       </h2>
@@ -214,13 +487,131 @@ function Section({
   );
 }
 
-function EvidenceList({ refs }: { refs: string[] }) {
-  if (refs.length === 0) return null;
-  const itemLabel = refs.length === 1 ? "item" : "items";
+function EvidenceItemsList({ items, ariaLabel }: { items: EvidenceItem[]; ariaLabel: string }) {
+  if (items.length === 0) return null;
   return (
-    <div aria-label="Supporting evidence" className="border-l border-border pl-2 text-xs text-muted-foreground">
-      Based on {refs.length} supporting {itemLabel}
+    <div aria-label={ariaLabel} className="mt-2 divide-y divide-border border-y border-border">
+      {items.map((item, index) => {
+        const content = (
+          <>
+            <span className="min-w-0 break-words">{item.label}</span>
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+              Open
+              {item.external ? <ExternalLink className="h-3.5 w-3.5" /> : <ArrowRight className="h-3.5 w-3.5" />}
+            </span>
+          </>
+        );
+        if (item.external && item.href) {
+          return (
+            <a
+              key={`${item.label}:${item.href}:${index}`}
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-w-0 items-center justify-between gap-3 py-2 text-sm hover:bg-accent/35"
+            >
+              {content}
+            </a>
+          );
+        }
+        if (item.href) {
+          return (
+            <Link
+              key={`${item.label}:${item.href}:${index}`}
+              to={item.href}
+              className="flex min-w-0 items-center justify-between gap-3 py-2 text-sm hover:bg-accent/35"
+            >
+              {content}
+            </Link>
+          );
+        }
+        return (
+          <div key={`${item.label}:${index}`} className="flex min-w-0 items-center justify-between gap-3 py-2 text-sm">
+            <span className="min-w-0 break-words">{item.label}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">Unavailable</span>
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+function EvidenceList({ refs, context }: { refs: string[]; context: EvidenceContext }) {
+  return <EvidenceItemsList items={evidenceItems(refs, context)} ariaLabel="Supporting evidence" />;
+}
+
+function AttachmentList({ attachments }: { attachments: TimelineView["attachments"] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <div aria-label="Feedback attachments" className="flex min-w-0 flex-wrap gap-2 pt-1">
+      {attachments.map((attachment, index) => {
+        const content = (
+          <>
+            <Paperclip className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 break-all">{attachment.name}</span>
+          </>
+        );
+        return attachment.contentPath ? (
+          <a
+            key={`${attachment.name}:${index}`}
+            href={attachment.contentPath}
+            className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-foreground underline decoration-border underline-offset-2"
+          >
+            {content}
+          </a>
+        ) : (
+          <span key={`${attachment.name}:${index}`} className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function ResultProposalSummary({ proposal }: { proposal: ResultProposalView }) {
+  return (
+    <>
+      <div className="mt-3 min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">Outcome</div>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm font-medium leading-6">{proposal.outcome}</p>
+      </div>
+      <div className="mt-3 min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">Success criteria</div>
+        <div className="mt-1 divide-y divide-border border-y border-border">
+          {proposal.criteria.map((criterion, index) => (
+            <div key={`${criterion.label}:${index}`} className="flex min-w-0 items-start justify-between gap-3 py-2 text-sm">
+              <span className="min-w-0 whitespace-pre-wrap break-words">{criterion.label}</span>
+              <span className={cn(
+                "shrink-0 text-xs font-medium",
+                criterion.status === "met" && "text-emerald-700 dark:text-emerald-400",
+                (criterion.status === "unmet" || criterion.status === "breached") && "text-destructive",
+                criterion.status === "unknown" && "text-amber-700 dark:text-amber-400",
+              )}>{criterion.statusLabel}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3 min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">Risks and gaps</div>
+        {proposal.risks ? <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{proposal.risks}</p> : null}
+        {proposal.gaps.length > 0 ? (
+          <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+            {proposal.gaps.map((gap) => <li key={gap} className="min-w-0 whitespace-pre-wrap break-words">{gap}</li>)}
+          </ul>
+        ) : null}
+      </div>
+      <div className="mt-3 min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">Evidence check</div>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{proposal.evidenceCheck}</p>
+      </div>
+      <div className="mt-3 min-w-0" aria-label="Result evidence">
+        <div className="text-xs font-medium text-muted-foreground">Evidence</div>
+        {proposal.evidence.length > 0 ? (
+          <EvidenceItemsList items={proposal.evidence} ariaLabel="Inspectable result evidence" />
+        ) : <p className="mt-1 text-xs text-muted-foreground">No supporting references attached.</p>}
+      </div>
+    </>
   );
 }
 
@@ -269,17 +660,45 @@ function DeletionBlockers({ dependencies }: { dependencies: GoalDependencies }) 
 }
 
 function facetLabel(facet: GoalWorkspaceFacet | string) {
+  if (facet === "closed") return "History";
   if (facet === "ready_for_acceptance") return "Ready for acceptance";
   if (facet === "needs_attention" || facet === "needs_your_attention") return "Needs your attention";
+  if (facet === "waiting_focus") return "Waiting for focus";
   if (facet === "waiting_external" || facet === "waiting_for_external_result") return "Waiting for external result";
   return "Agent advancing";
 }
 
+function timelineKindLabel(kind: string) {
+  if (kind === "activity") return "Progress update";
+  if (kind === "feedback") return "Feedback";
+  if (kind === "change_proposal") return "Proposed Goal update";
+  if (kind === "result_proposal") return "Proposed result";
+  if (kind === "work_status") return "Related work";
+  if (kind === "evidence") return "Evidence update";
+  return "Goal update";
+}
+
+function resultProposalHistoryLabel(status: string) {
+  if (status === "accepted") return "Accepted result";
+  if (status === "rejected") return "Result proposal rejected";
+  if (status === "superseded") return "Result proposal superseded";
+  if (status === "inconclusive") return "Result needs more evidence";
+  if (status === "ready") return "Result ready for review";
+  return "Result proposal";
+}
+
+function attentionKindLabel(kind: string) {
+  if (kind === "result_proposal" || kind === "accept") return "Result ready for review";
+  if (kind === "change_proposal" || kind === "approval") return "Goal update needs approval";
+  if (kind === "alignment_question" || kind === "clarification") return "Goal needs clarification";
+  return "Action needed";
+}
+
 export function GoalDetail() {
-  const { goalId } = useParams<{ goalId: string }>();
+  const { goalId, orgPrefix } = useParams<{ goalId: string; orgPrefix?: string }>();
   const location = useLocation();
   const debugMode = new URLSearchParams(location.search).get("goalDebug") === "1";
-  const { selectedOrganizationId, setSelectedOrganizationId } = useOrganization();
+  const { organizations, selectedOrganizationId } = useOrganization();
   const { confirm, openNewGoal, promptText } = useDialog();
   const { closePanel } = usePanel();
   const { pushToast } = useToast();
@@ -287,13 +706,21 @@ export function GoalDetail() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const feedbackRef = useRef<HTMLTextAreaElement>(null);
+  const focusButtonRef = useRef<HTMLButtonElement>(null);
+  const currentGoalHeadingRef = useRef<HTMLHeadingElement>(null);
+  const attentionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const historyFocusRef = useRef<HTMLDivElement>(null);
   const feedbackRequestRef = useRef<{ identity: string; key: string } | null>(null);
   const resultRequestKeysRef = useRef(new Map<string, string>());
-  const proposalRefs = useRef(new Map<string, HTMLElement>());
+  const decisionFocusRequestRef = useRef<DecisionFocusRequest | null>(null);
+  const focusControlRequestRef = useRef<{ goalId: string; focus: boolean } | null>(null);
   const [feedbackBody, setFeedbackBody] = useState("");
   const [pendingFeedback, setPendingFeedback] = useState<PendingFeedback | null>(null);
   const [changeNotes, setChangeNotes] = useState<Record<string, string>>({});
   const [resultFeedback, setResultFeedback] = useState<Record<string, string>>({});
+  const [historyPages, setHistoryPages] = useState<unknown[][]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null | undefined>(undefined);
+  const [historyFocusKey, setHistoryFocusKey] = useState<string | null>(null);
 
   const workspaceQuery = useQuery({
     queryKey: ["goals", "detail", goalId, "workspace"],
@@ -302,7 +729,19 @@ export function GoalDetail() {
   });
   const workspace = workspaceQuery.data;
   const goal = workspace?.goal;
-  const orgId = goal?.orgId ?? selectedOrganizationId;
+  const routeOrganization = findOrganizationByPrefix({ organizations, organizationPrefix: orgPrefix });
+  const routeOrganizationId = routeOrganization?.id ?? selectedOrganizationId;
+  const goalOrganization = goal
+    ? organizations.find((organization) => organization.id === goal.orgId) ?? null
+    : null;
+  const canonicalGoalPath = goal && routeOrganizationId && goal.orgId !== routeOrganizationId && goalOrganization
+    ? `/${getOrganizationRouteKey(goalOrganization)}/goals/${goal.id}${location.search}${location.hash}`
+    : null;
+  const orgId = routeOrganizationId;
+  const sessionQuery = useQuery({
+    queryKey: ["auth", "session"],
+    queryFn: () => authApi.getSession(),
+  });
 
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(orgId!),
@@ -327,17 +766,11 @@ export function GoalDetail() {
 
   useEffect(() => closePanel(), [closePanel]);
   useEffect(() => {
-    if (goal?.orgId && goal.orgId !== selectedOrganizationId) {
-      setSelectedOrganizationId(goal.orgId, { source: "route_sync" });
-    }
-  }, [goal?.orgId, selectedOrganizationId, setSelectedOrganizationId]);
-  useEffect(() => {
     setBreadcrumbs([{ label: "Goals", href: "/goals" }, { label: goal?.title ?? goalId ?? "Goal" }]);
   }, [goal?.title, goalId, setBreadcrumbs]);
 
   const invalidate = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["goals", "detail", goalId, "workspace"] }),
       queryClient.invalidateQueries({ queryKey: queryKeys.goals.detail(goalId!) }),
       orgId ? queryClient.invalidateQueries({ queryKey: queryKeys.goals.list(orgId) }) : Promise.resolve(),
       orgId ? queryClient.invalidateQueries({ queryKey: ["goals", "workspace", orgId] }) : Promise.resolve(),
@@ -355,11 +788,17 @@ export function GoalDetail() {
   });
   const setFocus = useMutation({
     mutationFn: (focus: boolean) => goalsApi.setFocus(goalId!, focus),
+    onMutate: (focus) => {
+      focusControlRequestRef.current = { goalId: goalId!, focus };
+    },
     onSuccess: async () => {
       await invalidate();
       pushToast({ id: "goal-detail-operation", title: "Focus updated", tone: "success" });
     },
-    onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
+    onError: (error: Error) => {
+      focusControlRequestRef.current = null;
+      pushToast({ title: error.message, tone: "error" });
+    },
   });
   const deleteGoal = useMutation({
     mutationFn: () => goalsApi.remove(goalId!),
@@ -393,13 +832,21 @@ export function GoalDetail() {
   });
 
   const changeDecision = useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: "approve" | "reject" }) => goalsApi.decideChangeProposal(id, {
+    mutationFn: ({ id, decision }: ChangeDecisionInput) => goalsApi.decideChangeProposal(id, {
       decision,
       note: changeNotes[id]?.trim() || undefined,
     }),
-    onSuccess: async (_, variables) => {
+    onMutate: (variables) => {
+      decisionFocusRequestRef.current = { goalId: variables.goalId, kind: "change", id: variables.id };
+    },
+    onSuccess: async () => {
       await invalidate();
-      requestAnimationFrame(() => proposalRefs.current.get(`change:${variables.id}`)?.focus());
+    },
+    onError: (_, variables) => {
+      const request = decisionFocusRequestRef.current;
+      if (request?.goalId === variables.goalId && request.kind === "change" && request.id === variables.id) {
+        decisionFocusRequestRef.current = null;
+      }
     },
   });
 
@@ -407,14 +854,43 @@ export function GoalDetail() {
     mutationFn: ({ id, decision, feedback, idempotencyKey }) => decision === "accept"
       ? goalsApi.acceptResultProposal(id, { idempotencyKey })
       : goalsApi.rejectResultProposal(id, { idempotencyKey, feedback }),
+    onMutate: (variables) => {
+      decisionFocusRequestRef.current = { goalId: variables.goalId, kind: "result", id: variables.id };
+    },
     onSuccess: async (_, variables) => {
       await invalidate();
       if (variables.decision === "reject") {
         setResultFeedback((current) => ({ ...current, [variables.id]: "" }));
       }
-      requestAnimationFrame(() => proposalRefs.current.get(`result:${variables.id}`)?.focus());
+    },
+    onError: (_, variables) => {
+      const request = decisionFocusRequestRef.current;
+      if (request?.goalId === variables.goalId && request.kind === "result" && request.id === variables.id) {
+        decisionFocusRequestRef.current = null;
+      }
     },
   });
+
+  const historyMutation = useMutation({
+    mutationFn: (cursor: string) => goalsApi.getHistory(goalId!, cursor),
+    onSuccess: (page) => {
+      setHistoryPages((current) => [...current, page.items]);
+      setHistoryCursor(page.nextCursor);
+      const firstItem = page.items[0];
+      setHistoryFocusKey(firstItem ? `${firstItem.kind}:${firstItem.id}` : null);
+    },
+  });
+
+  useEffect(() => {
+    setHistoryPages([]);
+    setHistoryCursor(workspaceQuery.data?.timelineNextCursor ?? null);
+    setHistoryFocusKey(null);
+  }, [goalId, workspaceQuery.data?.timelineNextCursor]);
+
+  useEffect(() => {
+    if (!historyFocusKey) return;
+    requestAnimationFrame(() => historyFocusRef.current?.focus());
+  }, [historyFocusKey, historyPages]);
 
   const linkedProjects = useMemo(
     () => (projectsQuery.data ?? []).filter((project) => project.goalIds.includes(goalId!) || project.goalId === goalId),
@@ -424,11 +900,87 @@ export function GoalDetail() {
     () => (issuesQuery.data ?? []).filter((issue) => issue.goalId === goalId),
     [goalId, issuesQuery.data],
   );
-  const timeline = useMemo(() => normalizeTimeline(workspace?.timeline), [workspace?.timeline]);
+  const timeline = useMemo(() => {
+    const normalized = normalizeTimeline([...(workspace?.timeline ?? []), ...historyPages.flat()]);
+    const seen = new Set<string>();
+    return normalized.filter((entry) => {
+      const key = `${entry.kind}:${entry.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [historyPages, workspace?.timeline]);
   const changeProposals = useMemo(() => normalizeChangeProposals(workspace?.changeProposals), [workspace?.changeProposals]);
-  const resultProposals = useMemo(() => normalizeResultProposals(workspace?.resultProposals), [workspace?.resultProposals]);
+  const resultProposals = useMemo(
+    () => normalizeResultProposals(workspace?.resultProposals, workspace?.goal.criteria, {
+      issues: issuesQuery.data ?? [],
+      projects: projectsQuery.data ?? [],
+      ownerAgentId: workspace?.goal.ownerAgentId ?? null,
+    }),
+    [issuesQuery.data, projectsQuery.data, workspace?.goal.criteria, workspace?.goal.ownerAgentId, workspace?.resultProposals],
+  );
+
+  useLayoutEffect(() => {
+    const request = decisionFocusRequestRef.current;
+    if (!request || workspaceQuery.isFetching) return;
+    if (request.goalId !== goalId) {
+      decisionFocusRequestRef.current = null;
+      return;
+    }
+    const decisionIsPending = request.kind === "change"
+      ? changeDecision.isPending
+      : resultDecision.isPending;
+    if (decisionIsPending) return;
+    const proposalIsStillActionable = request.kind === "change"
+      ? changeProposals.some((proposal) => proposal.id === request.id && proposal.status === "pending")
+      : resultProposals.some((proposal) => proposal.id === request.id && proposal.status === "ready");
+    if (proposalIsStillActionable) return;
+
+    const hasOtherActionableAttention = changeProposals.some(
+      (proposal) => proposal.id !== request.id && proposal.status === "pending",
+    ) || resultProposals.some(
+      (proposal) => proposal.id !== request.id && proposal.status === "ready",
+    ) || Boolean(workspace?.attention && workspace.attention.sourceId !== request.id);
+    const attentionHeading = hasOtherActionableAttention ? attentionHeadingRef.current : null;
+    const currentGoalHeading = currentGoalHeadingRef.current;
+    const feedbackComposer = feedbackRef.current;
+    const target = attentionHeading?.isConnected
+      ? attentionHeading
+      : currentGoalHeading?.isConnected
+        ? currentGoalHeading
+        : feedbackComposer?.isConnected
+          ? feedbackComposer
+          : null;
+    if (!target) return;
+    target.focus();
+    decisionFocusRequestRef.current = null;
+  }, [
+    changeDecision.isPending,
+    changeProposals,
+    goalId,
+    resultDecision.isPending,
+    resultProposals,
+    workspace?.attention,
+    workspaceQuery.isFetching,
+  ]);
+
+  useLayoutEffect(() => {
+    const request = focusControlRequestRef.current;
+    if (!request || setFocus.isPending || workspaceQuery.isFetching) return;
+    if (request.goalId !== goalId) {
+      focusControlRequestRef.current = null;
+      return;
+    }
+    if (workspace?.goal.focus !== request.focus) return;
+
+    const focusButton = focusButtonRef.current;
+    if (!focusButton?.isConnected) return;
+    focusButton.focus();
+    focusControlRequestRef.current = null;
+  }, [goalId, setFocus.isPending, workspace?.goal.focus, workspaceQuery.isFetching]);
 
   if (workspaceQuery.isLoading) return <PageSkeleton variant="detail" />;
+  if (canonicalGoalPath) return <Navigate to={canonicalGoalPath} replace />;
   if (workspaceQuery.error) {
     const message = workspaceQuery.error instanceof Error ? workspaceQuery.error.message : "Unable to load Goal";
     return (
@@ -459,7 +1011,13 @@ export function GoalDetail() {
   const lifecycle = goal.lifecycle ?? "draft";
   const isDraft = lifecycle === "draft";
   const isActive = lifecycle === "active";
+  const isClosed = lifecycle === "closed";
   const owner = agentsQuery.data?.find((agent) => agent.id === goal.ownerAgentId) ?? null;
+  const evidenceContext: EvidenceContext = {
+    issues: issuesQuery.data ?? [],
+    projects: projectsQuery.data ?? [],
+    runAgentId: goal.ownerAgentId ?? null,
+  };
   const currentGoalRecord = asRecord(workspace.currentGoal);
   const currentGoalSummary = readString(currentGoalRecord, "summary")
     ?? goal.outcomeStatement
@@ -475,6 +1033,7 @@ export function GoalDetail() {
     ?? "No next step has been recorded.";
   const wakeCondition = readString(nextStepRecord, "wakeCondition") ?? goal.wakeCondition ?? null;
   const readyProposals = resultProposals.filter((proposal) => proposal.status === "ready");
+  const acceptedProposal = resultProposals.find((proposal) => proposal.status === "accepted") ?? null;
   const pendingChanges = changeProposals.filter((proposal) => proposal.status === "pending");
   const hasAttention = Boolean(workspace.attention || readyProposals.length > 0 || pendingChanges.length > 0);
   const evaluationOutcome = readString(asRecord(goal.evaluationResult), "outcome");
@@ -498,7 +1057,7 @@ export function GoalDetail() {
     title: goal.title,
     context: goal.description ?? "",
     ownerAgentId: goal.ownerAgentId ?? "",
-    targetTime: goal.evaluationDeadline ? String(goal.evaluationDeadline).slice(0, 16) : "",
+    targetTime: goal.evaluationDeadline ? toDateTimeLocalValue(goal.evaluationDeadline) : "",
   });
   const submitFeedback = () => {
     const body = feedbackBody.trim();
@@ -529,7 +1088,7 @@ export function GoalDetail() {
   };
 
   return (
-    <div className="min-w-0 space-y-5 overflow-x-hidden pb-8">
+    <div data-testid="goal-detail-workspace" className="min-w-0 space-y-5 overflow-x-hidden pb-8">
       <header className="min-w-0 space-y-3">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -538,17 +1097,30 @@ export function GoalDetail() {
             {goal.focus ? <span className="text-xs font-medium text-[color:var(--accent-base)]">Focus Goal</span> : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={rename}><Pencil className="mr-1.5 h-3.5 w-3.5" />Rename</Button>
+            {isDraft ? <Button size="sm" variant="outline" onClick={rename}><Pencil className="mr-1.5 h-3.5 w-3.5" />Rename</Button> : null}
             {isDraft ? <Button size="sm" onClick={continueAlignment}><Target className="mr-1.5 h-3.5 w-3.5" />Continue alignment</Button> : null}
             {isDraft ? <Button size="sm" variant="outline" onClick={remove} disabled={deleteGoal.isPending}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete</Button> : null}
-            {isActive ? <Button size="sm" variant={goal.focus ? "outline" : "default"} onClick={() => setFocus.mutate(!goal.focus)} disabled={setFocus.isPending}><Focus className="mr-1.5 h-3.5 w-3.5" />{goal.focus ? "Unfocus" : "Set focus"}</Button> : null}
+            {isActive ? <Button ref={focusButtonRef} size="sm" variant={goal.focus ? "outline" : "default"} onClick={() => setFocus.mutate(!goal.focus)} disabled={setFocus.isPending}><Focus className="mr-1.5 h-3.5 w-3.5" />{goal.focus ? "Unfocus" : "Set focus"}</Button> : null}
           </div>
         </div>
-        <InlineEditor value={goal.title} onSave={(title) => updateGoal.mutate({ title })} as="h1" className="min-w-0 whitespace-normal break-words text-2xl font-semibold" />
-        <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
+        {!isDraft ? (
+          <>
+            <h1 className="min-w-0 whitespace-normal break-words text-2xl font-semibold">{goal.title}</h1>
+            {goal.description ? (
+              <MarkdownBody className="min-w-0 break-words text-sm text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                {goal.description}
+              </MarkdownBody>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <InlineEditor value={goal.title} onSave={(title) => updateGoal.mutate({ title })} as="h1" className="min-w-0 whitespace-normal break-words text-2xl font-semibold" />
+            <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
+          </>
+        )}
       </header>
 
-      <Section title="Current Goal" icon={Target}>
+      <Section title="Current Goal" icon={Target} headingRef={currentGoalHeadingRef}>
         <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{currentGoalSummary}</p>
         {currentGoalRecord.updatedFromEvidence === true ? <p className="text-xs text-muted-foreground">Updated from evidence and feedback</p> : null}
       </Section>
@@ -556,17 +1128,17 @@ export function GoalDetail() {
       <Section title="Current progress" icon={Sparkles}>
         <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
         {workspace.currentProgress.uncertainty ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
-        <EvidenceList refs={workspace.currentProgress.evidenceRefs ?? []} />
+        <EvidenceList refs={workspace.currentProgress.evidenceRefs ?? []} context={evidenceContext} />
       </Section>
 
-      {hasAttention ? (
-        <Section title="Needs your attention" icon={ShieldCheck}>
+      {!isClosed && hasAttention ? (
+        <Section title="Needs your attention" icon={ShieldCheck} headingRef={attentionHeadingRef}>
           {workspace.attention ? (
             <div className="min-w-0 border-l-2 border-amber-500/50 pl-3">
-              <div className="text-xs font-medium text-muted-foreground">{workspace.attention.kind}</div>
+              <div className="text-xs font-medium text-muted-foreground">{attentionKindLabel(workspace.attention.kind)}</div>
               <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{workspace.attention.reason}</p>
               {workspace.attention.impact ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.attention.impact}</p> : null}
-              <EvidenceList refs={workspace.attention.evidenceRefs ?? []} />
+              <EvidenceList refs={workspace.attention.evidenceRefs ?? []} context={evidenceContext} />
               {isDraft ? <Button type="button" size="sm" className="mt-3" onClick={continueAlignment}>Continue alignment</Button> : null}
             </div>
           ) : null}
@@ -577,13 +1149,8 @@ export function GoalDetail() {
             return (
               <article
                 key={proposal.id}
-                ref={(element) => {
-                  if (element) proposalRefs.current.set(`change:${proposal.id}`, element);
-                  else proposalRefs.current.delete(`change:${proposal.id}`);
-                }}
-                tabIndex={-1}
                 aria-label="Goal change proposal"
-                className="min-w-0 rounded-md border border-amber-500/35 bg-amber-500/5 p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-w-0 rounded-md border border-amber-500/35 bg-amber-500/5 p-3"
               >
                 <div className="text-sm font-semibold">Proposed Goal change</div>
                 <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
@@ -592,7 +1159,7 @@ export function GoalDetail() {
                 </div>
                 {proposal.rationale ? <p className="mt-3 whitespace-pre-wrap break-words text-sm">{proposal.rationale}</p> : null}
                 {proposal.impact ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">Impact: {proposal.impact}</p> : null}
-                <EvidenceList refs={proposal.evidenceRefs} />
+                <EvidenceList refs={proposal.evidenceRefs} context={evidenceContext} />
                 <label className="mt-3 block text-xs text-muted-foreground">
                   Decision note
                   <input
@@ -606,8 +1173,12 @@ export function GoalDetail() {
                 </label>
                 {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error.message}</p> : null}
                 <div className="mt-3 flex flex-wrap justify-end gap-2">
-                  <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => changeDecision.mutate({ id: proposal.id, decision: "reject" })}>Reject</Button>
-                  <Button type="button" size="sm" disabled={isPending} onClick={() => changeDecision.mutate({ id: proposal.id, decision: "approve" })}><Check className="mr-1.5 h-3.5 w-3.5" />Approve</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => changeDecision.mutate({ goalId: goal.id, id: proposal.id, decision: "reject" })}>
+                    {error && changeDecision.variables?.decision === "reject" ? "Retry reject" : "Reject"}
+                  </Button>
+                  <Button type="button" size="sm" disabled={isPending} onClick={() => changeDecision.mutate({ goalId: goal.id, id: proposal.id, decision: "approve" })}>
+                    <Check className="mr-1.5 h-3.5 w-3.5" />{error && changeDecision.variables?.decision === "approve" ? "Retry approve" : "Approve"}
+                  </Button>
                 </div>
               </article>
             );
@@ -620,19 +1191,16 @@ export function GoalDetail() {
             return (
               <article
                 key={proposal.id}
-                ref={(element) => {
-                  if (element) proposalRefs.current.set(`result:${proposal.id}`, element);
-                  else proposalRefs.current.delete(`result:${proposal.id}`);
-                }}
-                tabIndex={-1}
                 aria-label="Goal result proposal"
-                className="min-w-0 rounded-md border border-emerald-500/35 bg-emerald-500/5 p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(
+                  "min-w-0 rounded-md border p-3",
+                  proposal.outcomeKind === "not_achieved" || proposal.outcomeKind === "breached"
+                    ? "border-destructive/35 bg-destructive/5"
+                    : "border-emerald-500/35 bg-emerald-500/5",
+                )}
               >
                 <div className="text-sm font-semibold">Result proposed</div>
-                <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{proposal.outcome}</p>
-                {proposal.risks ? <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">Risks: {proposal.risks}</p> : null}
-                {proposal.gaps.length > 0 ? <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">Gaps: {proposal.gaps.join("; ")}</p> : null}
-                <EvidenceList refs={proposal.evidenceRefs} />
+                <ResultProposalSummary proposal={proposal} />
                 <label className="mt-3 block text-xs font-medium text-muted-foreground">
                   Why is this result not sufficient?
                   <Textarea
@@ -653,25 +1221,27 @@ export function GoalDetail() {
                     variant="outline"
                     disabled={isPending || !rejection.trim()}
                     onClick={() => resultDecision.mutate({
+                      goalId: goal.id,
                       id: proposal.id,
                       decision: "reject",
                       feedback: rejection.trim(),
                       idempotencyKey: resultKey(proposal.id, "reject", rejection),
                     })}
                   >
-                    Result is not sufficient
+                    {error && resultDecision.variables?.decision === "reject" ? "Retry rejection" : "Result is not sufficient"}
                   </Button>
                   <Button
                     type="button"
                     size="sm"
                     disabled={isPending}
                     onClick={() => resultDecision.mutate({
+                      goalId: goal.id,
                       id: proposal.id,
                       decision: "accept",
                       idempotencyKey: resultKey(proposal.id, "accept"),
                     })}
                   >
-                    <FileCheck2 className="mr-1.5 h-3.5 w-3.5" />Accept result
+                    <FileCheck2 className="mr-1.5 h-3.5 w-3.5" />{error && resultDecision.variables?.decision === "accept" ? "Retry accept" : "Accept result"}
                   </Button>
                 </div>
               </article>
@@ -680,36 +1250,81 @@ export function GoalDetail() {
         </Section>
       ) : null}
 
-      {lifecycle === "closed" ? (
+      {isClosed ? (
         <Section title="Result accepted" icon={FileCheck2}>
-          <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
+          {acceptedProposal ? (
+            <article aria-label="Accepted Goal result" className={cn(
+              "min-w-0 border-l-2 pl-3",
+              acceptedProposal.outcomeKind === "not_achieved" || acceptedProposal.outcomeKind === "breached"
+                ? "border-destructive/45"
+                : "border-emerald-500/50",
+            )}>
+              <ResultProposalSummary proposal={acceptedProposal} />
+            </article>
+          ) : (
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Accepted proposal details are not available for this earlier Goal.</p>
+            </div>
+          )}
         </Section>
       ) : null}
 
-      <Section title="Agent is doing" icon={UserRound}>
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
-        <p className="text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? `Agent ${goal.ownerAgentId.slice(0, 8)}` : "Unassigned")}</p>
-      </Section>
+      {!isClosed ? (
+        <>
+          <Section title="Agent is doing" icon={UserRound}>
+            <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
+            <p className="min-w-0 break-all text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? `Agent ${goal.ownerAgentId.slice(0, 8)}` : "Unassigned")}</p>
+          </Section>
 
-      <Section title="Next step" icon={ArrowRight}>
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
-        {wakeCondition ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
-      </Section>
+          <Section title="Next step" icon={ArrowRight}>
+            <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
+            {wakeCondition ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
+          </Section>
+        </>
+      ) : null}
 
-      <Section title="Progress and feedback" icon={History}>
+      <Section title={isClosed ? "History" : "Progress and feedback"} icon={History}>
         <div className="divide-y divide-border border-y border-border">
-          {timeline.length === 0 && !pendingFeedback ? <p className="py-3 text-sm text-muted-foreground">No progress or feedback yet.</p> : null}
-          {timeline.map((entry) => (
-            <div key={entry.id} className="min-w-0 space-y-1 py-2.5">
+          {timeline.length === 0 && !(isActive && pendingFeedback) ? <p className="py-3 text-sm text-muted-foreground">No progress or feedback yet.</p> : null}
+          {timeline.map((entry) => {
+            const entryKey = `${entry.kind}:${entry.id}`;
+            const receivesHistoryFocus = entryKey === historyFocusKey;
+            return (
+            <div
+              key={entryKey}
+              ref={receivesHistoryFocus ? historyFocusRef : undefined}
+              tabIndex={receivesHistoryFocus ? -1 : undefined}
+              className="min-w-0 space-y-1 rounded-sm py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="text-xs font-medium text-muted-foreground">{entry.actorName ?? entry.kind}</div>
+                <div className="min-w-0 break-all text-xs font-medium text-muted-foreground">
+                  {entry.actorType === "user" && entry.actorId && entry.actorId === sessionQuery.data?.user.id
+                    ? "You"
+                    : entry.actorName ?? timelineKindLabel(entry.kind)}
+                </div>
                 {entry.createdAt ? <div className="shrink-0 text-xs text-muted-foreground">{formatDate(entry.createdAt)}</div> : null}
               </div>
+              {entry.kind === "result_proposal" && entry.status ? (
+                <div className="text-xs font-medium text-muted-foreground">
+                  {resultProposalHistoryLabel(entry.status)}
+                </div>
+              ) : null}
               <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{entry.summary}</p>
-              <EvidenceList refs={entry.evidenceRefs} />
+              <EvidenceList
+                refs={entry.evidenceRefs}
+                context={{
+                  ...evidenceContext,
+                  runAgentId: entry.actorType === "agent" && entry.actorId
+                    ? entry.actorId
+                    : evidenceContext.runAgentId,
+                }}
+              />
+              <AttachmentList attachments={entry.attachments} />
             </div>
-          ))}
-          {pendingFeedback ? (
+            );
+          })}
+          {isActive && pendingFeedback ? (
             <div className={cn("min-w-0 space-y-1 py-2.5", pendingFeedback.status === "failed" && "text-destructive")}>
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="text-xs font-medium">You</div>
@@ -722,9 +1337,23 @@ export function GoalDetail() {
               ) : null}
             </div>
           ) : null}
+          {historyCursor ? (
+            <div className="py-3 text-center">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={historyMutation.isPending}
+                onClick={() => historyMutation.mutate(historyCursor)}
+              >
+                {historyMutation.isPending ? "Loading..." : historyMutation.isError ? "Retry earlier records" : "Load earlier records"}
+              </Button>
+              {historyMutation.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{historyMutation.error.message}</p> : null}
+            </div>
+          ) : null}
         </div>
 
-        {!isDraft ? <div className="min-w-0 space-y-2">
+        {isActive ? <div className="min-w-0 space-y-2">
           <Textarea
             ref={feedbackRef}
             aria-label="Goal feedback"
@@ -753,7 +1382,7 @@ export function GoalDetail() {
       <Section title="Goal details and related work" icon={Clock3}>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">
           <div className="min-w-0"><div className="text-xs text-muted-foreground">Owner</div><div className="mt-1 min-w-0 break-words text-sm">{owner?.name ?? "Unassigned"}</div></div>
-          <div className="min-w-0"><div className="text-xs text-muted-foreground">Target time</div><div className="mt-1 min-w-0 break-words text-sm">{goal.actionDeadline ? formatDate(goal.actionDeadline) : "Not set"}</div></div>
+          <div className="min-w-0"><div className="text-xs text-muted-foreground">Target time</div><div className="mt-1 min-w-0 break-words text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</div></div>
         </div>
         {goal.criteria && goal.criteria.length > 0 ? (
           <div className="divide-y divide-border border-y border-border">

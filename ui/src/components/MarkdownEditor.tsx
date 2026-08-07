@@ -163,6 +163,7 @@ export interface InlineTokenClickEvent {
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
+  ariaLabel?: string;
   placeholder?: string;
   className?: string;
   contentClassName?: string;

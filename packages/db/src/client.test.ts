@@ -362,6 +362,98 @@ describe("applyPendingMigrations", () => {
   );
 
   it(
+    "reconciles duplicate ready Goal Result Proposals before adding the unique index",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0146 = createCurrentMigrationsFolderThrough(146);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0146 });
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES ('00000000-0000-0000-0000-000000000201', 'goal-migration', 'Goal migration', 'GMG')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "agents" ("id", "org_id", "name")
+          VALUES ('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000201', 'Goal owner')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "goals" ("id", "org_id", "title", "owner_agent_id", "lifecycle", "status")
+          VALUES (
+            '00000000-0000-0000-0000-000000000203',
+            '00000000-0000-0000-0000-000000000201',
+            'Reconcile duplicate proposals',
+            '00000000-0000-0000-0000-000000000202',
+            'active',
+            'active'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "goal_result_proposals" (
+            "id", "org_id", "goal_id", "contract_revision", "candidate", "candidate_hash",
+            "preflight", "risk_summary", "status", "idempotency_key", "proposed_by_agent_id", "created_at"
+          )
+          VALUES
+            (
+              '00000000-0000-0000-0000-000000000204',
+              '00000000-0000-0000-0000-000000000201',
+              '00000000-0000-0000-0000-000000000203',
+              1,
+              '{}'::jsonb,
+              'first-candidate',
+              '{}'::jsonb,
+              'First proposal remains ready',
+              'ready',
+              'first-key',
+              '00000000-0000-0000-0000-000000000202',
+              '2026-08-01T00:00:00Z'
+            ),
+            (
+              '00000000-0000-0000-0000-000000000205',
+              '00000000-0000-0000-0000-000000000201',
+              '00000000-0000-0000-0000-000000000203',
+              1,
+              '{}'::jsonb,
+              'second-candidate',
+              '{}'::jsonb,
+              'Second proposal is preserved as superseded',
+              'ready',
+              'second-key',
+              '00000000-0000-0000-0000-000000000202',
+              '2026-08-02T00:00:00Z'
+            )
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const rows = await verifySql.unsafe<{ id: string; status: string }[]>(`
+          SELECT "id", "status"
+          FROM "goal_result_proposals"
+          WHERE "goal_id" = '00000000-0000-0000-0000-000000000203'
+          ORDER BY "created_at" ASC, "id" ASC
+        `);
+        expect(rows).toEqual([
+          { id: "00000000-0000-0000-0000-000000000204", status: "ready" },
+          { id: "00000000-0000-0000-0000-000000000205", status: "superseded" },
+        ]);
+        await expect(verifySql.unsafe(`
+          UPDATE "goal_result_proposals"
+          SET "status" = 'ready'
+          WHERE "id" = '00000000-0000-0000-0000-000000000205'
+        `)).rejects.toThrow();
+      } finally {
+        await verifySql.end();
+      }
+    },
+    30_000,
+  );
+
+  it(
     "completes migration 0100 when an older version already created the alias table",
     async () => {
       const connectionString = await createTempDatabase();
@@ -576,6 +668,7 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
+          "0147_third_slyde.sql",
         ],
         reason: "pending-migrations",
       });
@@ -743,6 +836,7 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
+          "0147_third_slyde.sql",
         ],
         reason: "pending-migrations",
       });

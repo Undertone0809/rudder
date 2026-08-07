@@ -168,6 +168,33 @@ export interface GoalFeedbackEntry {
   updatedAt: Date;
 }
 
+export interface GoalHistoryAttachment {
+  name: string;
+  mimeType: string | null;
+  size: number | null;
+  contentPath: string | null;
+}
+
+export interface GoalHistoryItem {
+  id: string;
+  kind: "activity" | "feedback" | "change_proposal" | "result_proposal";
+  summary: string;
+  createdAt: Date | string;
+  evidenceRefs: string[];
+  actorType: "user" | "agent" | "system";
+  actorId: string | null;
+  actorName: string;
+  attachments: GoalHistoryAttachment[];
+  feedbackKind?: GoalFeedbackKind;
+  approvalId?: string;
+  status?: string;
+}
+
+export interface GoalHistoryPage {
+  items: GoalHistoryItem[];
+  nextCursor: string | null;
+}
+
 export interface GoalContractSnapshot {
   contractRevision: number;
   outcomeStatement: string;
@@ -296,15 +323,8 @@ export interface GoalWorkspaceSummary {
     impact?: string | null;
     evidenceRefs?: string[];
   } | null;
-  timeline: Array<{
-    id: string;
-    kind: string;
-    summary: string;
-    createdAt?: Date | string;
-    evidenceRefs?: string[];
-    actorName?: string | null;
-    feedbackKind?: GoalFeedbackKind;
-  }>;
+  timeline: GoalHistoryItem[];
+  timelineNextCursor: string | null;
   changeProposals?: GoalChangeProposal[];
   resultProposals: GoalResultProposal[];
 }

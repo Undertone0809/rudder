@@ -9,10 +9,12 @@ import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { useDialog, type NewGoalDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { fromDateTimeLocalValue } from "../lib/datetime-local";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { AgentMenuLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
+import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 
 type PreviewInput = {
   title: string;
@@ -34,12 +36,6 @@ function useDebouncedValue<T>(value: T, delay: number) {
   return debounced;
 }
 
-function toIsoTargetTime(value: string) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid min-w-0 gap-1 border-t border-border/60 py-2.5 first:border-t-0 sm:grid-cols-[9.5rem_minmax(0,1fr)] sm:gap-3">
@@ -58,8 +54,9 @@ export function NewGoalDialog() {
   const [context, setContext] = useState("");
   const [ownerAgentId, setOwnerAgentId] = useState("");
   const [targetTime, setTargetTime] = useState("");
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const requestRef = useRef<{ identity: string; key: string } | null>(null);
-  const contextRef = useRef<HTMLTextAreaElement>(null);
+  const contextRef = useRef<MarkdownEditorRef>(null);
 
   useEffect(() => {
     if (!newGoalOpen) return;
@@ -70,35 +67,46 @@ export function NewGoalDialog() {
     requestRef.current = null;
   }, [newGoalDefaults, newGoalOpen]);
 
-  const { data: agents = [] } = useQuery({
+  const { data: agents = [], isSuccess: agentsLoaded } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: Boolean(newGoalOpen && selectedOrganizationId),
   });
 
+  const invokableAgents = useMemo(
+    () => agents.filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
+    [agents],
+  );
+
   useEffect(() => {
-    if (!newGoalOpen || ownerAgentId || agents.length === 0) return;
-    const suggested = agents.find((agent) => agent.status !== "paused") ?? agents[0];
+    if (!newGoalOpen || !agentsLoaded) return;
+    if (invokableAgents.length === 0) {
+      if (ownerAgentId) setOwnerAgentId("");
+      return;
+    }
+    if (ownerAgentId && invokableAgents.some((agent) => agent.id === ownerAgentId)) return;
+    const suggested = invokableAgents.find((agent) => agent.status !== "paused") ?? invokableAgents[0];
     setOwnerAgentId(suggested?.id ?? "");
-  }, [agents, newGoalOpen, ownerAgentId]);
+  }, [agentsLoaded, invokableAgents, newGoalOpen, ownerAgentId]);
 
   const agentOptions = useMemo<InlineEntityOption[]>(
-    () => agents.map((agent) => ({
+    () => invokableAgents.map((agent) => ({
       id: agent.id,
       label: agent.name,
       searchText: `${agent.name} ${agent.title ?? ""} ${agent.role}`,
     })),
-    [agents],
+    [invokableAgents],
   );
-  const currentOwner = agents.find((agent) => agent.id === ownerAgentId) ?? null;
+  const currentOwner = invokableAgents.find((agent) => agent.id === ownerAgentId) ?? null;
 
   const previewInput = useMemo<PreviewInput>(() => ({
     title: goal.trim(),
     context: markdownDocumentOrUndefined(context) ?? null,
     ownerAgentId: ownerAgentId || null,
-    targetTime: toIsoTargetTime(targetTime),
+    targetTime: fromDateTimeLocalValue(targetTime),
   }), [context, goal, ownerAgentId, targetTime]);
   const debouncedPreviewInput = useDebouncedValue(previewInput, 250);
+  const currentPreviewFingerprint = JSON.stringify(previewInput);
   const previewFingerprint = JSON.stringify(debouncedPreviewInput);
   const previewQuery = useQuery({
     queryKey: ["goals", "start-preview", selectedOrganizationId, previewFingerprint],
@@ -109,7 +117,9 @@ export function NewGoalDialog() {
   });
 
   const preview = previewQuery.data;
-  const canStart = Boolean(preview?.valid && preview.packet && preview.packetHash);
+  const previewIsCurrent = currentPreviewFingerprint === previewFingerprint;
+  const previewCanStart = Boolean(preview?.valid && preview.packet && preview.packetHash);
+  const canStart = previewIsCurrent && previewCanStart;
 
   const requestKeyFor = (candidate: GoalStartPreview) => {
     const identity = `${previewFingerprint}:${candidate.packetHash ?? "draft"}`;
@@ -120,6 +130,7 @@ export function NewGoalDialog() {
   };
 
   const reset = () => {
+    setDocumentSessionId((current) => current + 1);
     setGoal("");
     setContext("");
     setOwnerAgentId("");
@@ -135,6 +146,7 @@ export function NewGoalDialog() {
   const createGoal = useMutation({
     mutationFn: async () => {
       if (!selectedOrganizationId) throw new Error("Select an organization before creating a Goal.");
+      if (!previewIsCurrent) throw new Error("Goal details changed. Wait for the latest preview before continuing.");
       if (preview && canStart && preview.packet && preview.packetHash) {
         return goalsApi.start(selectedOrganizationId, {
           requestKey: requestKeyFor(preview),
@@ -147,6 +159,8 @@ export function NewGoalDialog() {
         return goalsApi.update(newGoalDefaults.draftId, {
           title: goal.trim(),
           description: markdownDocumentOrUndefined(context),
+          ownerAgentId: ownerAgentId || null,
+          targetTime: fromDateTimeLocalValue(targetTime),
           alignmentQuestion: preview?.alignmentQuestion,
         });
       }
@@ -154,7 +168,7 @@ export function NewGoalDialog() {
         title: goal.trim(),
         description: markdownDocumentOrUndefined(context),
         ownerAgentId: ownerAgentId || null,
-        targetTime: toIsoTargetTime(targetTime),
+        targetTime: fromDateTimeLocalValue(targetTime),
         alignmentQuestion: preview?.alignmentQuestion,
       });
     },
@@ -170,10 +184,11 @@ export function NewGoalDialog() {
     },
   });
 
-  const actionLabel = canStart ? "Create and start" : "Save draft";
-  const pendingLabel = canStart ? "Starting..." : "Saving...";
+  const actionLabel = previewCanStart ? "Create and start" : "Save draft";
+  const pendingLabel = previewCanStart ? "Starting..." : "Saving...";
   const actionDisabled =
     !goal.trim()
+    || !previewIsCurrent
     || previewQuery.isFetching
     || (!preview && !previewQuery.error)
     || createGoal.isPending;
@@ -228,17 +243,19 @@ export function NewGoalDialog() {
               />
             </label>
 
-            <label className="block space-y-1.5">
+            <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Context</span>
-              <textarea
+              <MarkdownEditor
                 ref={contextRef}
-                aria-label="Context"
-                className="min-h-20 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/55 focus:border-ring"
+                engine="codemirror"
+                documentIdentity={`new-goal:${selectedOrganizationId ?? "none"}:${newGoalDefaults.draftId ?? documentSessionId}`}
+                ariaLabel="Context"
                 placeholder="Optional background or why this matters now"
                 value={context}
-                onChange={(event) => setContext(event.target.value)}
+                onChange={setContext}
+                contentClassName="min-h-20 text-sm"
               />
-            </label>
+            </div>
 
             <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 space-y-1.5">
@@ -252,7 +269,6 @@ export function NewGoalDialog() {
                   emptyMessage="No Agents found."
                   ariaLabel="Assignee"
                   variant="field"
-                  disablePortal
                   onChange={setOwnerAgentId}
                   renderTriggerValue={(option) => option && currentOwner
                     ? <AgentMenuLabel agent={currentOwner} agentAvatarStyle="bare" />

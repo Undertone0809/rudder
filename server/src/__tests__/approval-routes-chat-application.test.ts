@@ -122,10 +122,24 @@ describe("approval routes chat application", () => {
     const approved = { ...pendingApproval, status: "approved" };
     mockApprovalService.getById.mockResolvedValueOnce(pendingApproval).mockResolvedValueOnce(approved);
     mockGoalService.decideChangeProposal.mockResolvedValue({
-      id: "proposal-1",
-      goalId: "goal-1",
-      status: "applied",
-      appliedRevision: 2,
+      proposal: {
+        id: "proposal-1",
+        goalId: "goal-1",
+        status: "applied",
+        appliedRevision: 2,
+      },
+      dispatch: {
+        ownerAgentId: "agent-1",
+        wakeupRequestId: "goal-wakeup-1",
+        source: "on_demand",
+        triggerDetail: "system",
+        reason: "goal_change_decided",
+        payload: { goalId: "goal-1" },
+        contextSnapshot: { goalId: "goal-1" },
+        requestedByActorType: "user",
+        requestedByActorId: "user-1",
+        idempotencyKey: "goal-change-decision:proposal-1:approve",
+      },
     });
 
     const res = await request(createApp())
@@ -138,6 +152,10 @@ describe("approval routes chat application", () => {
       note: "Apply the reviewed change",
     }, "user-1");
     expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      existingWakeupRequestId: "goal-wakeup-1",
+      reason: "goal_change_decided",
+    }));
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "goal.change_approved",
       entityId: "goal-1",
@@ -160,10 +178,24 @@ describe("approval routes chat application", () => {
     const rejected = { ...pendingApproval, status: "rejected" };
     mockApprovalService.getById.mockResolvedValueOnce(pendingApproval).mockResolvedValueOnce(rejected);
     mockGoalService.decideChangeProposal.mockResolvedValue({
-      id: "proposal-1",
-      goalId: "goal-1",
-      status: "rejected",
-      appliedRevision: null,
+      proposal: {
+        id: "proposal-1",
+        goalId: "goal-1",
+        status: "rejected",
+        appliedRevision: null,
+      },
+      dispatch: {
+        ownerAgentId: "agent-1",
+        wakeupRequestId: "goal-wakeup-2",
+        source: "on_demand",
+        triggerDetail: "system",
+        reason: "goal_change_decided",
+        payload: { goalId: "goal-1" },
+        contextSnapshot: { goalId: "goal-1" },
+        requestedByActorType: "user",
+        requestedByActorId: "user-1",
+        idempotencyKey: "goal-change-decision:proposal-1:reject",
+      },
     });
 
     const res = await request(createApp())
@@ -176,6 +208,10 @@ describe("approval routes chat application", () => {
       note: "Keep the current Goal",
     }, "user-1");
     expect(mockApprovalService.reject).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      existingWakeupRequestId: "goal-wakeup-2",
+      reason: "goal_change_decided",
+    }));
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "goal.change_rejected",
       entityId: "goal-1",
@@ -185,6 +221,32 @@ describe("approval routes chat application", () => {
       entityId: "approval-1",
     }));
   });
+
+  it.each(["approve", "reject"] as const)(
+    "rejects cross-organization Goal change %s before any side effect",
+    async (decision) => {
+      mockApprovalService.getById.mockResolvedValue({
+        id: "approval-other-org",
+        orgId: "organization-2",
+        type: "goal_change",
+        status: "pending",
+        payload: { proposalId: "proposal-other-org" },
+        requestedByAgentId: "agent-other-org",
+      });
+
+      const res = await request(createApp())
+        .post(`/api/approvals/approval-other-org/${decision}`)
+        .send({ decisionNote: "Unauthorized cross-organization decision" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("User does not have access to this organization");
+      expect(mockGoalService.decideChangeProposal).not.toHaveBeenCalled();
+      expect(mockApprovalService.approve).not.toHaveBeenCalled();
+      expect(mockApprovalService.reject).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+      expect(mockLogActivity).not.toHaveBeenCalled();
+    },
+  );
 
   it("applies chat approval side effects when a chat issue proposal is approved", async () => {
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });

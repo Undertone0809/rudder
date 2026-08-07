@@ -14,7 +14,7 @@ import {
   type RudderMcpPreflightResult,
 } from "./rudder-mcp.js";
 
-const PREFLIGHT_TIMEOUT_MS = 3_000;
+const PREFLIGHT_TIMEOUT_MS = 15_000;
 const RUDDER_SCHEMA_KEYS = new Set([
   "type",
   "description",

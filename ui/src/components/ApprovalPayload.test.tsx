@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import type { Agent, IssueLabel, Project } from "@rudderhq/shared";
+import type { Agent, Approval, IssueLabel, Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../context/ThemeContext";
+import { ApprovalCard } from "./ApprovalCard";
 import {
   ApprovalPayloadRenderer,
   ChatIssueApprovalLabelPicker,
@@ -110,6 +111,93 @@ function renderChatIssueApproval(payload: Record<string, unknown>, context = {})
   );
 }
 
+function goalChangePayload() {
+  return {
+    goalId: "goal-internal-id",
+    proposalId: "proposal-internal-id",
+    expectedContractRevision: 2,
+    beforeContract: {
+      outcomeStatement: "Ship a verified Goal Workspace",
+      objectiveMode: "target",
+      criteria: [{
+        id: "workflow",
+        label: "The operator workflow passes",
+        evaluator: "artifact",
+      }],
+      autonomyEnvelope: {
+        allowed: ["bounded_reversible_work", "external_publication"],
+        requiresHumanApproval: ["external_publication"],
+      },
+      humanAuthorities: { acceptance: "board_human", externalPublication: "board_human" },
+      evaluationPolicy: { terminalEvidenceRequired: true, humanAcceptanceRequired: true },
+    },
+    afterContract: {
+      outcomeStatement: "Ship a verified Goal Workspace with restart recovery",
+      objectiveMode: "maintain",
+      criteria: [{
+        id: "workflow",
+        label: "The operator workflow passes after restart",
+        evaluator: "artifact",
+        evidenceRequirements: ["artifact://goal-workspace/restart-check"],
+      }],
+      autonomyEnvelope: { allowed: ["bounded_reversible_work"] },
+      humanAuthorities: { acceptance: "board_human" },
+      evaluationPolicy: { terminalEvidenceRequired: true },
+      evaluationDeadline: "2026-08-22T10:00:00.000Z",
+    },
+    rationale: "Restart evidence makes the commitment materially stronger.",
+    evidenceRefs: ["artifact://goal-workspace/restart-evidence"],
+  };
+}
+
+function renderGoalChangeApproval() {
+  return renderToStaticMarkup(
+    <ThemeProvider>
+      <ApprovalPayloadRenderer type="goal_change" payload={goalChangePayload()} />
+    </ThemeProvider>,
+  );
+}
+
+function renderGoalChangeApprovalCardDom(onApprove = vi.fn(), onReject = vi.fn()) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanupFn = () => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  };
+  const approval = {
+    id: "approval-1",
+    orgId: "org-1",
+    type: "goal_change",
+    requestedByAgentId: null,
+    requestedByUserId: null,
+    status: "pending",
+    payload: goalChangePayload(),
+    decisionNote: null,
+    decidedByUserId: null,
+    decidedAt: null,
+    createdAt: new Date("2026-08-07T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-07T00:00:00.000Z"),
+  } as Approval;
+  act(() => {
+    root.render(
+      <ThemeProvider>
+        <ApprovalCard
+          approval={approval}
+          requesterAgent={null}
+          onApprove={onApprove}
+          onReject={onReject}
+          isPending={false}
+        />
+      </ThemeProvider>,
+    );
+  });
+  return container;
+}
+
 function renderChatIssueApprovalDom(payload: Record<string, unknown>, context = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -166,6 +254,89 @@ function renderLabelPickerDom({
 }
 
 describe("ApprovalPayloadRenderer", () => {
+  it("renders Goal changes as plain-language outcome, change, and boundary summaries", () => {
+    const html = renderGoalChangeApproval();
+
+    expect(html).toContain('aria-label="Goal change summary"');
+    for (const label of ["Outcome", "Change", "Boundary", "Reason"]) {
+      expect(html).toContain(`aria-label="${label} summary"`);
+      expect(html).toMatch(new RegExp(`<h4[^>]*>${label}</h4>`));
+    }
+    expect(html).toContain("Ship a verified Goal Workspace with restart recovery");
+    expect(html).toContain("Judge success by: The operator workflow passes after restart.");
+    expect(html).toContain("Change how success is judged.");
+    expect(html).toContain("Set the review target for");
+    expect(html).toContain("This proposal changes the agent&#x27;s working limits, human approval responsibilities, and evidence and review expectations.");
+    expect(html).toContain('aria-label="Boundary changes"');
+    expect(html).toContain("Current:");
+    expect(html).toContain("Proposed:");
+    expect(html).toContain("bounded, reversible work");
+    expect(html).toContain("external publication");
+    expect(html).toContain("Your acceptance before completion: required");
+    expect(html).toContain("Restart evidence makes the commitment materially stronger.");
+    for (const internalDetail of [
+      "goal-internal-id",
+      "proposal-internal-id",
+      "objectiveMode",
+      "evaluator",
+      "autonomyEnvelope",
+      "humanAuthorities",
+      "evaluationPolicy",
+      "evidenceRefs",
+      "artifact://",
+      "bounded_reversible_work",
+      "board_human",
+    ]) {
+      expect(html).not.toContain(internalDetail);
+    }
+  });
+
+  it("wraps long Goal change content without exposing contract JSON", () => {
+    const longOutcome = `Ship ${"restart-safe-workspace".repeat(20)}`;
+    const longReason = `Because ${"production-shaped-evidence".repeat(20)}`;
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <ApprovalPayloadRenderer
+          type="goal_change"
+          payload={{
+            beforeContract: { outcomeStatement: "Ship the workspace" },
+            afterContract: {
+              outcomeStatement: longOutcome,
+              criteria: [{ label: "The long-running recovery workflow passes", evaluator: "artifact" }],
+            },
+            rationale: longReason,
+            evidenceRefs: ["artifact://internal/long-text-check"],
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(longOutcome);
+    expect(html).toContain(longReason);
+    expect(html).toContain("[overflow-wrap:anywhere]");
+    expect(html).not.toContain("beforeContract");
+    expect(html).not.toContain("afterContract");
+    expect(html).not.toContain("evaluator");
+    expect(html).not.toContain("artifact://");
+  });
+
+  it("keeps Goal change approval actions usable around the dedicated renderer", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    const container = renderGoalChangeApprovalCardDom(onApprove, onReject);
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const approve = buttons.find((button) => button.textContent === "Approve");
+    const reject = buttons.find((button) => button.textContent === "Reject");
+
+    expect(container.textContent).toContain("Goal Change");
+    expect(approve?.disabled).toBe(false);
+    expect(reject?.disabled).toBe(false);
+    act(() => approve?.click());
+    act(() => reject?.click());
+    expect(onApprove).toHaveBeenCalledOnce();
+    expect(onReject).toHaveBeenCalledOnce();
+  });
+
   it("renders chat issue proposal Markdown and readable project/assignee labels", () => {
     const html = renderChatIssueApproval(
       {

@@ -1070,6 +1070,7 @@ async function startServerRuntime(
       recoveryCutoff: startupRecoveryCutoff,
     }))
     .then(() => heartbeat.reapOrphanedRuns({ recoveryCutoff: startupRecoveryCutoff }))
+    .then(() => heartbeat.resumePendingWakeupRequests())
     .then(() => heartbeat.resumeQueuedRuns())
     .catch((err) => {
       logger.error({ err }, "startup heartbeat recovery failed");
@@ -1079,6 +1080,7 @@ async function startServerRuntime(
       .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
       .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
       .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
+      .then(() => heartbeat.resumePendingWakeupRequests())
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
         logger.error({ err }, "periodic heartbeat recovery failed");

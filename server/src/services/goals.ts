@@ -16,6 +16,8 @@ import {
   agentWakeupRequests,
   agents,
   approvals,
+  assets,
+  authUsers,
   automations,
   calendarEvents,
   costEvents,
@@ -49,6 +51,8 @@ import type {
   GoalDependencyPreview,
   GoalEvaluationCandidate,
   GoalEvaluatorKind,
+  GoalHistoryItem,
+  GoalHistoryPage,
   GoalResultProposal,
   GoalResultReducerPreflight,
   GoalStartPacket,
@@ -59,19 +63,40 @@ import type {
   UpdateGoalPlan,
 } from "@rudderhq/shared";
 import { activateGoalSchema } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { buildDeferredWakePayload, readDeferredWakePayload } from "./runtime-kernel/heartbeat.sessions.js";
 
 type GoalRow = typeof goals.$inferSelect;
 type GoalReader = Pick<Db, "select">;
+type GoalWakeupActor = {
+  actorType: "user" | "agent" | "system";
+  actorId: string | null;
+};
+type GoalWakeupDispatch = {
+  ownerAgentId: string;
+  wakeupRequestId: string;
+  source: "on_demand";
+  triggerDetail: "system";
+  reason: "goal_started" | "goal_feedback" | "goal_change_decided";
+  payload: Record<string, unknown>;
+  contextSnapshot: Record<string, unknown>;
+  requestedByActorType: GoalWakeupActor["actorType"];
+  requestedByActorId: string | null;
+  idempotencyKey: string;
+};
 type GoalAgent = Pick<
   typeof agents.$inferSelect,
   "id" | "orgId" | "name" | "status" | "role" | "title" | "capabilities"
 >;
 
 const DEPENDENCY_PREVIEW_LIMIT = 5;
+const GOAL_HISTORY_DEFAULT_LIMIT = 50;
+const GOAL_HISTORY_MAX_LIMIT = 100;
 const TERMINAL_RUN_STATUSES = ["succeeded", "completed", "failed", "cancelled", "timed_out"] as const;
+const CURRENT_PROGRESS_ACTIVITY_KINDS = ["progress", "evidence", "checkpoint", "closeout"] as const;
 const NON_INVOKABLE_AGENT_STATUSES = new Set(["terminated", "pending_approval"]);
 const GOAL_OUTCOME_PATTERNS = [
   /\b(ship|publish|launch|deliver|creat(?:e|ed|ion)|build|complet(?:e|ed|ion)|finish|deploy|release|migrate|implement|fix|resolve|remove|establish|achieve|reach|increase|reduce|decrease|grow|choose|select|decide|approve|pass|verify|maintain|keep|sustain|recommend|submit)\b/i,
@@ -96,7 +121,9 @@ const CAPABILITY_STOP_WORDS = new Set([
 
 function hasConcreteGoalOutcome(input: PreviewGoalStart) {
   const combined = `${input.title.trim()} ${input.context?.trim() ?? ""}`;
-  return input.title.trim().length >= 8 && GOAL_OUTCOME_PATTERNS.some((pattern) => pattern.test(combined));
+  if (input.title.trim().length < 8) return false;
+  if (GOAL_OUTCOME_PATTERNS.some((pattern) => pattern.test(combined))) return true;
+  return meaningfulTokens(combined).size >= 4 || /[\p{Script=Han}]{6,}/u.test(combined);
 }
 
 function goalMode(input: PreviewGoalStart): "target" | "maximize" | "maintain" | "decide" {
@@ -162,15 +189,78 @@ function stringEvidenceRefs(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-type ExternalGoalCheckpoint = {
+type ExternalGoalWorkFact = {
   id: string;
-  kind: "checkpoint";
+  kind: "work_status";
   summary: string;
   occurredAt: Date;
   sourceId: string;
   sourceRunId: string | null;
   evidenceRefs: string[];
 };
+
+const GOAL_HISTORY_KINDS = ["activity", "feedback", "change_proposal", "result_proposal"] as const;
+type GoalHistoryKind = (typeof GOAL_HISTORY_KINDS)[number];
+type GoalHistoryCursor = { version: 1; createdAt: string; kind: GoalHistoryKind; id: string };
+
+function encodeGoalHistoryCursor(item: GoalHistoryItem) {
+  const createdAt = item.createdAt instanceof Date ? item.createdAt.toISOString() : new Date(item.createdAt).toISOString();
+  return Buffer.from(JSON.stringify({ version: 1, createdAt, kind: item.kind, id: item.id } satisfies GoalHistoryCursor))
+    .toString("base64url");
+}
+
+function decodeGoalHistoryCursor(value: string | null | undefined): GoalHistoryCursor | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<GoalHistoryCursor>;
+    if (parsed.version !== 1
+      || typeof parsed.createdAt !== "string"
+      || Number.isNaN(new Date(parsed.createdAt).getTime())
+      || !GOAL_HISTORY_KINDS.includes(parsed.kind as GoalHistoryKind)
+      || typeof parsed.id !== "string"
+      || !parsed.id) {
+      throw new Error("invalid cursor payload");
+    }
+    return parsed as GoalHistoryCursor;
+  } catch {
+    throw badRequest("Invalid Goal history cursor");
+  }
+}
+
+function historyCursorCondition(
+  timestampColumn: AnyPgColumn,
+  idColumn: AnyPgColumn,
+  kind: GoalHistoryKind,
+  cursor: GoalHistoryCursor | null,
+) {
+  if (!cursor) return undefined;
+  const cursorDate = new Date(cursor.createdAt);
+  const kindOrder = kind.localeCompare(cursor.kind);
+  if (kindOrder > 0) return or(lt(timestampColumn, cursorDate), eq(timestampColumn, cursorDate));
+  if (kindOrder < 0) return lt(timestampColumn, cursorDate);
+  return or(
+    lt(timestampColumn, cursorDate),
+    and(eq(timestampColumn, cursorDate), gt(idColumn, cursor.id)),
+  );
+}
+
+function publicGoalOutcome(outcome: string) {
+  if (outcome === "achieved") return "Goal achieved";
+  if (outcome === "not_achieved") return "Goal not achieved";
+  if (outcome === "maintained") return "Goal maintained";
+  if (outcome === "breached") return "Goal condition breached";
+  if (outcome === "completed_with_result") return "Goal completed with a measured result";
+  if (outcome === "decided") return "Goal completed with a decision";
+  return "Result needs more evidence";
+}
+
+function publicGoalActivitySummary(
+  activity: Pick<typeof goalActivities.$inferSelect, "activityKind" | "summary">,
+) {
+  if (activity.activityKind !== "closeout") return activity.summary;
+  const legacyOutcome = /^Goal evaluated as\s+(.+)$/i.exec(activity.summary)?.[1]?.trim();
+  return legacyOutcome ? publicGoalOutcome(legacyOutcome) : activity.summary;
+}
 
 function resultSummary(run: {
   status: string;
@@ -430,6 +520,13 @@ async function requireGoal(db: GoalReader, id: string) {
   return goal;
 }
 
+async function requireGoalForUpdate(db: GoalReader, id: string) {
+  const goal = await db.select().from(goals).where(eq(goals.id, id))
+    .for("update").then((rows) => rows[0] ?? null);
+  if (!goal) throw notFound("Goal not found");
+  return goal;
+}
+
 function positiveOutcome(mode: string, outcome: string) {
   return (mode === "target" && outcome === "achieved")
     || (mode === "maximize" && outcome === "completed_with_result")
@@ -572,17 +669,165 @@ export function goalService(db: Db) {
     goal: GoalRow,
     pendingChange: typeof goalChangeProposals.$inferSelect | null,
     readyResult: typeof goalResultProposals.$inferSelect | null,
+    pendingWakeup: Pick<typeof agentWakeupRequests.$inferSelect, "status"> | null = null,
   ) {
     if (goal.lifecycle === "closed") return "closed" as const;
     if (goal.lifecycle === "draft") return "needs_attention" as const;
     if (readyResult) return "ready_for_acceptance" as const;
     if (pendingChange) return "needs_attention" as const;
+    if (pendingWakeup?.status === "deferred_goal_focus") return "waiting_focus" as const;
+    if (pendingWakeup?.status === "deferred_goal_blocked"
+      || pendingWakeup?.status === "deferred_agent_paused") return "needs_attention" as const;
     if (goal.continuationKind === "wait") return "waiting_external" as const;
     return "agent_advancing" as const;
   }
 
-  async function latestExternalCheckpoint(goal: GoalRow): Promise<ExternalGoalCheckpoint | null> {
-    const [issueFacts, linkedProjectFacts] = await Promise.all([
+  function goalWakeupAttentionReason(
+    wakeup: Pick<typeof agentWakeupRequests.$inferSelect, "status" | "error"> | null,
+  ) {
+    if (wakeup?.status === "deferred_agent_paused") {
+      return "The Owner Agent is paused. Resume it to continue this Goal.";
+    }
+    if (wakeup?.status !== "deferred_goal_blocked") return null;
+    if (wakeup.error === "heartbeat.wakeOnDemand.disabled") {
+      return "The Owner Agent is not accepting on-demand work. Update the Agent or choose another Owner.";
+    }
+    if (wakeup.error === "agent.unavailable") {
+      return "The Owner Agent is unavailable. Make it available or choose another Owner.";
+    }
+    if (wakeup.error === "budget.blocked") {
+      return "The Owner Agent is blocked by a budget limit. Resolve the budget decision to continue.";
+    }
+    return "The Owner Agent cannot start this work yet. Resolve its blocking condition to continue.";
+  }
+
+  function pendingGoalWakeup(goal: Pick<GoalRow, "id" | "orgId">) {
+    return db.select({
+      status: agentWakeupRequests.status,
+      error: agentWakeupRequests.error,
+    }).from(agentWakeupRequests).where(and(
+      eq(agentWakeupRequests.orgId, goal.orgId),
+      sql`${agentWakeupRequests.payload} ->> 'goalId' = ${goal.id}`,
+      inArray(agentWakeupRequests.status, [
+        "deferred_goal_focus",
+        "deferred_goal_blocked",
+        "deferred_agent_paused",
+      ]),
+      isNull(agentWakeupRequests.runId),
+    )).orderBy(desc(agentWakeupRequests.requestedAt)).limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function ensureGoalWakeupIntent(
+    database: Database,
+    goal: GoalRow,
+    input: {
+      event: "goal_started" | "goal_feedback" | "goal_change_decided";
+      eventId: string;
+      actor: GoalWakeupActor;
+      feedback?: { id: string; body: string; kind: string };
+      decision?: { decision: "approve" | "reject"; note: string | null; status: string };
+    },
+  ): Promise<GoalWakeupDispatch> {
+    if (!goal.ownerAgentId) throw conflict("Goal has no Owner Agent to wake");
+    const taskKey = `goal:${goal.id}:${input.event}:${input.eventId}`;
+    const idempotencyKey = input.event === "goal_started"
+      ? `goal-start:${input.eventId}`
+      : input.event === "goal_feedback"
+        ? `goal-feedback:${input.eventId}`
+        : `goal-change-decision:${input.eventId}:${input.decision?.decision ?? "unknown"}`;
+    const payload: Record<string, unknown> = {
+      event: input.event,
+      goalId: goal.id,
+      taskKey,
+      ...(input.event === "goal_started" ? { goalStartRequestId: input.eventId } : {}),
+      ...(input.feedback ? { feedbackId: input.feedback.id } : {}),
+      ...(input.decision ? { goalChangeProposalId: input.eventId, decision: input.decision.decision } : {}),
+    };
+    const contextSnapshot: Record<string, unknown> = {
+      goalId: goal.id,
+      taskKey,
+      goal: {
+        id: goal.id,
+        title: goal.title,
+        description: goal.description,
+        outcomeStatement: goal.outcomeStatement,
+        objectiveMode: goal.objectiveMode,
+        contractRevision: goal.contractRevision,
+        criteria: goal.criteria,
+        autonomyEnvelope: goal.autonomyEnvelope,
+        humanAuthorities: goal.humanAuthorities,
+        evaluationPolicy: goal.evaluationPolicy,
+        actionDeadline: goal.actionDeadline,
+        evaluationDeadline: goal.evaluationDeadline,
+      },
+      goalContinuation: {
+        kind: goal.continuationKind,
+        summary: goal.continuationSummary,
+        wakeCondition: goal.wakeCondition,
+      },
+      ...(input.feedback ? {
+        goalFeedback: {
+          id: input.feedback.id,
+          body: input.feedback.body,
+          kind: input.feedback.kind,
+        },
+      } : {}),
+      ...(input.decision ? {
+        goalDecision: {
+          proposalId: input.eventId,
+          decision: input.decision.decision,
+          note: input.decision.note,
+          status: input.decision.status,
+        },
+      } : {}),
+    };
+    const storedPayload = buildDeferredWakePayload(payload, contextSnapshot);
+    const [inserted] = await database.insert(agentWakeupRequests).values({
+      orgId: goal.orgId,
+      agentId: goal.ownerAgentId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: input.event,
+      payload: storedPayload,
+      status: "queued",
+      requestedByActorType: input.actor.actorType,
+      requestedByActorId: input.actor.actorId,
+      idempotencyKey,
+    }).onConflictDoNothing().returning();
+    const wakeup = inserted ?? await database.select().from(agentWakeupRequests).where(and(
+      eq(agentWakeupRequests.orgId, goal.orgId),
+      eq(agentWakeupRequests.agentId, goal.ownerAgentId),
+      eq(agentWakeupRequests.idempotencyKey, idempotencyKey),
+    )).then((rows) => rows[0] ?? null);
+    if (!wakeup) throw conflict("Goal Owner wakeup could not be queued");
+    if (!sameHashPayload(readDeferredWakePayload(wakeup.payload), payload)) {
+      throw conflict("Goal Owner wakeup key was reused with a different payload");
+    }
+    const requestedByActorType = wakeup.requestedByActorType === "user"
+      || wakeup.requestedByActorType === "agent"
+      || wakeup.requestedByActorType === "system"
+      ? wakeup.requestedByActorType
+      : "system";
+    return {
+      ownerAgentId: goal.ownerAgentId,
+      wakeupRequestId: wakeup.id,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: input.event,
+      payload,
+      contextSnapshot,
+      requestedByActorType,
+      requestedByActorId: wakeup.requestedByActorId,
+      idempotencyKey,
+    };
+  }
+
+  async function latestExternalWorkFact(
+    goal: GoalRow,
+    preferredRunId: string | null = null,
+  ): Promise<ExternalGoalWorkFact | null> {
+    const [issueFacts, linkedProjectFacts, directRunFacts] = await Promise.all([
       db.select({
         id: issues.id,
         identifier: issues.identifier,
@@ -607,6 +852,20 @@ export function goalService(db: Db) {
         eq(projects.orgId, goal.orgId),
         or(eq(projects.goalId, goal.id), eq(projectGoals.goalId, goal.id)),
       )),
+      goal.ownerAgentId
+        ? db.select({
+          id: heartbeatRuns.id,
+          status: heartbeatRuns.status,
+          updatedAt: heartbeatRuns.updatedAt,
+          resultJson: heartbeatRuns.resultJson,
+          resultSummaryJson: heartbeatRuns.resultSummaryJson,
+          error: heartbeatRuns.error,
+        }).from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.orgId, goal.orgId),
+          eq(heartbeatRuns.agentId, goal.ownerAgentId),
+          sql`${heartbeatRuns.contextSnapshot} ->> 'goalId' = ${goal.id}`,
+        ))
+        : Promise.resolve([]),
     ]);
     const runIds = [...new Set(issueFacts.flatMap((issue) => [issue.checkoutRunId, issue.executionRunId]).filter((id): id is string => Boolean(id)))];
     const runFacts = runIds.length > 0
@@ -622,36 +881,88 @@ export function goalService(db: Db) {
         inArray(heartbeatRuns.id, runIds),
       ))
       : [];
-    const facts: ExternalGoalCheckpoint[] = [
+    const relatedFacts: ExternalGoalWorkFact[] = [
       ...issueFacts.map((issue) => ({
-        id: `checkpoint:issue:${issue.id}`,
-        kind: "checkpoint" as const,
+        id: `work-status:issue:${issue.id}`,
+        kind: "work_status" as const,
         summary: `Issue ${issue.identifier ?? issue.title} is ${issue.status}.`,
         occurredAt: issue.updatedAt,
         sourceId: issue.id,
         sourceRunId: issue.executionRunId ?? issue.checkoutRunId,
-        evidenceRefs: [`issue://${issue.id}`],
+        evidenceRefs: [],
       })),
       ...linkedProjectFacts.map((project) => ({
-        id: `checkpoint:project:${project.id}`,
-        kind: "checkpoint" as const,
+        id: `work-status:project:${project.id}`,
+        kind: "work_status" as const,
         summary: `Project ${project.name} is ${project.status}.`,
         occurredAt: project.updatedAt,
         sourceId: project.id,
         sourceRunId: null,
-        evidenceRefs: [`project://${project.id}`],
+        evidenceRefs: [],
       })),
       ...runFacts.map((run) => ({
-        id: `checkpoint:run:${run.id}`,
-        kind: "checkpoint" as const,
+        id: `work-status:run:${run.id}`,
+        kind: "work_status" as const,
         summary: `Agent run ${run.id.slice(0, 8)} is ${run.status}: ${resultSummary(run)}`,
         occurredAt: run.updatedAt,
         sourceId: run.id,
         sourceRunId: run.id,
-        evidenceRefs: [`run://${run.id}`],
+        evidenceRefs: [],
       })),
     ];
-    return facts.sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())[0] ?? null;
+    const directFacts: ExternalGoalWorkFact[] = directRunFacts
+      .filter((run) => !runFacts.some((linkedRun) => linkedRun.id === run.id))
+      .map((run) => ({
+        id: `work-status:run:${run.id}`,
+        kind: "work_status" as const,
+        summary: `Agent run ${run.id.slice(0, 8)} is ${run.status}: ${resultSummary(run)}`,
+        occurredAt: run.updatedAt,
+        sourceId: run.id,
+        sourceRunId: run.id,
+        evidenceRefs: [],
+      }));
+    const allRunFacts = [...relatedFacts, ...directFacts].filter((fact) => fact.sourceId === fact.sourceRunId);
+    const preferredRun = preferredRunId
+      ? allRunFacts.find((fact) => fact.sourceRunId === preferredRunId) ?? null
+      : null;
+    if (preferredRun) return preferredRun;
+    const facts = relatedFacts.length > 0 ? relatedFacts : directFacts;
+    return facts.sort((left, right) => {
+      const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
+      return timeDelta !== 0 ? timeDelta : right.id.localeCompare(left.id);
+    })[0] ?? null;
+  }
+
+  async function requireGoalRun(
+    database: Database,
+    goal: GoalRow,
+    runId: string,
+    actorAgentId: string | null = null,
+  ) {
+    const run = await database.select({
+      id: heartbeatRuns.id,
+      orgId: heartbeatRuns.orgId,
+      agentId: heartbeatRuns.agentId,
+      status: heartbeatRuns.status,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
+    }).from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
+    if (!run || run.orgId !== goal.orgId) {
+      throw unprocessable("Goal Activity run must belong to the same organization");
+    }
+    if (actorAgentId && run.agentId !== actorAgentId) {
+      throw unprocessable("Goal Activity run must belong to the acting Agent");
+    }
+    const context = run.contextSnapshot ?? {};
+    if (context.goalId === goal.id) return run;
+    const issueId = typeof context.issueId === "string" ? context.issueId : null;
+    const linkedIssue = issueId
+      ? await database.select({ goalId: issues.goalId }).from(issues).where(and(
+        eq(issues.id, issueId),
+        eq(issues.orgId, goal.orgId),
+      )).then((rows) => rows[0] ?? null)
+      : null;
+    if (linkedIssue?.goalId === goal.id) return run;
+    throw unprocessable("Goal Activity run must be linked to this Goal");
   }
 
   async function recordFeedback(
@@ -676,56 +987,47 @@ export function goalService(db: Db) {
       if (existing.contentHash !== contentHash) {
         throw conflict("Goal feedback idempotency key was reused with a different payload");
       }
-      return existing;
     }
 
-    const [inserted] = await database.insert(goalFeedbackEntries).values({
-      orgId: goal.orgId,
-      goalId: goal.id,
-      actorType: "user",
-      actorId: actorUserId,
-      body: input.body,
-      attachments: input.attachments,
-      contentHash,
-      feedbackKind: input.feedbackKind,
-      idempotencyKey: input.idempotencyKey,
-    }).onConflictDoNothing().returning();
-    const feedback = inserted ?? await database.select().from(goalFeedbackEntries).where(and(
-      eq(goalFeedbackEntries.goalId, goal.id),
-      eq(goalFeedbackEntries.idempotencyKey, input.idempotencyKey),
-    )).then((rows) => rows[0] ?? null);
+    const [inserted] = existing ? [] : await database.insert(goalFeedbackEntries).values({
+        orgId: goal.orgId,
+        goalId: goal.id,
+        actorType: "user",
+        actorId: actorUserId,
+        body: input.body,
+        attachments: input.attachments,
+        contentHash,
+        feedbackKind: input.feedbackKind,
+        idempotencyKey: input.idempotencyKey,
+      }).onConflictDoNothing().returning();
+    const feedback = existing ?? inserted ?? await database.select().from(goalFeedbackEntries).where(and(
+        eq(goalFeedbackEntries.goalId, goal.id),
+        eq(goalFeedbackEntries.idempotencyKey, input.idempotencyKey),
+      )).then((rows) => rows[0] ?? null);
     if (!feedback) throw conflict("Goal feedback could not be recorded");
     if (feedback.contentHash !== contentHash) {
       throw conflict("Goal feedback idempotency key was reused with a different payload");
     }
-    if (feedback.routedWakeupRequestId) return feedback;
-
-    const wakeupKey = `goal-feedback:${feedback.id}`;
-    const [insertedWakeup] = await database.insert(agentWakeupRequests).values({
-      orgId: goal.orgId,
-      agentId: goal.ownerAgentId!,
-      source: "goal_feedback",
-      triggerDetail: "goal_feedback",
-      reason: "Goal feedback requires Owner review",
-      payload: { goalId: goal.id, feedbackId: feedback.id },
-      status: "queued",
-      requestedByActorType: "user",
-      requestedByActorId: actorUserId,
-      idempotencyKey: wakeupKey,
-    }).onConflictDoNothing().returning();
-    const wakeup = insertedWakeup ?? await database.select().from(agentWakeupRequests).where(and(
-      eq(agentWakeupRequests.orgId, goal.orgId),
-      eq(agentWakeupRequests.agentId, goal.ownerAgentId!),
-      eq(agentWakeupRequests.idempotencyKey, wakeupKey),
-    )).then((rows) => rows[0] ?? null);
-    if (!wakeup) throw conflict("Goal feedback Owner wakeup could not be queued");
-    return database.update(goalFeedbackEntries).set({
-      routedWakeupRequestId: wakeup.id,
-      updatedAt: new Date(),
-    }).where(and(
-      eq(goalFeedbackEntries.id, feedback.id),
-      eq(goalFeedbackEntries.orgId, goal.orgId),
-    )).returning().then((rows) => rows[0] ?? feedback);
+    const dispatch = await ensureGoalWakeupIntent(database, goal, {
+      event: "goal_feedback",
+      eventId: feedback.id,
+      actor: { actorType: "user", actorId: actorUserId },
+      feedback: { id: feedback.id, body: feedback.body, kind: feedback.feedbackKind },
+    });
+    if (feedback.routedWakeupRequestId && feedback.routedWakeupRequestId !== dispatch.wakeupRequestId) {
+      throw conflict("Goal feedback is linked to a different Owner wakeup");
+    }
+    const routedFeedback = feedback.routedWakeupRequestId
+      ? feedback
+      : await database.update(goalFeedbackEntries).set({
+        routedWakeupRequestId: dispatch.wakeupRequestId,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(goalFeedbackEntries.id, feedback.id),
+        eq(goalFeedbackEntries.orgId, goal.orgId),
+        isNull(goalFeedbackEntries.routedWakeupRequestId),
+      )).returning().then((rows) => rows[0] ?? feedback);
+    return { feedback: routedFeedback, dispatch };
   }
 
   async function evaluateInTransaction(
@@ -794,17 +1096,158 @@ export function goalService(db: Db) {
       contractRevision: current.contractRevision,
       submittedByAgentId: actorAgentId,
       agentOwnerRefAtTime: current.ownerAgentId,
-      activityKind: "evidence",
-      summary: `Goal evaluated as ${evaluation.outcome}`,
+      activityKind: "closeout",
+      summary: publicGoalOutcome(evaluation.outcome),
       evidenceRefs: input.evidenceRefs,
       idempotencyKey: acceptedProposal ? `goal-result-evaluation:${acceptedProposal.id}` : null,
     }).onConflictDoNothing();
     return goal;
   }
 
+  async function historyFor(
+    id: string,
+    options: { cursor?: string | null; limit?: number } = {},
+  ): Promise<GoalHistoryPage> {
+    const goal = await requireGoal(db, id);
+    const cursor = decodeGoalHistoryCursor(options.cursor);
+    const limit = options.limit ?? GOAL_HISTORY_DEFAULT_LIMIT;
+    if (!Number.isInteger(limit) || limit < 1 || limit > GOAL_HISTORY_MAX_LIMIT) {
+      throw badRequest(`Goal history limit must be between 1 and ${GOAL_HISTORY_MAX_LIMIT}`);
+    }
+    const perSourceLimit = limit + 1;
+    const [activityRows, feedbackRows, changeRows, resultRows] = await Promise.all([
+      db.select().from(goalActivities).where(and(
+        eq(goalActivities.goalId, id),
+        historyCursorCondition(goalActivities.occurredAt, goalActivities.id, "activity", cursor),
+      )).orderBy(desc(goalActivities.occurredAt), asc(goalActivities.id)).limit(perSourceLimit),
+      db.select().from(goalFeedbackEntries).where(and(
+        eq(goalFeedbackEntries.goalId, id),
+        historyCursorCondition(goalFeedbackEntries.createdAt, goalFeedbackEntries.id, "feedback", cursor),
+      )).orderBy(desc(goalFeedbackEntries.createdAt), asc(goalFeedbackEntries.id)).limit(perSourceLimit),
+      db.select().from(goalChangeProposals).where(and(
+        eq(goalChangeProposals.goalId, id),
+        historyCursorCondition(goalChangeProposals.createdAt, goalChangeProposals.id, "change_proposal", cursor),
+      )).orderBy(desc(goalChangeProposals.createdAt), asc(goalChangeProposals.id)).limit(perSourceLimit),
+      db.select().from(goalResultProposals).where(and(
+        eq(goalResultProposals.goalId, id),
+        historyCursorCondition(goalResultProposals.createdAt, goalResultProposals.id, "result_proposal", cursor),
+      )).orderBy(desc(goalResultProposals.createdAt), asc(goalResultProposals.id)).limit(perSourceLimit),
+    ]);
+
+    const agentIds = Array.from(new Set([
+      ...activityRows.map((row) => row.submittedByAgentId),
+      ...changeRows.map((row) => row.proposedByAgentId),
+      ...resultRows.map((row) => row.proposedByAgentId),
+    ].filter((value): value is string => Boolean(value))));
+    const userIds = Array.from(new Set(feedbackRows.map((row) => row.actorId).filter(Boolean)));
+    const attachmentAssetIds = Array.from(new Set(feedbackRows.flatMap((row) => row.attachments).flatMap((attachment) => {
+      const match = attachment.uri.match(/^asset:\/\/([0-9a-f-]{36})$/i);
+      return match?.[1] ? [match[1]] : [];
+    })));
+    const [agentRows, userRows, assetRows] = await Promise.all([
+      agentIds.length > 0
+        ? db.select({ id: agents.id, name: agents.name }).from(agents).where(and(
+          eq(agents.orgId, goal.orgId),
+          inArray(agents.id, agentIds),
+        ))
+        : Promise.resolve([]),
+      userIds.length > 0
+        ? db.select({ id: authUsers.id, name: authUsers.name }).from(authUsers).where(inArray(authUsers.id, userIds))
+        : Promise.resolve([]),
+      attachmentAssetIds.length > 0
+        ? db.select({ id: assets.id }).from(assets).where(and(
+          eq(assets.orgId, goal.orgId),
+          inArray(assets.id, attachmentAssetIds),
+        ))
+        : Promise.resolve([]),
+    ]);
+    const agentNames = new Map(agentRows.map((row) => [row.id, row.name]));
+    const userNames = new Map(userRows.map((row) => [row.id, row.name]));
+    const validAssetIds = new Set(assetRows.map((row) => row.id));
+    const actorName = (actorType: "user" | "agent" | "system", actorId: string | null) => {
+      if (actorType === "system") return "System";
+      if (actorType === "agent") return actorId ? agentNames.get(actorId) ?? "Former agent" : "System";
+      return actorId ? userNames.get(actorId) ?? "Board user" : "Board user";
+    };
+    const items: GoalHistoryItem[] = [
+      ...activityRows.map((activity) => {
+        const actorType = activity.submittedByAgentId ? "agent" as const : "system" as const;
+        return {
+          id: activity.id,
+          kind: "activity" as const,
+          summary: publicGoalActivitySummary(activity),
+          createdAt: activity.occurredAt,
+          evidenceRefs: stringEvidenceRefs(activity.evidenceRefs),
+          actorType,
+          actorId: activity.submittedByAgentId,
+          actorName: actorName(actorType, activity.submittedByAgentId),
+          attachments: [],
+        };
+      }),
+      ...feedbackRows.map((entry) => ({
+        id: entry.id,
+        kind: "feedback" as const,
+        summary: entry.body,
+        createdAt: entry.createdAt,
+        evidenceRefs: [],
+        actorType: "user" as const,
+        actorId: entry.actorId,
+        actorName: actorName("user", entry.actorId),
+        attachments: entry.attachments.map((attachment) => {
+          const match = attachment.uri.match(/^asset:\/\/([0-9a-f-]{36})$/i);
+          const assetId = match?.[1] ?? null;
+          return {
+            name: attachment.name,
+            mimeType: attachment.mimeType ?? null,
+            size: attachment.size ?? null,
+            contentPath: assetId && validAssetIds.has(assetId) ? `/api/assets/${assetId}/content` : null,
+          };
+        }),
+        feedbackKind: entry.feedbackKind,
+      })),
+      ...changeRows.map((proposal) => ({
+        id: proposal.id,
+        kind: "change_proposal" as const,
+        summary: proposal.rationale,
+        createdAt: proposal.createdAt,
+        evidenceRefs: proposal.evidenceRefs,
+        actorType: "agent" as const,
+        actorId: proposal.proposedByAgentId,
+        actorName: actorName("agent", proposal.proposedByAgentId),
+        attachments: [],
+        approvalId: proposal.approvalId,
+        status: proposal.status,
+      })),
+      ...resultRows.map((proposal) => ({
+        id: proposal.id,
+        kind: "result_proposal" as const,
+        summary: `${publicGoalOutcome(proposal.preflight.outcome)}. ${proposal.riskSummary}`,
+        createdAt: proposal.createdAt,
+        evidenceRefs: proposal.candidate.evidenceRefs,
+        actorType: "agent" as const,
+        actorId: proposal.proposedByAgentId,
+        actorName: actorName("agent", proposal.proposedByAgentId),
+        attachments: [],
+        status: proposal.status,
+      })),
+    ].sort((left, right) => {
+      const timeDifference = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+      if (timeDifference !== 0) return timeDifference;
+      const kindDifference = left.kind.localeCompare(right.kind);
+      return kindDifference !== 0 ? kindDifference : left.id.localeCompare(right.id);
+    });
+    const pageItems = items.slice(0, limit);
+    return {
+      items: pageItems,
+      nextCursor: items.length > limit && pageItems.length > 0
+        ? encodeGoalHistoryCursor(pageItems[pageItems.length - 1]!)
+        : null,
+    };
+  }
+
   async function workspaceFor(id: string) {
     const goal = await requireGoal(db, id);
-    const [ownerAssignment, plan, activities, feedback, changes, results] = await Promise.all([
+    const [ownerAssignment, plan, activities, historyPage, changes, results, evidenceActivity, pendingWakeup] = await Promise.all([
       db.select().from(goalOwnerAssignments).where(and(
         eq(goalOwnerAssignments.goalId, id),
         isNull(goalOwnerAssignments.endsAt),
@@ -817,94 +1260,57 @@ export function goalService(db: Db) {
         : Promise.resolve(null),
       db.select().from(goalActivities).where(eq(goalActivities.goalId, id))
         .orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(100),
-      db.select().from(goalFeedbackEntries).where(eq(goalFeedbackEntries.goalId, id))
-        .orderBy(desc(goalFeedbackEntries.createdAt)).limit(100),
-      db.select().from(goalChangeProposals).where(eq(goalChangeProposals.goalId, id))
-        .orderBy(desc(goalChangeProposals.createdAt)).limit(100),
-      db.select().from(goalResultProposals).where(eq(goalResultProposals.goalId, id))
-        .orderBy(desc(goalResultProposals.createdAt)).limit(100),
+      historyFor(id),
+      db.select().from(goalChangeProposals).where(and(
+        eq(goalChangeProposals.goalId, id),
+        eq(goalChangeProposals.status, "pending"),
+      )).orderBy(asc(goalChangeProposals.createdAt)),
+      db.select().from(goalResultProposals).where(and(
+        eq(goalResultProposals.goalId, id),
+        inArray(goalResultProposals.status, ["ready", "accepted"]),
+      )).orderBy(desc(goalResultProposals.createdAt)),
+      db.select().from(goalActivities).where(and(
+        eq(goalActivities.goalId, id),
+        inArray(goalActivities.activityKind, [...CURRENT_PROGRESS_ACTIVITY_KINDS]),
+        sql`jsonb_array_length(${goalActivities.evidenceRefs}) > 0`,
+      )).orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(1)
+        .then((rows) => rows[0] ?? null),
+      pendingGoalWakeup(goal),
     ]);
-    const externalCheckpoint = await latestExternalCheckpoint(goal);
-    const evidenceActivity = activities.find((activity) => stringEvidenceRefs(activity.evidenceRefs).length > 0) ?? null;
-    const progressSource = [
-      evidenceActivity
-        ? {
-          summary: evidenceActivity.summary,
-          sourceActivityId: evidenceActivity.id,
-          evidenceRefs: stringEvidenceRefs(evidenceActivity.evidenceRefs),
-          occurredAt: evidenceActivity.occurredAt,
-        }
-        : null,
-      externalCheckpoint
-        ? {
-          summary: externalCheckpoint.summary,
-          sourceActivityId: null,
-          evidenceRefs: externalCheckpoint.evidenceRefs,
-          occurredAt: externalCheckpoint.occurredAt,
-        }
-        : null,
-    ].filter((value): value is NonNullable<typeof value> => Boolean(value))
-      .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())[0] ?? null;
-    const pendingChange = changes.find((proposal) => proposal.status === "pending") ?? null;
-    const readyResult = results.find((proposal) => proposal.status === "ready") ?? null;
-    const facet = facetFor(goal, pendingChange, readyResult);
-    const attention = readyResult
+    const externalWorkFact = await latestExternalWorkFact(
+      goal,
+      typeof evidenceActivity?.runRef === "string" ? evidenceActivity.runRef : null,
+    );
+    const progressSource = evidenceActivity
       ? {
-        kind: "result_proposal" as const,
-        reason: `Review the proposed Goal result: ${readyResult.preflight.outcome}`,
-        sourceId: readyResult.id,
+        summary: publicGoalActivitySummary(evidenceActivity),
+        sourceActivityId: evidenceActivity.id,
+        evidenceRefs: stringEvidenceRefs(evidenceActivity.evidenceRefs),
       }
-      : pendingChange
+      : null;
+    const pendingChange = changes[0] ?? null;
+    const readyResult = results.find((proposal) => proposal.status === "ready") ?? null;
+    const facet = facetFor(goal, pendingChange, readyResult, pendingWakeup);
+    const wakeupAttentionReason = goalWakeupAttentionReason(pendingWakeup);
+    const attention = goal.lifecycle === "closed"
+      ? null
+      : readyResult
         ? {
-          kind: "change_proposal" as const,
-          reason: pendingChange.rationale,
-          sourceId: pendingChange.id,
+          kind: "result_proposal" as const,
+          reason: "Review the proposed Goal result and decide whether it is sufficient.",
+          sourceId: readyResult.id,
         }
-        : goal.lifecycle === "draft" && goal.alignmentQuestion
-          ? { kind: "alignment_question" as const, reason: goal.alignmentQuestion, sourceId: goal.id }
-          : null;
-    const timeline = [
-      ...activities.map((activity) => ({
-        id: activity.id,
-        kind: "activity" as const,
-        summary: activity.summary,
-        occurredAt: activity.occurredAt,
-        sourceId: activity.id,
-        sourceRunId: activity.runRef,
-        evidenceRefs: stringEvidenceRefs(activity.evidenceRefs),
-      })),
-      ...feedback.map((entry) => ({
-        id: entry.id,
-        kind: "feedback" as const,
-        summary: entry.body,
-        occurredAt: entry.createdAt,
-        sourceId: entry.id,
-        actorType: entry.actorType,
-        actorId: entry.actorId,
-        attachments: entry.attachments,
-        feedbackKind: entry.feedbackKind,
-      })),
-      ...changes.map((proposal) => ({
-        id: proposal.id,
-        kind: "change_proposal" as const,
-        summary: proposal.rationale,
-        occurredAt: proposal.createdAt,
-        sourceId: proposal.id,
-        approvalId: proposal.approvalId,
-        status: proposal.status,
-        evidenceRefs: proposal.evidenceRefs,
-      })),
-      ...results.map((proposal) => ({
-        id: proposal.id,
-        kind: "result_proposal" as const,
-        summary: `Result proposed as ${proposal.preflight.outcome}: ${proposal.riskSummary}`,
-        occurredAt: proposal.createdAt,
-        sourceId: proposal.id,
-        status: proposal.status,
-        evidenceRefs: proposal.candidate.evidenceRefs,
-      })),
-      ...(externalCheckpoint ? [externalCheckpoint] : []),
-    ].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime());
+        : pendingChange
+          ? {
+            kind: "change_proposal" as const,
+            reason: pendingChange.rationale,
+            sourceId: pendingChange.id,
+          }
+          : goal.lifecycle === "draft" && goal.alignmentQuestion
+            ? { kind: "alignment_question" as const, reason: goal.alignmentQuestion, sourceId: goal.id }
+            : wakeupAttentionReason
+              ? { kind: "owner_blocked" as const, reason: wakeupAttentionReason, sourceId: pendingWakeup?.status ?? null }
+              : null;
     return {
       goal: { ...goal, ownerAssignment, plan, activities },
       facet,
@@ -920,7 +1326,11 @@ export function goalService(db: Db) {
           sourceActivityId: null,
           evidenceRefs: [],
         },
-      agentAction: plan ? { summary: plan.summary, sourcePlanId: plan.id, sourceIds: [plan.id] } : null,
+      agentAction: externalWorkFact
+        ? { summary: externalWorkFact.summary, sourceIds: [externalWorkFact.sourceId] }
+        : plan
+          ? { summary: plan.summary, sourcePlanId: plan.id, sourceIds: [plan.id] }
+          : null,
       nextStep: goal.continuationKind && goal.continuationSummary
         ? {
           kind: goal.continuationKind,
@@ -929,7 +1339,8 @@ export function goalService(db: Db) {
         }
         : null,
       attention,
-      timeline,
+      timeline: historyPage.items,
+      timelineNextCursor: historyPage.nextCursor,
       changeProposals: changes,
       resultProposals: results,
     };
@@ -947,6 +1358,8 @@ export function goalService(db: Db) {
       .where(eq(goalResultProposals.id, id)).then((rows) => rows[0] ?? null),
 
     dependencies: (goal: GoalRow) => getGoalDependencies(db, goal),
+
+    history: historyFor,
 
     previewStart: async (orgId: string, input: PreviewGoalStart) => {
       if (!hasConcreteGoalOutcome(input)) return compileGoalStartPreview(input, null);
@@ -966,7 +1379,11 @@ export function goalService(db: Db) {
       return compileGoalStartPreview(input, owner as GoalAgent | null);
     },
 
-    start: async (orgId: string, input: StartGoal) => {
+    start: async (
+      orgId: string,
+      input: StartGoal,
+      actor: GoalWakeupActor = { actorType: "system", actorId: null },
+    ) => {
       const computedHash = stableGoalHash(input.packet);
       if (computedHash !== input.packetHash) {
         throw conflict("Goal Start packet hash does not match the submitted packet");
@@ -990,7 +1407,12 @@ export function goalService(db: Db) {
           eq(goals.orgId, orgId),
         )).then((rows) => rows[0] ?? null);
         if (!goal) throw conflict("Completed Goal Start request has no Goal");
-        return { goal, replayed: true };
+        const dispatch = await ensureGoalWakeupIntent(db, goal, {
+          event: "goal_started",
+          eventId: replay.id,
+          actor,
+        });
+        return { goal, replayed: true, dispatch };
       }
 
       return db.transaction(async (tx) => {
@@ -1028,7 +1450,12 @@ export function goalService(db: Db) {
             eq(goals.orgId, orgId),
           )).then((rows) => rows[0] ?? null);
           if (!existingGoal) throw conflict("Completed Goal Start request has no Goal");
-          return { goal: existingGoal, replayed: true };
+          const dispatch = await ensureGoalWakeupIntent(database, existingGoal, {
+            event: "goal_started",
+            eventId: existing.id,
+            actor,
+          });
+          return { goal: existingGoal, replayed: true, dispatch };
         }
 
         let draft: GoalRow | null;
@@ -1128,7 +1555,12 @@ export function goalService(db: Db) {
           eq(goalStartRequests.status, "pending"),
         )).returning().then((rows) => rows[0] ?? null);
         if (!completedRequest) throw conflict("Goal Start request could not be completed");
-        return { goal, replayed: false };
+        const dispatch = await ensureGoalWakeupIntent(database, goal, {
+          event: "goal_started",
+          eventId: completedRequest.id,
+          actor,
+        });
+        return { goal, replayed: false, dispatch };
       });
     },
 
@@ -1138,13 +1570,13 @@ export function goalService(db: Db) {
       const organizationGoals = await db.select().from(goals).where(eq(goals.orgId, orgId))
         .orderBy(asc(goals.createdAt));
       return Promise.all(organizationGoals.map(async (goal) => {
-        const [progress, externalCheckpoint, pendingChange, readyResult, owner] = await Promise.all([
+        const [progress, pendingChange, readyResult, owner, pendingWakeup] = await Promise.all([
           db.select().from(goalActivities).where(and(
             eq(goalActivities.goalId, goal.id),
+            inArray(goalActivities.activityKind, [...CURRENT_PROGRESS_ACTIVITY_KINDS]),
             sql`jsonb_array_length(${goalActivities.evidenceRefs}) > 0`,
             )).orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(1)
             .then((rows) => rows[0] ?? null),
-          latestExternalCheckpoint(goal),
           db.select().from(goalChangeProposals).where(and(
             eq(goalChangeProposals.goalId, goal.id),
             eq(goalChangeProposals.status, "pending"),
@@ -1159,23 +1591,25 @@ export function goalService(db: Db) {
               eq(agents.orgId, orgId),
             )).then((rows) => rows[0] ?? null)
             : Promise.resolve(null),
+          pendingGoalWakeup(goal),
         ]);
-        const currentProgress = [
-          progress ? { summary: progress.summary, occurredAt: progress.occurredAt } : null,
-          externalCheckpoint ? { summary: externalCheckpoint.summary, occurredAt: externalCheckpoint.occurredAt } : null,
-        ].filter((value): value is NonNullable<typeof value> => Boolean(value))
-          .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())[0]?.summary
-          ?? "No evidence-backed progress has been recorded yet.";
-        const attentionReason = readyResult
-          ? `Review the proposed Goal result: ${readyResult.preflight.outcome}`
-          : pendingChange?.rationale ?? (goal.lifecycle === "draft" ? goal.alignmentQuestion : null);
+        const currentProgress = progress
+          ? publicGoalActivitySummary(progress)
+          : "No evidence-backed progress has been recorded yet.";
+        const attentionReason = goal.lifecycle === "closed"
+          ? null
+          : readyResult
+            ? `Review the proposed Goal result: ${readyResult.preflight.outcome}`
+            : pendingChange?.rationale
+              ?? (goal.lifecycle === "draft" ? goal.alignmentQuestion : null)
+              ?? goalWakeupAttentionReason(pendingWakeup);
         return {
           id: goal.id,
           orgId: goal.orgId,
           title: goal.title,
           lifecycle: goal.lifecycle,
           status: goal.status,
-          facet: facetFor(goal, pendingChange, readyResult),
+          facet: facetFor(goal, pendingChange, readyResult, pendingWakeup),
           ownerAgentId: goal.ownerAgentId,
           ownerName: owner?.name ?? null,
           currentProgress,
@@ -1207,28 +1641,56 @@ export function goalService(db: Db) {
       title: string;
       description?: string | null;
       alignmentQuestion?: string | null;
-    }) => db.insert(goals).values({
-      orgId,
-      title: data.title,
-      description: data.description ?? null,
-      alignmentQuestion: data.alignmentQuestion ?? null,
-      level: "task",
-      status: "planned",
-      lifecycle: "draft",
-      parentId: null,
-      ownerAgentId: null,
-    }).returning().then((rows) => rows[0]),
+      ownerAgentId?: string | null;
+      targetTime?: Date | null;
+    }) => {
+      if (data.ownerAgentId) await requireInvokableOwner(db, orgId, data.ownerAgentId);
+      return db.insert(goals).values({
+        orgId,
+        title: data.title,
+        description: data.description ?? null,
+        alignmentQuestion: data.alignmentQuestion ?? null,
+        evaluationDeadline: data.targetTime ?? null,
+        level: "task",
+        status: "planned",
+        lifecycle: "draft",
+        parentId: null,
+        ownerAgentId: data.ownerAgentId ?? null,
+      }).returning().then((rows) => rows[0]);
+    },
 
     update: async (id: string, data: {
       title?: string;
       description?: string | null;
       alignmentQuestion?: string | null;
+      ownerAgentId?: string | null;
+      targetTime?: Date | null;
     }, actorAgentId: string | null = null) => {
-      const current = await requireGoal(db, id);
-      assertGoalOwner(current, actorAgentId);
-      const { title, description, alignmentQuestion } = data;
-      return db.update(goals).set({ title, description, alignmentQuestion, updatedAt: new Date() })
-        .where(eq(goals.id, id)).returning().then((rows) => rows[0] ?? null);
+      return db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const current = await requireGoalForUpdate(database, id);
+        assertGoalOwner(current, actorAgentId);
+        if (current.lifecycle === "closed") {
+          throw conflict("Closed Goals are read-only");
+        }
+        if ((data.ownerAgentId !== undefined || data.targetTime !== undefined) && current.lifecycle !== "draft") {
+          throw conflict("Owner and target time can only be edited while a Goal is a Draft");
+        }
+        if (data.ownerAgentId) await requireInvokableOwner(database, current.orgId, data.ownerAgentId);
+        const { title, description, alignmentQuestion, ownerAgentId, targetTime } = data;
+        const changedGoal = await database.update(goals).set({
+          title,
+          description,
+          alignmentQuestion,
+          ...(ownerAgentId !== undefined ? { ownerAgentId } : {}),
+          ...(targetTime !== undefined ? { evaluationDeadline: targetTime } : {}),
+          updatedAt: new Date(),
+        })
+          .where(and(eq(goals.id, id), eq(goals.lifecycle, current.lifecycle)))
+          .returning().then((rows) => rows[0] ?? null);
+        if (!changedGoal) throw conflict("Goal changed before update; reload and retry");
+        return changedGoal;
+      });
     },
 
     activate: async (id: string, input: ActivateGoal, actorAgentId: string | null = null) => {
@@ -1290,19 +1752,23 @@ export function goalService(db: Db) {
     },
 
     updatePlan: async (id: string, input: UpdateGoalPlan, actorAgentId: string | null = null) => {
-      const current = await requireGoal(db, id);
-      assertCanonicalActiveGoal(current);
-      assertGoalOwner(current, actorAgentId);
-      const revision = current.planRevision + 1;
       return db.transaction(async (tx) => {
-        const [plan] = await tx.insert(goalPlans).values({
+        const database = tx as unknown as Database;
+        const current = await requireGoalForUpdate(database, id);
+        assertCanonicalActiveGoal(current);
+        assertGoalOwner(current, actorAgentId);
+        const revision = current.planRevision + 1;
+        const [plan] = await database.insert(goalPlans).values({
           orgId: current.orgId,
           goalId: id,
           revision,
           ...input,
           createdByAgentId: actorAgentId,
         }).returning();
-        await tx.update(goals).set({ planRevision: revision, updatedAt: new Date() }).where(eq(goals.id, id));
+        const changedGoal = await database.update(goals).set({ planRevision: revision, updatedAt: new Date() })
+          .where(and(eq(goals.id, id), eq(goals.lifecycle, "active"), eq(goals.planRevision, current.planRevision)))
+          .returning().then((rows) => rows[0] ?? null);
+        if (!changedGoal) throw conflict("Goal changed before Plan update; reload and retry");
         return plan;
       });
     },
@@ -1311,57 +1777,58 @@ export function goalService(db: Db) {
       .orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(100),
 
     createActivity: async (id: string, input: CreateGoalActivity, actorAgentId: string | null = null) => {
-      const current = await requireGoal(db, id);
-      assertCanonicalActiveGoal(current);
-      assertGoalOwner(current, actorAgentId);
-      if (input.activityKind === "closeout" && !input.runRef) {
-        throw unprocessable("A closeout Activity requires a Run reference");
-      }
-      if (input.runRef) {
-        const run = await db.select({ id: heartbeatRuns.id, orgId: heartbeatRuns.orgId, status: heartbeatRuns.status })
-          .from(heartbeatRuns).where(eq(heartbeatRuns.id, input.runRef)).then((rows) => rows[0] ?? null);
-        if (!run || run.orgId !== current.orgId) throw unprocessable("Goal Activity run must belong to the same organization");
-        if (input.activityKind === "closeout" && !TERMINAL_RUN_STATUSES.includes(run.status as typeof TERMINAL_RUN_STATUSES[number])) {
-          throw conflict("A closeout Activity requires a terminal Run");
+      return db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const current = await requireGoalForUpdate(database, id);
+        assertCanonicalActiveGoal(current);
+        assertGoalOwner(current, actorAgentId);
+        if (input.activityKind === "closeout" && !input.runRef) {
+          throw unprocessable("A closeout Activity requires a Run reference");
         }
-      }
-      const [activity] = await db.insert(goalActivities).values({
-        orgId: current.orgId,
-        goalId: id,
-        contractRevision: current.contractRevision,
-        submittedByAgentId: actorAgentId,
-        agentOwnerRefAtTime: current.ownerAgentId,
-        activityKind: input.activityKind ?? "progress",
-        commitmentRef: input.commitmentRef ?? null,
-        runRef: input.runRef ?? null,
-        summary: input.summary,
-        evidenceRefs: input.evidenceRefs,
-        idempotencyKey: input.idempotencyKey ?? null,
-        occurredAt: input.occurredAt ?? new Date(),
-      }).onConflictDoNothing().returning();
-      if (activity) return activity;
-      if (input.idempotencyKey) {
-        const existingIdempotent = await db.select().from(goalActivities).where(and(
-          eq(goalActivities.goalId, id),
-          eq(goalActivities.idempotencyKey, input.idempotencyKey),
-        )).then((rows) => rows[0] ?? null);
-        if (existingIdempotent) return existingIdempotent;
-      }
-      if (input.activityKind === "closeout" && input.runRef) {
-        const existingCloseout = await db.select().from(goalActivities).where(and(
-          eq(goalActivities.goalId, id),
-          eq(goalActivities.runRef, input.runRef),
-          eq(goalActivities.activityKind, "closeout"),
-        )).then((rows) => rows[0] ?? null);
-        if (existingCloseout) throw conflict("A closeout Activity already exists for this Run");
-      }
-      throw conflict("Goal Activity was already recorded");
+        if (input.runRef) {
+          const run = await requireGoalRun(database, current, input.runRef, actorAgentId);
+          if (input.activityKind === "closeout" && !TERMINAL_RUN_STATUSES.includes(run.status as typeof TERMINAL_RUN_STATUSES[number])) {
+            throw conflict("A closeout Activity requires a terminal Run");
+          }
+        }
+        const [activity] = await database.insert(goalActivities).values({
+          orgId: current.orgId,
+          goalId: id,
+          contractRevision: current.contractRevision,
+          submittedByAgentId: actorAgentId,
+          agentOwnerRefAtTime: current.ownerAgentId,
+          activityKind: input.activityKind ?? "progress",
+          commitmentRef: input.commitmentRef ?? null,
+          runRef: input.runRef ?? null,
+          summary: input.summary,
+          evidenceRefs: input.evidenceRefs,
+          idempotencyKey: input.idempotencyKey ?? null,
+          occurredAt: input.occurredAt ?? new Date(),
+        }).onConflictDoNothing().returning();
+        if (activity) return activity;
+        if (input.idempotencyKey) {
+          const existingIdempotent = await database.select().from(goalActivities).where(and(
+            eq(goalActivities.goalId, id),
+            eq(goalActivities.idempotencyKey, input.idempotencyKey),
+          )).then((rows) => rows[0] ?? null);
+          if (existingIdempotent) return existingIdempotent;
+        }
+        if (input.activityKind === "closeout" && input.runRef) {
+          const existingCloseout = await database.select().from(goalActivities).where(and(
+            eq(goalActivities.goalId, id),
+            eq(goalActivities.runRef, input.runRef),
+            eq(goalActivities.activityKind, "closeout"),
+          )).then((rows) => rows[0] ?? null);
+          if (existingCloseout) throw conflict("A closeout Activity already exists for this Run");
+        }
+        throw conflict("Goal Activity was already recorded");
+      });
     },
 
     feedback: async (id: string, input: CreateGoalFeedback, actorUserId: string) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const current = await requireGoal(database, id);
+        const current = await requireGoalForUpdate(database, id);
         return recordFeedback(database, current, input, actorUserId);
       });
     },
@@ -1375,7 +1842,7 @@ export function goalService(db: Db) {
       const normalizedPatch = normalizeContractPatch(input.afterContract);
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const current = await requireGoal(database, id);
+        const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
         const existing = await database.select().from(goalChangeProposals).where(and(
@@ -1387,7 +1854,7 @@ export function goalService(db: Db) {
           return existing;
         }
         if (current.contractRevision !== input.expectedContractRevision) {
-          throw conflict("Goal Contract revision changed before proposal creation", {
+          throw conflict("Goal changed before the proposed update could be created", {
             expectedContractRevision: input.expectedContractRevision,
             currentContractRevision: current.contractRevision,
           });
@@ -1406,7 +1873,7 @@ export function goalService(db: Db) {
           evaluationPolicy: mergedContract.evaluationPolicy,
           actionDeadline: mergedContract.actionDeadline,
           evaluationDeadline: mergedContract.evaluationDeadline,
-          initialPlan: { summary: "Validate the proposed Contract revision" },
+          initialPlan: { summary: "Validate the proposed Goal update" },
           initialContinuation: {
             kind: current.continuationKind,
             summary: current.continuationSummary,
@@ -1421,18 +1888,26 @@ export function goalService(db: Db) {
           if (!linkedApproval
             || linkedApproval.orgId !== current.orgId
             || linkedApproval.type !== "goal_change"
-            || linkedApproval.status !== "pending") {
+            || linkedApproval.status !== "pending"
+            || linkedApproval.requestedByAgentId !== actorAgentId) {
             throw unprocessable("Goal change approval must be pending and belong to the same organization");
           }
-          await database.update(approvals).set({
+          const boundApproval = await database.update(approvals).set({
             payload: {
-              ...linkedApproval.payload,
               goalId: id,
               proposalId,
               expectedContractRevision: current.contractRevision,
+              beforeContract,
+              afterContract: normalizedPatch,
+              rationale: input.rationale,
+              evidenceRefs: input.evidenceRefs,
             },
             updatedAt: new Date(),
-          }).where(eq(approvals.id, approvalId));
+          }).where(and(
+            eq(approvals.id, approvalId),
+            eq(approvals.status, "pending"),
+          )).returning().then((rows) => rows[0] ?? null);
+          if (!boundApproval) throw conflict("Goal change approval changed before it could be linked");
         } else {
           await database.insert(approvals).values({
             id: approvalId,
@@ -1487,14 +1962,6 @@ export function goalService(db: Db) {
         const proposal = await database.select().from(goalChangeProposals)
           .where(eq(goalChangeProposals.id, proposalId)).then((rows) => rows[0] ?? null);
         if (!proposal) throw notFound("Goal change proposal not found");
-        if (input.decision === "approve" && proposal.status === "applied") return { proposal, stale: false };
-        if (input.decision === "reject" && proposal.status === "rejected") return { proposal, stale: false };
-        if (proposal.status !== "pending") {
-          throw conflict(`Goal change proposal is already ${proposal.status}`);
-        }
-        const current = await requireGoal(database, proposal.goalId);
-        assertCanonicalActiveGoal(current);
-        if (current.orgId !== proposal.orgId) throw unprocessable("Goal change proposal organization mismatch");
         const approval = await database.select().from(approvals).where(and(
           eq(approvals.id, proposal.approvalId),
           eq(approvals.orgId, proposal.orgId),
@@ -1502,6 +1969,23 @@ export function goalService(db: Db) {
         if (!approval || approval.type !== "goal_change") {
           throw unprocessable("Goal change proposal approval is invalid");
         }
+        if ((input.decision === "approve" && proposal.status === "applied")
+          || (input.decision === "reject" && proposal.status === "rejected")) {
+          const current = await requireGoalForUpdate(database, proposal.goalId);
+          const dispatch = await ensureGoalWakeupIntent(database, current, {
+            event: "goal_change_decided",
+            eventId: proposal.id,
+            actor: { actorType: "user", actorId: actorUserId },
+            decision: { decision: input.decision, note: approval.decisionNote, status: proposal.status },
+          });
+          return { proposal, stale: false, dispatch };
+        }
+        if (proposal.status !== "pending") {
+          throw conflict(`Goal change proposal is already ${proposal.status}`);
+        }
+        const current = await requireGoalForUpdate(database, proposal.goalId);
+        assertCanonicalActiveGoal(current);
+        if (current.orgId !== proposal.orgId) throw unprocessable("Goal change proposal organization mismatch");
         if (input.decision === "reject") {
           const now = new Date();
           await database.update(approvals).set({
@@ -1530,14 +2014,22 @@ export function goalService(db: Db) {
             evidenceRefs: proposal.evidenceRefs,
             idempotencyKey: `goal-change:${proposal.id}:rejected`,
           }).onConflictDoNothing();
-          return { proposal: rejected, stale: false };
+          const dispatch = await ensureGoalWakeupIntent(database, current, {
+            event: "goal_change_decided",
+            eventId: proposal.id,
+            actor: { actorType: "user", actorId: actorUserId },
+            decision: { decision: "reject", note: input.note ?? null, status: rejected.status },
+          });
+          return { proposal: rejected, stale: false, dispatch };
         }
 
         if (current.contractRevision !== proposal.expectedContractRevision) {
           const now = new Date();
           await database.update(approvals).set({
-            status: "approved",
-            decisionNote: input.note ?? null,
+            status: "cancelled",
+            decisionNote: input.note
+              ? `${input.note}\n\nNot applied because the Goal changed before this decision.`
+              : "Not applied because the Goal changed before this decision.",
             decidedByUserId: actorUserId,
             decidedAt: now,
             updatedAt: now,
@@ -1564,7 +2056,7 @@ export function goalService(db: Db) {
           evaluationPolicy: merged.evaluationPolicy,
           actionDeadline: merged.actionDeadline,
           evaluationDeadline: merged.evaluationDeadline,
-          initialPlan: { summary: "Apply the approved Contract revision" },
+          initialPlan: { summary: "Apply the approved Goal update" },
           initialContinuation: {
             kind: current.continuationKind,
             summary: current.continuationSummary,
@@ -1599,7 +2091,7 @@ export function goalService(db: Db) {
           eq(goals.lifecycle, "active"),
           eq(goals.contractRevision, proposal.expectedContractRevision),
         )).returning().then((rows) => rows[0] ?? null);
-        if (!changedGoal) throw conflict("Goal Contract revision changed before proposal application");
+        if (!changedGoal) throw conflict("Goal changed before the approved update could be applied");
         await database.insert(goalActivities).values({
           orgId: current.orgId,
           goalId: current.id,
@@ -1607,7 +2099,7 @@ export function goalService(db: Db) {
           submittedByAgentId: proposal.proposedByAgentId,
           agentOwnerRefAtTime: current.ownerAgentId,
           activityKind: "decision_requested",
-          summary: `Applied Goal Contract revision ${nextRevision}: ${proposal.rationale}`,
+          summary: `Goal updated after approval: ${proposal.rationale}`,
           evidenceRefs: proposal.evidenceRefs,
           idempotencyKey: `goal-change:${proposal.id}:applied`,
         }).onConflictDoNothing();
@@ -1621,28 +2113,38 @@ export function goalService(db: Db) {
           eq(goalChangeProposals.status, "pending"),
         )).returning().then((rows) => rows[0] ?? null);
         if (!applied) throw conflict("Goal change proposal changed before application");
-        return { proposal: applied, stale: false };
+        const dispatch = await ensureGoalWakeupIntent(database, changedGoal, {
+          event: "goal_change_decided",
+          eventId: proposal.id,
+          actor: { actorType: "user", actorId: actorUserId },
+          decision: { decision: "approve", note: input.note ?? null, status: applied.status },
+        });
+        return { proposal: applied, stale: false, dispatch };
       });
       if (result.stale) {
-        throw conflict("Goal Contract revision changed before proposal application", {
+        throw conflict("Goal changed before the approved update could be applied", {
           expectedContractRevision: result.proposal.expectedContractRevision,
           currentContractRevision: result.currentRevision,
         });
       }
-      return result.proposal;
+      if (!result.dispatch) throw conflict("Goal change decision could not queue the Owner continuation");
+      return { proposal: result.proposal, dispatch: result.dispatch };
     },
 
     createResultProposal: async (
       id: string,
       input: CreateGoalResultProposal,
       actorAgentId: string | null,
+      actorRunId: string | null = null,
     ) => {
       if (!actorAgentId) throw forbidden("Only the Goal Owner Agent can submit a Result Proposal");
       const candidate = evaluationCandidate(input);
       const candidateHash = stableGoalHash(candidate);
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const current = await requireGoal(database, id);
+        const current = await requireGoalForUpdate(database, id);
+        assertGoalOwner(current, actorAgentId);
+        if (actorRunId) await requireGoalRun(database, current, actorRunId, actorAgentId);
         const existing = await database.select().from(goalResultProposals).where(and(
           eq(goalResultProposals.goalId, id),
           eq(goalResultProposals.idempotencyKey, input.idempotencyKey),
@@ -1652,15 +2154,24 @@ export function goalService(db: Db) {
           return existing;
         }
         assertCanonicalActiveGoal(current);
-        assertGoalOwner(current, actorAgentId);
         if (input.contractRevision !== current.contractRevision) {
-          throw conflict("Goal Contract revision changed before Result Proposal creation", {
+          throw conflict("Goal changed before the result could be proposed", {
             expectedContractRevision: input.contractRevision,
             currentContractRevision: current.contractRevision,
           });
         }
         const preflight = reduceGoalEvaluation(current, candidate);
         const status = isTerminalEvaluation(preflight.outcome) ? "ready" as const : "inconclusive" as const;
+        if (status === "ready") {
+          const readyProposal = await database.select({ id: goalResultProposals.id })
+            .from(goalResultProposals).where(and(
+              eq(goalResultProposals.goalId, id),
+              eq(goalResultProposals.status, "ready"),
+            )).limit(1).then((rows) => rows[0] ?? null);
+          if (readyProposal) {
+            throw conflict("This Goal already has a Result Proposal ready for review");
+          }
+        }
         const [proposal] = await database.insert(goalResultProposals).values({
           orgId: current.orgId,
           goalId: current.id,
@@ -1677,6 +2188,16 @@ export function goalService(db: Db) {
           eq(goalResultProposals.goalId, id),
           eq(goalResultProposals.idempotencyKey, input.idempotencyKey),
         )).then((rows) => rows[0] ?? null);
+        if (!persisted && status === "ready") {
+          const readyProposal = await database.select({ id: goalResultProposals.id })
+            .from(goalResultProposals).where(and(
+              eq(goalResultProposals.goalId, id),
+              eq(goalResultProposals.status, "ready"),
+            )).limit(1).then((rows) => rows[0] ?? null);
+          if (readyProposal) {
+            throw conflict("This Goal already has a Result Proposal ready for review");
+          }
+        }
         if (!persisted) throw conflict("Goal Result Proposal could not be recorded");
         assertSameResultProposalPayload(persisted, input, candidateHash);
         if (status === "inconclusive") {
@@ -1687,12 +2208,25 @@ export function goalService(db: Db) {
             submittedByAgentId: actorAgentId,
             agentOwnerRefAtTime: current.ownerAgentId,
             activityKind: "bottleneck",
+            runRef: actorRunId,
             summary: inconclusiveResultSummary(preflight, input.riskSummary),
             evidenceRefs: candidate.evidenceRefs,
             idempotencyKey: `goal-result-inconclusive:${input.idempotencyKey}`,
           }).onConflictDoNothing();
           return persisted;
         }
+        await database.insert(goalActivities).values({
+          orgId: current.orgId,
+          goalId: current.id,
+          contractRevision: current.contractRevision,
+          submittedByAgentId: actorAgentId,
+          agentOwnerRefAtTime: current.ownerAgentId,
+          activityKind: "evidence",
+          runRef: actorRunId,
+          summary: `${publicGoalOutcome(preflight.outcome)} is ready for review. ${input.riskSummary}`,
+          evidenceRefs: candidate.evidenceRefs,
+          idempotencyKey: `goal-result-evidence:${input.idempotencyKey}`,
+        }).onConflictDoNothing();
         return persisted;
       });
     },
@@ -1707,7 +2241,7 @@ export function goalService(db: Db) {
         const proposal = await database.select().from(goalResultProposals)
           .where(eq(goalResultProposals.id, proposalId)).then((rows) => rows[0] ?? null);
         if (!proposal) throw notFound("Goal Result Proposal not found");
-        const current = await requireGoal(database, proposal.goalId);
+        const current = await requireGoalForUpdate(database, proposal.goalId);
         if (current.orgId !== proposal.orgId) throw unprocessable("Goal Result Proposal organization mismatch");
         if (proposal.consumedAt) {
           if (proposal.acceptanceIdempotencyKey !== input.idempotencyKey) {
@@ -1720,7 +2254,7 @@ export function goalService(db: Db) {
         }
         assertCanonicalActiveGoal(current);
         if (proposal.contractRevision !== current.contractRevision) {
-          throw conflict("Goal Contract revision changed before Result Proposal acceptance", {
+          throw conflict("Goal changed before the result could be accepted", {
             expectedContractRevision: proposal.contractRevision,
             currentContractRevision: current.contractRevision,
           });
@@ -1753,9 +2287,35 @@ export function goalService(db: Db) {
           const latestProposal = await database.select().from(goalResultProposals)
             .where(eq(goalResultProposals.id, proposal.id)).then((rows) => rows[0] ?? null);
           if (latestProposal?.consumedAt && latestProposal.acceptanceIdempotencyKey === input.idempotencyKey) {
-            return requireGoal(database, proposal.goalId);
+            return requireGoalForUpdate(database, proposal.goalId);
           }
           throw conflict("Goal Result Proposal changed before acceptance");
+        }
+        const pendingChanges = await database.select({
+          id: goalChangeProposals.id,
+          approvalId: goalChangeProposals.approvalId,
+        }).from(goalChangeProposals).where(and(
+          eq(goalChangeProposals.goalId, current.id),
+          eq(goalChangeProposals.status, "pending"),
+        ));
+        if (pendingChanges.length > 0) {
+          await database.update(goalChangeProposals).set({
+            status: "superseded",
+            updatedAt: now,
+          }).where(and(
+            eq(goalChangeProposals.goalId, current.id),
+            eq(goalChangeProposals.status, "pending"),
+          ));
+          await database.update(approvals).set({
+            status: "cancelled",
+            decisionNote: "Closed because the Goal result was accepted before this proposed change was applied.",
+            decidedByUserId: actorUserId,
+            decidedAt: now,
+            updatedAt: now,
+          }).where(and(
+            inArray(approvals.id, pendingChanges.map((change) => change.approvalId)),
+            inArray(approvals.status, ["pending", "revision_requested"]),
+          ));
         }
         return evaluateInTransaction(database, current, {
           ...proposal.candidate,
@@ -1778,18 +2338,26 @@ export function goalService(db: Db) {
           if (proposal.rejectionFeedback !== input.feedback) {
             throw conflict("Goal Result Proposal rejection was replayed with different feedback");
           }
-          return proposal;
+          const current = await requireGoalForUpdate(database, proposal.goalId);
+          if (current.lifecycle !== "active") return { proposal, dispatch: null };
+          const { dispatch } = await recordFeedback(database, current, {
+            body: input.feedback,
+            attachments: [],
+            feedbackKind: "ordinary",
+            idempotencyKey: input.idempotencyKey,
+          }, actorUserId);
+          return { proposal, dispatch };
         }
         if (proposal.status !== "ready") {
           throw conflict(`Goal Result Proposal is already ${proposal.status}`);
         }
-        const current = await requireGoal(database, proposal.goalId);
+        const current = await requireGoalForUpdate(database, proposal.goalId);
         assertCanonicalActiveGoal(current);
         if (current.orgId !== proposal.orgId) throw unprocessable("Goal Result Proposal organization mismatch");
         if (current.contractRevision !== proposal.contractRevision) {
-          throw conflict("Goal Contract revision changed before Result Proposal rejection");
+          throw conflict("Goal changed before the result could be returned for more work");
         }
-        await recordFeedback(database, current, {
+        const { dispatch } = await recordFeedback(database, current, {
           body: input.feedback,
           attachments: [],
           feedbackKind: "ordinary",
@@ -1808,23 +2376,24 @@ export function goalService(db: Db) {
           eq(goalResultProposals.status, "ready"),
         )).returning().then((rows) => rows[0] ?? null);
         if (!rejected) throw conflict("Goal Result Proposal changed before rejection");
-        return rejected;
+        return { proposal: rejected, dispatch };
       });
     },
 
     assignOwner: async (id: string, input: AssignGoalOwner, actorAgentId: string | null = null) => {
-      const current = await requireGoal(db, id);
-      assertCanonicalActiveGoal(current);
-      assertGoalOwner(current, actorAgentId);
-      await requireInvokableOwner(db, current.orgId, input.agentId);
       return db.transaction(async (tx) => {
-        const previous = await tx.select().from(goalOwnerAssignments)
+        const database = tx as unknown as Database;
+        const current = await requireGoalForUpdate(database, id);
+        assertCanonicalActiveGoal(current);
+        assertGoalOwner(current, actorAgentId);
+        await requireInvokableOwner(database, current.orgId, input.agentId);
+        const previous = await database.select().from(goalOwnerAssignments)
           .where(and(eq(goalOwnerAssignments.goalId, id), isNull(goalOwnerAssignments.endsAt)))
           .then((rows) => rows[0] ?? null);
         if (previous?.agentId === input.agentId) return previous;
         const now = new Date();
-        if (previous) await tx.update(goalOwnerAssignments).set({ endsAt: now }).where(eq(goalOwnerAssignments.id, previous.id));
-        const [assignment] = await tx.insert(goalOwnerAssignments).values({
+        if (previous) await database.update(goalOwnerAssignments).set({ endsAt: now }).where(eq(goalOwnerAssignments.id, previous.id));
+        const [assignment] = await database.insert(goalOwnerAssignments).values({
           orgId: current.orgId,
           goalId: id,
           agentId: input.agentId,
@@ -1832,18 +2401,32 @@ export function goalService(db: Db) {
           assignedByAuthorityRef: input.authorityRef ?? null,
           startsAt: now,
         }).returning();
-        await tx.update(goals).set({ ownerAgentId: input.agentId, updatedAt: now }).where(eq(goals.id, id));
+        const changedGoal = await database.update(goals).set({ ownerAgentId: input.agentId, updatedAt: now })
+          .where(and(eq(goals.id, id), eq(goals.lifecycle, "active")))
+          .returning().then((rows) => rows[0] ?? null);
+        if (!changedGoal) throw conflict("Goal changed before Owner assignment; reload and retry");
         return assignment;
       });
     },
 
     setFocus: async (id: string, focus: boolean, actorAgentId: string | null = null) => {
-      const current = await requireGoal(db, id);
-      if (focus) assertCanonicalActiveGoal(current);
-      assertGoalOwner(current, actorAgentId);
       return db.transaction(async (tx) => {
-        if (focus) await tx.update(goals).set({ focus: false }).where(eq(goals.orgId, current.orgId));
-        const [goal] = await tx.update(goals).set({ focus, updatedAt: new Date() }).where(eq(goals.id, id)).returning();
+        const database = tx as unknown as Database;
+        const candidate = await requireGoal(database, id);
+        await database.execute(sql`select id from organizations where id = ${candidate.orgId} for update`);
+        const current = await requireGoalForUpdate(database, id);
+        if (current.orgId !== candidate.orgId) throw conflict("Goal organization changed before Focus update; reload and retry");
+        assertCanonicalActiveGoal(current);
+        assertGoalOwner(current, actorAgentId);
+        if (focus) await database.update(goals).set({ focus: false }).where(and(
+          eq(goals.orgId, current.orgId),
+          eq(goals.lifecycle, "active"),
+        ));
+        const [goal] = await database.update(goals).set({ focus, updatedAt: new Date() }).where(and(
+          eq(goals.id, id),
+          eq(goals.lifecycle, "active"),
+        )).returning();
+        if (!goal) throw conflict("Goal changed before Focus update; reload and retry");
         return goal;
       });
     },
@@ -1851,7 +2434,7 @@ export function goalService(db: Db) {
     evaluate: async (id: string, input: EvaluateGoal, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const current = await requireGoal(database, id);
+        const current = await requireGoalForUpdate(database, id);
         return evaluateInTransaction(database, current, input, actorAgentId);
       });
     },

@@ -4,6 +4,7 @@ import type {
   GoalChangeProposal,
   GoalDependencies,
   GoalFeedbackEntry,
+  GoalHistoryPage,
   GoalOwnerAssignment,
   GoalPlan,
   GoalResultProposal,
@@ -25,6 +26,8 @@ export const goalsApi = {
     api.get<GoalWorkspaceCard[] | { cards: GoalWorkspaceCard[] }>(`/orgs/${orgId}/goals/workspace`),
   get: (id: string) => api.get<GoalDetail>(`/goals/${id}`),
   getWorkspace: (id: string) => api.get<GoalWorkspaceSummary>(`/goals/${id}/workspace`),
+  getHistory: (id: string, cursor: string, limit = 50) =>
+    api.get<GoalHistoryPage>(`/goals/${id}/history?limit=${limit}&cursor=${encodeURIComponent(cursor)}`),
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Goal>(`/orgs/${orgId}/goals`, data),
   previewStart: (orgId: string, data: Record<string, unknown>) =>
