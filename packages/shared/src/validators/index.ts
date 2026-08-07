@@ -27,6 +27,11 @@ export {
   agentSkillEnableSchema, agentSkillEntrySchema, agentSkillOriginSchema, agentSkillSnapshotSchema, agentSkillSourceClassSchema, agentSkillStateSchema, agentSkillSyncModeSchema, agentSkillSyncSchema, type AgentSkillEnable, type AgentSkillSync
 } from "./adapter-skills.js";
 export {
+  agentIssueCreationRequestStatusSchema,
+  createAgentIssueCreationRequestSchema,
+  type CreateAgentIssueCreationRequest
+} from "./agent-issue-creation.js";
+export {
   aiSearchRequestSchema,
   aiSearchScopeSchema,
   type AiSearchRequest
