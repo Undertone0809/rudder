@@ -22,7 +22,8 @@ related_code:
   - ui/src/pages/OrganizationMcpSettings.tsx
   - ui/src/pages/AgentDetail.integrations.tsx
   - docs/reference/permissions-and-platforms.mdx
-commit_refs: []
+commit_refs:
+  - "c5fcce941 feat: complete GitHub managed MCP PAT integration"
 updated_at: 2026-08-07
 ---
 
