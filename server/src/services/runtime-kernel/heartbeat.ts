@@ -70,6 +70,7 @@ import {
   renewHeartbeatRunExecutionLease,
   renewHeartbeatRunTerminalEffectsClaim,
   RUN_EXECUTION_LEASE_MS,
+  RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS,
   setWakeupStatusMonotonic,
   terminalEffectNames,
   transitionHeartbeatRunToTerminal,
@@ -88,6 +89,50 @@ const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
 // server process.
 const activeRunExecutions = new Set<string>();
 const runAbortControllers = new Map<string, AbortController>();
+const localExecutionLeaseStates = new Map<string, {
+  lastRenewedAtMs: number;
+  sleepRecoveryUsed: boolean;
+  sleepRecoveryPending: boolean;
+}>();
+const LOCAL_EXECUTION_SLEEP_GAP_MS = RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS * 2;
+
+function getLocalExecutionLeaseState(runId: string, nowMs: number) {
+  const existing = localExecutionLeaseStates.get(runId);
+  if (existing) return existing;
+  const state = {
+    lastRenewedAtMs: nowMs,
+    sleepRecoveryUsed: false,
+    sleepRecoveryPending: false,
+  };
+  localExecutionLeaseStates.set(runId, state);
+  return state;
+}
+
+function observeLocalExecutionLease(runId: string, now: Date) {
+  const nowMs = now.getTime();
+  const existing = localExecutionLeaseStates.get(runId);
+  const state = getLocalExecutionLeaseState(runId, nowMs);
+  const sleepRecoveryDetected = Boolean(
+    existing
+    && nowMs > existing.lastRenewedAtMs
+    && nowMs - existing.lastRenewedAtMs > LOCAL_EXECUTION_SLEEP_GAP_MS
+    && !state.sleepRecoveryUsed,
+  );
+  if (sleepRecoveryDetected) {
+    state.sleepRecoveryUsed = true;
+    state.sleepRecoveryPending = true;
+  }
+  state.lastRenewedAtMs = nowMs;
+  return sleepRecoveryDetected;
+}
+
+function pruneLocalExecutionLeaseStates() {
+  for (const runId of localExecutionLeaseStates.keys()) {
+    if (!activeRunExecutions.has(runId) && !runningProcesses.has(runId)) {
+      localExecutionLeaseStates.delete(runId);
+    }
+  }
+}
 
 function formatDurationMs(ms: number) {
   const totalSeconds = Math.max(0, Math.round(ms / 1000));
@@ -831,9 +876,52 @@ export function heartbeatService(
     if (tracked) killChildProcessTree(tracked.child, false);
   }
 
-  async function renewRunExecutionLease(runId: string, ownerToken: string, now = new Date()) {
+  async function renewRunExecutionLease(
+    runId: string,
+    ownerToken: string,
+    now = new Date(),
+    opts?: { observeSleep?: boolean; touchActivity?: boolean },
+  ) {
     await testHooks?.beforeRunExecutionLeaseRenewal?.({ runId, ownerToken });
-    return renewHeartbeatRunExecutionLease(db, runId, ownerToken, now);
+    const sleepRecoveryDetected = opts?.observeSleep !== false
+      ? observeLocalExecutionLease(runId, now)
+      : false;
+    const renewed = await renewHeartbeatRunExecutionLease(db, runId, ownerToken, now, {
+      touchActivity: opts?.touchActivity || sleepRecoveryDetected,
+    });
+    if (!renewed) {
+      const state = localExecutionLeaseStates.get(runId);
+      if (state) state.sleepRecoveryPending = false;
+    }
+    return renewed;
+  }
+
+  async function preserveLiveExecutionAfterSleep(
+    run: typeof heartbeatRuns.$inferSelect,
+    now: Date,
+  ): Promise<boolean> {
+    if (!run.executionOwnerToken || !run.executionLeaseExpiresAt) return false;
+    if (!activeRunExecutions.has(run.id) && !runningProcesses.has(run.id)) return false;
+
+    observeLocalExecutionLease(run.id, now);
+    const state = localExecutionLeaseStates.get(run.id);
+    const wakeGracePending = state?.sleepRecoveryPending === true;
+    if (wakeGracePending) {
+      state.sleepRecoveryPending = false;
+    } else if (new Date(run.executionLeaseExpiresAt).getTime() > now.getTime()) {
+      return false;
+    } else if (state?.sleepRecoveryUsed) {
+      return false;
+    } else if (state) {
+      state.sleepRecoveryUsed = true;
+    }
+
+    const renewed = await renewRunExecutionLease(run.id, run.executionOwnerToken, now, {
+      observeSleep: false,
+      touchActivity: true,
+    });
+    if (!renewed) abortRunExecution(run.id);
+    return true;
   }
 
   async function countRunningRunsForAgent(agentId: string, excludeRunId?: string) {
@@ -1124,6 +1212,7 @@ export function heartbeatService(
   }
 
   async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    pruneLocalExecutionLeaseStates();
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = opts?.now ?? new Date();
     const recoveryCutoff = opts?.recoveryCutoff ?? now;
@@ -1259,6 +1348,7 @@ export function heartbeatService(
   }
 
   async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    pruneLocalExecutionLeaseStates();
     const maxInactivityMs = opts?.maxInactivityMs ?? DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS;
     if (!Number.isFinite(maxInactivityMs) || maxInactivityMs <= 0) {
       return { timedOut: 0, runIds: [] };
@@ -1282,6 +1372,7 @@ export function heartbeatService(
 
     for (const { run, agentRuntimeType, lastEventAt, eventCount } of activeRuns) {
       if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
+      if (await preserveLiveExecutionAfterSleep(run, now)) continue;
       const activityTimes = [
         run.updatedAt,
         lastEventAt,
@@ -1354,6 +1445,7 @@ export function heartbeatService(
   }
 
   async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    pruneLocalExecutionLeaseStates();
     const maxRuntimeMs = opts?.maxRuntimeMs ?? DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS;
     if (!Number.isFinite(maxRuntimeMs) || maxRuntimeMs <= 0) {
       return { timedOut: 0, runIds: [] };
@@ -1373,6 +1465,7 @@ export function heartbeatService(
 
     for (const { run, agentRuntimeType } of activeRuns) {
       if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
+      if (await preserveLiveExecutionAfterSleep(run, now)) continue;
       const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : null;
       if (!startedAt || !Number.isFinite(startedAt)) continue;
 
