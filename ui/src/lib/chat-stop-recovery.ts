@@ -114,6 +114,7 @@ function normalizeRequest(value: unknown): ChatStopRequest | null {
 
 const STREAM_STATES = new Set<ChatStreamDraftState>([
   "streaming",
+  "tool_busy",
   "finalizing",
   "stopping",
   "stopped",

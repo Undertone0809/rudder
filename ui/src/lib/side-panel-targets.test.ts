@@ -9,6 +9,7 @@ import {
 } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
+  sideChatGenerationScopeKey,
   sidePanelFullPageHref,
   sidePanelTargetFromHref,
   sidePanelTargetKey,
@@ -179,7 +180,11 @@ describe("side panel targets", () => {
       clientMutationId: "mutation-1",
       label: "Side Chat",
     } as const;
-    expect(sidePanelTargetKey(provisionalSideChat)).toBe("side-chat:draft:mutation-1");
+    expect(sidePanelTargetKey(provisionalSideChat)).toBe("side-chat:draft:chat-1:mutation-1");
+    expect(sideChatGenerationScopeKey("org-1", provisionalSideChat)).toBe("side-chat:org-1:chat-1:mutation-1");
+    expect(sideChatGenerationScopeKey("org-2", provisionalSideChat)).not.toBe(
+      sideChatGenerationScopeKey("org-1", provisionalSideChat),
+    );
     expect(sidePanelFullPageHref(provisionalSideChat)).toBe("/messenger/chat/chat-1?messageId=message-1");
 
     const persistedSideChat = { ...provisionalSideChat, conversationId: "side-chat-1" };

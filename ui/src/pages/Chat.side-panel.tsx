@@ -76,6 +76,7 @@ import {
   rememberSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
 import {
+  sideChatGenerationScopeKey,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
@@ -2251,7 +2252,9 @@ export function ChatSidePanel({
     closingSideChatKeysRef.current.add(tabKey);
     setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
     try {
-      const registeredClose = sideChatCloseHandlersRef.current.get(tab.clientMutationId);
+      const registeredClose = sideChatCloseHandlersRef.current.get(
+        sideChatGenerationScopeKey(selectedOrganizationId ?? "__none__", tab),
+      );
       const destroyedConversationId = registeredClose
         ? await registeredClose()
         : tab.conversationId
@@ -2641,7 +2644,7 @@ export function ChatSidePanel({
             const active = sidePanelTargetKey(target) === activeTargetKey;
             return (
               <div
-                key={`side-chat-view:${target.clientMutationId}`}
+                key={`side-chat-view:${selectedOrganizationId}:${target.sourceConversationId}:${target.clientMutationId}`}
                 className={cn("h-full min-h-0", active ? "block" : "hidden")}
                 aria-hidden={!active}
               >

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   createDb,
@@ -16,16 +16,16 @@ async function createOrganization(page: Page, name: string) {
   return orgRes.json();
 }
 
-function threadTestId(threadKey: string) {
-  return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+function issueRowLocator(scope: Page | Locator, threadKey: string) {
+  return scope.locator(`[data-messenger-thread-key="${threadKey}"]`);
 }
 
-function threadUnreadBadgeTestId(threadKey: string) {
-  return `${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+function unreadBadgeLocator(row: Locator) {
+  return row.locator('[data-testid$="-unread-badge"]');
 }
 
-async function rowTitleFontWeight(page: Page, rowTestId: string) {
-  return page.getByTestId(rowTestId).locator("a .truncate").first().evaluate((element) =>
+async function rowTitleFontWeight(row: Locator) {
+  return row.locator("a .truncate").first().evaluate((element) =>
     window.getComputedStyle(element.parentElement ?? element).fontWeight,
   );
 }
@@ -51,20 +51,20 @@ test("clears a split issue unread badge before mark-read returns", async ({ page
   const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
   const issueRef = issue.identifier ?? issue.id;
   const threadKey = `issue:${issue.id}`;
-  const rowTestId = threadTestId(threadKey);
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
 
   await page.addInitScript(({ orgId }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
   }, { orgId: organization.id });
 
-  await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+  await page.goto(`/${organizationRouteKey}/messenger`, { waitUntil: "commit" });
 
-  const splitIssueRow = page.getByTestId(rowTestId);
-  const unreadBadge = page.getByTestId(threadUnreadBadgeTestId(threadKey));
+  const splitIssueRow = issueRowLocator(page, threadKey);
+  const unreadBadge = unreadBadgeLocator(splitIssueRow);
   await expect(splitIssueRow).toContainText(issue.title, { timeout: 15_000 });
   await expect(unreadBadge).toHaveText("1");
-  const fontWeightBeforeClick = await rowTitleFontWeight(page, rowTestId);
+  const fontWeightBeforeClick = await rowTitleFontWeight(splitIssueRow);
 
   const markReadGate: { release?: () => void } = {};
   const markReadStarted = new Promise<void>((resolve) => {
@@ -81,10 +81,10 @@ test("clears a split issue unread badge before mark-read returns", async ({ page
   });
 
   await splitIssueRow.click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/messenger/issues/${issueRef}$`));
   await markReadStarted;
   expect(await unreadBadge.count()).toBe(0);
-  await expect.poll(() => rowTitleFontWeight(page, rowTestId)).toBe(fontWeightBeforeClick);
+  await expect.poll(() => rowTitleFontWeight(splitIssueRow)).toBe(fontWeightBeforeClick);
 
   markReadGate.release?.();
   await expect.poll(async () => {
@@ -117,7 +117,7 @@ test("clears a grouped split issue unread badge when the group row is selected",
   const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
   const issueRef = issue.identifier ?? issue.id;
   const threadKey = `issue:${issue.id}`;
-  const rowTestId = threadTestId(threadKey);
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
 
   const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
     data: { name: "Grouped issue work", icon: "folder::amber" },
@@ -135,15 +135,15 @@ test("clears a grouped split issue unread badge when the group row is selected",
     window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
   }, { orgId: organization.id });
 
-  await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+  await page.goto(`/${organizationRouteKey}/messenger`, { waitUntil: "commit" });
 
   const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
-  const groupedIssueRow = groupSection.getByTestId(rowTestId);
-  const unreadBadge = groupedIssueRow.getByTestId(threadUnreadBadgeTestId(threadKey));
+  const groupedIssueRow = issueRowLocator(groupSection, threadKey);
+  const unreadBadge = unreadBadgeLocator(groupedIssueRow);
   await expect(groupSection).toContainText("Grouped issue work", { timeout: 15_000 });
   await expect(groupedIssueRow).toContainText(issue.title);
   await expect(unreadBadge).toHaveText("1");
-  const fontWeightBeforeClick = await rowTitleFontWeight(page, rowTestId);
+  const fontWeightBeforeClick = await rowTitleFontWeight(groupedIssueRow);
 
   const markReadGate: { release?: () => void } = {};
   const markReadStarted = new Promise<void>((resolve) => {
@@ -160,10 +160,10 @@ test("clears a grouped split issue unread badge when the group row is selected",
   });
 
   await groupedIssueRow.click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/messenger/issues/${issueRef}$`));
   await markReadStarted;
   await expect(unreadBadge).toHaveCount(0);
-  await expect.poll(() => rowTitleFontWeight(page, rowTestId)).toBe(fontWeightBeforeClick);
+  await expect.poll(() => rowTitleFontWeight(groupedIssueRow)).toBe(fontWeightBeforeClick);
 
   markReadGate.release?.();
   await expect.poll(async () => {
@@ -173,4 +173,64 @@ test("clears a grouped split issue unread badge when the group row is selected",
       .where(eq(messengerThreadUserStates.threadKey, threadKey));
     return Boolean(rows[0]?.lastReadAt);
   }).toBe(true);
+});
+
+test("does not re-notify an open issue after a title and description-only update", async ({ page }) => {
+  const sessionRes = await page.request.get("/api/auth/get-session");
+  expect(sessionRes.ok()).toBe(true);
+  const session = await sessionRes.json();
+  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  expect(currentUserId).toBeTruthy();
+
+  const organization = await createOrganization(page, `Messenger-Open-Issue-Content-${Date.now()}`);
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Open issue before content edit",
+      description: "An open issue should not become unread when its content changes.",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: currentUserId,
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
+  const issueRef = issue.identifier ?? issue.id;
+  const threadKey = `issue:${issue.id}`;
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
+
+  await page.addInitScript(({ orgId }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
+  }, { orgId: organization.id });
+
+  await page.goto(`/${organizationRouteKey}/messenger`, { waitUntil: "commit" });
+
+  const issueRow = issueRowLocator(page, threadKey);
+  const unreadBadge = unreadBadgeLocator(issueRow);
+  await expect(issueRow).toContainText(issue.title, { timeout: 15_000 });
+  await expect(unreadBadge).toHaveText("1");
+
+  await issueRow.click();
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/messenger/issues/${issueRef}$`));
+  await expect(unreadBadge).toHaveCount(0);
+  await expect.poll(async () => {
+    const rows = await e2eDb
+      .select({ lastReadAt: messengerThreadUserStates.lastReadAt })
+      .from(messengerThreadUserStates)
+      .where(eq(messengerThreadUserStates.threadKey, threadKey));
+    return Boolean(rows[0]?.lastReadAt);
+  }).toBe(true);
+
+  const updateRes = await page.request.patch(`/api/issues/${issue.id}`, {
+    data: {
+      title: "Open issue after content edit",
+      description: "The open issue remains read after its content changes.",
+    },
+  });
+  expect(updateRes.ok()).toBe(true);
+
+  await expect(page.getByRole("heading", { name: "Open issue after content edit" })).toBeVisible({ timeout: 15_000 });
+  await expect(issueRow).toContainText("Open issue after content edit", { timeout: 15_000 });
+  await expect(unreadBadge).toHaveCount(0);
+  await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
 });

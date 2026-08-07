@@ -55,7 +55,7 @@ import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLin
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
-import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
+import { resolveDesktopLocalEnvProfile, resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
 import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
@@ -741,8 +741,14 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   if (workspaceHome) {
     process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
   }
-  process.env.PORT ??= profile.port;
-  process.env.RUDDER_EMBEDDED_POSTGRES_PORT ??= profile.embeddedPostgresPort;
+  // The Desktop profile owns its local ports. A restarted Desktop can inherit
+  // the CLI/updater's dev port from its parent process; preserving that value
+  // makes the new release look for PostgreSQL in the wrong instance/port and
+  // surfaces as a generic database startup failure. Smoke runs deliberately
+  // provide isolated ports and are the only caller allowed to override them.
+  const ownedPorts = resolveDesktopOwnedPorts(profile);
+  process.env.PORT = ownedPorts.port;
+  process.env.RUDDER_EMBEDDED_POSTGRES_PORT = ownedPorts.embeddedPostgresPort;
   process.env.RUDDER_DEPLOYMENT_MODE = "local_trusted";
   process.env.RUDDER_DEPLOYMENT_EXPOSURE = "private";
   process.env.HOST = "127.0.0.1";

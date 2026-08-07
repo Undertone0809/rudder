@@ -13,9 +13,16 @@ export function RunButton({
   size?: "sm" | "default";
 }) {
   return (
-    <Button variant="outline" size={size} onClick={onClick} disabled={disabled}>
+    <Button
+      variant="outline"
+      size={size}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+    >
       <Play className="h-3.5 w-3.5 sm:mr-1" />
-      <span className="hidden sm:inline">{label}</span>
+      <span className="agent-detail-action-label hidden sm:inline">{label}</span>
     </Button>
   );
 }
@@ -35,17 +42,31 @@ export function PauseResumeButton({
 }) {
   if (isPaused) {
     return (
-      <Button variant="outline" size={size} onClick={onResume} disabled={disabled}>
+      <Button
+        variant="outline"
+        size={size}
+        onClick={onResume}
+        disabled={disabled}
+        aria-label="Resume"
+        title="Resume"
+      >
         <Play className="h-3.5 w-3.5 sm:mr-1" />
-        <span className="hidden sm:inline">Resume</span>
+        <span className="agent-detail-action-label hidden sm:inline">Resume</span>
       </Button>
     );
   }
 
   return (
-    <Button variant="outline" size={size} onClick={onPause} disabled={disabled}>
+    <Button
+      variant="outline"
+      size={size}
+      onClick={onPause}
+      disabled={disabled}
+      aria-label="Pause"
+      title="Pause"
+    >
       <Pause className="h-3.5 w-3.5 sm:mr-1" />
-      <span className="hidden sm:inline">Pause</span>
+      <span className="agent-detail-action-label hidden sm:inline">Pause</span>
     </Button>
   );
 }

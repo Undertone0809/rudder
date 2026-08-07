@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
+import { chatGenerationScopeKey } from "@/lib/side-panel-targets";
 import { buildChatMentionHref, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
@@ -101,6 +102,28 @@ describe("chat reference navigation targets", () => {
     expect(chatMessageJumpTargetFromHref("https://example.com/messenger/chat/chat-2")).toBeNull();
     expect(chatMessageJumpTargetFromHref("/issues/issue-1")).toBeNull();
     expect(chatMessageJumpTargetFromHref("/plugins/foo/chat/bar")).toBeNull();
+  });
+});
+
+describe("chat generation identity", () => {
+  it("aliases a persisted Side Chat to its original panel mutation within its organization", () => {
+    expect(chatGenerationScopeKey("org-1", {
+      id: "side-chat-1",
+      orgId: "org-1",
+      conversationKind: "side_chat",
+      forkedFromConversationId: "source-chat-1",
+      sideChatClientMutationId: "mutation-1",
+    })).toBe("side-chat:org-1:source-chat-1:mutation-1");
+  });
+
+  it("does not reuse a Side Chat alias across organizations", () => {
+    expect(chatGenerationScopeKey("org-2", {
+      id: "side-chat-1",
+      orgId: "org-1",
+      conversationKind: "side_chat",
+      forkedFromConversationId: "source-chat-1",
+      sideChatClientMutationId: "mutation-1",
+    })).toBe("side-chat-1");
   });
 });
 

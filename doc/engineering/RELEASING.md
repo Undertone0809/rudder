@@ -296,6 +296,14 @@ and Desktop install directories. Maintainers can also run it manually from the
 `Public Install Smoke` workflow with a package spec such as
 `@rudderhq/cli@latest`, `@rudderhq/cli@canary`, or an exact version.
 
+Each Desktop asset is also gated before collection by a packaged `upgrade` smoke.
+That gate starts the built Electron app against an isolated instance, exercises
+the upgrade migration path, leaves a stale PostgreSQL pid file to model an
+interrupted shutdown, and verifies the next launch reaches the board. Packaging
+also fails if the shell, server, bundled CLI, or first-party bundled packages
+are not version-compatible. This catches the recurring local-database startup
+failure before the asset can be attached to a release.
+
 After a stable release, the workflow also runs:
 
 ```bash

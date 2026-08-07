@@ -13,6 +13,8 @@ import { forbidden, unauthorized, unprocessable } from "../errors.js";
 
 export const PRODUCT_ANALYTICS_EVENT_NAMES = [
   "organization_created",
+  "issue_created",
+  "chat_created",
   "human_work_started",
   "run_started",
   "run_succeeded",
@@ -29,6 +31,8 @@ export const PRODUCT_ANALYTICS_EVENT_NAMES = [
 
 export const PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES = [
   "organization_created",
+  "issue_created",
+  "chat_created",
   "human_work_started",
   "run_started",
   "run_succeeded",
@@ -76,6 +80,17 @@ export const PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalytics
     "template_kind",
     "is_first_organization",
     "is_user_initiated",
+  ]),
+  issue_created: new Set([
+    "creation_path",
+    "has_goal_link",
+    "has_project_link",
+    "is_sub_issue",
+  ]),
+  chat_created: new Set([
+    "creation_path",
+    "initial_role",
+    "plan_mode",
   ]),
   human_work_started: new Set(["work_surface", "origin"]),
   run_started: new Set(["run_kind", "runtime", "attempt_kind"]),
@@ -874,6 +889,8 @@ export function productAnalyticsService(db: Db) {
           productive_installations: Number(productiveInstallationRows[0]?.count ?? 0),
           successful_runs: counts.run_succeeded ?? 0,
           failed_runs: counts.run_failed ?? 0,
+          issues_created: counts.issue_created ?? 0,
+          chats_created: counts.chat_created ?? 0,
           human_work_started: counts.human_work_started ?? 0,
           output_ready: counts.output_ready ?? 0,
           review_decisions_recorded: counts.review_decision_recorded ?? 0,

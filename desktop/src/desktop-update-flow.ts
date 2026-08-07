@@ -51,12 +51,13 @@ export function resolveDesktopUpdateChildLaunch(options: {
       env: options.childEnv,
     };
   }
+  const resourcesPathModule = path.posix;
   const resourcesPath = options.resourcesPath
-    ?? path.resolve(path.dirname(command), "..", "Resources");
+    ?? resourcesPathModule.resolve(resourcesPathModule.dirname(command), "..", "Resources");
   return {
     command,
     args: [
-      path.join(resourcesPath, "server-package", "desktop-cli-runner.js"),
+      resourcesPathModule.join(resourcesPath, "server-package", "desktop-cli-runner.js"),
       ...options.cliArgs,
     ],
     env: {
@@ -635,6 +636,11 @@ export function createDesktopUpdateFlow(context: {
         ...(profileName ? ["--local-env", profileName] : []),
         "start",
         "--no-cli",
+        // The Desktop update contract downloads and replaces the portable app.
+        // Do not make replacement depend on a separate npm runtime install:
+        // that install can stall on registry resolution and leave the updater
+        // child alive without ever reaching the apply handoff.
+        "--no-runtime",
         "--target-version",
         normalizedVersion,
         "--repo",

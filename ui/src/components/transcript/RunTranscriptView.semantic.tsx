@@ -1,5 +1,6 @@
 import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptSkillTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
+import { parseUnifiedDiff } from "./TranscriptUnifiedDiff";
 
 export function normalizePathTarget(value: string): string | null {
   const normalized = cleanShellToken(compactWhitespace(value));
@@ -36,6 +37,11 @@ export function extractSkillSlugsFromEntryPaths(values: string[]): string[] {
     const slug = extractSkillSlugFromEntryPath(value);
     return slug ? [slug] : [];
   }));
+}
+
+export function transcriptArtifactBasename(value: string): string {
+  const normalized = value.trim().replace(/[\\/]+$/u, "");
+  return normalized.split(/[\\/]/u).filter(Boolean).at(-1) ?? normalized;
 }
 
 export function formatSkillUseAction(slugs: string[]): Pick<TranscriptToolSemanticInfo, "summary" | "quantity" | "noun"> | null {
@@ -104,6 +110,7 @@ export function createTranscriptFileTargets(
 ): TranscriptFileTarget[] {
   const workingDirectory = extractRecordWorkingDirectory(record);
   return dedupeTargets(paths).map((label) => ({
+    displayLabel: transcriptArtifactBasename(label),
     label,
     path: resolveTranscriptFileTarget(label, workingDirectory),
   }));
@@ -112,12 +119,124 @@ export function createTranscriptFileTargets(
 export function createTranscriptSkillTargets(
   paths: string[],
   record: Record<string, unknown> | null,
-): TranscriptSkillTarget[] {
+): Array<TranscriptSkillTarget & TranscriptFileTarget> {
   const fileTargets = createTranscriptFileTargets(paths, record);
   return fileTargets.flatMap((target) => {
     const name = extractSkillSlugFromEntryPath(target.label);
-    return name ? [{ name, path: target.path }] : [];
+    return name ? [{ ...target, name }] : [];
   });
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function formatFileChangeEvidenceWarning(input: unknown): string | null {
+  const record = asRecord(input);
+  const truncation = record?.truncation;
+  if (typeof truncation === "string" && truncation.trim()) {
+    return `File-change evidence was truncated: ${compactWhitespace(truncation)}`;
+  }
+  const detail = asRecord(truncation);
+  if (!detail) return null;
+
+  const message = readStringField(detail, ["message", "reason"]);
+  const omittedFiles = readFiniteNumber(
+    detail.omitted_file_count
+    ?? detail.omitted_files
+    ?? detail.files_omitted
+    ?? detail.omittedFiles
+    ?? detail.filesOmitted,
+  );
+  const omittedBytes = readFiniteNumber(
+    detail.omitted_bytes
+    ?? detail.bytes_omitted
+    ?? detail.omittedBytes
+    ?? detail.bytesOmitted,
+  );
+  const byteLimit = readFiniteNumber(
+    detail.byte_limit
+    ?? detail.max_bytes
+    ?? detail.byteLimit
+    ?? detail.maxBytes,
+  );
+  const truncatedDiffs = readFiniteNumber(
+    detail.truncated_diff_count
+    ?? detail.truncatedDiffCount,
+  );
+  const details: string[] = [];
+  if (omittedFiles) details.push(`${omittedFiles} ${pluralize("file", omittedFiles)} omitted`);
+  if (truncatedDiffs) details.push(`${truncatedDiffs} ${pluralize("diff", truncatedDiffs)} truncated`);
+  if (omittedBytes) details.push(`${omittedBytes.toLocaleString()} bytes omitted`);
+  if (byteLimit) details.push(`${byteLimit.toLocaleString()}-byte evidence limit`);
+  if (message) details.push(message);
+  return details.length > 0
+    ? `File-change evidence was truncated: ${details.join("; ")}.`
+    : "File-change evidence was truncated.";
+}
+
+function fileChangeOperation(kind: unknown): {
+  movePath: string | null;
+  operation: "add" | "delete" | "update" | "move" | "unknown";
+} {
+  if (typeof kind === "string") {
+    const normalized = kind.trim().toLowerCase();
+    if (normalized === "add" || normalized === "delete" || normalized === "update") {
+      return { movePath: null, operation: normalized };
+    }
+    if (normalized === "move") return { movePath: null, operation: "move" };
+    return { movePath: null, operation: "unknown" };
+  }
+
+  const record = asRecord(kind);
+  const type = readStringField(record, ["type"])?.toLowerCase() ?? "unknown";
+  const movePath = readStringField(record, ["move_path", "movePath"]);
+  if (type === "update" && movePath) return { movePath, operation: "move" };
+  if (type === "add" || type === "delete" || type === "update") {
+    return { movePath, operation: type };
+  }
+  if (type === "move") return { movePath, operation: "move" };
+  return { movePath, operation: "unknown" };
+}
+
+export function extractFileChangeEvidence(input: unknown): NonNullable<TranscriptToolSemanticInfo["fileChanges"]> {
+  const record = asRecord(input);
+  const changes = Array.isArray(record?.changes) ? record.changes : [];
+  return changes.flatMap((value) => {
+    const change = asRecord(value);
+    const path = readStringField(change, ["path"]);
+    if (!change || !path) return [];
+    const diff = typeof change.diff === "string" ? change.diff : null;
+    const parsed = diff ? parseUnifiedDiff(diff) : null;
+    const { movePath, operation } = fileChangeOperation(change.kind);
+    return [{
+      additions: parsed?.additions ?? 0,
+      deletions: parsed?.deletions ?? 0,
+      diff,
+      diffOriginalBytes: readFiniteNumber(change.diff_original_bytes ?? change.diffOriginalBytes),
+      diffTruncated: change.diff_truncated === true || change.diffTruncated === true,
+      displayLabel: transcriptArtifactBasename(path),
+      movePath,
+      operation,
+      path,
+    }];
+  });
+}
+
+function fileChangeEvidenceCount(
+  record: Record<string, unknown> | null,
+  retainedCount: number,
+): number {
+  const truncation = asRecord(record?.truncation);
+  const originalCount = readFiniteNumber(
+    truncation?.original_file_count
+    ?? truncation?.originalFileCount,
+  );
+  return originalCount !== null
+    && Number.isInteger(originalCount)
+    && originalCount >= retainedCount
+    ? originalCount
+    : retainedCount;
 }
 
 export function extractRecordQuery(record: Record<string, unknown> | null): string | null {
@@ -594,7 +713,9 @@ export function describeCommandSemanticInfo(
     if (skillAction) {
       return {
         ...skillAction,
+        actionKind: "skill",
         category: "skill",
+        fileTargets: createTranscriptSkillTargets(targets, record),
         label: "Use skill",
         bucket: "explore",
         skillTargets: createTranscriptSkillTargets(targets, record),
@@ -603,6 +724,7 @@ export function describeCommandSemanticInfo(
     const action = formatTargetAction("Read", targets, "file", "Read file");
     return {
       ...action,
+      actionKind: "read",
       category: invocation.category,
       label: invocation.label,
       bucket: "read",
@@ -1089,6 +1211,48 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
     return codexAgentToolInfo;
   }
 
+  if (normalizedName === "image_view") {
+    const sourcePath = readStringField(record, ["path"]);
+    const target = sourcePath ? createTranscriptFileTargets([sourcePath], record)[0] : null;
+    return {
+      actionKind: "image_view",
+      category: "image",
+      label: "View image",
+      summary: "Viewed an image",
+      bucket: "explore",
+      quantity: 1,
+      noun: "item",
+      ...(target?.path ? {
+        image: {
+          displayLabel: target.displayLabel,
+          path: target.path,
+        },
+      } : {}),
+    };
+  }
+
+  if (normalizedName === "file_change") {
+    const fileChanges = extractFileChangeEvidence(input);
+    const fileCount = fileChangeEvidenceCount(record, fileChanges.length);
+    const inputStatus = readStringField(record, ["status"])?.toLowerCase();
+    const summary = fileCount > 0
+      ? `Edited ${fileCount} ${pluralize("file", fileCount)}`
+      : inputStatus === "failed" || inputStatus === "error"
+        ? "File change failed"
+        : "File changes";
+    return {
+      actionKind: "file_change",
+      category: "edit",
+      label: "Edit files",
+      summary,
+      bucket: "edit",
+      quantity: fileCount,
+      noun: "file",
+      fileChanges,
+      evidenceWarning: formatFileChangeEvidenceWarning(input) ?? undefined,
+    };
+  }
+
   if (normalizedName === "skill") {
     const skill = readStringField(record, ["skill", "name"]);
     const skillAction = skill ? formatSkillUseAction([skill]) : null;
@@ -1099,14 +1263,21 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
     const resolvedPath = sourcePath
       ? createTranscriptFileTargets([sourcePath], record)[0]?.path ?? null
       : null;
+    const paths = extractRecordPaths(record);
+    const skillTargets = skill ? [{ name: skill, path: resolvedPath }] : [];
     return {
+      actionKind: "skill",
       category: "skill",
+      fileTargets: createTranscriptSkillTargets(
+        sourcePath ? [...paths, sourcePath] : paths,
+        record,
+      ),
       label: "Use skill",
       summary: skillAction?.summary ?? "Use skill",
       bucket: "explore",
       quantity: 1,
       noun: "skill",
-      skillTargets: skill ? [{ name: skill, path: resolvedPath }] : [],
+      skillTargets,
     };
   }
 
@@ -1158,7 +1329,9 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
     if (skillAction) {
       return {
         ...skillAction,
+        actionKind: "skill",
         category: "skill",
+        fileTargets: createTranscriptSkillTargets(paths, record),
         label: "Use skill",
         bucket: "explore",
         skillTargets: createTranscriptSkillTargets(paths, record),
@@ -1167,6 +1340,7 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
     const action = formatTargetAction("Read", paths, "file", "Read file");
     return {
       ...action,
+      actionKind: "read",
       category: invocation.category,
       label: invocation.label,
       bucket: "read",

@@ -684,9 +684,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               onAssistantState: (state: unknown) => serializeOutputAdmission(async () => {
                 if (abortController.signal.aborted) return;
                 if (clientClosed) return;
+                const activeControl = getActiveChatGeneration(conversation.id);
+                const attemptEpoch = Math.max(
+                  1,
+                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
+                );
                 writeStreamEvent(res, {
                   type: "assistant_state",
                   state,
+                  generationId: generation!.id,
+                  attemptEpoch,
                 });
               }),
               onTranscriptEntry: (entry: TranscriptEntry) => serializeOutputAdmission(async () => {

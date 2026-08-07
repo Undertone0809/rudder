@@ -233,6 +233,68 @@ describe("chat stream stop cutoff", () => {
       transcript: [{ text: "Reasoning before stop" }],
     });
   });
+
+  it("keeps accepting output after a tool-busy state and ignores replayed progress", () => {
+    const generationId = "generation-tool-busy";
+    const current = draft({ generationId, lastCommittedRenderSeq: 0 });
+    const toolBusy = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "assistant_state",
+      state: "tool_busy",
+      generationId,
+    });
+    const toolResult = applyChatStreamProgressEvent(toolBusy, "stream-1", {
+      type: "transcript_entry",
+      generationId,
+      generationSeq: 1,
+      entry: {
+        kind: "tool_result",
+        ts: "2026-07-16T09:00:02.000Z",
+        toolUseId: "memory-1",
+        toolName: "para-memory-files",
+        content: "memory loaded",
+        isError: false,
+      },
+    });
+    const replay = applyChatStreamProgressEvent(toolResult, "stream-1", {
+      type: "transcript_entry",
+      generationId,
+      generationSeq: 1,
+      entry: {
+        kind: "tool_result",
+        ts: "2026-07-16T09:00:02.000Z",
+        toolUseId: "memory-1",
+        toolName: "para-memory-files",
+        content: "memory loaded",
+        isError: false,
+      },
+    });
+    const answer = applyChatStreamProgressEvent(replay, "stream-1", {
+      type: "assistant_delta",
+      generationId,
+      generationSeq: 2,
+      delta: "final answer",
+    });
+
+    expect(toolBusy?.state).toBe("tool_busy");
+    expect(replay?.transcript).toHaveLength(1);
+    expect(answer).toMatchObject({
+      state: "tool_busy",
+      body: "Frozen prefixfinal answer",
+      lastCommittedRenderSeq: 2,
+    });
+  });
+
+  it("rejects progress from another generation instead of replacing the active identity", () => {
+    const current = draft({ generationId: "generation-1", lastCommittedRenderSeq: 3 });
+    const stale = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "assistant_delta",
+      generationId: "generation-2",
+      generationSeq: 4,
+      delta: "stale output",
+    });
+
+    expect(stale).toBe(current);
+  });
 });
 
 afterEach(() => {

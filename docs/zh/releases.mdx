@@ -18,6 +18,63 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+## v0.7.2
+
+发布时间：2026-08-07
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.2)
+
+这个版本提供更连续的 Agent 工作台、更清晰的 Goal 进展与验收流程，以及更丰富的运行证据查看能力。
+
+### 新功能
+
+- 增加 Messenger 工作台，可在可排序的标签页中统一管理 Browser、Library、Automation、本地应用和已保存视图，并在 Side Panel 与主工作台之间保留实时界面。
+- 增加 Goal 工作区，按下一步行动者或状态组织工作，包括 Agent 推进、需要你关注、等待外部结果、待验收和历史记录。
+- 增加 Goal 对齐与契约流程，在开始工作前预览结果、成功标准、负责人、边界和第一步行动，并支持反馈、证据、变更审阅和结果验收。
+- 增加运行产物检查，可在 Agent transcript 中查看文件变更、统一 diff、图片证据和本地文件预览。
+- 增加 Hermes API Server Agent 运行环境。
+
+### 改进
+
+- 改进 Agent 运行环境配置，使推理控制、模型发现、回退顺序与所选模型能力保持一致，并刷新 OpenClaw Gateway 兼容性。
+- 改进 Messenger 连续性，让 Side Chat 流、已保存视图和工作台实时界面在导航过程中保留上下文。
+- 改进 Desktop 和本地工作区的启动与升级可靠性，增强打包服务兼容性和嵌入式 PostgreSQL 迁移处理。
+
+### 问题修复
+
+- 修复 Side Chat 在导航过程中丢失流身份，以及 Messenger 中过期 Issue 提醒仍然显示的问题。
+- 修复窄屏下运行产物检查、过长内联标签和 Side Panel 源码滚动的问题。
+- 修复编辑 Issue 时内联图片无法继续预览的问题，并修复 Chat 滚动和流式输入边界状态。
+- 修复未明确调用 Rudder Browser 时仍可能触发 Browser 操作的问题。
+
+## v0.7.1
+
+发布时间：2026-08-04
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.1)
+
+这个版本提供更直接的隐私控制、更丰富的账号与 Agent 配置，并提升 Desktop 登录和工作审阅流程的可靠性。
+
+### 新功能
+
+- 增加“隐私与遥测”设置，可选择关闭、匿名或账号关联共享，并查看明确的数据边界和本地传输状态。
+- Desktop 账号设置支持上传 Rudder Account 头像。
+- 为 Claude、Codex、OpenCode 和 Pi Agent 增加思考强度控制，并为 Cursor 增加执行模式控制。
+- 未 @ Agent 时，发送 Issue 评论前会请求确认，减少可能无人处理的评论。
+
+### 改进
+
+- 强化遥测同意处理：默认不上传，账号关联共享必须明确同意，撤回同意后会清除对应范围内未发送的数据。
+- 改进 Desktop 账号设置，提供更清晰的登录进度、资料管理和浏览器跳转。
+- 改进运行环境设置和 Automation 选择器，让 Pi 托管认证、模型选择和推理选项保持一致。
+
+### 问题修复
+
+- 修复浏览器尚未建立 Rudder Account 会话时 Desktop 登录失败的问题，并为未签名的 macOS 构建提供安全回退。
+- 修复 Markdown 实时预览中的可见文本选择和区块操作，并保持运行批注编辑器清晰可读。
+- 修复 Automation 模型菜单对齐问题，并让较早活动的时间显示更明确。
+- 修复浏览器代理注册中断后 Browser 会话无法恢复的问题。
+
 ## v0.7.0
 
 发布时间：2026-08-03

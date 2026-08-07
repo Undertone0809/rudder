@@ -941,7 +941,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("I am checking the chat surface first.");
-    expect(html).toContain("Read ui/src/pages/Chat.tsx");
+    expect(html).toContain("Read Chat.tsx");
+    expect(html).not.toContain(">ui/src/pages/Chat.tsx</");
     expect(html).not.toContain("Final answer shown");
     expect(html).not.toContain("in the assistant message.");
   });
@@ -3278,7 +3279,7 @@ describe("RunTranscriptView", () => {
         runtime: "Cursor",
         name: "EditToolCall",
         input: { path: "ui/src/components/transcript/RunTranscriptView.semantic.tsx" },
-        expected: "Edited ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+        expected: "Edited RunTranscriptView.semantic.tsx",
       },
       {
         runtime: "Gemini",
@@ -3296,7 +3297,7 @@ describe("RunTranscriptView", () => {
         runtime: "Pi",
         name: "WriteFileToolCall",
         input: { filePath: "doc/engineering/DESIGN.md" },
-        expected: "Edited doc/engineering/DESIGN.md",
+        expected: "Edited DESIGN.md",
       },
       {
         runtime: "Claude",
