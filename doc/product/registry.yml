@@ -2147,6 +2147,28 @@ contracts:
     related_plans:
       - doc/plans/2026-07-15-desktop-startup-loading-recovery.md
       - doc/plans/2026-07-29-rudder-account-production-login.md
+  DATABASE.MIGRATION.COMPATIBILITY.001:
+    owner: product
+    domain: execution
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/execution/database-migration-compatibility.md
+    related_code:
+      - packages/db/src/client.ts
+      - packages/db/src/migration-manifest.ts
+      - server/src/index.ts
+      - scripts/release-compatibility-matrix.mjs
+      - scripts/release-compatibility-runtime.ts
+      - .github/workflows/release.yml
+    related_tests:
+      - packages/db/src/client.test.ts
+      - packages/db/src/migration-manifest.test.ts
+      - scripts/release-compatibility-matrix.test.mjs
+      - scripts/release-workflow-contract.test.mjs
+      - server/src/__tests__/migration-startup-contract.test.ts
+      - desktop/scripts/smoke.mjs
+    related_plans: []
   REVIEW.DECISION.001:
     owner: product
     domain: review-feedback-learning
