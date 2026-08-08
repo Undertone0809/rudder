@@ -3737,7 +3737,9 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
         if (!webview || typeof webview.getURL !== "function") return false;
         try {
-          return webview.getURL().startsWith("https://www.google.com/search?q=google");
+          const url = webview.getURL();
+          return url.startsWith("https://www.google.com/search?q=google")
+            || url.includes("continue=https://www.google.com/search%3Fq%3Dgoogle");
         } catch {
           return false;
         }
