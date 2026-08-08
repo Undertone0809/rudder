@@ -262,7 +262,7 @@ describe("BrowserLiveSurface", () => {
     expect(onWebContentsIdChange).toHaveBeenCalledWith(73);
   });
 
-  it("ignores late webview events from the previous address after navigation", () => {
+  it("ignores late webview events from any previous address after navigation", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -308,6 +308,13 @@ describe("BrowserLiveSurface", () => {
     const didNavigate = new Event("did-navigate");
     Object.defineProperty(didNavigate, "url", { configurable: true, value: nextUrl });
     act(() => webview.dispatchEvent(didNavigate));
+    onReplaceTarget.mockClear();
+
+    const finalUrl = "https://example.com/final";
+    act(() => {
+      address!.value = finalUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
     onReplaceTarget.mockClear();
 
     guestUrl = previousUrl;

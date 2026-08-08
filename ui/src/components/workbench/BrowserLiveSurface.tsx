@@ -77,7 +77,7 @@ type BrowserWebviewElement = HTMLElement & {
 
 type BrowserNavigationIntent = {
   expectedUrl: string;
-  staleUrl: string | null;
+  staleUrls: string[];
 };
 
 function acceptedBrowserFavicon(value: unknown) {
@@ -130,6 +130,7 @@ export function BrowserLiveSurface({
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
+  const staleNavigationUrlsRef = useRef<string[]>([]);
   const targetUrlRef = useRef(target.url);
   const currentUrlRef = useRef(target.url);
   const targetRef = useRef(target);
@@ -327,7 +328,8 @@ export function BrowserLiveSurface({
     const ignoreStaleNavigation = (nextUrl: string) => {
       const intent = navigationIntentRef.current;
       if (!intent || !nextUrl) return false;
-      if (intent.staleUrl && nextUrl === intent.staleUrl) return true;
+      if (nextUrl === intent.expectedUrl) return false;
+      if (intent.staleUrls.includes(nextUrl)) return true;
       if (nextUrl !== intent.expectedUrl) navigationIntentRef.current = null;
       return false;
     };
@@ -516,9 +518,14 @@ export function BrowserLiveSurface({
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
+    if (currentUrlRef.current && currentUrlRef.current !== nextUrl) {
+      staleNavigationUrlsRef.current = [
+        ...new Set([...staleNavigationUrlsRef.current, currentUrlRef.current]),
+      ].slice(-16);
+    }
     navigationIntentRef.current = {
       expectedUrl: nextUrl,
-      staleUrl: currentUrlRef.current === nextUrl ? null : currentUrlRef.current,
+      staleUrls: staleNavigationUrlsRef.current,
     };
     setLoadError(null);
     setLoadErrorDetailsOpen(false);
