@@ -262,6 +262,60 @@ describe("BrowserLiveSurface", () => {
     expect(onWebContentsIdChange).toHaveBeenCalledWith(73);
   });
 
+  it("ignores late webview events from the previous address after navigation", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const previousUrl = "https://example.com/previous";
+    const nextUrl = "https://example.com/next";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = previousUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-stale-events",
+            url: previousUrl,
+            viewInstanceId: "view-stale-events",
+          }}
+          targetKey="browser-tab:stale-events"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    expect(address).not.toBeNull();
+
+    act(() => {
+      address!.value = nextUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    const didNavigate = new Event("did-navigate");
+    Object.defineProperty(didNavigate, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(didNavigate));
+    onReplaceTarget.mockClear();
+
+    guestUrl = previousUrl;
+    act(() => webview.dispatchEvent(new Event("did-stop-loading")));
+
+    expect(onReplaceTarget).not.toHaveBeenCalled();
+  });
+
   it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
     const onOpenTarget = vi.fn();
     const onCloseTarget = vi.fn();
