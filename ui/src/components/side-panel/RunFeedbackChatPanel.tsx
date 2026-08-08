@@ -34,6 +34,7 @@ import type {
   ChatConversation,
   ChatInlineAnnotationInput,
   ChatMessage,
+  ChatStreamEvent,
   Project,
 } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,6 +64,62 @@ function transcriptEntries(message: ChatMessage) {
 
 function noop() {}
 
+const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const STOP_TERMINAL_POLL_INTERVAL_MS = 250;
+const STOP_TERMINAL_TIMEOUT_MS = 10_000;
+const ACTIVE_GENERATION_STATUSES = new Set([
+  "starting",
+  "active",
+  "running",
+  "tool_busy",
+  "closing",
+  "stop_requested",
+  "stopping",
+]);
+
+type StreamFence = {
+  generationId: string | null;
+  attemptEpoch: number | null;
+  lastCommittedRenderSeq: number;
+  renderedBodyHash: string;
+};
+
+type StreamTargetIdentity = {
+  conversationId: string | null;
+  clientMutationId: string;
+};
+
+type StreamFenceEvent = Extract<
+  ChatStreamEvent,
+  { type: "ack" | "assistant_delta" | "assistant_state" | "transcript_entry" }
+>;
+
+function newStreamFence(): StreamFence {
+  return {
+    generationId: null,
+    attemptEpoch: null,
+    lastCommittedRenderSeq: 0,
+    renderedBodyHash: EMPTY_CHAT_BODY_SHA256,
+  };
+}
+
+function recordStreamFence(fence: StreamFence, event: StreamFenceEvent) {
+  if (event.generationId) fence.generationId = event.generationId;
+  if (event.attemptEpoch !== undefined) fence.attemptEpoch = event.attemptEpoch;
+  if (event.generationSeq !== undefined) fence.lastCommittedRenderSeq = event.generationSeq;
+  if (event.bodyHash) fence.renderedBodyHash = event.bodyHash;
+}
+
+function stopQueueSnapshotIsTerminal(
+  snapshot: Awaited<ReturnType<typeof chatsApi.listQueue>>,
+  generationId: string | null,
+) {
+  if (!generationId) return snapshot.activeGenerationId === null;
+  if (snapshot.activeGenerationId !== generationId) return true;
+  return snapshot.activeGenerationStatus !== null
+    && !ACTIVE_GENERATION_STATUSES.has(snapshot.activeGenerationStatus);
+}
+
 export function RunFeedbackChatPanel({
   organizationId,
   target,
@@ -78,6 +135,8 @@ export function RunFeedbackChatPanel({
   const [draft, setDraft] = useState(target.body ?? "");
   const [projectId, setProjectId] = useState<string | null>(target.projectId ?? null);
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopIndeterminate, setStopIndeterminate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamBody, setStreamBody] = useState("");
@@ -92,8 +151,40 @@ export function RunFeedbackChatPanel({
   const editingAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mutationKeyRef = useRef(target.clientMutationId || makeId());
   const targetRef = useRef(target);
+  const activeConversationIdRef = useRef<string | null>(target.conversationId);
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const stopRequestedRef = useRef(false);
+  const stopCutoffAcceptedRef = useRef(false);
+  const streamFenceRef = useRef<StreamFence>(newStreamFence());
+  const streamTargetRef = useRef<StreamTargetIdentity | null>(null);
+  const streamRunIdRef = useRef(0);
+  const pendingStreamEventsRef = useRef<ChatStreamEvent[]>([]);
+  const streamEventHandlerRef = useRef<((event: ChatStreamEvent) => Promise<void> | void) | null>(null);
+  const renderedTargetRef = useRef<Pick<RunFeedbackTarget, "conversationId" | "clientMutationId">>(target);
   targetRef.current = target;
 
+  useEffect(() => {
+    const previousTarget = renderedTargetRef.current;
+    const sameFirstTurnStream = streamTargetRef.current?.conversationId === target.conversationId
+      && streamTargetRef.current.clientMutationId === target.clientMutationId
+      && previousTarget.conversationId === null
+      && Boolean(target.conversationId);
+    if (
+      !sameFirstTurnStream
+      && (
+        previousTarget.conversationId !== target.conversationId
+        || previousTarget.clientMutationId !== target.clientMutationId
+      )
+    ) {
+      setMessages([]);
+      setStreamBody("");
+    }
+    renderedTargetRef.current = target;
+  }, [target.clientMutationId, target.conversationId]);
+  useEffect(() => {
+    if (sending || streamTargetRef.current) return;
+    activeConversationIdRef.current = target.conversationId ?? null;
+  }, [sending, target.conversationId]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -127,6 +218,12 @@ export function RunFeedbackChatPanel({
     queryKey: queryKeys.chats.messages(organizationId, target.conversationId ?? "__run-feedback-draft__"),
     queryFn: () => chatsApi.listMessages(organizationId, target.conversationId!, { includeTranscript: true }),
     enabled: Boolean(target.conversationId),
+  });
+  useQuery({
+    queryKey: queryKeys.chats.queue(organizationId, target.conversationId ?? "__run-feedback-draft__"),
+    queryFn: () => chatsApi.listQueue(target.conversationId!),
+    enabled: Boolean(target.conversationId),
+    refetchInterval: sending ? 1_000 : false,
   });
 
   useEffect(() => {
@@ -198,6 +295,123 @@ export function RunFeedbackChatPanel({
     onReplaceTarget(sidePanelTargetKey(current), next);
   }, [onReplaceTarget]);
 
+  const streamTargetMatchesCurrentTarget = useCallback(() => {
+    const streamTarget = streamTargetRef.current;
+    if (!streamTarget) return false;
+    const currentTarget = targetRef.current;
+    if (streamTarget.conversationId) return currentTarget.conversationId === streamTarget.conversationId;
+    return currentTarget.clientMutationId === streamTarget.clientMutationId;
+  }, []);
+
+  const replayPendingStreamEvents = useCallback(async () => {
+    const pendingEvents = pendingStreamEventsRef.current.splice(0);
+    const handler = streamEventHandlerRef.current;
+    if (!handler) return;
+    for (const event of pendingEvents) await handler(event);
+  }, []);
+
+  const waitForTerminalStop = useCallback(async (conversationId: string, generationId: string | null) => {
+    const deadline = Date.now() + STOP_TERMINAL_TIMEOUT_MS;
+    const queryKey = queryKeys.chats.queue(organizationId, conversationId);
+    while (Date.now() < deadline) {
+      try {
+        const snapshot = await queryClient.fetchQuery({
+          queryKey,
+          queryFn: () => chatsApi.listQueue(conversationId),
+          staleTime: 0,
+        });
+        queryClient.setQueryData(queryKey, snapshot);
+        if (stopQueueSnapshotIsTerminal(snapshot, generationId)) return true;
+      } catch {
+        // Keep the stop state pending when the terminal readback is unavailable.
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, STOP_TERMINAL_POLL_INTERVAL_MS));
+    }
+    return false;
+  }, [organizationId, queryClient]);
+
+  const handleStop = useCallback(async () => {
+    const streamTarget = streamTargetRef.current;
+    const conversationId = streamTarget?.conversationId ?? activeConversationIdRef.current;
+    if (!conversationId || !sending || stopping || !streamTargetMatchesCurrentTarget()) return;
+    const controlActionId = makeId();
+    stopRequestedRef.current = true;
+    setStopping(true);
+    setStopIndeterminate(false);
+    setError(null);
+    try {
+      const latestQueue = await queryClient.fetchQuery({
+        queryKey: queryKeys.chats.queue(organizationId, conversationId),
+        queryFn: () => chatsApi.listQueue(conversationId),
+        staleTime: 0,
+      });
+      queryClient.setQueryData(queryKeys.chats.queue(organizationId, conversationId), latestQueue);
+      const streamFence = streamFenceRef.current;
+      const generationFence = latestQueue.activeGenerationId
+        && latestQueue.activeAttemptEpoch !== null
+        && latestQueue.activeAttemptEpoch !== undefined
+        && latestQueue.activeControlVersion !== null
+        && latestQueue.activeControlVersion !== undefined
+        ? {
+            generationId: latestQueue.activeGenerationId,
+            attemptEpoch: latestQueue.activeAttemptEpoch,
+            controlVersion: latestQueue.activeControlVersion,
+          }
+        : null;
+      const request = {
+        controlActionId,
+        ...(generationFence ? {
+          expectedGenerationId: generationFence.generationId,
+          expectedAttemptEpoch: generationFence.attemptEpoch,
+          expectedControlVersion: generationFence.controlVersion,
+        } : {}),
+        lastCommittedRenderSeq: streamFence.lastCommittedRenderSeq,
+        renderedBodyHash: streamFence.renderedBodyHash,
+      };
+      const result = await chatsApi.stopMessageStream(conversationId, request);
+      if (result.controlActionId !== controlActionId) {
+        throw new Error("Stop confirmation did not match this feedback stream.");
+      }
+      const cutoffAccepted = result.stopped || [
+        "stopping",
+        "stop_requested",
+        "stopped",
+        "interrupted_unverified",
+      ].includes(result.disposition ?? "");
+      if (cutoffAccepted) {
+        stopCutoffAcceptedRef.current = true;
+        pendingStreamEventsRef.current = [];
+        setStreamBody("");
+        streamAbortControllerRef.current?.abort();
+        const terminalEvidence = result.disposition === "stopped"
+          || result.disposition === "interrupted_unverified"
+          || await waitForTerminalStop(conversationId, result.generationId ?? generationFence?.generationId ?? null);
+        if (terminalEvidence) {
+          setStopping(false);
+          setStopIndeterminate(false);
+        } else {
+          setStopping(false);
+          setStopIndeterminate(true);
+          setError("Stop was accepted, but the final runtime state could not be confirmed yet.");
+        }
+      } else {
+        stopRequestedRef.current = false;
+        await replayPendingStreamEvents();
+        setStopping(false);
+      }
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
+      ]);
+    } catch (stopError) {
+      stopRequestedRef.current = false;
+      await replayPendingStreamEvents();
+      setStopping(false);
+      setStopIndeterminate(false);
+      setError(stopError instanceof Error ? stopError.message : "Could not stop feedback.");
+    }
+  }, [organizationId, queryClient, replayPendingStreamEvents, sending, stopping, streamTargetMatchesCurrentTarget, waitForTerminalStop]);
+
   const handleProjectChange = (value: string) => {
     if (projectLocked) return;
     const next = value || null;
@@ -206,7 +420,7 @@ export function RunFeedbackChatPanel({
   };
 
   const handleSend = async () => {
-    if (sending || !canSend) return;
+    if (sending || stopping || stopIndeterminate || !canSend) return;
     const sendTarget = targetRef.current;
     const body = draft.trim();
     const serialized = serializeChatResponseAnnotations(annotationState);
@@ -218,36 +432,101 @@ export function RunFeedbackChatPanel({
       pushToast,
     })) return;
     setSending(true);
+    setStopping(false);
+    setStopIndeterminate(false);
+    stopRequestedRef.current = false;
+    stopCutoffAcceptedRef.current = false;
+    streamFenceRef.current = newStreamFence();
     setError(null);
     setStreamBody("");
+    const streamRunId = streamRunIdRef.current + 1;
+    streamRunIdRef.current = streamRunId;
+    streamTargetRef.current = {
+      conversationId: sendTarget.conversationId ?? null,
+      clientMutationId: sendTarget.clientMutationId ?? mutationKeyRef.current,
+    };
+    pendingStreamEventsRef.current = [];
+    const streamAbortController = new AbortController();
+    streamAbortControllerRef.current = streamAbortController;
+    const isCurrentStream = () => streamRunIdRef.current === streamRunId
+      && streamTargetMatchesCurrentTarget();
+    const applyStreamEvent = async (event: ChatStreamEvent) => {
+      if (!isCurrentStream() || stopCutoffAcceptedRef.current) return;
+      if (event.type === "ack") {
+        recordStreamFence(streamFenceRef.current, event);
+        activeConversationIdRef.current = event.userMessage.conversationId;
+        if (!sendTarget.conversationId && streamTargetRef.current) {
+          streamTargetRef.current = {
+            ...streamTargetRef.current,
+            conversationId: event.userMessage.conversationId,
+          };
+        }
+        setMessages((current) => [...current, event.userMessage]);
+        for (const annotationId of sentAnnotationIds) {
+          dispatchAnnotation({ type: "delete", id: annotationId });
+        }
+        const current = targetRef.current;
+        const remainingAnnotations = current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id));
+        const nextTarget = sendTarget.conversationId
+          ? {
+              ...current,
+              body: current.body === body ? "" : current.body,
+              inlineAnnotations: remainingAnnotations,
+            }
+          : {
+              ...current,
+              conversationId: event.userMessage.conversationId,
+              projectLocked: true,
+              projectId: sendTarget.projectId,
+              body: current.body === body ? "" : current.body,
+              inlineAnnotations: remainingAnnotations,
+            };
+        updateTarget(nextTarget);
+        setAnnotationsExpanded(remainingAnnotations.length > 0);
+        if (!sendTarget.conversationId) {
+          try {
+            window.localStorage.setItem(
+              `rudder.run-feedback-draft:${organizationId}:${sendTarget.agentId}`,
+              JSON.stringify(nextTarget),
+            );
+          } catch {
+            // Ignore restricted storage environments; the Side Panel state remains authoritative.
+          }
+        }
+      }
+      if (event.type === "assistant_delta") {
+        recordStreamFence(streamFenceRef.current, event);
+        setStreamBody((current) => current + event.delta);
+      }
+      if (event.type === "assistant_state" || event.type === "transcript_entry") {
+        recordStreamFence(streamFenceRef.current, event);
+      }
+      if (event.type === "final") {
+        setStreamBody("");
+        setMessages((current) => [...current, ...event.messages]);
+      }
+      if (event.type === "error") throw new Error(event.error);
+    };
+    streamEventHandlerRef.current = applyStreamEvent;
+    const onStreamEvent = async (event: ChatStreamEvent) => {
+      if (!isCurrentStream() || stopCutoffAcceptedRef.current) return;
+      if (stopRequestedRef.current && !stopCutoffAcceptedRef.current) {
+        pendingStreamEventsRef.current.push(event);
+        return;
+      }
+      await applyStreamEvent(event);
+    };
     try {
       if (sendTarget.conversationId) {
         await chatsApi.sendMessageStream(sendTarget.conversationId, body, {
+          signal: streamAbortController.signal,
           files: serialized.files,
           inlineAnnotations: serialized.inlineAnnotations,
-          onEvent: async (event) => {
-            if (event.type === "ack") {
-              setMessages((current) => [...current, event.userMessage]);
-              for (const annotationId of sentAnnotationIds) {
-                dispatchAnnotation({ type: "delete", id: annotationId });
-              }
-              const current = targetRef.current;
-              updateTarget({
-                body: current.body === body ? "" : current.body,
-                inlineAnnotations: current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id)),
-              });
-              setAnnotationsExpanded(current.inlineAnnotations.some((annotation) => !sentAnnotationIds.has(annotation.id)));
-            }
-            if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
-            if (event.type === "final") {
-              setStreamBody("");
-              setMessages((current) => [...current, ...event.messages]);
-            }
-            if (event.type === "error") throw new Error(event.error);
-          },
+          onEvent: onStreamEvent,
         });
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
+          signal: streamAbortController.signal,
           preferredAgentId: sendTarget.agentId,
           issueCreationMode: "manual_approval",
           planMode: false,
@@ -259,40 +538,7 @@ export function RunFeedbackChatPanel({
           clientMutationId: mutationKeyRef.current,
           files: serialized.files,
           inlineAnnotations: serialized.inlineAnnotations,
-          onEvent: async (event) => {
-            if (event.type === "ack") {
-              setMessages((current) => [...current, event.userMessage]);
-              for (const annotationId of sentAnnotationIds) {
-                dispatchAnnotation({ type: "delete", id: annotationId });
-              }
-              const current = targetRef.current;
-              const remainingAnnotations = current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id));
-              const nextTarget = {
-                ...current,
-                conversationId: event.userMessage.conversationId,
-                projectLocked: true,
-                projectId: sendTarget.projectId,
-                body: current.body === body ? "" : current.body,
-                inlineAnnotations: remainingAnnotations,
-              } satisfies RunFeedbackTarget;
-              updateTarget(nextTarget);
-              setAnnotationsExpanded(remainingAnnotations.length > 0);
-              try {
-                window.localStorage.setItem(
-                  `rudder.run-feedback-draft:${organizationId}:${sendTarget.agentId}`,
-                  JSON.stringify(nextTarget),
-                );
-              } catch {
-                // Ignore restricted storage environments; the Side Panel state remains authoritative.
-              }
-            }
-            if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
-            if (event.type === "final") {
-              setStreamBody("");
-              setMessages((current) => [...current, ...event.messages]);
-            }
-            if (event.type === "error") throw new Error(event.error);
-          },
+          onEvent: onStreamEvent,
         });
       }
       if (sendTarget.conversationId) {
@@ -302,14 +548,41 @@ export function RunFeedbackChatPanel({
         ]);
       }
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "Could not send feedback.");
+      const isAbort = sendError instanceof DOMException
+        ? sendError.name === "AbortError"
+        : sendError instanceof Error && sendError.name === "AbortError";
+      if (!isAbort || !stopRequestedRef.current) {
+        setError(sendError instanceof Error ? sendError.message : "Could not send feedback.");
+      }
     } finally {
+      const stopCutoffPending = stopCutoffAcceptedRef.current;
+      streamAbortControllerRef.current = null;
       setSending(false);
+      if (!stopCutoffPending && !stopRequestedRef.current) setStopping(false);
+      if (!stopRequestedRef.current || stopCutoffPending) {
+        streamEventHandlerRef.current = null;
+        streamTargetRef.current = null;
+        pendingStreamEventsRef.current = [];
+        stopRequestedRef.current = false;
+      }
     }
   };
 
   const conversation = conversationQuery.data as ChatConversation | undefined;
   const visibleMessages = messages;
+  const currentStreamCanBeStopped = sending
+    && Boolean(activeConversationIdRef.current)
+    && streamTargetMatchesCurrentTarget();
+  const feedbackButtonMode = stopping || stopIndeterminate
+    ? "stopping"
+    : currentStreamCanBeStopped
+      ? "stop"
+      : sending
+        ? "sending"
+        : "send";
+  const feedbackButtonDisabled = stopping || stopIndeterminate
+    || (!sending && !canSend)
+    || (sending && !currentStreamCanBeStopped);
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="run-feedback-chat-panel">
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -453,7 +726,7 @@ export function RunFeedbackChatPanel({
           <ChatComposerEditor
             value={draft}
             onChange={(value) => {
-              if (sending) return;
+              if (sending || stopping || stopIndeterminate) return;
               setDraft(value);
               updateTarget({ body: value });
             }}
@@ -461,7 +734,21 @@ export function RunFeedbackChatPanel({
             onSubmit={() => void handleSend()}
           />
           <ChatComposerToolbar
-            actions={<ChatComposerSendButton mode={sending ? "sending" : "send"} ariaLabel={sending ? "Sending feedback" : "Send feedback"} disabled={!canSend || sending} onClick={() => void handleSend()} />}
+            actions={(
+              <ChatComposerSendButton
+                mode={feedbackButtonMode}
+                stoppingComplete={stopIndeterminate}
+                ariaLabel={stopIndeterminate ? "Stop status pending" : feedbackButtonMode === "stop" ? "Stop feedback" : feedbackButtonMode === "stopping" ? "Stopping feedback" : feedbackButtonMode === "sending" ? "Sending feedback" : "Send feedback"}
+                disabled={feedbackButtonDisabled}
+                onClick={() => {
+                  if (feedbackButtonMode === "stop") {
+                    void handleStop();
+                    return;
+                  }
+                  if (feedbackButtonMode === "send") void handleSend();
+                }}
+              />
+            )}
           >
             <span className="inline-flex min-w-0 max-w-[min(100%,14rem)] items-center gap-1.5 text-xs text-muted-foreground" title={projectLocked ? "Project context is locked after conversation starts." : (selectedProject?.name ?? "No project")}>
               {selectedProject ? <ProjectIcon color={selectedProject.color} icon={selectedProject.icon} size="xs" label={selectedProject.name} /> : <span className="h-3.5 w-3.5 shrink-0 rounded border border-dashed border-muted-foreground/50" aria-hidden="true" />}

@@ -5,13 +5,13 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { AppBuilderDataManager } from "./app-builder-data.js";
 import {
   AppBuilderController,
   registerAppBuilderIpcHandlers,
 } from "./app-builder-ipc.js";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
+import { resolveAppBuilderWorkspaceRoot } from "./app-builder-workspace.js";
 import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
@@ -877,21 +877,11 @@ function initializeLocalApps(desktopInstallationId: string): void {
       if (!serverHandle?.apiUrl) {
         throw new Error("Rudder must finish starting before App Builder can resolve its workspace.");
       }
-      const response = await fetch(
-        buildDesktopApiRequestUrl(
-          serverHandle.apiUrl,
-          `/orgs/${encodeURIComponent(organizationId)}/workspace/files`,
-        ),
-      );
-      if (!response.ok) {
-        throw new Error(`Unable to resolve the App Builder workspace (${response.status})`);
-      }
-      const workspace = await response.json() as { rootPath?: unknown };
-      const root = workspace.rootPath;
-      if (typeof root !== "string" || !path.isAbsolute(root)) {
-        throw new Error("The organization workspace is not available on this device.");
-      }
-      return root;
+      return resolveAppBuilderWorkspaceRoot({
+        apiBaseUrl: serverHandle.apiUrl,
+        organizationId,
+        fetchApi: (input, init) => session.defaultSession.fetch(input, init),
+      });
     },
     selectExportDirectory: async ({ appId, snapshotId }) => {
       const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
