@@ -697,6 +697,7 @@ describe("applyPendingMigrations", () => {
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
           "0147_github_mcp_provider.sql",
+          "0148_chat_message_transcript_entries.sql",
         ],
         reason: "pending-migrations",
       });
@@ -865,6 +866,7 @@ describe("applyPendingMigrations", () => {
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
           "0147_github_mcp_provider.sql",
+          "0148_chat_message_transcript_entries.sql",
         ],
         reason: "pending-migrations",
       });
