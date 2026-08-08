@@ -317,6 +317,11 @@ describe("BrowserLiveSurface", () => {
     });
     onReplaceTarget.mockClear();
 
+    guestUrl = nextUrl;
+    const lateNavigation = new Event("did-navigate");
+    Object.defineProperty(lateNavigation, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(lateNavigation));
+
     guestUrl = previousUrl;
     act(() => webview.dispatchEvent(new Event("did-stop-loading")));
 
@@ -397,8 +402,15 @@ describe("BrowserLiveSurface", () => {
       );
     });
 
-    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    const goBack = vi.fn();
+    const webview = container.querySelector("webview") as HTMLElement & {
+      canGoBack?: () => boolean;
+      getURL?: () => string;
+      goBack?: () => void;
+    };
     webview.getURL = () => guestUrl;
+    webview.canGoBack = () => true;
+    webview.goBack = goBack;
     const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
     act(() => webview.dispatchEvent(new Event("dom-ready")));
 
@@ -415,6 +427,8 @@ describe("BrowserLiveSurface", () => {
     onReplaceTarget.mockClear();
 
     guestUrl = previousUrl;
+    act(() => container!.querySelector<HTMLButtonElement>("button[aria-label='Back']")?.click());
+    expect(goBack).toHaveBeenCalledOnce();
     const backNavigation = new Event("did-navigate");
     Object.defineProperty(backNavigation, "url", { configurable: true, value: previousUrl });
     act(() => webview.dispatchEvent(backNavigation));

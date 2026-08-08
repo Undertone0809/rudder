@@ -131,6 +131,7 @@ export function BrowserLiveSurface({
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
   const staleNavigationUrlsRef = useRef<string[]>([]);
+  const historyNavigationRequestRef = useRef(false);
   const targetUrlRef = useRef(target.url);
   const currentUrlRef = useRef(target.url);
   const targetRef = useRef(target);
@@ -223,6 +224,20 @@ export function BrowserLiveSurface({
     applyZoomFactor(BROWSER_LIVE_SURFACE_ZOOM_FACTORS[nextIndex] ?? 1);
   }, [applyZoomFactor]);
 
+  const navigateHistory = useCallback((direction: -1 | 1) => {
+    safeWebviewCall((webview) => {
+      const canNavigate = direction === -1
+        ? webview.canGoBack?.()
+        : webview.canGoForward?.();
+      if (!canNavigate) return false;
+      historyNavigationRequestRef.current = true;
+      navigationIntentRef.current = null;
+      if (direction === -1) webview.goBack?.();
+      else webview.goForward?.();
+      return true;
+    }, false);
+  }, [safeWebviewCall]);
+
   const executeBrowserShortcut = useCallback((action: BrowserShortcutAction) => {
     if (!active) return;
     switch (action) {
@@ -236,30 +251,22 @@ export function BrowserLiveSurface({
       case "reload":
         if (!isBlank) {
           navigationIntentRef.current = null;
+          historyNavigationRequestRef.current = false;
           safeWebviewCall((webview) => webview.reload?.(), undefined);
         }
         return;
       case "reload_ignoring_cache":
         if (!isBlank) {
           navigationIntentRef.current = null;
+          historyNavigationRequestRef.current = false;
           safeWebviewCall((webview) => webview.reloadIgnoringCache?.(), undefined);
         }
         return;
       case "go_back":
-        if (!isBlank) {
-          navigationIntentRef.current = null;
-          safeWebviewCall((webview) => {
-            if (webview.canGoBack?.()) webview.goBack?.();
-          }, undefined);
-        }
+        if (!isBlank) navigateHistory(-1);
         return;
       case "go_forward":
-        if (!isBlank) {
-          navigationIntentRef.current = null;
-          safeWebviewCall((webview) => {
-            if (webview.canGoForward?.()) webview.goForward?.();
-          }, undefined);
-        }
+        if (!isBlank) navigateHistory(1);
         return;
       case "zoom_in":
         if (!isBlank) stepZoomFactor(1);
@@ -275,6 +282,7 @@ export function BrowserLiveSurface({
     applyZoomFactor,
     canOpenNewTab,
     isBlank,
+    navigateHistory,
     onOpenTarget,
     safeWebviewCall,
     stepZoomFactor,
@@ -330,15 +338,17 @@ export function BrowserLiveSurface({
       options: { allowExplicitHistoricalNavigation?: boolean } = {},
     ) => {
       const intent = navigationIntentRef.current;
-      if (!intent || !nextUrl) return false;
+      if (!nextUrl) return false;
+      if (!intent) {
+        if (options.allowExplicitHistoricalNavigation) historyNavigationRequestRef.current = false;
+        return false;
+      }
       if (nextUrl === intent.expectedUrl) return false;
       if (intent.staleUrls.includes(nextUrl)) {
-        if (options.allowExplicitHistoricalNavigation) {
-          const physicalUrl = safeCurrentWebviewUrl("");
-          if (physicalUrl === nextUrl) {
-            navigationIntentRef.current = null;
-            return false;
-          }
+        if (options.allowExplicitHistoricalNavigation && historyNavigationRequestRef.current) {
+          historyNavigationRequestRef.current = false;
+          navigationIntentRef.current = null;
+          return false;
         }
         return true;
       }
@@ -533,6 +543,7 @@ export function BrowserLiveSurface({
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
+    historyNavigationRequestRef.current = false;
     if (currentUrlRef.current && currentUrlRef.current !== nextUrl) {
       staleNavigationUrlsRef.current = [
         ...new Set([...staleNavigationUrlsRef.current, currentUrlRef.current]),
@@ -597,9 +608,7 @@ export function BrowserLiveSurface({
           size="icon-xs"
           aria-label="Back"
           disabled={!navigationState.canGoBack}
-          onClick={() => safeWebviewCall((webview) => {
-            webview.goBack?.();
-          }, undefined)}
+          onClick={() => navigateHistory(-1)}
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
@@ -609,9 +618,7 @@ export function BrowserLiveSurface({
           size="icon-xs"
           aria-label="Forward"
           disabled={!navigationState.canGoForward}
-          onClick={() => safeWebviewCall((webview) => {
-            webview.goForward?.();
-          }, undefined)}
+          onClick={() => navigateHistory(1)}
         >
           <ArrowRight className="h-3.5 w-3.5" />
         </Button>
