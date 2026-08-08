@@ -316,6 +316,49 @@ describe("BrowserLiveSurface", () => {
     expect(onReplaceTarget).not.toHaveBeenCalled();
   });
 
+  it("uses the attached guest to navigate instead of relying on a src update", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const loadURL = vi.fn(async () => undefined);
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-attached-guest",
+            url: "https://example.com/previous",
+            viewInstanceId: "view-attached-guest",
+          }}
+          targetKey="browser-tab:attached-guest"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & {
+      loadURL?: (url: string) => Promise<void>;
+    };
+    webview.loadURL = loadURL;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    act(() => {
+      address!.value = "https://example.com/next#section";
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
+  });
+
   it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
     const onOpenTarget = vi.fn();
     const onCloseTarget = vi.fn();

@@ -69,6 +69,7 @@ type BrowserWebviewElement = HTMLElement & {
   getURL?: () => string;
   goBack?: () => void;
   goForward?: () => void;
+  loadURL?: (url: string) => Promise<void>;
   reload?: () => void;
   reloadIgnoringCache?: () => void;
   setZoomFactor?: (factor: number) => void;
@@ -521,9 +522,14 @@ export function BrowserLiveSurface({
     };
     setLoadError(null);
     setLoadErrorDetailsOpen(false);
-    setWebviewSrc(nextUrl);
+    const loaded = safeWebviewCall((webview) => {
+      if (!webview.loadURL) return false;
+      void webview.loadURL(nextUrl).catch(() => undefined);
+      return true;
+    }, false);
+    if (!loaded) setWebviewSrc(nextUrl);
     replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
-  }, [replaceBrowserTarget]);
+  }, [replaceBrowserTarget, safeWebviewCall]);
 
   const reloadCurrentPage = useCallback(() => {
     setLoadErrorDetailsOpen(false);
