@@ -3737,12 +3737,33 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
         if (!webview || typeof webview.getURL !== "function") return false;
         try {
+          const classifyGoogleNavigation = (value) => {
+            try {
+              const url = new URL(value);
+              if (url.protocol !== "https:" || url.hostname !== "www.google.com") return null;
+              if (url.pathname === "/search" && url.searchParams.get("q") === "google") return "search";
+              if (url.pathname.startsWith("/sorry/")) {
+                const continuedUrl = url.searchParams.get("continue");
+                if (!continuedUrl) return null;
+                const continued = new URL(continuedUrl);
+                return continued.protocol === "https:"
+                  && continued.hostname === "www.google.com"
+                  && continued.pathname === "/search"
+                  && continued.searchParams.get("q") === "google"
+                  ? "captcha"
+                  : null;
+              }
+              return null;
+            } catch {
+              return null;
+            }
+          };
           const url = webview.getURL();
-          const matchesSearch = url.startsWith("https://www.google.com/search?q=google")
-            || url.includes("continue=https://www.google.com/search%3Fq%3Dgoogle");
-          if (!matchesSearch || (typeof webview.isLoading === "function" && webview.isLoading())) return false;
+          const googleNavigation = classifyGoogleNavigation(url);
+          if (!googleNavigation || (typeof webview.isLoading === "function" && webview.isLoading())) return false;
           await new Promise((resolve) => setTimeout(resolve, 400));
-          return webview.getURL() === url
+          return classifyGoogleNavigation(webview.getURL()) === googleNavigation
+            && webview.getURL() === url
             && (typeof webview.isLoading !== "function" || !webview.isLoading());
         } catch {
           return false;
