@@ -80,6 +80,11 @@ type BrowserNavigationIntent = {
   staleUrls: string[];
 };
 
+type BrowserHistoryNavigation = {
+  baselineUrl: string;
+  token: number;
+};
+
 function acceptedBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -131,7 +136,10 @@ export function BrowserLiveSurface({
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
   const staleNavigationUrlsRef = useRef<string[]>([]);
-  const historyNavigationRequestRef = useRef(false);
+  const historyNavigationRef = useRef<BrowserHistoryNavigation | null>(null);
+  const historyNavigationTokenRef = useRef(0);
+  const historyNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleHistoryNavigationRef = useRef<((token: number, baselineUrl: string) => void) | null>(null);
   const targetUrlRef = useRef(target.url);
   const currentUrlRef = useRef(target.url);
   const targetRef = useRef(target);
@@ -225,18 +233,26 @@ export function BrowserLiveSurface({
   }, [applyZoomFactor]);
 
   const navigateHistory = useCallback((direction: -1 | 1) => {
-    safeWebviewCall((webview) => {
+    const baselineUrl = safeCurrentWebviewUrl(currentUrlRef.current);
+    const token = historyNavigationTokenRef.current + 1;
+    historyNavigationTokenRef.current = token;
+    historyNavigationRef.current = { baselineUrl, token };
+    navigationIntentRef.current = null;
+    const moved = safeWebviewCall((webview) => {
       const canNavigate = direction === -1
         ? webview.canGoBack?.()
         : webview.canGoForward?.();
       if (!canNavigate) return false;
-      historyNavigationRequestRef.current = true;
-      navigationIntentRef.current = null;
       if (direction === -1) webview.goBack?.();
       else webview.goForward?.();
       return true;
     }, false);
-  }, [safeWebviewCall]);
+    if (!moved) {
+      historyNavigationRef.current = null;
+      return;
+    }
+    settleHistoryNavigationRef.current?.(token, baselineUrl);
+  }, [safeCurrentWebviewUrl, safeWebviewCall]);
 
   const executeBrowserShortcut = useCallback((action: BrowserShortcutAction) => {
     if (!active) return;
@@ -251,14 +267,14 @@ export function BrowserLiveSurface({
       case "reload":
         if (!isBlank) {
           navigationIntentRef.current = null;
-          historyNavigationRequestRef.current = false;
+          historyNavigationRef.current = null;
           safeWebviewCall((webview) => webview.reload?.(), undefined);
         }
         return;
       case "reload_ignoring_cache":
         if (!isBlank) {
           navigationIntentRef.current = null;
-          historyNavigationRequestRef.current = false;
+          historyNavigationRef.current = null;
           safeWebviewCall((webview) => webview.reloadIgnoringCache?.(), undefined);
         }
         return;
@@ -313,6 +329,41 @@ export function BrowserLiveSurface({
     onReplaceTargetRef.current(targetKey, nextTarget);
   }, [targetKey]);
 
+  const settleHistoryNavigation = useCallback((token: number, baselineUrl: string) => {
+    const deadline = Date.now() + 10_000;
+    const check = () => {
+      const pending = historyNavigationRef.current;
+      if (!pending || pending.token !== token) return;
+      const nextUrl = safeCurrentWebviewUrl("");
+      if (nextUrl && nextUrl !== baselineUrl) {
+        historyNavigationRef.current = null;
+        staleNavigationUrlsRef.current = [
+          ...new Set([...staleNavigationUrlsRef.current, baselineUrl]),
+        ].slice(-16);
+        navigationIntentRef.current = {
+          expectedUrl: nextUrl,
+          staleUrls: staleNavigationUrlsRef.current,
+        };
+        replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
+        updateNavigationState();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        historyNavigationRef.current = null;
+        updateNavigationState();
+        return;
+      }
+      historyNavigationTimerRef.current = setTimeout(check, 50);
+    };
+    if (historyNavigationTimerRef.current !== null) clearTimeout(historyNavigationTimerRef.current);
+    historyNavigationTimerRef.current = setTimeout(check, 0);
+  }, [replaceBrowserTarget, safeCurrentWebviewUrl, updateNavigationState]);
+  settleHistoryNavigationRef.current = settleHistoryNavigation;
+
+  useEffect(() => () => {
+    if (historyNavigationTimerRef.current !== null) clearTimeout(historyNavigationTimerRef.current);
+  }, []);
+
   useEffect(() => {
     const externallyChangedUrl = targetUrlRef.current !== target.url;
     targetUrlRef.current = target.url;
@@ -333,25 +384,13 @@ export function BrowserLiveSurface({
     const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
-    const ignoreStaleNavigation = (
-      nextUrl: string,
-      options: { allowExplicitHistoricalNavigation?: boolean } = {},
-    ) => {
+    const ignoreStaleNavigation = (nextUrl: string) => {
+      if (historyNavigationRef.current) return true;
       const intent = navigationIntentRef.current;
       if (!nextUrl) return false;
-      if (!intent) {
-        if (options.allowExplicitHistoricalNavigation) historyNavigationRequestRef.current = false;
-        return false;
-      }
+      if (!intent) return false;
       if (nextUrl === intent.expectedUrl) return false;
-      if (intent.staleUrls.includes(nextUrl)) {
-        if (options.allowExplicitHistoricalNavigation && historyNavigationRequestRef.current) {
-          historyNavigationRequestRef.current = false;
-          navigationIntentRef.current = null;
-          return false;
-        }
-        return true;
-      }
+      if (intent.staleUrls.includes(nextUrl)) return true;
       navigationIntentRef.current = null;
       return false;
     };
@@ -370,7 +409,14 @@ export function BrowserLiveSurface({
     };
     const handleStop = () => {
       setLoading(false);
+      if (historyNavigationRef.current) {
+        updateNavigationState();
+        return;
+      }
       const nextUrl = safeCurrentWebviewUrl("");
+      if (nextUrl && navigationIntentRef.current?.expectedUrl === nextUrl) {
+        navigationIntentRef.current = null;
+      }
       if (nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
@@ -380,10 +426,7 @@ export function BrowserLiveSurface({
       const nextUrl = "url" in event && typeof event.url === "string"
         ? event.url
         : safeCurrentWebviewUrl("");
-      if (
-        nextUrl
-        && !ignoreStaleNavigation(nextUrl, { allowExplicitHistoricalNavigation: true })
-      ) {
+      if (nextUrl && !ignoreStaleNavigation(nextUrl)) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
@@ -543,7 +586,8 @@ export function BrowserLiveSurface({
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
-    historyNavigationRequestRef.current = false;
+    historyNavigationTokenRef.current += 1;
+    historyNavigationRef.current = null;
     if (currentUrlRef.current && currentUrlRef.current !== nextUrl) {
       staleNavigationUrlsRef.current = [
         ...new Set([...staleNavigationUrlsRef.current, currentUrlRef.current]),

@@ -371,7 +371,7 @@ describe("BrowserLiveSurface", () => {
     expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
   });
 
-  it("accepts an explicit back navigation to a historical URL", () => {
+  it("accepts an explicit back navigation to a historical URL", async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -426,17 +426,20 @@ describe("BrowserLiveSurface", () => {
     act(() => webview.dispatchEvent(didNavigate));
     onReplaceTarget.mockClear();
 
-    guestUrl = previousUrl;
+    guestUrl = nextUrl;
     act(() => container!.querySelector<HTMLButtonElement>("button[aria-label='Back']")?.click());
     expect(goBack).toHaveBeenCalledOnce();
+    guestUrl = previousUrl;
     const backNavigation = new Event("did-navigate");
     Object.defineProperty(backNavigation, "url", { configurable: true, value: previousUrl });
     act(() => webview.dispatchEvent(backNavigation));
 
-    expect(onReplaceTarget).toHaveBeenCalledWith(
-      "browser-tab:history-back",
-      expect.objectContaining({ url: previousUrl }),
-    );
+    await act(async () => {
+      await vi.waitFor(() => expect(onReplaceTarget).toHaveBeenCalledWith(
+        "browser-tab:history-back",
+        expect.objectContaining({ url: previousUrl }),
+      ));
+    });
   });
 
   it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
