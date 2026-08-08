@@ -393,9 +393,13 @@ export async function stopOwnedE2EServer(options: {
   } catch {
     // A missing config cannot identify a server by its listening port.
   }
+  // Playwright can terminate the webServer wrapper before global teardown runs;
+  // retain the runtime and port candidates so owned child servers are still reclaimed.
   const candidatePids = [
     await readServerLease(path.join(options.instanceRoot, "server.pid"), options.instanceRoot, configPath, port)
       .then((lease) => lease?.pid ?? null),
+    await readPid(path.join(options.instanceRoot, "runtime", "server.json")),
+    ...(port === null ? [] : await listeningPids(port)),
   ].filter((pid): pid is number => pid !== null && isRunning(pid));
   const processes = await listProcesses();
   if (!processes) throw new Error("E2E server cleanup could not list processes");
