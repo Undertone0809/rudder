@@ -42,6 +42,10 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function normalizeSqlLineEndings(sql) {
+  return sql.replace(/\r\n?/g, "\n");
+}
+
 function parseJournal(raw, label) {
   let journal;
   try {
@@ -113,7 +117,7 @@ export function buildMigrationManifest({ journalRaw, listSqlFiles, readSqlFile, 
     if (typeof sql !== "string" || sql.trim().length === 0) {
       fail(`${label} fixture has an empty ${fileName}.`);
     }
-    return { fileName, fingerprint: sha256(sql) };
+    return { fileName, fingerprint: sha256(normalizeSqlLineEndings(sql)) };
   });
   const fingerprintByFileName = new Map(
     sqlFiles.map((file) => [file.fileName, file.fingerprint]),

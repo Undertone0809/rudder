@@ -157,6 +157,22 @@ describe("release migration compatibility matrix", () => {
     })).toThrow("rewrites migration file 0055_legacy_compat.sql");
   });
 
+  it("normalizes SQL line endings before calculating migration fingerprints", () => {
+    const lf = manifest(
+      ["0000_base", "0001_next"],
+      { "0000_base": "CREATE TABLE users (\nid integer;\n);\n", "0001_next": "SELECT 1;\n" },
+      "lf",
+    );
+    const crlf = manifest(
+      ["0000_base", "0001_next"],
+      { "0000_base": "CREATE TABLE users (\r\nid integer;\r\n);\r\n", "0001_next": "SELECT 1;\r\n" },
+      "crlf",
+    );
+
+    expect(crlf.sqlFiles).toEqual(lf.sqlFiles);
+    expect(crlf.fingerprint).toBe(lf.fingerprint);
+  });
+
   it("exits nonzero before release work when the CLI matrix declaration is missing", () => {
     const result = spawnSync(
       process.execPath,
