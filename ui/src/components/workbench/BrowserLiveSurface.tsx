@@ -77,12 +77,18 @@ type BrowserWebviewElement = HTMLElement & {
 
 type BrowserNavigationIntent = {
   expectedUrl: string;
+  generation: number;
   staleUrls: string[];
 };
 
 type BrowserHistoryNavigation = {
   baselineUrl: string;
   token: number;
+};
+
+type BrowserNavigationStart = {
+  generation: number;
+  url: string;
 };
 
 function acceptedBrowserFavicon(value: unknown) {
@@ -136,6 +142,8 @@ export function BrowserLiveSurface({
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
   const staleNavigationUrlsRef = useRef<string[]>([]);
+  const navigationStartRef = useRef<BrowserNavigationStart | null>(null);
+  const navigationGenerationRef = useRef(0);
   const historyNavigationRef = useRef<BrowserHistoryNavigation | null>(null);
   const historyNavigationTokenRef = useRef(0);
   const historyNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -233,6 +241,7 @@ export function BrowserLiveSurface({
   }, [applyZoomFactor]);
 
   const navigateHistory = useCallback((direction: -1 | 1) => {
+    if (historyNavigationRef.current) return;
     const baselineUrl = safeCurrentWebviewUrl(currentUrlRef.current);
     const token = historyNavigationTokenRef.current + 1;
     historyNavigationTokenRef.current = token;
@@ -342,6 +351,7 @@ export function BrowserLiveSurface({
         ].slice(-16);
         navigationIntentRef.current = {
           expectedUrl: nextUrl,
+          generation: navigationGenerationRef.current,
           staleUrls: staleNavigationUrlsRef.current,
         };
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
@@ -384,13 +394,26 @@ export function BrowserLiveSurface({
     const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
-    const ignoreStaleNavigation = (nextUrl: string) => {
+    const ignoreStaleNavigation = (nextUrl: string, physicalUrl = "") => {
       if (historyNavigationRef.current) return true;
       const intent = navigationIntentRef.current;
       if (!nextUrl) return false;
       if (!intent) return false;
       if (nextUrl === intent.expectedUrl) return false;
-      if (intent.staleUrls.includes(nextUrl)) return true;
+      if (intent.staleUrls.includes(nextUrl)) {
+        const source = navigationStartRef.current;
+        const isCurrentNavigation = Boolean(
+          source
+          && source.generation > intent.generation
+          && source.url === nextUrl
+          && physicalUrl === nextUrl,
+        );
+        if (isCurrentNavigation) {
+          navigationIntentRef.current = null;
+          return false;
+        }
+        return true;
+      }
       navigationIntentRef.current = null;
       return false;
     };
@@ -403,7 +426,15 @@ export function BrowserLiveSurface({
     const handleStartNavigation = (event: Event) => {
       const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
       const nextUrl = "url" in event && typeof event.url === "string" ? event.url : "";
-      if (isMainFrame && nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
+      if (!isMainFrame || !nextUrl) return;
+      navigationStartRef.current = {
+        generation: navigationGenerationRef.current + 1,
+        url: nextUrl,
+      };
+      navigationGenerationRef.current += 1;
+      const intent = navigationIntentRef.current;
+      const stale = intent && nextUrl !== intent.expectedUrl && intent.staleUrls.includes(nextUrl);
+      if (!stale && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
     };
@@ -414,26 +445,24 @@ export function BrowserLiveSurface({
         return;
       }
       const nextUrl = safeCurrentWebviewUrl("");
-      if (nextUrl && navigationIntentRef.current?.expectedUrl === nextUrl) {
-        navigationIntentRef.current = null;
-      }
-      if (nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
+      if (nextUrl && !ignoreStaleNavigation(nextUrl, nextUrl) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
     };
     const handleNavigate = (event: Event) => {
+      const physicalUrl = safeCurrentWebviewUrl("");
       const nextUrl = "url" in event && typeof event.url === "string"
         ? event.url
-        : safeCurrentWebviewUrl("");
-      if (nextUrl && !ignoreStaleNavigation(nextUrl)) {
+        : physicalUrl;
+      if (nextUrl && !ignoreStaleNavigation(nextUrl, physicalUrl)) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
     };
     const handleTitle = (event: Event) => {
       const nextUrl = safeCurrentWebviewUrl(currentUrlRef.current);
-      if (ignoreStaleNavigation(nextUrl)) return;
+      if (ignoreStaleNavigation(nextUrl, nextUrl)) return;
       const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
         ? event.title.trim()
         : browserSidePanelLabel(nextUrl);
@@ -464,7 +493,11 @@ export function BrowserLiveSurface({
         ? event.validatedURL
         : currentUrlRef.current;
       const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
-      if (isMainFrame && !ignoreStaleNavigation(failedUrl) && errorDescription !== "ERR_ABORTED") {
+      if (
+        isMainFrame
+        && !ignoreStaleNavigation(failedUrl, safeCurrentWebviewUrl(""))
+        && errorDescription !== "ERR_ABORTED"
+      ) {
         setLoading(false);
         setLoadError({ code: errorDescription, url: failedUrl });
         setLoadErrorDetailsOpen(false);
@@ -586,6 +619,7 @@ export function BrowserLiveSurface({
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
+    navigationGenerationRef.current += 1;
     historyNavigationTokenRef.current += 1;
     historyNavigationRef.current = null;
     if (currentUrlRef.current && currentUrlRef.current !== nextUrl) {
@@ -595,6 +629,7 @@ export function BrowserLiveSurface({
     }
     navigationIntentRef.current = {
       expectedUrl: nextUrl,
+      generation: navigationGenerationRef.current,
       staleUrls: staleNavigationUrlsRef.current,
     };
     setLoadError(null);
