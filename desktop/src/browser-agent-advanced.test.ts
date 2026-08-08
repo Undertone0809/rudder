@@ -360,6 +360,22 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
+  it("falls back to Electron capture when CDP screenshot capture fails", async () => {
+    const harness = createHarness();
+    const defaultImplementation = harness.sendCommand.getMockImplementation();
+    harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === "Page.captureScreenshot") throw new Error("Browser CDP screenshot failed.");
+      return defaultImplementation?.(method, params);
+    });
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    const screenshot = await driver.execute("screenshot", { format: "png" }) as any;
+
+    expect(screenshot.base64).toBe(harness.png.toString("base64"));
+    expect(harness.windowStub.capturePage).toHaveBeenCalledWith(undefined);
+    await driver.dispose();
+  });
+
   it("takes ownership of Electron dialogs and settles their native callback", async () => {
     const harness = createHarness();
     const electronDefaultHandler = vi.fn();

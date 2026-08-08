@@ -124,6 +124,8 @@ const MAX_ASSET_BYTES = 25_000_000;
 const MAX_ASSET_BUNDLE_BYTES = 100_000_000;
 const MAX_CONTENT_EXPORT_BYTES = 25_000_000;
 const MAX_LOG_ENTRIES = 500;
+const CDP_SCREENSHOT_TIMEOUT_MS = 5_000;
+const NATIVE_SCREENSHOT_TIMEOUT_MS = 5_000;
 
 type VirtualClipboardItem = {
   entries: Array<{ mimeType: string; text?: string; base64?: string }>;
@@ -1077,17 +1079,59 @@ export async function createBrowserAdvancedDriver(options: {
       clip = { x: 0, y: 0, width, height };
       command.clip = { ...clip, scale: 1 };
     }
-    const result = await debug.sendCommand("Page.captureScreenshot", command);
-    const buffer = Buffer.from(String(result.data || ""), "base64");
-    if (buffer.length > 10_000_000) throw new Error("Browser screenshot exceeded the response limit.");
     const [viewportWidth = 0, viewportHeight = 0] = options.window.getContentSize();
-    return {
-      mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
-      base64: buffer.toString("base64"),
+    const dimensions = {
       width: clip ? Number(clip.width) : viewportWidth,
       height: clip ? Number(clip.height) : viewportHeight,
-      fullPage: args.fullPage === true,
     };
+    const toResult = (buffer: Buffer, mimeType: "image/jpeg" | "image/png") => {
+      if (buffer.length > 10_000_000) throw new Error("Browser screenshot exceeded the response limit.");
+      return {
+        mimeType,
+        base64: buffer.toString("base64"),
+        ...dimensions,
+        fullPage: args.fullPage === true,
+      };
+    };
+    const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          operation,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    try {
+      const result = await withTimeout(
+        debug.sendCommand("Page.captureScreenshot", command),
+        CDP_SCREENSHOT_TIMEOUT_MS,
+        "Browser CDP screenshot timed out.",
+      );
+      const buffer = Buffer.from(String(result.data || ""), "base64");
+      return toResult(buffer, format === "jpeg" ? "image/jpeg" : "image/png");
+    } catch (error) {
+      if (format !== "png") throw error;
+      // Hidden BrowserWindows can leave Chromium's CDP screenshot command
+      // waiting on a Linux compositor. Electron's native capture remains
+      // scoped to the same tab and provides a bounded fallback.
+      const nativeCapture = options.window.capturePage(clip ? {
+        x: Number(clip.x),
+        y: Number(clip.y),
+        width: Number(clip.width),
+        height: Number(clip.height),
+      } : undefined);
+      const nativeImage = await withTimeout(
+        nativeCapture,
+        NATIVE_SCREENSHOT_TIMEOUT_MS,
+        "Browser native screenshot timed out.",
+      );
+      return toResult(nativeImage.toPNG(), "image/png");
+    }
   };
 
   const fetchToFile = async (
