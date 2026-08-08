@@ -3731,45 +3731,18 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.match(await fileLoadError.innerText(), /ERR_FILE_NOT_FOUND/);
       assert.equal(page.url(), rudderUrl, "missing local files should not replace the Rudder route");
 
-      await browserUrlInput.fill("google");
+      const localAddressBarUrl = `${fixtureUrl}#messenger-main-address-bar`;
+      await browserUrlInput.fill(localAddressBarUrl);
       await browserUrlInput.press("Enter");
-      await page.waitForFunction(async () => {
+      await page.waitForFunction(async ({ expectedUrl }) => {
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.getURL !== "function") return false;
-        try {
-          const classifyGoogleNavigation = (value) => {
-            try {
-              const url = new URL(value);
-              if (url.protocol !== "https:" || url.hostname !== "www.google.com") return null;
-              if (url.pathname === "/search" && url.searchParams.get("q") === "google") return "search";
-              if (url.pathname.startsWith("/sorry/")) {
-                const continuedUrl = url.searchParams.get("continue");
-                if (!continuedUrl) return null;
-                const continued = new URL(continuedUrl);
-                return continued.protocol === "https:"
-                  && continued.hostname === "www.google.com"
-                  && continued.pathname === "/search"
-                  && continued.searchParams.get("q") === "google"
-                  ? "captcha"
-                  : null;
-              }
-              return null;
-            } catch {
-              return null;
-            }
-          };
-          const url = webview.getURL();
-          const googleNavigation = classifyGoogleNavigation(url);
-          if (!googleNavigation || (typeof webview.isLoading === "function" && webview.isLoading())) return false;
-          await new Promise((resolve) => setTimeout(resolve, 400));
-          return classifyGoogleNavigation(webview.getURL()) === googleNavigation
-            && webview.getURL() === url
-            && (typeof webview.isLoading !== "function" || !webview.isLoading());
-        } catch {
+        if (!webview || typeof webview.getURL !== "function" || typeof webview.executeJavaScript !== "function") {
           return false;
         }
-      }, null, { timeout: 30_000 });
-      await page.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+        if (webview.getURL() !== expectedUrl) return false;
+        const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
+        return heading === "Rudder Browser fixture";
+      }, { expectedUrl: localAddressBarUrl }, { timeout: 30_000 });
 
       const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
       await browserUrlInput.fill(promotionUrl);
