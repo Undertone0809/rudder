@@ -118,7 +118,7 @@ describe("release migration compatibility matrix", () => {
     const fixture = buildMigrationManifest({
       label: "fixture",
       journalRaw: journal(["0000_base"]),
-      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
+      listSqlFiles: () => ["0055_legacy_compat.sql", "0000_base.sql"],
       readSqlFile: (fileName) => ({
         "0000_base.sql": "SELECT 1;",
         "0055_legacy_compat.sql": "SELECT 2;",
@@ -127,12 +127,17 @@ describe("release migration compatibility matrix", () => {
     const candidate = buildMigrationManifest({
       label: "candidate",
       journalRaw: journal(["0000_base"]),
-      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
+      listSqlFiles: () => ["0055_legacy_compat.sql", "0000_base.sql"],
       readSqlFile: (fileName) => ({
         "0000_base.sql": "SELECT 1;",
         "0055_legacy_compat.sql": "SELECT 3;",
       })[fileName],
     });
+
+    expect(candidate.sqlFiles.map((file) => file.fileName)).toEqual([
+      "0000_base.sql",
+      "0055_legacy_compat.sql",
+    ]);
 
     expect(() => validateCompatibilityMatrix({
       candidateManifest: candidate,

@@ -99,7 +99,7 @@ export function buildMigrationManifest({ journalRaw, listSqlFiles, readSqlFile, 
   const journal = parseJournal(journalRaw, label);
   const sqlFileNames = (listSqlFiles?.() ?? journal.entries.map((entry) => `${entry.tag}.sql`))
     .filter((fileName) => fileName.endsWith(".sql"))
-    .sort((left, right) => left.localeCompare(right));
+    .sort();
   if (new Set(sqlFileNames).size !== sqlFileNames.length) {
     fail(`${label} fixture contains duplicate migration SQL file names.`);
   }

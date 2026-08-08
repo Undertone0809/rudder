@@ -103,8 +103,6 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v6
         with:
