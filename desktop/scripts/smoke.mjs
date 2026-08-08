@@ -3738,8 +3738,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         if (!webview || typeof webview.getURL !== "function") return false;
         try {
           const url = webview.getURL();
-          return url.startsWith("https://www.google.com/search?q=google")
+          const matchesSearch = url.startsWith("https://www.google.com/search?q=google")
             || url.includes("continue=https://www.google.com/search%3Fq%3Dgoogle");
+          if (!matchesSearch || (typeof webview.isLoading === "function" && webview.isLoading())) return false;
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          return webview.getURL() === url
+            && (typeof webview.isLoading !== "function" || !webview.isLoading());
         } catch {
           return false;
         }
@@ -3755,6 +3759,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           || typeof webview.getURL !== "function"
           || typeof webview.executeJavaScript !== "function"
           || webview.getURL() !== expectedUrl) return false;
+        if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
         return (await webview.executeJavaScript("document.querySelector('h1')?.textContent")) === "Rudder Browser fixture";
       }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
 

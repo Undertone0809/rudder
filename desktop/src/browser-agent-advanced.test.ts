@@ -354,6 +354,7 @@ describe("Browser Agent advanced driver", () => {
     expect(screenshot.base64).toBe(harness.png.toString("base64"));
     expect(harness.sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", expect.objectContaining({
       captureBeyondViewport: true,
+      fromSurface: false,
       clip: expect.objectContaining({ width: 800, height: 1200 }),
     }));
     await driver.dispose();

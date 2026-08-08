@@ -191,7 +191,7 @@ jobs:
 
       - name: Run database migration and recovery tests
         shell: bash
-        run: pnpm --filter @rudderhq/db exec vitest run src/client.test.ts src/migration-manifest.test.ts
+        run: pnpm --filter @rudderhq/db exec vitest run --maxWorkers=1 src/client.test.ts src/migration-manifest.test.ts
 
       - name: Run historical schema upgrade matrix with shaped data
         shell: bash
