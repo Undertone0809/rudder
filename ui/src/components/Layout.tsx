@@ -811,7 +811,7 @@ function DesktopSidePanelSlot({
         data-testid="side-panel-resizer"
         aria-hidden={!resizerVisible}
         className={cn(
-          "motion-resize workspace-column-resizer group relative z-20 flex shrink-0 touch-none select-none items-stretch justify-center",
+          "motion-resize workspace-column-resizer group relative z-[80] flex shrink-0 touch-none select-none items-stretch justify-center",
           resizerVisible ? "cursor-col-resize opacity-100" : "pointer-events-none opacity-0",
           resizingSidePanel && "is-resizing",
         )}

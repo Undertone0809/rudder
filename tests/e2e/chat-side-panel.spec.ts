@@ -3212,6 +3212,9 @@ test.describe("Chat Side Panel", () => {
         await expect(sidePanel).toBeVisible({ timeout: 15_000 });
         await expect(resizer).toBeVisible();
         await expect.poll(() => resizer.evaluate((element) => element.offsetWidth)).toBe(4);
+        expect(
+          await resizer.evaluate((element) => Number.parseInt(getComputedStyle(element).zIndex, 10)),
+        ).toBeGreaterThanOrEqual(80);
         expect(await resizerHitTarget.evaluate((element) => element.offsetWidth)).toBeGreaterThanOrEqual(10);
         expect(await resizerHitTarget.evaluate((element) => {
           const rect = element.getBoundingClientRect();
