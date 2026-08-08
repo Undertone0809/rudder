@@ -1,5 +1,5 @@
 import type { Db } from "@rudderhq/db";
-import { assets, chatAttachments, chatConversations, chatMessages } from "@rudderhq/db";
+import { assets, chatAttachments, chatConversations, chatMessageTranscriptEntries, chatMessages } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
@@ -8,14 +8,16 @@ import {
   rudderInlineVisualMappingsFromStructuredPayload,
   sanitizeChatStructuredPayload,
   type ChatInlineVisualMapping,
+  type ChatStreamTranscriptEntry,
   type RudderInlineVisualMapping,
 } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
-import { stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import type { MessageHydrationRow } from "./chats.types.js";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 type ChatTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ChatMessageRow = typeof chatMessages.$inferSelect;
@@ -55,6 +57,7 @@ export async function copyForkChatMessages(input: {
   sourceConversation: typeof chatConversations.$inferSelect;
   targetConversationId: string;
   orgId: string;
+  transcriptBySourceMessageId: ReadonlyMap<string, readonly ChatStreamTranscriptEntry[]>;
 }) {
   const copiedMessageIdBySourceId = new Map(
     input.messages.map((message) => [message.id, randomUUID()]),
@@ -260,6 +263,21 @@ export async function copyForkChatMessages(input: {
   });
   if (copiedMessages.length > 0) {
     await input.tx.insert(chatMessages).values(copiedMessages);
+  }
+  const copiedTranscriptEntries = input.messages.flatMap((message) => {
+    const transcript = input.transcriptBySourceMessageId.get(message.id)
+      ?? chatTranscriptFromPayload(message.structuredPayload);
+    const copiedMessageId = copiedMessageIdBySourceId.get(message.id);
+    if (!copiedMessageId) return [];
+    return transcript.map((entry, entrySeq) => ({
+      orgId: input.orgId,
+      messageId: copiedMessageId,
+      entrySeq,
+      payload: sanitizePostgresJsonValue(entry) as Record<string, unknown>,
+    }));
+  });
+  if (copiedTranscriptEntries.length > 0) {
+    await input.tx.insert(chatMessageTranscriptEntries).values(copiedTranscriptEntries);
   }
   if (copiedAttachments.length > 0) {
     await input.tx.insert(chatAttachments).values(copiedAttachments);

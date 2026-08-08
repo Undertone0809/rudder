@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDesktopBrowserApiClient,
   isDesktopBrowserRunActive,
   readDesktopBrowserSettings,
   registerDesktopBrowserBroker,
@@ -88,6 +89,41 @@ describe("Desktop Browser Broker server registration", () => {
       agentId: "agent-2",
       runId: "run-1",
     }, fetchImpl)).resolves.toBe(false);
+  });
+
+  it("routes every protected Browser lifecycle request through the injected fetch", async () => {
+    const sessionFetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/instance/settings/browser")) {
+        return new Response(JSON.stringify({ enabled: true, openLinksIn: "built_in" }), { status: 200 });
+      }
+      if (url.includes("/heartbeat-runs/")) {
+        return new Response(JSON.stringify({
+          id: "run-1",
+          orgId: "org-1",
+          agentId: "agent-1",
+          status: "running",
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 204 });
+    });
+    const client = createDesktopBrowserApiClient(sessionFetch);
+
+    await client.readSettings("http://127.0.0.1:3100/api");
+    await client.registerBroker("http://127.0.0.1:3100/api", broker);
+    await client.unregisterBroker("http://127.0.0.1:3100/api", broker.token);
+    await expect(client.isRunActive("http://127.0.0.1:3100/api", {
+      orgId: "org-1",
+      agentId: "agent-1",
+      runId: "run-1",
+    })).resolves.toBe(true);
+
+    expect(sessionFetch).toHaveBeenCalledTimes(4);
+    expect(sessionFetch.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:3100/api/instance/settings/browser",
+      "http://127.0.0.1:3100/api/instance/browser/broker",
+      "http://127.0.0.1:3100/api/instance/browser/broker",
+      "http://127.0.0.1:3100/api/heartbeat-runs/run-1",
+    ]);
   });
 
   it("does not expose response bodies or the credential when registration fails", async () => {

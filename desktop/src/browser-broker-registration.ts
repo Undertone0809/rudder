@@ -5,7 +5,7 @@ export type DesktopBrowserSettings = {
   openLinksIn: "built_in" | "default_browser";
 };
 
-type DesktopBrowserBrokerRegistration = {
+export type DesktopBrowserBrokerRegistration = {
   endpoint: string;
   token: string;
   ownerId?: string;
@@ -141,4 +141,20 @@ export async function isDesktopBrowserRunActive(
     && value.orgId === identity.orgId
     && value.agentId === identity.agentId
     && value.status === "running";
+}
+
+export function createDesktopBrowserApiClient(
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+) {
+  return {
+    registerBroker: (
+      apiUrl: string,
+      broker: DesktopBrowserBrokerRegistration,
+    ) => registerDesktopBrowserBroker(apiUrl, broker, fetchImpl),
+    unregisterBroker: (apiUrl: string, token: string) =>
+      unregisterDesktopBrowserBroker(apiUrl, token, fetchImpl),
+    readSettings: (apiUrl: string) => readDesktopBrowserSettings(apiUrl, fetchImpl),
+    isRunActive: (apiUrl: string, identity: BrowserRuntimeIdentity) =>
+      isDesktopBrowserRunActive(apiUrl, identity, fetchImpl),
+  };
 }

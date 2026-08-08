@@ -10,7 +10,7 @@ import {
 } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, eq, lte } from "drizzle-orm";
 import type { ChatGenerationProtocolTransaction } from "./chat-generation-protocol.helpers.js";
-import { withPersistedTranscript } from "./chats.helpers.js";
+import { stripChatMetadataFromPayload } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 
 type GenerationRow = typeof chatGenerations.$inferSelect;
@@ -103,10 +103,9 @@ export async function freezeAssistantMessageProjection(
     .set({
       status: "stopped",
       body: durableBody,
-      structuredPayload: withPersistedTranscript(
-        existing.structuredPayload,
-        projection.transcript,
-      ),
+      structuredPayload: projection.transcript.length > 0
+        ? stripChatMetadataFromPayload(existing.structuredPayload)
+        : existing.structuredPayload,
       ...(projection.runId ? { runId: projection.runId } : {}),
       updatedAt: new Date(),
     })

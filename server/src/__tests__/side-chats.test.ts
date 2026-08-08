@@ -11,6 +11,7 @@ import {
   messengerCustomGroupEntries,
   messengerCustomGroups,
   organizations,
+  productAnalyticsEvents,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -107,6 +108,7 @@ describe("sideChatService", () => {
   }, 60_000);
 
   afterEach(async () => {
+    await db.delete(productAnalyticsEvents);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
     await db.delete(chatWorkManifestItems);
@@ -760,6 +762,25 @@ describe("sideChatService", () => {
       .from(chatConversations)
       .where(eq(chatConversations.id, sideChat.id));
     expect(persisted?.title).toBe(sideChat.title);
+  });
+
+  it("records one deduplicated analytics event for Side Chat creation", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const retry = await createSideChat(source);
+
+    expect(retry.id).toBe(sideChat.id);
+    const events = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, sideChat.id));
+    expect(events.filter((event) => event.eventName === "chat_created")).toMatchObject([
+      {
+        orgId: source.orgId,
+        actorType: "human",
+        origin: "human",
+        properties: { creation_path: "side_chat", initial_role: "system" },
+      },
+    ]);
+    expect(events.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
   });
 
   it("destroys an unkept Side Chat and turns an elapsed Side Chat read-only", async () => {

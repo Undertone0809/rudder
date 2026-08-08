@@ -632,7 +632,31 @@ test.describe("Run transcript detail", () => {
 
     const sendFeedback = feedbackPanel.getByRole("button", { name: "Send feedback" });
     await expect(sendFeedback).toBeEnabled();
+    const stopResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes("/messages/stream/stop")
+    ));
     await sendFeedback.click();
+    const stopFeedback = feedbackPanel.getByRole("button", { name: "Stop feedback" });
+    await expect(stopFeedback).toBeVisible({ timeout: 15_000 });
+    await stopFeedback.click();
+    const stopResponse = await stopResponsePromise;
+    expect(stopResponse.ok(), await stopResponse.text()).toBe(true);
+    const stopRequest = stopResponse.request().postDataJSON() as Record<string, unknown>;
+    expect(stopRequest.expectedGenerationId).toEqual(expect.any(String));
+    expect(stopRequest.expectedAttemptEpoch).toEqual(expect.any(Number));
+    expect(stopRequest.expectedControlVersion).toEqual(expect.any(Number));
+    expect(stopRequest.lastCommittedRenderSeq).toEqual(expect.any(Number));
+    expect(stopRequest.renderedBodyHash).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/));
+    const stopPayload = await stopResponse.json() as { stopped?: boolean; disposition?: string };
+    expect(
+      stopPayload.stopped === true
+      || ["stopping", "stop_requested", "stopped", "interrupted_unverified"].includes(stopPayload.disposition ?? ""),
+    ).toBe(true);
+    await expect.poll(async () => (
+      await feedbackPanel.getByRole("button", { name: "Send feedback" }).count()
+      + await feedbackPanel.getByRole("button", { name: "Stop status pending" }).count()
+    ), { timeout: 15_000 }).toBeGreaterThan(0);
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(projectSelector).toBeDisabled();
 
@@ -708,6 +732,10 @@ test.describe("Run transcript detail", () => {
     await expect(annotationEditor).toBeVisible();
     await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
+    await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(feedbackPanel.getByText("late output", { exact: false })).toHaveCount(0);
+    await expect(feedbackPanel.getByText("late final", { exact: false })).toHaveCount(0);
+    await expect(projectSelector).toBeDisabled();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(sidePanel).toBeVisible();

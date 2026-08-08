@@ -28,7 +28,6 @@ import {
   freezeAssistantMessageProjection,
   visibleGenerationProjectionThrough,
 } from "./chat-generation-provenance.js";
-import { withPersistedTranscript } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
@@ -315,7 +314,6 @@ export function chatGenerationProtocolService(db: Db) {
           .set({
             status: "streaming",
             body: durableBody,
-            structuredPayload,
             ...(input.runId !== undefined ? { runId: input.runId } : {}),
             ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
             updatedAt: new Date(),
@@ -348,25 +346,9 @@ export function chatGenerationProtocolService(db: Db) {
       if (event.eventKind !== "transcript") {
         return { generation, message, event };
       }
-      const projection = await visibleGenerationProjectionThrough(
-        tx,
-        generation.id,
-        event.generationSeq,
-      );
-      const [messageWithProvenance] = await tx
-        .update(chatMessages)
-        .set({
-          structuredPayload: withPersistedTranscript(
-            message.structuredPayload,
-            projection.transcript,
-          ),
-          updatedAt: new Date(),
-        })
-        .where(eq(chatMessages.id, message.id))
-        .returning();
       return {
         generation,
-        message: messageWithProvenance ?? message,
+        message,
         event,
       };
     });

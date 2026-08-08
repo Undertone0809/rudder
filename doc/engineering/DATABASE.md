@@ -70,6 +70,64 @@ startup gate to avoid a backup.
 
 Docker note: the Docker quickstart image also uses embedded PostgreSQL by default. Persist `/rudder` to keep DB state across container restarts (see `doc/engineering/DOCKER.md`).
 
+## Chat transcript migration and bloat recovery
+
+Chat generation transcript events are kept in `chat_generation_events`. The
+`chat_message_transcript_entries` table stores detached snapshots for legacy
+messages and messages copied into a fork. New streaming events do not append a
+growing array to `chat_messages.structured_payload`.
+
+For an existing database, migration `0148` only creates the table and adjusts
+the bounded `chat_messages` autovacuum settings. It intentionally does not
+rewrite historical rows during application startup. Run the backfill as a
+separate maintenance operation:
+
+1. Stop the Rudder server, workers, and scheduled jobs that can write the target
+   database. Write a recoverable `pg_dump` or provider snapshot to a different
+   disk or volume; do not use the nearly full database backup directory.
+2. Apply the schema migration and inspect the candidates without changing rows:
+
+   ```sh
+   pnpm db:migrate
+   DATABASE_URL='postgres://...' pnpm db:backfill-chat-transcripts --dry-run --batch-size 100
+   ```
+
+3. Review the JSON report. An exit code of `2` means at least one legacy
+   message or old fork was left unresolved. Resolve it from the report rather
+   than deleting the source data or forcing a match. Then run the command
+   without `--dry-run`; it uses short `FOR UPDATE SKIP LOCKED` batches, inserts
+   entries before removing `__chatTranscript`, and validates count, order, and
+   payload before each legacy key is cleared. Re-running it is safe.
+4. After the readback checks pass, stop every process connected to this
+   database and run `VACUUM (FULL, ANALYZE) chat_messages;` using a direct
+   PostgreSQL connection. `VACUUM FULL` needs an exclusive lock and temporary
+   working space. If the available space cannot cover that temporary need, stop
+   and free space elsewhere first; never remove PostgreSQL relation files by
+   hand.
+5. Check relation and TOAST sizes, the remaining legacy-key count, detached
+   entry count, and a transcript read through the fork API. Keep the external
+   recovery point until these checks and a restart have passed.
+
+Useful post-maintenance queries are:
+
+```sql
+SELECT pg_size_pretty(pg_total_relation_size('chat_messages')) AS chat_messages,
+       pg_size_pretty(pg_total_relation_size('chat_message_transcript_entries')) AS transcript_entries;
+
+SELECT c.relname AS toast_relation,
+       pg_size_pretty(pg_total_relation_size(c.oid)) AS toast_size
+FROM pg_class parent
+JOIN pg_class c ON c.oid = parent.reltoastrelid
+WHERE parent.relname = 'chat_messages';
+
+SELECT count(*) AS legacy_messages
+FROM chat_messages
+WHERE structured_payload ? '__chatTranscript';
+
+SELECT count(*) AS detached_entries
+FROM chat_message_transcript_entries;
+```
+
 Production local and packaged Desktop builds should use PostgreSQL 18.4 production binaries for this managed local database path. Set `RUDDER_POSTGRES_BIN_DIR` to the `bin` directory from a PostgreSQL 18.4 installation or packaged runtime payload:
 
 ```sh

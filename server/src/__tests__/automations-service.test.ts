@@ -11,6 +11,7 @@ import {
   chatContextLinks,
   chatConversations,
   chatMessages,
+  chatMessageTranscriptEntries,
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
@@ -772,7 +773,12 @@ describe("automation service live-execution coalescing", () => {
         status: "completed",
       },
     });
-    expect((assistantMessage.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
+    expect(assistantMessage.structuredPayload).not.toHaveProperty("__chatTranscript");
+    await expect(db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, assistantMessage.id)))
+      .resolves.toHaveLength(1);
     expect(chatAssistant.streamChatAssistantReply).toHaveBeenCalledTimes(1);
     expect(chatAssistant.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
       userMessageId: userMessage.id,
@@ -881,9 +887,14 @@ describe("automation service live-execution coalescing", () => {
     expect(assistantMessage.status).toBe("failed");
     expect(assistantMessage.body).toBe("The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.");
     expect(assistantMessage.body).not.toContain("I will inspect the issue first.");
-    expect((assistantMessage.structuredPayload as Record<string, unknown>).__chatTranscript).toEqual([
-      expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." }),
-    ]);
+    expect(assistantMessage.structuredPayload).not.toHaveProperty("__chatTranscript");
+    await expect(db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, assistantMessage.id)))
+      .resolves.toEqual([
+        { payload: expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." }) },
+      ]);
   });
 
   it("preserves non-message chat assistant result kinds for chat output", async () => {

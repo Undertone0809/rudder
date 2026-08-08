@@ -306,6 +306,120 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  it("records empty and fork chat creation at their service boundaries", async () => {
+    const orgId = randomUUID();
+    const userId = "analytics-chat-boundary-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat boundary analytics",
+      urlKey: deriveOrganizationUrlKey("Chat boundary analytics"),
+      issuePrefix: `B${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const source = await chatSvc.create(orgId, {
+      title: "Boundary source",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const answer = await chatSvc.addMessage(source.id, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      body: "Fork from this answer",
+    });
+    const child = await chatSvc.forkConversation({
+      sourceConversationId: source.id,
+      orgId,
+      userId,
+      sourceMessageId: answer.id,
+      createdByUserId: userId,
+    });
+
+    const sourceEvents = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, source.id));
+    const childEvents = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.entityId, child.id));
+    expect(sourceEvents.filter((event) => event.eventName === "chat_created")).toMatchObject([
+      { properties: { creation_path: "empty" } },
+    ]);
+    expect(childEvents.filter((event) => event.eventName === "chat_created")).toMatchObject([
+      { properties: { creation_path: "fork", initial_role: "system" } },
+    ]);
+    expect(sourceEvents.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
+    expect(childEvents.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
+  });
+
+  it("classifies automation and integration chat creation through the real service boundary", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Non-human chat analytics",
+      urlKey: deriveOrganizationUrlKey("Non-human chat analytics"),
+      issuePrefix: `N${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const automation = await chatSvc.createWithInitialMessage(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Automation run input",
+        structuredPayload: { eventType: "automation_run_input" },
+      },
+      activity: {
+        actorType: "system",
+        actorId: "automation-chat-output",
+      },
+    });
+    const integration = await chatSvc.createWithInitialMessage(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+      contextLinks: [{
+        entityType: "agent",
+        entityId: randomUUID(),
+        metadata: { source: "agent_integration", provider: "feishu" },
+      }],
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Integration inbound message",
+      },
+      activity: {
+        actorType: "system",
+        actorId: "feishu-inbound",
+      },
+    });
+
+    const events = await db.select().from(productAnalyticsEvents)
+      .where(eq(productAnalyticsEvents.orgId, orgId));
+    expect(events.filter((event) => event.entityId === automation.conversation.id)).toMatchObject([
+      {
+        eventName: "chat_created",
+        actorType: "automation",
+        origin: "automation",
+        sourceTransition: "chat.automation.create",
+        properties: { creation_path: "automation", initial_role: "user", plan_mode: false },
+      },
+    ]);
+    expect(events.filter((event) => event.entityId === integration.conversation.id)).toMatchObject([
+      {
+        eventName: "chat_created",
+        actorType: "system",
+        origin: "system",
+        sourceTransition: "chat.integration.create",
+        properties: { creation_path: "integration", initial_role: "user", plan_mode: false },
+      },
+    ]);
+  });
+
   async function createQueuedAnnotationFixture(input: {
     body?: string;
     sourceBody?: string;

@@ -10,6 +10,12 @@ vi.mock("@/lib/router", () => ({
   ),
 }));
 
+vi.mock("./Identity", () => ({
+  Identity: ({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) => (
+    <span data-avatar-url={avatarUrl ?? ""}>{name}</span>
+  ),
+}));
+
 describe("resolveActivityActorName", () => {
   it("labels the current board user as You", () => {
     expect(
@@ -240,5 +246,32 @@ describe("ActivityRow", () => {
     expect(html).toContain("top-0");
     expect(html).toContain("leading-5");
     expect(html).toContain("tabular-nums");
+  });
+
+  it("renders the current board user's account avatar", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-user-avatar",
+          orgId: "org-1",
+          actorType: "user",
+          actorId: "user-1",
+          action: "issue.created",
+          entityType: "issue",
+          entityId: "issue-1",
+          agentId: null,
+          runId: null,
+          details: { title: "Verify user activity avatar" },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map()}
+        entityNameMap={new Map([['issue:issue-1', "AGE-178"]])}
+        currentBoardUserId="user-1"
+        currentBoardUserAvatarUrl="data:image/png;base64,avatar"
+      />,
+    );
+
+    expect(html).toContain('data-avatar-url="data:image/png;base64,avatar"');
+    expect(html).toContain("You");
   });
 });
