@@ -16,7 +16,7 @@
     "stage:app": "node scripts/stage-app.mjs",
     "stage:app-builder-toolchain": "node scripts/stage-app-builder-toolchain.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "smoke": "node scripts/smoke.mjs && electron scripts/update-session-fetch-smoke.mjs && node scripts/app-builder-smoke.mjs",
+    "smoke": "node scripts/smoke.mjs && node scripts/run-electron-script.mjs scripts/update-session-fetch-smoke.mjs && node scripts/app-builder-smoke.mjs",
     "smoke:app-builder": "pnpm build && node scripts/app-builder-smoke.mjs",
     "smoke:app-builder:packaged": "node scripts/app-builder-smoke.mjs --packaged"
   },

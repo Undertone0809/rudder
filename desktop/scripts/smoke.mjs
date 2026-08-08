@@ -3749,12 +3749,19 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       await browserUrlInput.press("Enter");
       await page.waitForFunction(async ({ expectedUrl }) => {
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        const addressBar = document.querySelector("input[name='browser-url']");
         if (!webview
           || typeof webview.getURL !== "function"
           || typeof webview.executeJavaScript !== "function"
+          || !(addressBar instanceof HTMLInputElement)
+          || addressBar.value !== expectedUrl
           || webview.getURL() !== expectedUrl) return false;
         if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
-        return (await webview.executeJavaScript("document.querySelector('h1')?.textContent")) === "Rudder Browser fixture";
+        if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return webview.getURL() === expectedUrl && addressBar.value === expectedUrl;
       }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
 
       const movingSideTab = sidePanel.locator(
