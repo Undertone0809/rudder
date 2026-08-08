@@ -824,7 +824,7 @@ function DesktopSidePanelSlot({
       >
         <span
           data-testid="side-panel-resizer-hit-target"
-          className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+          className="absolute inset-y-0 right-0"
           style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
           aria-hidden="true"
         />

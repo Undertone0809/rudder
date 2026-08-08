@@ -3218,6 +3218,13 @@ test.describe("Chat Side Panel", () => {
           const edgeTarget = document.elementFromPoint(rect.left + 0.5, rect.top + rect.height / 2);
           return edgeTarget === element || element.contains(edgeTarget);
         })).toBe(true);
+        expect(await resizerHitTarget.evaluate((element) => {
+          const hitTarget = element.getBoundingClientRect();
+          const resizer = element.parentElement?.getBoundingClientRect();
+          return Boolean(resizer)
+            && hitTarget.left < resizer!.left
+            && hitTarget.right <= resizer!.right + 0.5;
+        })).toBe(true);
 
         const [initialStackBox, initialPanelBox, initialResizerBox] = await Promise.all([
           page.getByTestId("workspace-main-panel-stack").boundingBox(),
