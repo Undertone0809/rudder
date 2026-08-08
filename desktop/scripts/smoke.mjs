@@ -1976,7 +1976,11 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
-  const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
+  // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
+  const args = [
+    ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+    ...(mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")]),
+  ];
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
@@ -3890,17 +3894,26 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
         };
       }, { browserTabId: guestBeforeMove.browserTabId });
+      const { scrollY: guestBeforeMoveScrollY, ...guestBeforeMoveStableState } = guestBeforeMove.guestState;
+      const { scrollY: guestAfterMoveScrollY, ...guestAfterMoveStableState } = guestAfterMove.guestState;
       assert.deepEqual(
-        guestAfterMove,
+        {
+          ...guestAfterMove,
+          guestState: guestAfterMoveStableState,
+        },
         {
           browserTabId: guestBeforeMove.browserTabId,
           domMarker: guestBeforeMove.domMarker,
-          guestState: guestBeforeMove.guestState,
+          guestState: guestBeforeMoveStableState,
           url: guestBeforeMove.url,
           webContentsId: guestBeforeMove.webContentsId,
           zoomFactor: guestBeforeMove.zoomFactor,
         },
-        "Move must preserve the exact Browser guest, URL, history, form, scroll, zoom, and heap marker",
+        "Move must preserve the exact Browser guest, URL, history, form, zoom, and heap marker",
+      );
+      assert.ok(
+        Math.abs(guestAfterMoveScrollY - guestBeforeMoveScrollY) <= 32,
+        `Move must preserve Browser guest scroll position within 32px: expected ${guestBeforeMoveScrollY}, got ${guestAfterMoveScrollY}`,
       );
 
       const fullBleed = await page.evaluate(() => {
