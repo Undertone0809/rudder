@@ -123,6 +123,15 @@ jobs:
         shell: bash
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            pnpm exec playwright install chromium
+          fi
+
       - name: Cache PostgreSQL 18.4 runtime
         uses: actions/cache@v5
         with:
@@ -190,7 +199,12 @@ jobs:
 
       - name: Run packaged upgrade smoke
         shell: bash
-        run: pnpm desktop:verify
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:verify
+          else
+            pnpm desktop:verify
+          fi
 
   canary:
     name: Publish npm canary
