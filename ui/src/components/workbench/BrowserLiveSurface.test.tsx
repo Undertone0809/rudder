@@ -366,6 +366,65 @@ describe("BrowserLiveSurface", () => {
     expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
   });
 
+  it("accepts an explicit back navigation to a historical URL", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const previousUrl = "https://example.com/previous";
+    const nextUrl = "https://example.com/next";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = previousUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-history-back",
+            url: previousUrl,
+            viewInstanceId: "view-history-back",
+          }}
+          targetKey="browser-tab:history-back"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    act(() => {
+      address!.value = nextUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    const didNavigate = new Event("did-navigate");
+    Object.defineProperty(didNavigate, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(didNavigate));
+    onReplaceTarget.mockClear();
+
+    guestUrl = previousUrl;
+    const backNavigation = new Event("did-navigate");
+    Object.defineProperty(backNavigation, "url", { configurable: true, value: previousUrl });
+    act(() => webview.dispatchEvent(backNavigation));
+
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:history-back",
+      expect.objectContaining({ url: previousUrl }),
+    );
+  });
+
   it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
     const onOpenTarget = vi.fn();
     const onCloseTarget = vi.fn();

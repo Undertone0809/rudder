@@ -325,12 +325,24 @@ export function BrowserLiveSurface({
     const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
-    const ignoreStaleNavigation = (nextUrl: string) => {
+    const ignoreStaleNavigation = (
+      nextUrl: string,
+      options: { allowExplicitHistoricalNavigation?: boolean } = {},
+    ) => {
       const intent = navigationIntentRef.current;
       if (!intent || !nextUrl) return false;
       if (nextUrl === intent.expectedUrl) return false;
-      if (intent.staleUrls.includes(nextUrl)) return true;
-      if (nextUrl !== intent.expectedUrl) navigationIntentRef.current = null;
+      if (intent.staleUrls.includes(nextUrl)) {
+        if (options.allowExplicitHistoricalNavigation) {
+          const physicalUrl = safeCurrentWebviewUrl("");
+          if (physicalUrl === nextUrl) {
+            navigationIntentRef.current = null;
+            return false;
+          }
+        }
+        return true;
+      }
+      navigationIntentRef.current = null;
       return false;
     };
 
@@ -358,7 +370,10 @@ export function BrowserLiveSurface({
       const nextUrl = "url" in event && typeof event.url === "string"
         ? event.url
         : safeCurrentWebviewUrl("");
-      if (nextUrl && !ignoreStaleNavigation(nextUrl)) {
+      if (
+        nextUrl
+        && !ignoreStaleNavigation(nextUrl, { allowExplicitHistoricalNavigation: true })
+      ) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
