@@ -1005,7 +1005,7 @@ contracts:
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - ui/src/components/NewProjectDialog.test.tsx
-      - tests/e2e/new-project-resource-popover-scroll.spec.ts
+      - tests/e2e/new-project-sources-dialog.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   LIBRARY.FILES.001:

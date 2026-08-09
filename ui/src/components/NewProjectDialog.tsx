@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Popover,
@@ -21,12 +22,16 @@ import type {
 import { PROJECT_COLORS } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   Calendar,
   CircleHelp,
   FileText,
   Folder,
+  FolderOpen,
+  Globe2,
   LibraryBig,
   Link2,
+  Loader2,
   Maximize2,
   Minimize2,
   Plus,
@@ -36,13 +41,13 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { libraryCopy } from "../lib/library-copy";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
@@ -93,6 +98,8 @@ type DraftInlineResource = {
 
 type DraftProjectResource = DraftAttachedResource | DraftInlineResource;
 
+type AddSourcesView = "choose" | "library" | "local" | "url";
+
 function draftResourceKey(resource: DraftProjectResource) {
   return resource.kind === "existing" ? `existing:${resource.resourceId}` : `new:${resource.id}`;
 }
@@ -130,6 +137,20 @@ function libraryNameFromPath(locator: string) {
   return parts.at(-1) ?? locator.trim();
 }
 
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function resourceUpdatedAt(resource: OrganizationResource) {
+  const timestamp = new Date(resource.updatedAt).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 export function NewProjectDialog() {
   const { newProjectOpen, closeNewProject } = useDialog();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -149,11 +170,13 @@ export function NewProjectDialog() {
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
-  const [addResourcesOpen, setAddResourcesOpen] = useState(false);
+  const [addSourcesView, setAddSourcesView] = useState<AddSourcesView | null>(null);
   const [librarySearch, setLibrarySearch] = useState("");
-  const [resourceSearch, setResourceSearch] = useState("");
+  const [selectedLocalResourceIds, setSelectedLocalResourceIds] = useState<string[]>([]);
+  const [urlSource, setUrlSource] = useState("");
+  const [localPathPicking, setLocalPathPicking] = useState(false);
+  const [sourceDialogError, setSourceDialogError] = useState<string | null>(null);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
-  const addResourcesScrollRef = useScrollbarActivityRef("new-project:add-resources");
   const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
 
   const { data: goals } = useQuery({
@@ -177,7 +200,7 @@ export function NewProjectDialog() {
       query: librarySearch,
       limit: 24,
     }),
-    enabled: !!selectedOrganizationId && newProjectOpen && addResourcesOpen,
+    enabled: !!selectedOrganizationId && newProjectOpen && addSourcesView === "library",
   });
 
   const createProject = useMutation({
@@ -207,7 +230,11 @@ export function NewProjectDialog() {
     setExpanded(false);
     setResourceDrafts([]);
     setLibrarySearch("");
-    setResourceSearch("");
+    setSelectedLocalResourceIds([]);
+    setUrlSource("");
+    setAddSourcesView(null);
+    setLocalPathPicking(false);
+    setSourceDialogError(null);
   }
 
   const existingResourceMap = new Map((organizationResources ?? []).map((resource) => [resource.id, resource]));
@@ -232,16 +259,9 @@ export function NewProjectDialog() {
     }),
   );
   const availableResources = (organizationResources ?? []).filter((resource) => !selectedExistingResourceIds.has(resource.id));
-  const normalizedResourceSearch = resourceSearch.trim().toLowerCase();
-  const visibleAvailableResources = normalizedResourceSearch
-    ? availableResources.filter((resource) => [
-      resource.name,
-      resource.locator,
-      resource.description ?? "",
-      organizationResourceSourceTypeLabel(resource.sourceType),
-      organizationResourceKindLabel(resource.kind),
-    ].some((value) => value.toLowerCase().includes(normalizedResourceSearch)))
-    : availableResources;
+  const recentLocalResources = availableResources
+    .filter((resource) => resource.sourceType === "external" && (resource.kind === "file" || resource.kind === "directory"))
+    .sort((left, right) => resourceUpdatedAt(right) - resourceUpdatedAt(left));
   const libraryFileEntries = Array.isArray(libraryMentionFiles?.entries) ? libraryMentionFiles.entries : [];
   const availableLibraryFiles = libraryFileEntries.filter((entry) =>
     isValidLibraryProjectPath(entry.path, entry.isDirectory ? "directory" : "file")
@@ -273,20 +293,43 @@ export function NewProjectDialog() {
     setResourceDrafts((current) => current.filter((resource) => draftResourceKey(resource) !== key));
   }
 
-  function addExistingResource(resource: OrganizationResource) {
+  function closeAddSourcesDialog() {
+    setAddSourcesView(null);
+    setLibrarySearch("");
+    setSelectedLocalResourceIds([]);
+    setUrlSource("");
+    setSourceDialogError(null);
+  }
+
+  function openAddSourcesDialog() {
+    setAddSourcesView("choose");
+    setSourceDialogError(null);
+  }
+
+  function addExistingResources(resources: OrganizationResource[]) {
     setResourceDrafts((current) => {
-      if (current.some((draft) => draft.kind === "existing" && draft.resourceId === resource.id)) return current;
+      const attachedIds = new Set(
+        current
+          .filter((draft): draft is DraftAttachedResource => draft.kind === "existing")
+          .map((draft) => draft.resourceId),
+      );
       return [
         ...current,
-        {
-          kind: "existing",
-          resourceId: resource.id,
-          role: "reference",
-          note: "",
-        },
+        ...resources
+          .filter((resource) => !attachedIds.has(resource.id))
+          .map((resource): DraftAttachedResource => ({
+            kind: "existing",
+            resourceId: resource.id,
+            role: resource.kind === "directory" ? "working_set" : "reference",
+            note: "",
+          })),
       ];
     });
-    setAddResourcesOpen(false);
+    closeAddSourcesDialog();
+  }
+
+  function addExistingResource(resource: OrganizationResource) {
+    addExistingResources([resource]);
   }
 
   function addLibraryResource(file: OrganizationWorkspaceFileEntry) {
@@ -309,7 +352,7 @@ export function NewProjectDialog() {
         note: "",
       },
     ]);
-    setAddResourcesOpen(false);
+    closeAddSourcesDialog();
   }
 
   function addLibraryResourcePath(locator: string) {
@@ -334,13 +377,56 @@ export function NewProjectDialog() {
         note: "",
       },
     ]);
-    setAddResourcesOpen(false);
-    setLibrarySearch("");
+    closeAddSourcesDialog();
   }
 
-  function addExternalResourceDraft() {
-    setResourceDrafts((current) => [...current, createInlineResourceDraft()]);
-    setAddResourcesOpen(false);
+  function addInlineSource({
+    kind,
+    locator,
+    name,
+  }: {
+    kind: "file" | "url";
+    locator: string;
+    name?: string;
+  }) {
+    setResourceDrafts((current) => [
+      ...current,
+      {
+        ...createInlineResourceDraft(),
+        name: name?.trim() || suggestResourceNameFromLocator(locator),
+        resourceKind: kind,
+        locator,
+        role: "reference",
+      },
+    ]);
+    closeAddSourcesDialog();
+  }
+
+  async function chooseLocalFile() {
+    if (localPathPicking) return;
+    setLocalPathPicking(true);
+    setSourceDialogError(null);
+    try {
+      const result = await instanceSettingsApi.pickPath({ selectionType: "file" });
+      if (!result.cancelled && result.path) {
+        addInlineSource({ kind: "file", locator: result.path });
+      }
+    } catch {
+      setSourceDialogError("Could not open the file picker. Try again from the Rudder Desktop app.");
+    } finally {
+      setLocalPathPicking(false);
+    }
+  }
+
+  function addSelectedLocalSources() {
+    const selectedIds = new Set(selectedLocalResourceIds);
+    addExistingResources(recentLocalResources.filter((resource) => selectedIds.has(resource.id)));
+  }
+
+  function addUrlSource() {
+    const locator = urlSource.trim();
+    if (!isHttpUrl(locator)) return;
+    addInlineSource({ kind: "url", locator });
   }
 
   async function handleSubmit() {
@@ -402,7 +488,16 @@ export function NewProjectDialog() {
   const selectedGoals = (goals ?? []).filter((g) => goalIds.includes(g.id));
   const availableGoals = (goals ?? []).filter((g) => !goalIds.includes(g.id));
 
+  const sourceDialogTitle = addSourcesView === "library"
+    ? "Add from library"
+    : addSourcesView === "local"
+      ? "Select from local"
+      : addSourcesView === "url"
+        ? "Add from URL"
+        : "Add sources";
+
   return (
+    <>
     <Dialog
       open={newProjectOpen}
       onOpenChange={(open) => {
@@ -510,158 +605,33 @@ export function NewProjectDialog() {
           <div className="space-y-3 border-t border-border px-4 py-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex items-center gap-1.5">
-                <div className="text-sm font-medium">Project Context</div>
+                <div className="text-sm font-medium">Project Sources</div>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label="About project context"
+                      aria-label="About project sources"
                     >
                       <CircleHelp className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
-                    {libraryCopy("projectContextHelp", locale)}
+                    {libraryCopy("projectSourcesHelp", locale)}
                   </TooltipContent>
                 </Tooltip>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <Popover
-                  open={addResourcesOpen}
-                  onOpenChange={(open) => {
-                    setAddResourcesOpen(open);
-                    if (!open) {
-                      setLibrarySearch("");
-                      setResourceSearch("");
-                    }
-                  }}
+                <Button
+                  type="button"
+                  size="xs"
+                  className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
+                  disabled={!selectedOrganizationId}
+                  onClick={openAddSourcesDialog}
                 >
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      size="xs"
-                      className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
-                      disabled={!selectedOrganizationId}
-                    >
-                      <Plus className="mr-1.5 h-3 w-3" />
-                      Add resources
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="z-[60] flex max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden p-1"
-                    align="end"
-                    collisionPadding={16}
-                    disablePortal
-                    sideOffset={8}
-                  >
-                  <button
-                    type="button"
-                    className="flex w-full shrink-0 items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                    onClick={addExternalResourceDraft}
-                  >
-                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span>
-                      <span className="block text-xs font-medium">Create external resource</span>
-                      <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
-                    </span>
-                  </button>
-                  <div className="mx-2 my-1 h-px shrink-0 bg-border" />
-                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                    {libraryCopy("addFromLibrary", locale)}
-                  </div>
-                  <div className="px-2 pb-2">
-                    <input
-                      value={librarySearch}
-                      onChange={(event) => setLibrarySearch(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && canAddLibrarySearchPath) {
-                          event.preventDefault();
-                          addLibraryResourcePath(normalizedLibrarySearch);
-                        }
-                      }}
-                      className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      placeholder={libraryCopy("searchLibraryPlaceholder", locale)}
-                    />
-                  </div>
-                  <div
-                    ref={addResourcesScrollRef}
-                    data-testid="new-project-add-resources-popover-scroll"
-                    className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
-                  >
-                    {availableLibraryFiles.length === 0 ? (
-                      <div className="px-2 py-2 text-xs text-muted-foreground">
-                        {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
-                      </div>
-                    ) : availableLibraryFiles.map((file) => {
-                      const Icon = file.isDirectory ? Folder : FileText;
-                      return (
-                        <button
-                          key={file.path}
-                          type="button"
-                          className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                          onClick={() => addLibraryResource(file)}
-                        >
-                          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0">
-                            <span className="block truncate text-xs font-medium">{file.displayLabel ?? file.name}</span>
-                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{file.path}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {canAddLibrarySearchPath ? (
-                      <button
-                        type="button"
-                        className="mt-1 flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                        onClick={() => addLibraryResourcePath(normalizedLibrarySearch)}
-                      >
-                        <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium">{libraryCopy("useThisLibraryPath", locale)}</span>
-                          <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                            {normalizedLibrarySearch}
-                          </span>
-                        </span>
-                      </button>
-                    ) : null}
-
-                    <div className="my-1 h-px bg-border" />
-                    <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                      Existing resources
-                    </div>
-                    <div className="px-2 pb-2">
-                      <input
-                        value={resourceSearch}
-                        onChange={(event) => setResourceSearch(event.target.value)}
-                        className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                        placeholder="Search existing resources"
-                      />
-                    </div>
-                    {visibleAvailableResources.length === 0 ? (
-                      <div className="px-2 py-2 text-xs text-muted-foreground">
-                        {resourceSearch.trim() ? "No matching resources." : "No unattached resources available."}
-                      </div>
-                    ) : visibleAvailableResources.map((resource) => (
-                      <button
-                        key={resource.id}
-                        type="button"
-                        className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                        onClick={() => addExistingResource(resource)}
-                      >
-                        <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium">{resource.name}</span>
-                          <span className="block truncate text-[11px] text-muted-foreground">
-                            {organizationResourceSourceTypeLabel(resource.sourceType)} · {organizationResourceKindLabel(resource.kind)} · {resource.locator}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-
-                  </div>
-                  </PopoverContent>
-                </Popover>
+                  <Plus className="mr-1.5 h-3 w-3" />
+                  Add sources
+                </Button>
               </div>
             </div>
 
@@ -910,7 +880,7 @@ export function NewProjectDialog() {
             <p className="text-xs text-destructive">Failed to create project.</p>
           ) : (
             <span className="text-xs text-muted-foreground">
-              {resourceDrafts.length > 0 ? `${resourceDrafts.length} context item${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
+              {resourceDrafts.length > 0 ? `${resourceDrafts.length} source${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
             </span>
           )}
           <Button
@@ -923,5 +893,252 @@ export function NewProjectDialog() {
         </div>
       </DialogContent>
     </Dialog>
+    <Dialog
+      open={addSourcesView !== null}
+      onOpenChange={(open) => {
+        if (!open) closeAddSourcesDialog();
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
+        className="isolate flex max-h-[min(680px,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 before:absolute before:inset-0 before:-z-10 before:bg-card sm:max-w-lg"
+        data-testid="new-project-add-sources-dialog"
+      >
+        <div className="flex min-h-14 shrink-0 items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {addSourcesView && addSourcesView !== "choose" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Back to source types"
+                onClick={() => {
+                  setAddSourcesView("choose");
+                  setSourceDialogError(null);
+                }}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
+            <DialogTitle className="truncate text-base font-medium">{sourceDialogTitle}</DialogTitle>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground"
+            aria-label="Close add sources"
+            onClick={closeAddSourcesDialog}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        {addSourcesView === "choose" ? (
+          <div className="grid gap-2 p-4">
+            {[
+              {
+                view: "library" as const,
+                label: "Add from library",
+                detail: "Reuse files already in this organization",
+                icon: LibraryBig,
+              },
+              {
+                view: "local" as const,
+                label: "Select from local",
+                detail: "Reuse recent sources or choose a file",
+                icon: FolderOpen,
+              },
+              {
+                view: "url" as const,
+                label: "Add from URL",
+                detail: "Link a webpage or remote reference",
+                icon: Globe2,
+              },
+            ].map((option) => (
+              <button
+                key={option.view}
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-[var(--radius-sm)] border border-border/80 px-3 py-3 text-left transition-colors hover:border-border-strong hover:bg-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setAddSourcesView(option.view)}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-muted/40 text-muted-foreground group-hover:text-foreground">
+                  <option.icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{option.label}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{option.detail}</span>
+                </span>
+                <span className="text-muted-foreground">&rsaquo;</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {addSourcesView === "library" ? (
+          <>
+            <div className="shrink-0 border-b border-border px-4 py-3">
+              <input
+                value={librarySearch}
+                onChange={(event) => setLibrarySearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && canAddLibrarySearchPath) {
+                    event.preventDefault();
+                    addLibraryResourcePath(normalizedLibrarySearch);
+                  }
+                }}
+                className={cn(resourceControlClass, "h-8")}
+                placeholder={libraryCopy("searchLibraryPlaceholder", locale)}
+                autoFocus
+              />
+            </div>
+            <div
+              data-testid="new-project-library-sources-scroll"
+              className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
+            >
+              {availableLibraryFiles.length === 0 && !canAddLibrarySearchPath ? (
+                <div className="px-2 py-8 text-center text-sm text-muted-foreground">
+                  {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
+                </div>
+              ) : availableLibraryFiles.map((file) => {
+                const Icon = file.isDirectory ? Folder : FileText;
+                return (
+                  <button
+                    key={file.path}
+                    type="button"
+                    className="flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2.5 text-left hover:bg-accent/50"
+                    onClick={() => addLibraryResource(file)}
+                  >
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">{file.displayLabel ?? file.name}</span>
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">{file.path}</span>
+                    </span>
+                  </button>
+                );
+              })}
+              {canAddLibrarySearchPath ? (
+                <button
+                  type="button"
+                  className="flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2.5 text-left hover:bg-accent/50"
+                  onClick={() => addLibraryResourcePath(normalizedLibrarySearch)}
+                >
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{libraryCopy("useThisLibraryPath", locale)}</span>
+                    <span className="block truncate font-mono text-[11px] text-muted-foreground">{normalizedLibrarySearch}</span>
+                  </span>
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
+        {addSourcesView === "local" ? (
+          <>
+            <div className="flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-medium">Recent sources</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">Select one or more to add again.</div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={localPathPicking}
+                onClick={() => void chooseLocalFile()}
+              >
+                {localPathPicking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+                Choose file
+              </Button>
+            </div>
+            <div
+              data-testid="new-project-local-sources-scroll"
+              className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            >
+              {recentLocalResources.length === 0 ? (
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">No recent local sources yet.</div>
+              ) : recentLocalResources.map((resource) => {
+                const selected = selectedLocalResourceIds.includes(resource.id);
+                const Icon = resource.kind === "directory" ? Folder : FileText;
+                return (
+                  <label
+                    key={resource.id}
+                    className="flex cursor-pointer items-center gap-3 border-b border-border/70 px-4 py-3 transition-colors last:border-b-0 hover:bg-accent/30"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(event) => setSelectedLocalResourceIds((current) => (
+                        event.target.checked
+                          ? [...current, resource.id]
+                          : current.filter((id) => id !== resource.id)
+                      ))}
+                      className="h-4 w-4 shrink-0 accent-primary"
+                    />
+                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">{resource.name}</span>
+                      <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{resource.locator}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {sourceDialogError ? (
+              <p className="shrink-0 border-t border-border px-4 py-2 text-xs text-destructive">{sourceDialogError}</p>
+            ) : null}
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
+              <span className="text-xs text-muted-foreground">
+                {selectedLocalResourceIds.length === 0
+                  ? "No sources selected"
+                  : `${selectedLocalResourceIds.length} source${selectedLocalResourceIds.length === 1 ? "" : "s"} selected`}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                disabled={selectedLocalResourceIds.length === 0}
+                onClick={addSelectedLocalSources}
+              >
+                Add sources
+              </Button>
+            </div>
+          </>
+        ) : null}
+
+        {addSourcesView === "url" ? (
+          <>
+            <div className="grid gap-2 p-4">
+              <label htmlFor="new-project-source-url" className="text-xs text-muted-foreground">URL</label>
+              <input
+                id="new-project-source-url"
+                type="url"
+                value={urlSource}
+                onChange={(event) => setUrlSource(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && isHttpUrl(urlSource)) {
+                    event.preventDefault();
+                    addUrlSource();
+                  }
+                }}
+                className={cn(resourceControlClass, "h-9")}
+                placeholder="https://example.com/reference"
+                autoFocus
+              />
+              {urlSource.trim() && !isHttpUrl(urlSource) ? (
+                <p className="text-xs text-destructive">Enter a valid http:// or https:// URL.</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 justify-end border-t border-border px-4 py-3">
+              <Button type="button" size="sm" disabled={!isHttpUrl(urlSource)} onClick={addUrlSource}>
+                Add source
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
