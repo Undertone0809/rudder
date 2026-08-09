@@ -98,4 +98,44 @@ describe("stopOwnedE2EServer", () => {
     expect(stopped).toContain(String(serverProcess.pid));
     await waitForExit(serverProcess);
   });
+
+  it.skipIf(process.platform === "win32")("reclaims a server discovered through its owned PostgreSQL child", async () => {
+    testRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-e2e-cleanup-"));
+    const instanceRoot = path.join(testRoot, "instances", "test");
+    const dataDirectory = path.join(instanceRoot, "db");
+    const readyPath = path.join(testRoot, "server-ready");
+    await fs.mkdir(dataDirectory, { recursive: true });
+    await fs.writeFile(path.join(instanceRoot, "config.json"), JSON.stringify({ server: {} }), "utf8");
+
+    const serverScript = [
+      "const fs = require('node:fs');",
+      "const { spawn } = require('node:child_process');",
+      "const dataDirectory = process.argv[1];",
+      "const readyPath = process.argv[2];",
+      "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'postgres', '-D', dataDirectory], { stdio: 'ignore' });",
+      "fs.writeFileSync(readyPath, 'ready');",
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    serverProcess = spawn(
+      process.execPath,
+      ["-e", serverScript, dataDirectory, readyPath, "--dir", path.join(repositoryRoot, "server")],
+      { cwd: repositoryRoot, stdio: "ignore" },
+    );
+    if (!serverProcess.pid) throw new Error("Test server did not expose a PID");
+    const readyDeadline = Date.now() + 5_000;
+    while (Date.now() < readyDeadline) {
+      try {
+        await fs.access(readyPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    await fs.access(readyPath);
+
+    const stopped = await stopOwnedE2EServer({ instanceRoot, repositoryRoot });
+
+    expect(stopped).toContain(String(serverProcess.pid));
+    await waitForExit(serverProcess);
+  });
 });

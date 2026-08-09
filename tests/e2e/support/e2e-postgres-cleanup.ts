@@ -251,15 +251,24 @@ function hasServerAncestor(
   processes: ProcessInfo[],
   repositoryRoot: string,
 ): boolean {
+  return serverAncestorPids(pid, processes, repositoryRoot).length > 0;
+}
+
+function serverAncestorPids(
+  pid: number,
+  processes: ProcessInfo[],
+  repositoryRoot: string,
+): number[] {
   const byPid = new Map(processes.map((processInfo) => [processInfo.pid, processInfo]));
   const visited = new Set<number>();
+  const serverPids: number[] = [];
   let current = byPid.get(pid);
   while (current && !visited.has(current.pid)) {
     visited.add(current.pid);
-    if (commandOwnsServer(current.command, repositoryRoot)) return true;
+    if (commandOwnsServer(current.command, repositoryRoot)) serverPids.push(current.pid);
     current = byPid.get(current.parentPid);
   }
-  return false;
+  return serverPids;
 }
 
 async function instanceHasLiveServer(
@@ -403,6 +412,12 @@ export async function stopOwnedE2EServer(options: {
   ].filter((pid): pid is number => pid !== null && isRunning(pid));
   const processes = await listProcesses();
   if (!processes) throw new Error("E2E server cleanup could not list processes");
+  const instanceRepositoryRoot = repositoryRootForInstance(options.instanceRoot, options.repositoryRoot);
+  const dataDirectory = path.join(options.instanceRoot, "db");
+  for (const processInfo of processes) {
+    if (!commandOwnsPostgresData(processInfo.command, dataDirectory)) continue;
+    candidatePids.push(...serverAncestorPids(processInfo.pid, processes, instanceRepositoryRoot));
+  }
   const stopped: string[] = [];
   for (const pid of new Set(candidatePids)) {
     const command = processes.find((processInfo) => processInfo.pid === pid)?.command ?? await commandLine(pid);
