@@ -217,7 +217,7 @@ ${e2eConfigJson}
 EOF
 ${CLEAR_INHERITED_RUNTIME_ENV_COMMAND}
 printf '"'"'{"pid":%s,"configPath":"%s","instanceRoot":"%s","port":%s}\\n'"'"' "$$" "${E2E_CONFIG}" "${E2E_INSTANCE_ROOT}" "${PORT}" > "${E2E_SERVER_PID_PATH}"
-env ${SERVER_ENV_PREFIX} pnpm --dir "${SERVER_DIR}" dev'`,
+exec env ${SERVER_ENV_PREFIX} pnpm --dir "${SERVER_DIR}" dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
