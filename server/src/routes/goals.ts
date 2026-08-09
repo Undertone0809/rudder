@@ -20,6 +20,16 @@ import {
 } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
+import {
+  publicGoalActivity,
+  publicGoalChangeProposal,
+  publicGoalDetail,
+  publicGoalFeedback,
+  publicGoalOwnerAssignment,
+  publicGoalPlan,
+  publicGoalResultProposal,
+  publicGoalView,
+} from "../services/goals.js";
 import { goalService, heartbeatService, logActivity } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -64,7 +74,7 @@ export function goalRoutes(db: Db) {
   router.get("/orgs/:orgId/goals", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    res.json(await svc.list(orgId));
+    res.json((await svc.list(orgId)).map(publicGoalView));
   });
 
   router.get("/orgs/:orgId/goals/workspace", async (req, res) => {
@@ -80,7 +90,7 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    res.json(await svc.detail(id));
+    res.json(publicGoalDetail(await svc.detail(id)));
   });
 
   router.get("/goals/:id/workspace", async (req, res) => {
@@ -119,7 +129,10 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    res.json(await svc.listActivities(id));
+    const goal = await svc.getById(id);
+    res.json((await svc.listActivities(id)).map((activity) => publicGoalActivity(activity, {
+      runAgentId: goal?.ownerAgentId,
+    })));
   });
 
   router.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {
@@ -139,7 +152,7 @@ export function goalRoutes(db: Db) {
       entityId: goal.id,
       details: { lifecycle: goal.lifecycle, title: goal.title },
     });
-    res.status(201).json(goal);
+    res.status(201).json(publicGoalView(goal));
   });
 
   router.post("/orgs/:orgId/goals/start-preview", validate(previewGoalStartSchema), async (req, res) => {
@@ -171,7 +184,7 @@ export function goalRoutes(db: Db) {
       details: { ownerAgentId: goal.ownerAgentId, packetHash: req.body.packetHash },
       idempotencyKey: `goal-start:${req.body.requestKey}`,
     });
-    res.status(replayed ? 200 : 201).json(goal);
+    res.status(replayed ? 200 : 201).json(publicGoalView(goal));
   });
 
   router.patch("/goals/:id", validate(updateGoalSchema), async (req, res) => {
@@ -194,7 +207,7 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: req.body,
     });
-    res.json(goal);
+    res.json(publicGoalView(goal));
   });
 
   router.post("/goals/:id/activate", validate(activateGoalSchema), async (req, res) => {
@@ -217,7 +230,7 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: { ownerAgentId: goal.ownerAgentId, objectiveMode: goal.objectiveMode },
     });
-    res.json(await svc.detail(id));
+    res.json(publicGoalDetail(await svc.detail(id)));
   });
 
   router.post("/goals/:id/plan", validate(updateGoalPlanSchema), async (req, res) => {
@@ -240,7 +253,7 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: { revision: plan.revision },
     });
-    res.status(201).json(plan);
+    res.status(201).json(publicGoalPlan(plan));
   });
 
   router.post("/goals/:id/activities", validate(createGoalActivitySchema), async (req, res) => {
@@ -268,7 +281,7 @@ export function goalRoutes(db: Db) {
       details: { activityId: activity?.id, activityKind: activity?.activityKind },
       idempotencyKey: req.body.idempotencyKey ?? null,
     });
-    res.status(201).json(activity);
+    res.status(201).json(publicGoalActivity(activity));
   });
 
   router.post("/goals/:id/feedback", validate(createGoalFeedbackSchema), async (req, res) => {
@@ -294,7 +307,7 @@ export function goalRoutes(db: Db) {
       details: { feedbackId: feedback.id, feedbackKind: feedback.feedbackKind },
       idempotencyKey: `goal-feedback:${feedback.id}`,
     });
-    res.status(201).json(feedback);
+    res.status(201).json(publicGoalFeedback(feedback));
   });
 
   router.post("/goals/:id/change-proposals", validate(createGoalChangeProposalSchema), async (req, res) => {
@@ -318,7 +331,7 @@ export function goalRoutes(db: Db) {
       details: { proposalId: proposal.id, expectedContractRevision: proposal.expectedContractRevision },
       idempotencyKey: `goal-change-proposal:${proposal.id}`,
     });
-    res.status(201).json(proposal);
+    res.status(201).json(publicGoalChangeProposal(proposal));
   });
 
   router.post("/goal-change-proposals/:proposalId/decide", validate(decideGoalChangeProposalSchema), async (req, res) => {
@@ -345,7 +358,7 @@ export function goalRoutes(db: Db) {
       details: { proposalId, status: proposal.status, appliedRevision: proposal.appliedRevision },
       idempotencyKey: `goal-change-decision:${proposalId}:${req.body.decision}`,
     });
-    res.json(proposal);
+    res.json(publicGoalChangeProposal(proposal));
   });
 
   router.post("/goals/:id/result-proposals", validate(createGoalResultProposalSchema), async (req, res) => {
@@ -369,7 +382,7 @@ export function goalRoutes(db: Db) {
       details: { proposalId: proposal.id, status: proposal.status, outcome: proposal.preflight.outcome },
       idempotencyKey: `goal-result-proposal:${proposal.id}`,
     });
-    res.status(201).json(proposal);
+    res.status(201).json(publicGoalResultProposal(proposal));
   });
 
   router.post("/goal-result-proposals/:proposalId/accept", validate(acceptGoalResultProposalSchema), async (req, res) => {
@@ -395,7 +408,7 @@ export function goalRoutes(db: Db) {
       details: { proposalId, outcome: goal.evaluationResult },
       idempotencyKey: `goal-result-accept:${proposalId}:${req.body.idempotencyKey}`,
     });
-    res.json(goal);
+    res.json(publicGoalView(goal));
   });
 
   router.post("/goal-result-proposals/:proposalId/reject", validate(rejectGoalResultProposalSchema), async (req, res) => {
@@ -422,7 +435,7 @@ export function goalRoutes(db: Db) {
       details: { proposalId, status: proposal.status },
       idempotencyKey: `goal-result-reject:${proposalId}:${req.body.idempotencyKey}`,
     });
-    res.json(proposal);
+    res.json(publicGoalResultProposal(proposal));
   });
 
   router.post("/goals/:id/owner", validate(assignGoalOwnerSchema), async (req, res) => {
@@ -446,11 +459,12 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: { agentId: assignment.agentId, assignmentRevision: assignment.assignmentRevision },
     });
-    res.json(assignment);
+    res.json(publicGoalOwnerAssignment(assignment));
   });
 
   router.post("/goals/:id/focus", validate(setGoalFocusSchema), async (req, res) => {
     const id = req.params.id as string;
+    assertBoard(req);
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
       res.status(404).json({ error: "Goal not found" });
@@ -470,7 +484,7 @@ export function goalRoutes(db: Db) {
       details: { focus: goal?.focus ?? false },
     });
     await heartbeat.resumePendingWakeupRequests({ orgId: existing.orgId });
-    res.json(goal);
+    res.json(publicGoalView(goal));
   });
 
   router.post("/goals/:id/evaluate", validate(evaluateGoalSchema), async (req, res) => {
@@ -493,7 +507,7 @@ export function goalRoutes(db: Db) {
       entityId: id,
       details: { result: goal.evaluationResult, lifecycle: goal.lifecycle },
     });
-    res.json(goal);
+    res.json(publicGoalView(goal));
   });
 
   router.delete("/goals/:id", async (req, res) => {
@@ -516,7 +530,7 @@ export function goalRoutes(db: Db) {
       entityType: "goal",
       entityId: id,
     });
-    res.json(goal);
+    res.json(publicGoalView(goal));
   });
 
   return router;

@@ -1012,7 +1012,7 @@ export function NewIssueDialog() {
       (goals ?? []).map((goal) => ({
         id: goal.id,
         label: goal.title,
-        searchText: `${goal.title} ${goal.description ?? ""} ${goal.level} ${goal.status}`,
+        searchText: `${goal.title} ${goal.description ?? ""} ${goal.status}`,
       })),
     [goals],
   );

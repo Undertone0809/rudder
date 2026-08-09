@@ -971,6 +971,7 @@ async function startServerRuntime(
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
     mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
+    pluginHttpAllowedOrigins: config.pluginHttpAllowedOrigins,
     instanceId,
     localEnv,
     runtimeOwnerKind,

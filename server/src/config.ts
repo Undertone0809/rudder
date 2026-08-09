@@ -28,6 +28,7 @@ import {
   parseMcpDeploymentPolicyEnv,
   type McpDeploymentAllowlists,
 } from "./services/mcp/security-policy.js";
+import { parsePluginHttpAllowlistEnv } from "./services/plugin-http-policy.js";
 
 function loadEnvFileWithoutOverride(filePath: string, blockedKeys?: ReadonlySet<string>): void {
   if (!existsSync(filePath)) return;
@@ -134,6 +135,7 @@ export interface Config {
   heartbeatRunInactivityTimeoutMs: number;
   companyDeletionEnabled: boolean;
   mcpDeploymentAllowlists: McpDeploymentAllowlists;
+  pluginHttpAllowedOrigins: string[];
 }
 
 function parsePositiveInt(rawValue: string | undefined): number | null {
@@ -347,6 +349,7 @@ export function loadConfig(): Config {
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
         : 30 * 60 * 1000;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
+  const pluginHttpAllowedOrigins = parsePluginHttpAllowlistEnv(process.env);
 
   return {
     deploymentMode,
@@ -395,5 +398,6 @@ export function loadConfig(): Config {
     heartbeatRunInactivityTimeoutMs,
     companyDeletionEnabled,
     mcpDeploymentAllowlists,
+    pluginHttpAllowedOrigins,
   };
 }

@@ -5,6 +5,7 @@ import {
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
   type GoalDependencies,
+  type GoalFeedbackAttachment,
   type GoalWorkspaceFacet,
   type Issue,
   type Project,
@@ -27,9 +28,11 @@ import {
   Target,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type Ref } from "react";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
@@ -55,6 +58,7 @@ type TimelineView = {
   summary: string;
   createdAt: Date | string | null;
   evidenceRefs: string[];
+  evidence: EvidenceItem[];
   actorName: string | null;
   actorType: string | null;
   actorId: string | null;
@@ -75,6 +79,7 @@ type ChangeProposalView = {
   rationale: string | null;
   impact: string | null;
   evidenceRefs: string[];
+  evidence: EvidenceItem[];
 };
 
 type ResultProposalView = {
@@ -109,6 +114,7 @@ type PendingFeedback = {
   identity: string;
   idempotencyKey: string;
   body: string;
+  attachments: GoalFeedbackAttachment[];
   feedbackKind: "ordinary" | "consequential";
   status: "sending" | "failed";
   error: string | null;
@@ -154,6 +160,20 @@ function readStringArray(value: unknown) {
     : [];
 }
 
+function normalizeEvidenceItems(value: unknown): EvidenceItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = asRecord(item);
+    const label = readString(record, "label");
+    if (!label) return [];
+    return [{
+      label,
+      href: typeof record.href === "string" && record.href.startsWith("/") ? record.href : null,
+      external: record.external === true,
+    }];
+  });
+}
+
 const criterionStatusLabels = {
   met: "Met",
   unmet: "Not met",
@@ -188,7 +208,7 @@ function parseEvidenceReference(reference: string) {
 function evidenceType(reference: string) {
   const { scheme } = parseEvidenceReference(reference);
   if (scheme === "artifact") return "Artifact evidence";
-  if (scheme === "run") return "Agent run evidence";
+  if (scheme === "run") return "Supporting work";
   if (scheme === "issue") return "Issue evidence";
   if (scheme === "project") return "Project evidence";
   if (scheme === "approval") return "Approval evidence";
@@ -201,13 +221,19 @@ function evidenceType(reference: string) {
   return "Other evidence";
 }
 
+function publicLibraryName(path: string) {
+  const name = path.split("/").filter(Boolean).at(-1);
+  return name && !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(name) ? name : null;
+}
+
 function evidenceItems(refs: string[], context: EvidenceContext): EvidenceItem[] {
   return refs.map((reference, index) => {
     const libraryFile = parseLibraryFileMentionHref(reference);
     if (libraryFile) {
       const search = new URLSearchParams({ path: libraryFile.filePath });
+      const publicName = publicLibraryName(libraryFile.filePath);
       return {
-        label: `Library file: ${libraryFile.filePath}`,
+        label: publicName ? `Library file: ${publicName}` : "Library file evidence",
         href: `/library?${search.toString()}`,
         external: false,
       };
@@ -216,9 +242,10 @@ function evidenceItems(refs: string[], context: EvidenceContext): EvidenceItem[]
     if (libraryEntry) {
       const search = new URLSearchParams({ entry: libraryEntry.entryId });
       if (libraryEntry.path) search.set("path", libraryEntry.path);
+      const publicName = libraryEntry.path ? publicLibraryName(libraryEntry.path) : null;
       return {
-        label: libraryEntry.path
-          ? `Library entry: ${libraryEntry.path}`
+        label: publicName
+          ? `Library entry: ${publicName}`
           : `Library entry evidence ${index + 1}`,
         href: `/library?${search.toString()}`,
         external: false,
@@ -252,7 +279,7 @@ function evidenceItems(refs: string[], context: EvidenceContext): EvidenceItem[]
     }
     if (scheme === "run" && entityId && context.runAgentId) {
       return {
-        label: `Agent run evidence ${index + 1}`,
+        label: `Supporting work ${index + 1}`,
         href: `/agents/${encodeURIComponent(context.runAgentId)}/runs/${encodeURIComponent(entityId)}`,
         external: false,
       };
@@ -309,10 +336,13 @@ function summarizeValue(value: unknown) {
     })
     : [];
   const target = readString(record, "evaluationDeadline", "actionDeadline", "targetTime");
+  const boundary = readString(record, "boundarySummary") ?? publicBoundarySummary(record.autonomyEnvelope);
+  const approval = readString(record, "approvalSummary") ?? publicApprovalSummary(record.humanAuthorities);
+  const completion = readString(record, "completionSummary") ?? publicCompletionSummary(record.evaluationPolicy);
   const boundaryParts = [
-    Object.hasOwn(record, "autonomyEnvelope") ? `Agent working boundaries: ${summarizeAgreement(record.autonomyEnvelope)}` : null,
-    Object.hasOwn(record, "humanAuthorities") ? `Decisions that need you: ${summarizeAgreement(record.humanAuthorities)}` : null,
-    Object.hasOwn(record, "evaluationPolicy") ? `Evidence and acceptance: ${summarizeAgreement(record.evaluationPolicy)}` : null,
+    boundary ? `Scope: ${boundary}` : null,
+    approval ? `Your call: ${approval}` : null,
+    completion ? `Ready when: ${completion}` : null,
   ];
   const parts = [
     direct ? `Outcome: ${direct}` : null,
@@ -323,24 +353,62 @@ function summarizeValue(value: unknown) {
   return parts.length > 0 ? parts.join("\n") : Object.keys(record).length === 0 ? "Not provided" : "The Goal direction would change.";
 }
 
-function summarizeAgreement(value: unknown): string {
-  if (value === null || value === undefined) return "not set";
-  if (typeof value === "boolean") return value ? "required" : "not required";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") {
-    const known: Record<string, string> = {
-      bounded_reversible_work: "bounded, reversible work",
-      external_or_irreversible_action: "external or irreversible actions",
-      authority_expansion: "expanding authority",
-      board_human: "you",
-    };
-    return known[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
-  }
-  if (Array.isArray(value)) return value.map(summarizeAgreement).join(", ");
-  return Object.entries(asRecord(value)).map(([key, entry]) => {
-    const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
-    return `${label}: ${summarizeAgreement(entry)}`;
-  }).join("; ");
+function publicToken(value: string) {
+  const known: Record<string, string> = {
+    bounded_reversible_work: "bounded, reversible work",
+    external_or_irreversible_action: "external or irreversible actions",
+    external_publication: "publishing externally",
+    authority_expansion: "expanding access",
+    acceptance: "accepting the result",
+    consequentialChanges: "consequential changes",
+    externalPublication: "publishing externally",
+  };
+  return known[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+}
+
+function publicBoundarySummary(value: unknown) {
+  const record = asRecord(value);
+  const allowed = readStringArray(record.allowed).map(publicToken);
+  const approvals = readStringArray(record.requiresHumanApproval).map(publicToken);
+  const parts = [
+    allowed.length > 0 ? `The Agent may handle ${allowed.join(", ")}.` : null,
+    approvals.length > 0 ? `You will be asked before ${approvals.join(", ")}.` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function publicApprovalSummary(value: unknown) {
+  const decisions = Object.entries(asRecord(value))
+    .filter(([, entry]) => entry === "board_human" || entry === true)
+    .map(([key]) => publicToken(key));
+  return decisions.length > 0 ? `You decide ${decisions.join(", ")}.` : null;
+}
+
+function publicCompletionSummary(value: unknown) {
+  const record = asRecord(value);
+  const requiresEvidence = record.terminalEvidenceRequired === true;
+  const requiresAcceptance = record.humanAcceptanceRequired === true;
+  if (requiresEvidence && requiresAcceptance) return "Supporting work is shown, and you accept the result.";
+  if (requiresEvidence) return "Supporting work is shown before the result is considered ready.";
+  if (requiresAcceptance) return "You accept the result when it is ready.";
+  return null;
+}
+
+function publicProposalText(value: string | null) {
+  if (!value) return value;
+  return value
+    .replace(/\bgoal\s+contract\b/gi, "Goal")
+    .replace(/\bcontract\s+revision\b/gi, "Goal update")
+    .replace(/\bcontracts?\b/gi, "agreement")
+    .replace(/\bobjective\s+mode\b/gi, "Goal type")
+    .replace(/\bevaluator\b/gi, "success check")
+    .replace(/\bevidence\s+requirements?\b/gi, "what we need to verify")
+    .replace(/\bautonomy\s+envelope\b/gi, "working scope")
+    .replace(/\bhuman\s+authorit(?:y|ies)\b/gi, "decisions you make")
+    .replace(/\b(?:evidence|artifact|run)\s+uri\b/gi, "supporting work")
+    .replace(/\b(?:artifact|run|issue|project|approval|decision|measurement|library-file|library-entry):\/\/[^\s)]+/gi, "supporting work")
+    .replace(/\b(?:goal-feedback|goal-start|goal-change-decision|goal-result-evaluation):[0-9a-f-]{8,}\b/gi, "the related update")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "the related item");
 }
 
 function contractChangeImpact(before: Record<string, unknown>, after: Record<string, unknown>) {
@@ -396,6 +464,7 @@ function normalizeTimeline(value: unknown): TimelineView[] {
       summary,
       createdAt: typeof createdAt === "string" || createdAt instanceof Date ? createdAt : null,
       evidenceRefs: readStringArray(record.evidenceRefs),
+      evidence: normalizeEvidenceItems(record.evidence),
       actorName: readString(record, "actorName", "submittedByName"),
       actorType: readString(record, "actorType"),
       actorId: readString(record, "actorId"),
@@ -423,9 +492,10 @@ function normalizeChangeProposals(value: unknown): ChangeProposalView[] {
       status: readString(record, "status") ?? "pending",
       before: summarizeValue(matchingBefore),
       after: summarizeValue(afterValue),
-      rationale: readString(record, "rationale", "reason"),
-      impact: readString(record, "impact", "impactSummary") ?? contractChangeImpact(beforeRecord, afterRecord),
+      rationale: publicProposalText(readString(record, "rationale", "reason")),
+      impact: publicProposalText(readString(record, "impact", "impactSummary") ?? contractChangeImpact(beforeRecord, afterRecord)),
       evidenceRefs: readStringArray(record.evidenceRefs),
+      evidence: normalizeEvidenceItems(record.evidence),
     }];
   });
 }
@@ -450,15 +520,26 @@ function normalizeResultProposals(
     if (!id) return [];
     const preflight = asRecord(record.preflight);
     const candidate = asRecord(record.candidate);
-    const criteria = (Array.isArray(preflight.criteria) ? preflight.criteria : []).map((criterion, index) => {
+    const rawCriteria = Array.isArray(record.criteria) ? record.criteria : preflight.criteria;
+    const criteria = (Array.isArray(rawCriteria) ? rawCriteria : []).map((criterion, index) => {
       const criterionRecord = asRecord(criterion);
       const criterionId = readString(criterionRecord, "id");
       const status = readCriterionStatus(criterionRecord.status);
+      const missingEvidence = readStringArray(criterionRecord.missingEvidence);
+      const missingEvidenceCount = typeof criterionRecord.missingEvidenceCount === "number"
+        ? criterionRecord.missingEvidenceCount
+        : missingEvidence.length;
       return {
         label: criterionId ? criterionLabels.get(criterionId) ?? `Success criterion ${index + 1}` : `Success criterion ${index + 1}`,
         status,
         statusLabel: criterionStatusLabels[status],
-        missingEvidence: readStringArray(criterionRecord.missingEvidence),
+        // Legacy fixtures may still contain the reference scheme; the public
+        // DTO only has a count, so use a neutral public label for that shape.
+        missingEvidence: missingEvidenceCount > 0
+          ? missingEvidence.length > 0
+            ? missingEvidence
+            : Array.from({ length: missingEvidenceCount }, () => "supporting work")
+          : [],
       };
     });
     const gaps = criteria.flatMap((criterion) => {
@@ -468,24 +549,29 @@ function normalizeResultProposals(
       }
       return criterion.status === "unknown" ? [`${criterion.label} is not verified.`] : [];
     });
-    const outcomeKind = readString(preflight, "outcome") ?? "inconclusive";
-    const evidenceRefs = readStringArray(candidate.evidenceRefs).length > 0
+    const outcomeKind = readString(record, "outcome") ?? readString(preflight, "outcome") ?? "inconclusive";
+    const evidenceRefs = readStringArray(record.evidenceRefs).length > 0
+      ? readStringArray(record.evidenceRefs)
+      : readStringArray(candidate.evidenceRefs).length > 0
       ? readStringArray(candidate.evidenceRefs)
       : readStringArray(preflight.evidenceRefs);
     const publicCriteria = criteria.map(({ label, status, statusLabel }) => ({ label, status, statusLabel }));
+    const publicEvidence = normalizeEvidenceItems(record.evidence);
     return [{
       id,
       status: readString(record, "status") ?? "ready",
-      outcome: outcomeLabel(outcomeKind, preflight, candidate),
+      outcome: readString(record, "outcomeLabel") ?? outcomeLabel(outcomeKind, preflight, candidate),
       outcomeKind,
       risks: readString(record, "riskSummary"),
       criteria: publicCriteria,
       evidenceCheck: evidenceCheck(outcomeKind, publicCriteria),
-      evidence: evidenceItems(evidenceRefs, {
-        issues: context.issues,
-        projects: context.projects,
-        runAgentId: readString(record, "proposedByAgentId") ?? context.ownerAgentId,
-      }),
+      evidence: publicEvidence.length > 0
+        ? publicEvidence
+        : evidenceItems(evidenceRefs, {
+          issues: context.issues,
+          projects: context.projects,
+          runAgentId: readString(record, "proposedByAgentId") ?? context.ownerAgentId,
+        }),
       gaps,
     }];
   });
@@ -564,8 +650,8 @@ function EvidenceItemsList({ items, ariaLabel }: { items: EvidenceItem[]; ariaLa
   );
 }
 
-function EvidenceList({ refs, context }: { refs: string[]; context: EvidenceContext }) {
-  return <EvidenceItemsList items={evidenceItems(refs, context)} ariaLabel="Supporting evidence" />;
+function EvidenceList({ refs = [], items, context }: { refs?: string[]; items?: EvidenceItem[]; context: EvidenceContext }) {
+  return <EvidenceItemsList items={items && items.length > 0 ? items : evidenceItems(refs, context)} ariaLabel="Supporting evidence" />;
 }
 
 function AttachmentList({ attachments }: { attachments: TimelineView["attachments"] }) {
@@ -597,7 +683,7 @@ function AttachmentList({ attachments }: { attachments: TimelineView["attachment
   );
 }
 
-function ResultProposalSummary({ proposal }: { proposal: ResultProposalView }) {
+function ResultProposalSummary({ proposal, accepted = false }: { proposal: ResultProposalView; accepted?: boolean }) {
   return (
     <>
       <div className="mt-3 min-w-0">
@@ -620,15 +706,15 @@ function ResultProposalSummary({ proposal }: { proposal: ResultProposalView }) {
           ))}
         </div>
       </div>
-      <div className="mt-3 min-w-0">
-        <div className="text-xs font-medium text-muted-foreground">Risks and gaps</div>
+      {proposal.risks || proposal.gaps.length > 0 ? <div className="mt-3 min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">{accepted ? "Result notes" : "Risks and gaps"}</div>
         {proposal.risks ? <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{proposal.risks}</p> : null}
         {proposal.gaps.length > 0 ? (
           <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
             {proposal.gaps.map((gap) => <li key={gap} className="min-w-0 whitespace-pre-wrap break-words">{gap}</li>)}
           </ul>
         ) : null}
-      </div>
+      </div> : null}
       <div className="mt-3 min-w-0">
         <div className="text-xs font-medium text-muted-foreground">Evidence check</div>
         <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{proposal.evidenceCheck}</p>
@@ -735,8 +821,9 @@ export function GoalDetail() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const feedbackRef = useRef<HTMLTextAreaElement>(null);
+  const feedbackFileRef = useRef<HTMLInputElement>(null);
   const focusButtonRef = useRef<HTMLButtonElement>(null);
-  const currentGoalHeadingRef = useRef<HTMLHeadingElement>(null);
+  const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const attentionHeadingRef = useRef<HTMLHeadingElement>(null);
   const historyFocusRef = useRef<HTMLDivElement>(null);
   const feedbackRequestRef = useRef<{ identity: string; key: string } | null>(null);
@@ -744,6 +831,9 @@ export function GoalDetail() {
   const decisionFocusRequestRef = useRef<DecisionFocusRequest | null>(null);
   const focusControlRequestRef = useRef<{ goalId: string; focus: boolean } | null>(null);
   const [feedbackBody, setFeedbackBody] = useState("");
+  const [feedbackAttachments, setFeedbackAttachments] = useState<GoalFeedbackAttachment[]>([]);
+  const [feedbackAttachmentError, setFeedbackAttachmentError] = useState<string | null>(null);
+  const [failedFeedbackFile, setFailedFeedbackFile] = useState<File | null>(null);
   const [pendingFeedback, setPendingFeedback] = useState<PendingFeedback | null>(null);
   const [changeNotes, setChangeNotes] = useState<Record<string, string>>({});
   const [resultFeedback, setResultFeedback] = useState<Record<string, string>>({});
@@ -856,6 +946,7 @@ export function GoalDetail() {
   const feedbackMutation = useMutation({
     mutationFn: (feedback: PendingFeedback) => goalsApi.feedback(goalId!, {
       body: feedback.body,
+      attachments: feedback.attachments,
       feedbackKind: feedback.feedbackKind,
       idempotencyKey: feedback.idempotencyKey,
     }),
@@ -864,11 +955,34 @@ export function GoalDetail() {
       await invalidate();
       setPendingFeedback(null);
       feedbackRequestRef.current = null;
+      setFeedbackAttachments([]);
       requestAnimationFrame(() => feedbackRef.current?.focus());
     },
     onError: (error: Error, feedback) => {
       setPendingFeedback({ ...feedback, status: "failed", error: error.message });
       requestAnimationFrame(() => feedbackRef.current?.focus());
+    },
+  });
+
+  const feedbackAttachmentMutation = useMutation({
+    mutationFn: async ({ file }: { file: File }) => {
+      if (!orgId) throw new Error("No organization selected");
+      if (!file.type.startsWith("image/")) throw new Error("Only image attachments are supported right now.");
+      return assetsApi.uploadImage(orgId, file, "goals/feedback");
+    },
+    onSuccess: (asset, { file }) => {
+      setFeedbackAttachments((current) => [...current, {
+        name: asset.originalFilename ?? file.name,
+        uri: `asset://${asset.assetId}`,
+        mimeType: asset.contentType,
+        size: asset.byteSize,
+      }]);
+      setFeedbackAttachmentError(null);
+      setFailedFeedbackFile(null);
+    },
+    onError: (error: Error, { file }) => {
+      setFeedbackAttachmentError(error.message);
+      setFailedFeedbackFile(file);
     },
   });
 
@@ -983,12 +1097,12 @@ export function GoalDetail() {
       (proposal) => proposal.id !== request.id && proposal.status === "ready",
     ) || Boolean(workspace?.attention && workspace.attention.sourceId !== request.id);
     const attentionHeading = hasOtherActionableAttention ? attentionHeadingRef.current : null;
-    const currentGoalHeading = currentGoalHeadingRef.current;
+    const outcomeHeading = outcomeHeadingRef.current;
     const feedbackComposer = feedbackRef.current;
     const target = attentionHeading?.isConnected
       ? attentionHeading
-      : currentGoalHeading?.isConnected
-        ? currentGoalHeading
+      : outcomeHeading?.isConnected
+        ? outcomeHeading
         : feedbackComposer?.isConnected
           ? feedbackComposer
           : null;
@@ -1108,7 +1222,8 @@ export function GoalDetail() {
     const body = feedbackBody.trim();
     if (!body || feedbackMutation.isPending) return;
     const feedbackKind = "ordinary" as const;
-    const identity = `${feedbackKind}\0${body}`;
+    const attachments = [...feedbackAttachments];
+    const identity = `${feedbackKind}\0${body}\0${attachments.map((attachment) => attachment.uri).join("\0")}`;
     if (feedbackRequestRef.current?.identity !== identity) {
       feedbackRequestRef.current = { identity, key: crypto.randomUUID() };
     }
@@ -1116,12 +1231,26 @@ export function GoalDetail() {
       identity,
       idempotencyKey: feedbackRequestRef.current.key,
       body,
+      attachments,
       feedbackKind,
       status: "sending",
       error: null,
     };
     setFeedbackBody("");
     feedbackMutation.mutate(pending);
+  };
+  const handleFeedbackFilePicked = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) feedbackAttachmentMutation.mutate({ file });
+  };
+  const removeFeedbackAttachment = (uri: string) => {
+    setFeedbackAttachments((current) => current.filter((attachment) => attachment.uri !== uri));
+    if (pendingFeedback?.status === "failed") {
+      setFeedbackBody(pendingFeedback.body);
+      setPendingFeedback(null);
+      feedbackRequestRef.current = null;
+    }
   };
   const resultKey = (proposalId: string, decision: "accept" | "reject", feedback = "") => {
     const identity = `${proposalId}:${decision}:${feedback.trim()}`;
@@ -1133,7 +1262,7 @@ export function GoalDetail() {
   };
 
   return (
-    <div data-testid="goal-detail-workspace" className="min-w-0 space-y-5 overflow-x-hidden pb-8">
+    <div data-testid="goal-detail-workspace" className="min-w-0 space-y-5 overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
       <header className="min-w-0 space-y-3">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1165,7 +1294,7 @@ export function GoalDetail() {
         )}
       </header>
 
-      <Section title="Current Goal" icon={Target} headingRef={currentGoalHeadingRef}>
+      <Section title="Outcome" icon={Target} headingRef={outcomeHeadingRef}>
         <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{currentGoalSummary}</p>
         {currentGoalRecord.updatedFromEvidence === true ? <p className="text-xs text-muted-foreground">Updated from evidence and feedback</p> : null}
       </Section>
@@ -1173,7 +1302,7 @@ export function GoalDetail() {
       <Section title="Current progress" icon={Sparkles}>
         <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
         {workspace.currentProgress.uncertainty ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
-        <EvidenceList refs={workspace.currentProgress.evidenceRefs ?? []} context={evidenceContext} />
+        <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
       </Section>
 
       {!isClosed && hasAttention ? (
@@ -1183,7 +1312,7 @@ export function GoalDetail() {
               <div className="text-xs font-medium text-muted-foreground">{attentionKindLabel(workspace.attention.kind)}</div>
               <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{workspace.attention.reason}</p>
               {workspace.attention.impact ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.attention.impact}</p> : null}
-              <EvidenceList refs={workspace.attention.evidenceRefs ?? []} context={evidenceContext} />
+              <EvidenceList items={workspace.attention.evidence ?? []} refs={[]} context={evidenceContext} />
               {isDraft ? <Button type="button" size="sm" className="mt-3" onClick={continueAlignment}>Continue alignment</Button> : null}
               {workspace.attention.kind === "owner_blocked" && owner?.status === "paused" ? (
                 <Button type="button" size="sm" className="mt-3" onClick={() => resumeOwner.mutate()} disabled={resumeOwner.isPending}>
@@ -1209,7 +1338,7 @@ export function GoalDetail() {
                 </div>
                 {proposal.rationale ? <p className="mt-3 whitespace-pre-wrap break-words text-sm">{proposal.rationale}</p> : null}
                 {proposal.impact ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">Impact: {proposal.impact}</p> : null}
-                <EvidenceList refs={proposal.evidenceRefs} context={evidenceContext} />
+                <EvidenceList items={proposal.evidence} refs={proposal.evidenceRefs} context={evidenceContext} />
                 <label className="mt-3 block text-xs text-muted-foreground">
                   Decision note
                   <input
@@ -1309,7 +1438,7 @@ export function GoalDetail() {
                 ? "border-destructive/45"
                 : "border-emerald-500/50",
             )}>
-              <ResultProposalSummary proposal={acceptedProposal} />
+              <ResultProposalSummary proposal={acceptedProposal} accepted />
             </article>
           ) : (
             <div className="min-w-0">
@@ -1322,10 +1451,12 @@ export function GoalDetail() {
 
       {!isClosed ? (
         <>
-          <Section title={agentActionHeading} icon={UserRound}>
-            <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
-            <p className="min-w-0 break-words text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</p>
-          </Section>
+          {readyProposals.length === 0 && pendingChanges.length === 0 ? (
+            <Section title={agentActionHeading} icon={UserRound}>
+              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
+              <p className="min-w-0 break-words text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</p>
+            </Section>
+          ) : null}
 
           <Section title="Next step" icon={ArrowRight}>
             <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
@@ -1362,6 +1493,7 @@ export function GoalDetail() {
               ) : null}
               <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{entry.summary}</p>
               <EvidenceList
+                items={entry.evidence}
                 refs={entry.evidenceRefs}
                 context={{
                   ...evidenceContext,
@@ -1381,6 +1513,16 @@ export function GoalDetail() {
                 <div className="text-xs">{pendingFeedback.status === "sending" ? "Sending..." : "Not sent"}</div>
               </div>
               <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{pendingFeedback.body}</p>
+              {pendingFeedback.attachments.length > 0 ? (
+                <div aria-label="Pending feedback attachments" className="flex min-w-0 flex-wrap gap-2 pt-1">
+                  {pendingFeedback.attachments.map((attachment) => (
+                    <span key={attachment.uri} className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                      <span className="break-all">{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {pendingFeedback.error ? <p role="alert" className="text-xs">{pendingFeedback.error}</p> : null}
               {pendingFeedback.status === "failed" ? (
                 <Button type="button" size="sm" variant="outline" onClick={() => feedbackMutation.mutate(pendingFeedback)}>Retry feedback</Button>
@@ -1404,6 +1546,50 @@ export function GoalDetail() {
         </div>
 
         {isActive ? <div className="min-w-0 space-y-2">
+          <input
+            ref={feedbackFileRef}
+            type="file"
+            accept="image/*"
+            aria-label="Attach feedback image"
+            className="hidden"
+            onChange={handleFeedbackFilePicked}
+          />
+          {feedbackAttachments.length > 0 ? (
+            <div aria-label="Selected feedback attachments" className="flex min-w-0 flex-wrap gap-2">
+              {feedbackAttachments.map((attachment) => (
+                <span key={attachment.uri} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 break-all">{attachment.name}</span>
+                  <button
+                    type="button"
+                    className="ml-1 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove feedback attachment ${attachment.name}`}
+                    onClick={() => removeFeedbackAttachment(attachment.uri)}
+                    disabled={feedbackAttachmentMutation.isPending || feedbackMutation.isPending}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {feedbackAttachmentError ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+              <span role="alert">{feedbackAttachmentError}</span>
+              {failedFeedbackFile ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => feedbackAttachmentMutation.mutate({ file: failedFeedbackFile })}
+                  disabled={feedbackAttachmentMutation.isPending}
+                >
+                  Retry attachment
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <Textarea
             ref={feedbackRef}
             aria-label="Goal feedback"
@@ -1421,8 +1607,18 @@ export function GoalDetail() {
             placeholder="Add a fact, correction, concern, or direction..."
             className="min-h-20 min-w-0 resize-y"
           />
-          <div className="flex justify-end">
-            <Button type="button" size="sm" onClick={submitFeedback} disabled={!feedbackBody.trim() || feedbackMutation.isPending}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => feedbackFileRef.current?.click()}
+              disabled={feedbackAttachmentMutation.isPending || feedbackMutation.isPending}
+            >
+              <Paperclip className="mr-1.5 h-3.5 w-3.5" />
+              {feedbackAttachmentMutation.isPending ? "Uploading..." : "Attach image"}
+            </Button>
+            <Button type="button" size="sm" onClick={submitFeedback} disabled={!feedbackBody.trim() || feedbackMutation.isPending || feedbackAttachmentMutation.isPending}>
               <MessageSquareText className="mr-1.5 h-3.5 w-3.5" />Send feedback
             </Button>
           </div>
@@ -1435,7 +1631,8 @@ export function GoalDetail() {
           <div className="min-w-0"><div className="text-xs text-muted-foreground">Target time</div><div className="mt-1 min-w-0 break-words text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</div></div>
         </div>
         {goal.criteria && goal.criteria.length > 0 ? (
-          <div className="divide-y divide-border border-y border-border">
+          <div className="space-y-2 border-y border-border py-3">
+            <div className="text-xs font-medium text-muted-foreground">How we will know it worked</div>
             {goal.criteria.map((criterion) => <div key={criterion.id} className="min-w-0 py-2 text-sm"><span className="whitespace-pre-wrap break-words">{criterion.label}</span></div>)}
           </div>
         ) : null}

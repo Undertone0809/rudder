@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useNavigate } from "@/lib/router";
 import type { GoalStartPreview } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -74,11 +74,13 @@ export function NewGoalDialog() {
     newGoalOpen,
   ]);
 
-  const { data: agents = [], isSuccess: agentsLoaded } = useQuery({
+  const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: Boolean(newGoalOpen && selectedOrganizationId),
   });
+  const agents = agentsQuery.data ?? [];
+  const agentsLoaded = agentsQuery.isSuccess;
 
   const invokableAgents = useMemo(
     () => agents.filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
@@ -187,13 +189,17 @@ export function NewGoalDialog() {
   });
 
   const actionLabel = previewCanStart
-    ? preview?.warning ? "Create and start with this Agent" : "Create and start"
+    ? createGoal.error
+      ? preview?.warning ? "Retry start with selected Agent" : "Retry create and start"
+      : preview?.warning ? "Start with selected Agent" : "Create and start"
     : "Save draft for alignment";
   const pendingLabel = previewCanStart ? "Starting..." : "Saving...";
   const actionDisabled =
     !goal.trim()
     || !previewIsCurrent
     || previewQuery.isFetching
+    || agentsQuery.isPending
+    || agentsQuery.isError
     || (!preview && !previewQuery.error)
     || createGoal.isPending;
 
@@ -215,7 +221,12 @@ export function NewGoalDialog() {
               {selectedOrganization?.name.slice(0, 3).toUpperCase()}
             </span>
             <span aria-hidden="true">/</span>
-            <DialogTitle className="truncate text-sm font-medium text-foreground">New Goal</DialogTitle>
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-sm font-medium text-foreground">New Goal</DialogTitle>
+              <DialogDescription className="sr-only">
+                Describe the outcome you want and choose the Agent who should advance it.
+              </DialogDescription>
+            </div>
           </div>
           <Button type="button" variant="ghost" size="icon-xs" aria-label="Close" onClick={close} disabled={createGoal.isPending}>
             <X className="h-3.5 w-3.5" />
@@ -270,7 +281,7 @@ export function NewGoalDialog() {
                   placeholder="Select an Agent"
                   noneLabel="No assignee"
                   searchPlaceholder="Search Agents..."
-                  emptyMessage="No Agents found."
+                  emptyMessage={agentsQuery.isError ? "Agents could not be loaded." : "No available Agents."}
                   ariaLabel="Assignee"
                   variant="field"
                   onChange={setOwnerAgentId}
@@ -288,6 +299,21 @@ export function NewGoalDialog() {
                     );
                   }}
                 />
+                {agentsQuery.isSuccess && invokableAgents.length === 0 ? (
+                  <p role="status" className="text-xs leading-5 text-muted-foreground">
+                    No available Agents yet. Add or activate an Agent before starting this Goal.
+                    <button
+                      type="button"
+                      className="ml-1 underline underline-offset-2 hover:text-foreground"
+                      onClick={() => {
+                        close();
+                        navigate("/agents");
+                      }}
+                    >
+                      Open Agents
+                    </button>
+                  </p>
+                ) : null}
               </div>
               <label className="min-w-0 space-y-1.5">
                 <span className="text-xs font-medium text-muted-foreground">Target time</span>
@@ -351,7 +377,22 @@ export function NewGoalDialog() {
                 </Button>
               </div>
             ) : null}
-            {createGoal.error ? <p role="alert" className="text-sm text-destructive">{createGoal.error.message}</p> : null}
+            {agentsQuery.isError ? (
+              <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+                <span>Available Agents could not be loaded. Try again before starting this Goal.</span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-sm"
+                  onClick={() => void agentsQuery.refetch()}
+                  disabled={agentsQuery.isFetching || createGoal.isPending}
+                >
+                  Retry Agents
+                </Button>
+              </div>
+            ) : null}
+            {createGoal.error ? <p role="alert" className="text-sm text-destructive">Unable to start this Goal right now. Try again.</p> : null}
           </div>
         </div>
 

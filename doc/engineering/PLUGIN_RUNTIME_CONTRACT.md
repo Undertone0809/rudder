@@ -37,6 +37,14 @@ or historical design context.
 - SDK surfaces: worker context, UI hooks, testing harness, bundler presets, and
   development server helpers.
 
+### Outbound HTTP
+
+`http.outbound` calls reject private and reserved IP ranges by default. A local
+trusted operator may explicitly allow exact HTTP(S) origins with
+`RUDDER_PLUGIN_HTTP_ALLOWLIST`; the allowlist is origin-only and applies to
+paths below that origin. This is intended for controlled local fixtures and
+does not make arbitrary private targets reachable.
+
 ## Current Truth Links
 
 - Product contracts: `doc/product/domains/plugins/lifecycle-capabilities.md`

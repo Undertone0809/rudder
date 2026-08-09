@@ -347,17 +347,19 @@ describe("GoalDetail", () => {
 
   it("renders the Goal Workspace in operational order without standard low-level fields", async () => {
     const container = renderPage();
-    await waitUntil(() => expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Current Goal")).toBe(true));
+    await waitUntil(() => expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(true));
     const text = container.textContent ?? "";
     const orderedSections = [
-      "Current Goal",
+      "Outcome",
       "Current progress",
       "Needs your attention",
-      "Agent is doing",
       "Next step",
       "Progress and feedback",
       "Goal details and related work",
     ];
+    if (text.includes("Agent is doing")) {
+      orderedSections.splice(3, 0, "Agent is doing");
+    }
     for (let index = 1; index < orderedSections.length; index += 1) {
       expect(text.indexOf(orderedSections[index - 1]!)).toBeLessThan(text.indexOf(orderedSections[index]!));
     }
@@ -397,7 +399,8 @@ describe("GoalDetail", () => {
     expect(resultBlock.textContent).toContain("Evidence check");
     expect(resultBlock.textContent).toContain("The submitted evidence supports every success criterion.");
     expect(resultBlock.textContent).toContain("Artifact evidence 1");
-    expect(resultBlock.textContent).toContain("Agent run evidence 2");
+    expect(resultBlock.textContent).toContain("Supporting work 2");
+    expect(resultBlock.textContent).not.toContain("Agent run evidence");
     for (const privateValue of [
       "artifact://goal-workspace/result",
       "run://goal-workspace/verifier",
@@ -473,7 +476,7 @@ describe("GoalDetail", () => {
           },
           humanAuthorities: { acceptance: "board_human", externalPublication: "board_human" },
         },
-        rationale: "Publishing externally changes the working boundary.",
+        rationale: "The autonomy envelope and evaluator changed; see artifact://internal.",
         evidenceRefs: [],
       }],
     } as never);
@@ -483,9 +486,13 @@ describe("GoalDetail", () => {
     const text = container.textContent ?? "";
     expect(text).not.toContain("result_proposal");
     expect(text).not.toContain("The Goal direction would change");
-    expect(text).toContain("Agent working boundaries");
-    expect(text).toContain("external publication");
-    expect(text).toContain("Decisions that need you");
+    expect(text).not.toContain("Agent working boundaries");
+    expect(text).not.toContain("autonomy envelope");
+    expect(text).not.toContain("evaluator");
+    expect(text).not.toContain("artifact://");
+    expect(text).toContain("Scope:");
+    expect(text).toContain("publishing externally");
+    expect(text).toContain("Your call:");
   });
 
   it("lets the user resume a paused Owner from the Goal Workspace", async () => {
@@ -613,10 +620,11 @@ describe("GoalDetail", () => {
     expect(evidence.textContent).toContain("Issue GW-1: Verify the operator workflow");
     expect(evidence.textContent).toContain("Project: Goal Workspace release");
     expect(evidence.textContent).toContain("Approval evidence 3");
-    expect(evidence.textContent).toContain("Agent run evidence 4");
+    expect(evidence.textContent).toContain("Supporting work 4");
+    expect(evidence.textContent).not.toContain("Agent run evidence");
     expect(evidence.textContent).toContain("External link evidence 5");
-    expect(evidence.textContent).toContain("Library file: docs/release-check.md");
-    expect(evidence.textContent).toContain("Library entry: reports/verification.md");
+    expect(evidence.textContent).toContain("Library file: release-check.md");
+    expect(evidence.textContent).toContain("Library entry: verification.md");
     expect(evidence.textContent).toContain("Artifact evidence 8");
     expect(evidence.textContent).toContain("File evidence 9");
     expect(evidence.textContent).toContain("Measurement evidence 10");
@@ -702,7 +710,8 @@ describe("GoalDetail", () => {
     expect(resultBlock.textContent).toContain("Restart recovery remains reliable still needs artifact evidence.");
     expect(resultBlock.textContent).toContain("The submitted evidence supports closing this Goal as not achieved.");
     expect(resultBlock.textContent).toContain("1 criterion remains unverified.");
-    expect(resultBlock.textContent).toContain("Agent run evidence 1");
+    expect(resultBlock.textContent).toContain("Supporting work 1");
+    expect(resultBlock.textContent).not.toContain("Agent run evidence");
     expect(resultBlock.textContent).toContain("External link evidence 2");
     expect(resultBlock.textContent).toContain("Unavailable");
     const externalLink = resultBlock.querySelector<HTMLAnchorElement>('a[href="https://evidence.example/verification"]');
@@ -835,7 +844,7 @@ describe("GoalDetail", () => {
     act(() => button(container, action)?.click());
 
     await waitUntil(() => expect(container.querySelector(`[aria-label="Goal ${proposal} proposal"]`)).toBeNull());
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Current Goal"));
+    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
   });
 
   it.each([
@@ -879,7 +888,7 @@ describe("GoalDetail", () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.goals.detail("goal-1") });
     });
     await waitUntil(() => expect(container.querySelector('[aria-label="Goal result proposal"]')).toBeNull());
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Current Goal"));
+    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
   });
 
   it.each([
@@ -923,10 +932,10 @@ describe("GoalDetail", () => {
     });
 
     await waitUntil(() => expect(container.querySelector('[aria-label="Goal result proposal"]')).toBeNull());
-    expect(document.activeElement?.textContent).not.toBe("Current Goal");
+    expect(document.activeElement?.textContent).not.toBe("Outcome");
     await act(async () => resolveDecision({ id: "result-1", status: settledStatus }));
     await waitUntil(() => expect(goalsApi.getWorkspace).toHaveBeenCalledTimes(2));
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Current Goal"));
+    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
   });
 
   it("does not carry a pending decision focus request into another Goal", async () => {
@@ -956,7 +965,7 @@ describe("GoalDetail", () => {
     await act(async () => releaseFirstGoalRefetch());
 
     const secondGoalHeading = Array.from(container.querySelectorAll("h2"))
-      .find((heading) => heading.textContent === "Current Goal");
+      .find((heading) => heading.textContent === "Outcome");
     expect(document.activeElement).not.toBe(secondGoalHeading);
   });
 

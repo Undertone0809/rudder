@@ -29,6 +29,10 @@ import { issueService } from "./issues.js";
 import { subscribeCompanyLiveEvents } from "./live-events.js";
 import { organizationService } from "./orgs.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
+import {
+  isPluginHttpAddressBlocked,
+  isPluginHttpOriginAllowed,
+} from "./plugin-http-policy.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { pluginStateStore } from "./plugin-state-store.js";
@@ -54,33 +58,6 @@ const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
  * Handles IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) which Node's
  * dns.lookup may return depending on OS configuration.
  */
-function isPrivateIP(ip: string): boolean {
-  const lower = ip.toLowerCase();
-
-  // Unwrap IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) and re-check as IPv4
-  const v4MappedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (v4MappedMatch && v4MappedMatch[1]) return isPrivateIP(v4MappedMatch[1]);
-
-  // IPv4 patterns
-  if (ip.startsWith("10.")) return true;
-  if (ip.startsWith("172.")) {
-    const second = parseInt(ip.split(".")[1]!, 10);
-    if (second >= 16 && second <= 31) return true;
-  }
-  if (ip.startsWith("192.168.")) return true;
-  if (ip.startsWith("127.")) return true;                   // loopback
-  if (ip.startsWith("169.254.")) return true;               // link-local
-  if (ip === "0.0.0.0") return true;
-
-  // IPv6 patterns
-  if (lower === "::1") return true;                          // loopback
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA
-  if (lower.startsWith("fe80")) return true;                 // link-local
-  if (lower === "::") return true;
-
-  return false;
-}
-
 /**
  * Validate a URL for plugin fetch: protocol whitelist + private IP blocking.
  *
@@ -105,7 +82,10 @@ interface ValidatedFetchTarget {
   useTls: boolean;
 }
 
-async function validateAndResolveFetchUrl(urlString: string): Promise<ValidatedFetchTarget> {
+async function validateAndResolveFetchUrl(
+  urlString: string,
+  allowedPrivateOrigins: readonly string[] = [],
+): Promise<ValidatedFetchTarget> {
   let parsed: URL;
   try {
     parsed = new URL(urlString);
@@ -118,6 +98,8 @@ async function validateAndResolveFetchUrl(urlString: string): Promise<ValidatedF
       `Disallowed protocol "${parsed.protocol}" — only http: and https: are permitted`,
     );
   }
+
+  const privateOriginAllowed = isPluginHttpOriginAllowed(parsed, allowedPrivateOrigins);
 
   // Resolve the hostname to an IP and check for private ranges.
   // We pin the resolved IP into the URL to eliminate the TOCTOU window
@@ -144,14 +126,14 @@ async function validateAndResolveFetchUrl(urlString: string): Promise<ValidatedF
     // Filter to only non-private IPs instead of rejecting the entire request
     // when some IPs are private. This handles multi-homed hosts that resolve
     // to both private and public addresses.
-    const safeResults = results.filter((entry) => !isPrivateIP(entry.address));
-    if (safeResults.length === 0) {
+    const safeResults = results.filter((entry) => !isPluginHttpAddressBlocked(entry.address));
+    if (safeResults.length === 0 && !privateOriginAllowed) {
       throw new Error(
         `All resolved IPs for ${originalHostname} are in private/reserved ranges`,
       );
     }
 
-    const resolved = safeResults[0]!;
+    const resolved = (safeResults[0] ?? results[0])!;
     return {
       parsedUrl: parsed,
       resolvedAddress: resolved.address,
@@ -441,6 +423,7 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
+  options: { allowedHttpOrigins?: readonly string[] } = {},
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -574,7 +557,7 @@ export function buildHostServices(
       async fetch(params) {
         // SSRF protection: validate protocol whitelist + block private IPs.
         // Resolve once, then connect directly to that IP to prevent DNS rebinding.
-        const target = await validateAndResolveFetchUrl(params.url);
+        const target = await validateAndResolveFetchUrl(params.url, options.allowedHttpOrigins);
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), PLUGIN_FETCH_TIMEOUT_MS);

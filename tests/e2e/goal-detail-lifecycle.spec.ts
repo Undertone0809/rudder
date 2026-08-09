@@ -43,7 +43,6 @@ type Goal = {
   title: string;
   lifecycle: string;
   status: string;
-  contractRevision: number;
   ownerAgentId: string | null;
   focus: boolean;
   evaluationResult: { outcome?: string } | null;
@@ -75,7 +74,8 @@ type Workspace = {
   currentProgress: {
     summary: string;
     sourceActivityId: string | null;
-    evidenceRefs: string[];
+    evidence?: Array<{ label: string; href: string | null; external: boolean }>;
+    evidenceRefs?: string[];
   };
   agentAction: { summary: string; sourceIds: string[] } | null;
   attention: { kind: string; reason: string; sourceId: string | null } | null;
@@ -120,6 +120,15 @@ async function createAgentKey(request: APIRequestContext, agentId: string, name:
   const response = await request.post(`/api/agents/${agentId}/keys`, { data: { name } });
   expect(response.ok()).toBe(true);
   return response.json() as Promise<{ token: string }>;
+}
+
+async function readContractRevision(goalId: string) {
+  const [row] = await e2eDb
+    .select({ contractRevision: goals.contractRevision })
+    .from(goals)
+    .where(eq(goals.id, goalId));
+  expect(row?.contractRevision).toBeGreaterThan(0);
+  return row!.contractRevision;
 }
 
 async function previewGoal(
@@ -200,6 +209,21 @@ test("reveals Goals in the primary rail only after the Experimental setting is e
   });
   expect(issueResponse.status()).toBe(201);
   const issue = await issueResponse.json() as { id: string; identifier: string | null };
+  const issueReadResponse = await page.request.get(`/api/issues/${issue.id}`);
+  expect(issueReadResponse.ok()).toBe(true);
+  const issueRead = await issueReadResponse.json() as { goal?: Record<string, unknown> | null };
+  expect(issueRead.goal).toMatchObject({ id: hiddenGoal.id, title: hiddenGoal.title });
+  for (const internalGoalField of [
+    "objectiveMode",
+    "contractRevision",
+    "autonomyEnvelope",
+    "humanAuthorities",
+    "evaluationPolicy",
+    "continuationKind",
+    "resultPayload",
+  ]) {
+    expect(issueRead.goal).not.toHaveProperty(internalGoalField);
+  }
 
   await page.goto(`/${organization.urlKey}/dashboard`);
   const primaryRail = page.getByTestId("primary-rail");
@@ -318,10 +342,15 @@ test.describe("Goal Workspace v2", () => {
     expect(buttonReceivesPointer).toBe(true);
     await createAndStart.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
-    await expect(page.getByText("Current Goal", { exact: true })).toBeVisible();
+    await expect(page.getByText("Outcome", { exact: true })).toBeVisible();
     await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
     await expect(page.getByText("Agent is doing", { exact: true })).toBeVisible();
     await expect(page.getByText("Next step", { exact: true })).toBeVisible();
+    await expect(page.getByText(
+      "Inspect the available context and produce the first bounded, reviewable artifact.",
+      { exact: true },
+    )).toBeVisible();
+    await expect(page.getByText(/Agent run [a-f0-9-]+ is/i)).toHaveCount(0);
 
     for (const hiddenControl of [
       "Objective mode",
@@ -350,8 +379,58 @@ test.describe("Goal Workspace v2", () => {
     expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
       run.id === startWakeups[0]?.runId && run.wakeupRequestId === startWakeups[0]?.id,
     )).toBeTruthy();
+    await e2eDb.update(heartbeatRuns).set({
+      status: "failed",
+      resultJson: { error: "Process adapter missing command" },
+      resultSummaryJson: null,
+      updatedAt: new Date(),
+    }).where(eq(heartbeatRuns.id, startWakeups[0]!.runId!));
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Needs your attention", exact: true })).toBeVisible();
+    await expect(page.getByText("The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Process adapter missing command", { exact: true })).toHaveCount(0);
+    const internalLanguageActivity = await page.request.post(`/api/goals/${goalId}/activities`, {
+      headers: {
+        Authorization: `Bearer ${ownerKey.token}`,
+        "x-rudder-run-id": startWakeups[0]!.runId!,
+      },
+      data: {
+        activityKind: "progress",
+        summary: "Current Goal contract and runtime evidence are being checked.",
+        evidenceRefs: [],
+        idempotencyKey: `goal-e2e-public-language-${goalId}`,
+      },
+    });
+    expect(internalLanguageActivity.status()).toBe(201);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await expect(page.getByText("Current Goal and supporting evidence are being checked.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Goal contract|runtime evidence|change_proposal|result_proposal/i)).toHaveCount(0);
     const contractBeforeFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     const feedbackBody = "Keep the release focused on the operator journey, not internal Contract terminology.";
+    let attachmentAttempts = 0;
+    await page.route(`**/api/orgs/${organization.id}/assets/images`, async (route) => {
+      attachmentAttempts += 1;
+      if (attachmentAttempts === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary image outage" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    const feedbackFile = page.getByLabel("Attach feedback image");
+    await feedbackFile.setInputFiles({
+      name: "operator-screenshot.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("goal-feedback-image"),
+    });
+    await expect(page.getByRole("alert")).toContainText("Temporary image outage");
+    await page.getByRole("button", { name: "Retry attachment" }).click();
+    await expect(page.getByLabel("Selected feedback attachments").getByText("operator-screenshot.png", { exact: true })).toBeVisible();
+    expect(attachmentAttempts).toBe(2);
+    await page.unroute(`**/api/orgs/${organization.id}/assets/images`);
     let feedbackAttempts = 0;
     await page.route(`**/api/goals/${goalId}/feedback`, async (route) => {
       feedbackAttempts += 1;
@@ -384,6 +463,7 @@ test.describe("Goal Workspace v2", () => {
 
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByLabel("Feedback attachments").getByText("operator-screenshot.png", { exact: true })).toBeVisible();
     const feedbackRows = (await e2eDb.select().from(goalFeedbackEntries))
       .filter((row) => row.goalId === goalId);
     expect(feedbackRows).toHaveLength(1);
@@ -392,6 +472,13 @@ test.describe("Goal Workspace v2", () => {
       body: feedbackBody,
       feedbackKind: "ordinary",
     });
+    expect(feedbackRows[0]?.attachments).toEqual([
+      expect.objectContaining({
+        name: "operator-screenshot.png",
+        mimeType: "image/png",
+        uri: expect.stringMatching(/^asset:\/\/[a-f0-9-]{36}$/),
+      }),
+    ]);
     expect(feedbackRows[0]?.actorId).toBeTruthy();
     const wakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
       row.orgId === organization.id
@@ -452,20 +539,17 @@ test.describe("Goal Workspace v2", () => {
       { exact: true },
     )).toBeVisible();
     const progressEvidence = currentProgress.getByLabel("Supporting evidence");
-    const progressExternalLink = progressEvidence.getByRole("link", { name: /^External link evidence 1/ });
-    await expect(progressExternalLink).toHaveAttribute("href", progressExternalEvidence);
-    await expect(progressExternalLink).toHaveAttribute("target", "_blank");
-    await expect(progressExternalLink).toHaveAttribute("rel", /\bnoopener\b/);
-    await expect(progressExternalLink).toHaveAttribute("rel", /\bnoreferrer\b/);
+    await expect(progressEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(progressEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
     const progressLibraryLink = progressEvidence.getByRole("link", {
-      name: `Library file: ${progressLibraryPath} Open`,
+      name: "Library file: operator-workflow.md Open",
       exact: true,
     });
     await expect(progressLibraryLink).toHaveAttribute(
       "href",
       `/${organization.urlKey}/library?path=${encodeURIComponent(progressLibraryPath)}`,
     );
-    const progressArtifactRow = progressEvidence.getByText("Artifact evidence 3", { exact: true }).locator("..");
+    const progressArtifactRow = progressEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(progressArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText(progressArtifactEvidence, { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agreement revision", { exact: true })).toHaveCount(0);
@@ -481,11 +565,18 @@ test.describe("Goal Workspace v2", () => {
     const workspaceResponse = await page.request.get(`/api/goals/${goalId}/workspace`);
     expect(workspaceResponse.ok()).toBe(true);
     const workspace = await workspaceResponse.json() as Workspace;
-    expect(workspace.currentProgress.evidenceRefs).toEqual([
-      progressExternalEvidence,
-      progressLibraryFileEvidence,
-      progressArtifactEvidence,
+    expect(workspace.currentProgress.evidenceRefs).toBeUndefined();
+    expect(workspace.currentProgress.evidence).toEqual([
+      { label: "External supporting link 1", href: null, external: true },
+      {
+        label: "Library file: operator-workflow.md",
+        href: `/${organization.urlKey}/library?path=${encodeURIComponent(progressLibraryPath)}`,
+        external: false,
+      },
+      { label: "Supporting work 3", href: null, external: false },
     ]);
+    expect(JSON.stringify(workspace)).not.toContain(progressExternalEvidence);
+    expect(JSON.stringify(workspace)).not.toContain(progressArtifactEvidence);
     expect(workspace.currentProgress.sourceActivityId).toBeTruthy();
     expect(workspace.agentAction?.sourceIds).toContain(ownerRunId);
     expect(workspace.facet).toBe("agent_advancing");
@@ -498,7 +589,7 @@ test.describe("Goal Workspace v2", () => {
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await expect(page.getByText("Current Goal", { exact: true })).toBeVisible();
+    await expect(page.getByText("Outcome", { exact: true })).toBeVisible();
     await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
     const bodyOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(bodyOverflow).toBeLessThanOrEqual(1);
@@ -677,13 +768,14 @@ test.describe("Goal Workspace v2", () => {
     const started = await startGoal(page.request, organization.id, preview);
     expect(started.response.status()).toBe(201);
     const goal = started.goal!;
+    const contractRevision = await readContractRevision(goal.id);
     const criterionId = preview.packet!.activation.criteria[0]!.id;
 
     const changeResponse = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "Evidence shows that the target must explicitly include restart recovery.",
         evidenceRefs: ["artifact://goal-workspace/restart-evidence"],
         afterContract: {
@@ -698,7 +790,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "A competing proposal should be superseded after the accepted revision advances.",
         evidenceRefs: ["artifact://goal-workspace/competing-evidence"],
         afterContract: {
@@ -714,7 +806,7 @@ test.describe("Goal Workspace v2", () => {
     };
     expect(competingChange.status).toBe("pending");
     const beforeApproval = await page.request.get(`/api/goals/${goal.id}`);
-    expect((await beforeApproval.json() as Goal).contractRevision).toBe(goal.contractRevision);
+    expect(await beforeApproval.json()).not.toHaveProperty("contractRevision");
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -737,7 +829,9 @@ test.describe("Goal Workspace v2", () => {
     await page.keyboard.press("Enter");
     await expect(changeApprovalDialog.getByText("Approval confirmed", { exact: true })).toBeVisible();
     const changedGoal = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
-    expect(changedGoal.contractRevision).toBe(goal.contractRevision + 1);
+    expect(changedGoal).not.toHaveProperty("contractRevision");
+    const changedContractRevision = await readContractRevision(goal.id);
+    expect(changedContractRevision).toBe(contractRevision + 1);
 
     const supersedeCompeting = await page.request.post(`/api/approvals/${competingChange.approvalId}/approve`, {
       data: { decisionNote: "The Goal has already advanced on a different approved revision." },
@@ -754,7 +848,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: changedGoal.contractRevision,
+        expectedContractRevision: changedContractRevision,
         rationale: "This broadens the commitment beyond the agreed release boundary and should be rejected.",
         evidenceRefs: ["artifact://goal-workspace/unwanted-expansion"],
         afterContract: {
@@ -784,14 +878,15 @@ test.describe("Goal Workspace v2", () => {
       const row = (await e2eDb.select().from(goalChangeProposals)).find((proposal) => proposal.id === rejectedChange.id);
       return row?.status;
     }).toBe("rejected");
-    expect((await page.request.get(`/api/goals/${goal.id}`).then((response) => response.json()) as Goal).contractRevision)
-      .toBe(changedGoal.contractRevision);
+    expect(await page.request.get(`/api/goals/${goal.id}`).then((response) => response.json()))
+      .not.toHaveProperty("contractRevision");
+    expect(await readContractRevision(goal.id)).toBe(changedContractRevision);
 
     const staleChange = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "This proposal is intentionally stale.",
         evidenceRefs: ["artifact://goal-workspace/stale"],
         afterContract: { outcomeStatement: "A stale outcome must never be applied" },
@@ -804,7 +899,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: inconclusiveKey,
-        contractRevision: changedGoal.contractRevision,
+        contractRevision: changedContractRevision,
         evidenceRefs: [],
         criteria: [{ id: criterionId, status: "unknown" }],
         resultPayload: {},
@@ -812,10 +907,10 @@ test.describe("Goal Workspace v2", () => {
       },
     });
     expect(inconclusiveResult.status()).toBe(201);
-    const inconclusiveProposal = await inconclusiveResult.json() as { id: string; status: string; preflight: { outcome: string } };
+    const inconclusiveProposal = await inconclusiveResult.json() as { id: string; status: string; outcome: string };
     expect(inconclusiveProposal.id).toBeTruthy();
     expect(inconclusiveProposal.status).toBe("inconclusive");
-    expect(inconclusiveProposal.preflight.outcome).toBe("inconclusive");
+    expect(inconclusiveProposal.outcome).toBe("inconclusive");
     expect((await e2eDb.select().from(goalResultProposals)).filter((row) =>
       row.goalId === goal.id && row.idempotencyKey === inconclusiveKey,
     )).toHaveLength(1);
@@ -824,17 +919,17 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: changedGoal.contractRevision,
+        contractRevision: changedContractRevision,
         evidenceRefs: ["artifact://goal-workspace/result-v1"],
         criteria: [{ id: criterionId, status: "met" }],
         resultPayload: {},
-        riskSummary: "The restart check should be repeated once more.",
+        riskSummary: "The restart contract should be repeated once more.",
       },
     });
     expect(firstResult.status()).toBe(201);
-    const firstProposal = await firstResult.json() as { id: string; status: string; preflight: { outcome: string } };
+    const firstProposal = await firstResult.json() as { id: string; status: string; outcome: string };
     expect(firstProposal.status).toBe("ready");
-    expect(firstProposal.preflight.outcome).toBe("achieved");
+    expect(firstProposal.outcome).toBe("achieved");
 
     const directTerminalEvaluate = await page.request.post(`/api/goals/${goal.id}/evaluate`, {
       headers: agentHeaders,
@@ -856,11 +951,24 @@ test.describe("Goal Workspace v2", () => {
     await page.goto(`/${organization.urlKey}/goals/${goal.id}`);
     const firstResultProposal = page.getByLabel("Goal result proposal");
     await expect(firstResultProposal).toBeVisible();
-    await expect(firstResultProposal.getByText("The restart check should be repeated once more.", { exact: true })).toBeVisible();
+    await expect(firstResultProposal.getByText("The restart agreement should be repeated once more.", { exact: true })).toBeVisible();
+    await expect(firstResultProposal.getByText(/\bcontract\b/i)).toHaveCount(0);
     await expect(firstResultProposal.getByText("artifact://goal-workspace/result-v1", { exact: true })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    const reloadedProposal = page.getByLabel("Goal result proposal");
+    await expect(reloadedProposal).toBeVisible();
     const proposalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(proposalOverflow).toBeLessThanOrEqual(1);
+    const proposalAction = reloadedProposal.getByRole("button", { name: "Accept result" });
+    await proposalAction.scrollIntoViewIfNeeded();
+    const proposalActionClearance = await page.evaluate(() => {
+      const action = document.querySelector('[aria-label="Goal result proposal"] button:last-of-type')?.getBoundingClientRect();
+      const nav = document.querySelector('nav[aria-label="Mobile navigation"]')?.getBoundingClientRect();
+      return action && nav ? nav.top - action.bottom : null;
+    });
+    expect(proposalActionClearance).not.toBeNull();
+    expect(proposalActionClearance!).toBeGreaterThanOrEqual(8);
     await page.screenshot({ path: testInfo.outputPath("goal-result-proposal-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
 
@@ -872,7 +980,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(firstResultProposal).toHaveCount(0);
     await expect(page.getByText("Result proposal rejected", { exact: true })).toBeVisible();
     await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Current Goal", exact: true })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeFocused();
     const afterReject = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
     expect(afterReject.lifecycle).toBe("active");
     expect(afterReject.evaluationResult).toBeNull();
@@ -911,7 +1019,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: changedGoal.contractRevision,
+        contractRevision: changedContractRevision,
         evidenceRefs: resultEvidenceRefs,
         criteria: [{ id: criterionId, status: "met" }],
         resultPayload: {},
@@ -925,7 +1033,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: changedGoal.contractRevision,
+        expectedContractRevision: changedContractRevision,
         rationale: "This proposal must close without remaining actionable after result acceptance.",
         evidenceRefs: ["artifact://goal-workspace/pending-at-close"],
         afterContract: {
@@ -945,13 +1053,10 @@ test.describe("Goal Workspace v2", () => {
     await expect(secondResultProposal).toBeVisible();
     await expect(secondResultProposal.getByText("No unresolved release risk remains.", { exact: true })).toBeVisible();
     const proposedResultEvidence = secondResultProposal.getByLabel("Inspectable result evidence");
-    const proposedExternalLink = proposedResultEvidence.getByRole("link", { name: /^External link evidence 1/ });
-    await expect(proposedExternalLink).toHaveAttribute("href", resultExternalEvidence);
-    await expect(proposedExternalLink).toHaveAttribute("target", "_blank");
-    await expect(proposedExternalLink).toHaveAttribute("rel", /\bnoopener\b/);
-    await expect(proposedExternalLink).toHaveAttribute("rel", /\bnoreferrer\b/);
+    await expect(proposedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(proposedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
     const proposedLibraryEntryLink = proposedResultEvidence.getByRole("link", {
-      name: `Library entry: ${resultLibraryPath} Open`,
+      name: "Library entry: accepted-result.md Open",
       exact: true,
     });
     const resultLibraryHref = [
@@ -959,7 +1064,8 @@ test.describe("Goal Workspace v2", () => {
       `path=${encodeURIComponent(resultLibraryPath)}`,
     ].join("&");
     await expect(proposedLibraryEntryLink).toHaveAttribute("href", resultLibraryHref);
-    const proposedArtifactRow = proposedResultEvidence.getByText("Artifact evidence 3", { exact: true }).locator("..");
+    await expect(proposedResultEvidence).not.toContainText(goal.id);
+    const proposedArtifactRow = proposedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(proposedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
 
@@ -983,16 +1089,14 @@ test.describe("Goal Workspace v2", () => {
     await expect(acceptedResult.getByText("No unresolved release risk remains.", { exact: true })).toBeVisible();
     await expect(acceptedResult.getByText("Evidence check", { exact: true })).toBeVisible();
     const acceptedResultEvidence = acceptedResult.getByLabel("Inspectable result evidence");
-    const acceptedExternalLink = acceptedResultEvidence.getByRole("link", { name: /^External link evidence 1/ });
-    await expect(acceptedExternalLink).toHaveAttribute("href", resultExternalEvidence);
-    await expect(acceptedExternalLink).toHaveAttribute("target", "_blank");
-    await expect(acceptedExternalLink).toHaveAttribute("rel", /\bnoopener\b/);
-    await expect(acceptedExternalLink).toHaveAttribute("rel", /\bnoreferrer\b/);
+    await expect(acceptedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(acceptedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
     await expect(acceptedResultEvidence.getByRole("link", {
-      name: `Library entry: ${resultLibraryPath} Open`,
+      name: "Library entry: accepted-result.md Open",
       exact: true,
     })).toHaveAttribute("href", resultLibraryHref);
-    const acceptedArtifactRow = acceptedResultEvidence.getByText("Artifact evidence 3", { exact: true }).locator("..");
+    await expect(acceptedResultEvidence).not.toContainText(goal.id);
+    const acceptedArtifactRow = acceptedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(acceptedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
     const acceptedProgress = page.getByRole("heading", { name: "Current progress", exact: true }).locator("..");
@@ -1004,15 +1108,33 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByText("Next step", { exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Goal feedback")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rename" })).toHaveCount(0);
-    await expect(page.getByText(`Goal updated after approval: ${changeProposal.rationale}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(
+      "Goal updated after approval: Supporting work shows that the target must explicitly include restart recovery.",
+      { exact: true },
+    )).toBeVisible();
     for (const internalTerm of ["Goal Contract", "Contract revision", "change_proposal", "result_proposal"]) {
       await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
     }
-    await expect(page.getByRole("heading", { name: "Current Goal", exact: true })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeFocused();
     await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    const reloadedAcceptedResult = page.getByLabel("Accepted Goal result");
+    await expect(reloadedAcceptedResult).toBeVisible();
     const acceptedOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(acceptedOverflow).toBeLessThanOrEqual(1);
+    const acceptedResultLastLink = reloadedAcceptedResult
+      .getByLabel("Inspectable result evidence")
+      .getByRole("link")
+      .last();
+    await acceptedResultLastLink.scrollIntoViewIfNeeded();
+    const acceptedResultClearance = await page.evaluate(() => {
+      const resultLink = document.querySelector('[aria-label="Inspectable result evidence"] a:last-of-type')?.getBoundingClientRect();
+      const nav = document.querySelector('nav[aria-label="Mobile navigation"]')?.getBoundingClientRect();
+      return resultLink && nav ? nav.top - resultLink.bottom : null;
+    });
+    expect(acceptedResultClearance).not.toBeNull();
+    expect(acceptedResultClearance!).toBeGreaterThanOrEqual(8);
     await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
 
@@ -1095,12 +1217,13 @@ test.describe("Goal Workspace v2", () => {
     const negativeStarted = await startGoal(page.request, organization.id, negativePreview);
     expect(negativeStarted.response.status()).toBe(201);
     const negativeGoal = negativeStarted.goal!;
+    const negativeContractRevision = await readContractRevision(negativeGoal.id);
     const negativeCriterionId = negativePreview.packet!.activation.criteria[0]!.id;
     const negativeResultResponse = await page.request.post(`/api/goals/${negativeGoal.id}/result-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: negativeGoal.contractRevision,
+        contractRevision: negativeContractRevision,
         evidenceRefs: ["artifact://goal-workspace/failed-release-check"],
         criteria: [{ id: negativeCriterionId, status: "unmet" }],
         resultPayload: {},
@@ -1120,7 +1243,7 @@ test.describe("Goal Workspace v2", () => {
       "The submitted evidence supports closing this Goal as not achieved.",
       { exact: true },
     )).toBeVisible();
-    await expect(negativeResultProposal.getByText("Artifact evidence 1", { exact: true })).toBeVisible();
+    await expect(negativeResultProposal.getByText("Supporting work 1", { exact: true })).toBeVisible();
     await expect(negativeResultProposal.getByText("artifact://goal-workspace/failed-release-check", { exact: true })).toHaveCount(0);
     const readyForReviewLabels = page.getByText("Result ready for review", { exact: true });
     await expect(readyForReviewLabels).toHaveCount(2);
@@ -1150,11 +1273,12 @@ test.describe("Goal Workspace v2", () => {
     const started = await startGoal(page.request, organization.id, preview);
     expect(started.response.status()).toBe(201);
     const goal = started.goal!;
+    const contractRevision = await readContractRevision(goal.id);
     const criterionId = preview.packet!.activation.criteria[0]!.id;
     const headers = { Authorization: `Bearer ${agentKey.token}` };
     const terminalPayload = (idempotencyKey: string) => ({
       idempotencyKey,
-      contractRevision: goal.contractRevision,
+      contractRevision,
       evidenceRefs: ["artifact://goal-workspace/concurrent-result"],
       criteria: [{ id: criterionId, status: "met" }],
       resultPayload: {},
@@ -1194,7 +1318,7 @@ test.describe("Goal Workspace v2", () => {
       headers,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: goal.contractRevision,
+        contractRevision,
         evidenceRefs: [],
         criteria: [{ id: criterionId, status: "unknown" }],
         resultPayload: {},
@@ -1229,6 +1353,7 @@ test.describe("Goal Workspace v2", () => {
     const preview = await previewGoal(page.request, organization.id, owner.id);
     const started = await startGoal(page.request, organization.id, preview);
     expect(started.response.status()).toBe(201);
+    const contractRevision = await readContractRevision(started.goal!.id);
     const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Advance the Goal through a real issue",
@@ -1240,6 +1365,13 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(issueResponse.ok()).toBe(true);
     const issue = await issueResponse.json() as { id: string };
+    const startedRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
+      const context = run.contextSnapshot as Record<string, unknown> | null;
+      return run.orgId === organization.id && context?.goalId === started.goal!.id;
+    });
+    for (const run of startedRuns) {
+      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    }
     const runId = randomUUID();
     const checkpointTime = new Date();
     await e2eDb.insert(heartbeatRuns).values({
@@ -1256,7 +1388,7 @@ test.describe("Goal Workspace v2", () => {
     const [progressActivity] = await e2eDb.insert(goalActivities).values({
       orgId: organization.id,
       goalId: started.goal!.id,
-      contractRevision: started.goal!.contractRevision,
+      contractRevision,
       submittedByAgentId: owner.id,
       agentOwnerRefAtTime: owner.id,
       activityKind: "evidence",
@@ -1269,7 +1401,7 @@ test.describe("Goal Workspace v2", () => {
     await e2eDb.insert(goalActivities).values(Array.from({ length: 101 }, (_, index) => ({
       orgId: organization.id,
       goalId: started.goal!.id,
-      contractRevision: started.goal!.contractRevision,
+      contractRevision,
       submittedByAgentId: owner.id,
       agentOwnerRefAtTime: owner.id,
       activityKind: (["decision_requested", "bottleneck"] as const)[index % 2],
@@ -1297,13 +1429,6 @@ test.describe("Goal Workspace v2", () => {
       createdAt: new Date(Date.now() - 120_000),
       updatedAt: new Date(Date.now() - 120_000),
     });
-    const startedRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
-      const context = run.contextSnapshot as Record<string, unknown> | null;
-      return run.orgId === organization.id && context?.goalId === started.goal!.id;
-    });
-    for (const run of startedRuns) {
-      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
-    }
     await e2eDb.update(issues).set({ executionRunId: runId, updatedAt: new Date(checkpointTime.getTime() - 500) }).where(eq(issues.id, issue.id));
 
     await page.goto("/");

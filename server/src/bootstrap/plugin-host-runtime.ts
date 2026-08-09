@@ -60,7 +60,9 @@ export function createPluginHostRuntime(db: Db, opts: RudderAppOptions) {
           const handle = workerManager.getWorker(pluginId);
           if (handle) handle.notify(method, params);
         };
-        const services = buildHostServices(db, pluginId, manifest.id, eventBus, notifyWorker);
+        const services = buildHostServices(db, pluginId, manifest.id, eventBus, notifyWorker, {
+          allowedHttpOrigins: opts.pluginHttpAllowedOrigins,
+        });
         hostServicesDisposers.set(pluginId, () => services.dispose());
         return createHostClientHandlers({
           pluginId,

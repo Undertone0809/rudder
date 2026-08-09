@@ -538,7 +538,7 @@ describe("Goal history service", () => {
       );
       expect(closeout).toMatchObject({
         summary: terminalCase.expectedSummary,
-        evidenceRefs: ["artifact://goal-history/terminal-proof"],
+        evidence: [{ label: "Supporting work 1", href: null, external: false }],
       });
       expect(closeout?.summary).not.toContain("evaluated as");
       expect(closeout?.summary).not.toContain(terminalCase.evaluator);

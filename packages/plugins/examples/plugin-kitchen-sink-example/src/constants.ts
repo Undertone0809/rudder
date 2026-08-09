@@ -49,6 +49,7 @@ export const TOOL_NAMES = {
   echo: "echo",
   companySummary: "organization-summary",
   createIssue: "create-issue",
+  httpPost: "http-post",
 } as const;
 
 export const STREAM_CHANNELS = {

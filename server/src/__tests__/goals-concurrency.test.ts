@@ -475,6 +475,30 @@ describe("Goal closed-state concurrency", () => {
         sourceIds: [directRun!.id],
       },
     });
+    await db.update(heartbeatRuns).set({
+      status: "failed",
+      resultJson: { error: "Process adapter missing command" },
+      resultSummaryJson: null,
+      updatedAt: new Date(),
+    }).where(eq(heartbeatRuns.id, directRun!.id));
+    expect(await service.workspace(active.id)).toMatchObject({
+      facet: "needs_attention",
+      agentAction: {
+        summary: "The Agent could not complete its latest action.",
+        status: "failed",
+      },
+      attention: {
+        kind: "owner_blocked",
+        reason: expect.stringContaining("could not complete its latest action"),
+        sourceId: directRun!.id,
+      },
+    });
+    await db.update(heartbeatRuns).set({
+      status: "running",
+      resultJson: null,
+      resultSummaryJson: { summary: "Validating the direct Goal artifact." },
+      updatedAt: new Date(),
+    }).where(eq(heartbeatRuns.id, directRun!.id));
     await expect(service.createActivity(active.id, {
       summary: "This Run belongs to another Goal",
       activityKind: "progress",
@@ -496,6 +520,35 @@ describe("Goal closed-state concurrency", () => {
       idempotencyKey: "goal-direct-run-progress",
     }, ownerAgentId);
     expect(progress).toMatchObject({ runRef: directRun!.id });
+
+    await db.update(heartbeatRuns).set({
+      status: "succeeded",
+      resultSummaryJson: { summary: "The direct Goal artifact passed its first check." },
+      updatedAt: new Date(),
+    }).where(eq(heartbeatRuns.id, directRun!.id));
+
+    const [newerFailedRun] = await db.insert(heartbeatRuns).values({
+      orgId,
+      agentId: ownerAgentId,
+      status: "failed",
+      contextSnapshot: { goalId: active.id },
+      resultJson: { error: "Process adapter missing command" },
+      updatedAt: new Date(Date.now() + 1_000),
+    }).returning();
+    expect(await service.workspace(active.id)).toMatchObject({
+      facet: "needs_attention",
+      agentAction: {
+        summary: "The Agent could not complete its latest action.",
+        status: "failed",
+      },
+      attention: {
+        kind: "owner_blocked",
+        sourceId: newerFailedRun!.id,
+      },
+    });
+    expect((await service.workspaceCards(orgId)).find((card) => card.id === active.id)).toMatchObject({
+      facet: "needs_attention",
+    });
 
     const resultInput = {
       evidenceRefs: ["artifact://goal-direct-run/result"],
@@ -522,7 +575,7 @@ describe("Goal closed-state concurrency", () => {
     expect(await service.workspace(active.id)).toMatchObject({
       currentProgress: {
         sourceActivityId: evidence!.id,
-        evidenceRefs: ["artifact://goal-direct-run/result"],
+        evidence: [{ label: "Supporting work 1", href: null, external: false }],
       },
       attention: { kind: "result_proposal", sourceId: proposal.id },
     });
@@ -881,7 +934,7 @@ describe("Goal closed-state concurrency", () => {
     const workspace = await service.workspace(active.id);
     expect(workspace.currentProgress).toMatchObject({
       summary: "Goal achieved",
-      evidenceRefs: ["artifact://verified-result"],
+      evidence: [{ label: "Supporting work 1", href: null, external: false }],
     });
   }, 30_000);
 });

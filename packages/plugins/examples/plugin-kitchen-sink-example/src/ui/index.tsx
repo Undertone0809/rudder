@@ -1444,7 +1444,9 @@ function KitchenSinkConsole({ context }: { context: { orgId: string | null; comp
           ? { message: toolMessage }
           : name === TOOL_NAMES.createIssue
             ? { title: issueTitle, description: "Created through the tool dispatcher demo." }
-            : {};
+            : name === TOOL_NAMES.httpPost
+              ? { message: toolMessage }
+              : {};
       const response = await hostFetchJson(`/api/plugins/tools/execute`, {
         method: "POST",
         body: JSON.stringify({
@@ -2018,6 +2020,7 @@ function KitchenSinkConsole({ context }: { context: { orgId: string | null; comp
               <button type="button" style={buttonStyle} onClick={() => void executeTool(TOOL_NAMES.echo)}>Run echo tool</button>
               <button type="button" style={buttonStyle} onClick={() => void executeTool(TOOL_NAMES.companySummary)}>Run summary tool</button>
               <button type="button" style={buttonStyle} onClick={() => void executeTool(TOOL_NAMES.createIssue)}>Run create-issue tool</button>
+              <button type="button" style={buttonStyle} onClick={() => void executeTool(TOOL_NAMES.httpPost)}>Run HTTP POST tool</button>
             </div>
             <JsonBlock value={toolOutput ?? { note: "No tool output yet." }} />
           </div>

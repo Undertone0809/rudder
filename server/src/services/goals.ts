@@ -32,6 +32,7 @@ import {
   goals,
   heartbeatRuns,
   issues,
+  organizations,
   projectGoals,
   projects,
 } from "@rudderhq/db";
@@ -58,11 +59,17 @@ import type {
   GoalStartPacket,
   GoalStartPreview,
   PreviewGoalStart,
+  PublicGoal,
+  PublicGoalActivity,
+  PublicGoalChangeProposal,
+  PublicGoalOwnerAssignment,
+  PublicGoalPlan,
+  PublicGoalResultProposal,
   RejectGoalResultProposal,
   StartGoal,
   UpdateGoalPlan,
 } from "@rudderhq/shared";
-import { activateGoalSchema } from "@rudderhq/shared";
+import { activateGoalSchema, parseLibraryEntryMentionHref, parseLibraryFileMentionHref } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
@@ -189,6 +196,105 @@ function stringEvidenceRefs(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+type PublicEvidenceItem = {
+  label: string;
+  href: string | null;
+  external: boolean;
+};
+
+type PublicEvidenceOptions = {
+  runAgentId?: string | null;
+  orgUrlKey?: string | null;
+};
+
+function publicOrganizationHref(path: string, orgUrlKey: string | null | undefined) {
+  return orgUrlKey ? `/${encodeURIComponent(orgUrlKey)}${path}` : path;
+}
+
+function publicEvidenceItems(value: unknown, options: PublicEvidenceOptions = {}): PublicEvidenceItem[] {
+  return stringEvidenceRefs(value).map((reference, index) => {
+    const libraryFile = parseLibraryFileMentionHref(reference);
+    if (libraryFile) {
+      const name = libraryFile.filePath.split("/").filter(Boolean).at(-1);
+      return {
+        label: name ? `Library file: ${name}` : "Library file",
+        href: publicOrganizationHref(
+          `/library?${new URLSearchParams({ path: libraryFile.filePath }).toString()}`,
+          options.orgUrlKey,
+        ),
+        external: false,
+      };
+    }
+
+    const libraryEntry = parseLibraryEntryMentionHref(reference);
+    if (libraryEntry) {
+      const search = new URLSearchParams({ entry: libraryEntry.entryId });
+      if (libraryEntry.path) search.set("path", libraryEntry.path);
+      return {
+        label: libraryEntry.path ? `Library entry: ${libraryEntry.path.split("/").filter(Boolean).at(-1) ?? "entry"}` : "Library entry",
+        href: publicOrganizationHref(`/library?${search.toString()}`, options.orgUrlKey),
+        external: false,
+      };
+    }
+
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(reference);
+    } catch {
+      parsed = null;
+    }
+    const scheme = parsed?.protocol.replace(/:$/, "").toLowerCase() ?? "";
+    const entityId = parsed && !parsed.username && !parsed.password && !parsed.port
+      && (parsed.pathname === "" || parsed.pathname === "/")
+      && /^[a-z0-9][a-z0-9._-]*$/i.test(parsed.hostname)
+      ? parsed.hostname
+      : null;
+    if (scheme === "issue" && entityId) {
+      return {
+        label: `Issue ${index + 1}`,
+        href: publicOrganizationHref(`/issues/${encodeURIComponent(entityId)}`, options.orgUrlKey),
+        external: false,
+      };
+    }
+    if (scheme === "project" && entityId) {
+      return {
+        label: `Project ${index + 1}`,
+        href: publicOrganizationHref(`/projects/${encodeURIComponent(entityId)}`, options.orgUrlKey),
+        external: false,
+      };
+    }
+    if (scheme === "approval" && entityId) {
+      return {
+        label: `Approval ${index + 1}`,
+        href: publicOrganizationHref(`/messenger/approvals/${encodeURIComponent(entityId)}`, options.orgUrlKey),
+        external: false,
+      };
+    }
+    if (scheme === "run" && entityId && options.runAgentId) {
+      return {
+        label: `Supporting work ${index + 1}`,
+        href: publicOrganizationHref(
+          `/agents/${encodeURIComponent(options.runAgentId)}/runs/${encodeURIComponent(entityId)}`,
+          options.orgUrlKey,
+        ),
+        external: false,
+      };
+    }
+    if (scheme === "http" || scheme === "https") {
+      return { label: `External supporting link ${index + 1}`, href: null, external: true };
+    }
+    const label = scheme === "artifact" ? "Supporting work" : scheme ? `${scheme} support` : "Supporting work";
+    return { label: `${label} ${index + 1}`, href: null, external: false };
+  });
+}
+
+async function organizationUrlKey(db: GoalReader, orgId: string) {
+  return db.select({ urlKey: organizations.urlKey })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .then((rows) => rows[0]?.urlKey ?? null);
+}
+
 type ExternalGoalWorkFact = {
   id: string;
   kind: "work_status";
@@ -199,6 +305,13 @@ type ExternalGoalWorkFact = {
   runStatus: string | null;
   evidenceRefs: string[];
 };
+
+function goalRunAttentionReason(status: string | null | undefined) {
+  if (status === "failed") return "The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.";
+  if (status === "cancelled" || status === "canceled") return "The Owner Agent stopped its latest action. Decide whether to retry or adjust the Goal.";
+  if (status === "timed_out" || status === "timeout") return "The Owner Agent's latest action timed out. Decide whether to retry or adjust the Goal.";
+  return null;
+}
 
 const GOAL_HISTORY_KINDS = ["activity", "feedback", "change_proposal", "result_proposal"] as const;
 type GoalHistoryKind = (typeof GOAL_HISTORY_KINDS)[number];
@@ -255,12 +368,298 @@ function publicGoalOutcome(outcome: string) {
   return "Result needs more evidence";
 }
 
-function publicGoalActivitySummary(
+const INTERNAL_GOAL_LANGUAGE = [
+  [/\bgoal\s+contract\b/gi, "Goal"],
+  [/\bcontract\s+revision\b/gi, "Goal update"],
+  [/\bcontracts?\b/gi, "agreement"],
+  [/\bobjective\s+mode\b/gi, "Goal type"],
+  [/\bevaluator\b/gi, "success check"],
+  [/\bevidence\s+requirements?\b/gi, "what we need to verify"],
+  [/\bautonomy\s+envelope\b/gi, "working boundaries"],
+  [/\bhuman\s+authorit(?:y|ies)\b/gi, "decisions that need you"],
+  [/\bcontinuation\b/gi, "next step"],
+  [/\bchange\s+proposal\b/gi, "Goal update"],
+  [/\bresult\s+proposal\b/gi, "result review"],
+  [/\bchange_proposal\b/gi, "Goal update"],
+  [/\bresult_proposal\b/gi, "result review"],
+  [/\bruntime\s+evidence\b/gi, "supporting evidence"],
+  [/\brun\s+evidence\b/gi, "supporting work"],
+  [/\bpara-memory-files\b/gi, "shared notes"],
+  [/\b(?:the\s+)?[`]?shared notes[`]?\s+skill\b/gi, "shared notes"],
+  [/\bdaily[- ]note\b/gi, "notes"],
+  [/\b(?:runtime\s+)?evidence\s+(?:demonstrates?|shows?)\s+that\b/gi, "Supporting work shows that"],
+] as const;
+
+export function publicGoalText(value: string) {
+  const mapped = INTERNAL_GOAL_LANGUAGE.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), value);
+  return mapped
+    .replace(/\b(?:goal-feedback|goal-start|goal-change-decision|goal-result-evaluation):[0-9a-f-]{8,}\b/gi, "the related update")
+    .replace(/\b(?:artifact|run|issue|project|approval|decision|measurement|library-file|library-entry):\/\/[^\s)]+/gi, "supporting work")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "the related item")
+    .replace(/\b(?:feedback|activity|proposal|request|run)\s+(?:the related item|[0-9a-f-]{8,})\b/gi, "the related update");
+}
+
+function publicGoalToken(value: string) {
+  const known: Record<string, string> = {
+    bounded_reversible_work: "bounded, reversible work",
+    external_or_irreversible_action: "external or irreversible actions",
+    external_publication: "publishing externally",
+    authority_expansion: "expanding access",
+    acceptance: "accepting the result",
+    consequentialChanges: "consequential changes",
+    externalPublication: "publishing externally",
+  };
+  return known[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+}
+
+function publicGoalRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function publicGoalStrings(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function publicGoalBoundarySummary(value: unknown) {
+  const record = publicGoalRecord(value);
+  const allowed = publicGoalStrings(record.allowed).map(publicGoalToken);
+  const approvals = publicGoalStrings(record.requiresHumanApproval).map(publicGoalToken);
+  const parts = [
+    allowed.length > 0 ? `The Agent may handle ${allowed.join(", ")}.` : null,
+    approvals.length > 0 ? `You will be asked before ${approvals.join(", ")}.` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function publicGoalAuthoritySummary(value: unknown) {
+  const decisions = Object.entries(publicGoalRecord(value))
+    .filter(([, entry]) => entry === "board_human" || entry === true)
+    .map(([key]) => publicGoalToken(key));
+  return decisions.length > 0 ? `You decide ${decisions.join(", ")}.` : null;
+}
+
+function publicGoalCompletionSummary(value: unknown) {
+  const record = publicGoalRecord(value);
+  const requiresEvidence = record.terminalEvidenceRequired === true;
+  const requiresAcceptance = record.humanAcceptanceRequired === true;
+  if (requiresEvidence && requiresAcceptance) return "Supporting work is shown, and you accept the result.";
+  if (requiresEvidence) return "Supporting work is shown before the result is considered ready.";
+  if (requiresAcceptance) return "You accept the result when it is ready.";
+  return null;
+}
+
+function publicGoalContractSummary(value: unknown) {
+  const record = publicGoalRecord(value);
+  const outcomeStatement = typeof record.outcomeStatement === "string" && record.outcomeStatement.trim()
+    ? publicGoalText(record.outcomeStatement)
+    : null;
+  const criteria = Array.isArray(record.criteria)
+    ? record.criteria.flatMap((criterion) => {
+      const label = publicGoalRecord(criterion).label;
+      return typeof label === "string" && label.trim() ? [{ label: publicGoalText(label) }] : [];
+    })
+    : [];
+  const targetTime = typeof record.evaluationDeadline === "string"
+    ? record.evaluationDeadline
+    : typeof record.actionDeadline === "string" ? record.actionDeadline : null;
+  return {
+    ...(outcomeStatement ? { outcomeStatement } : {}),
+    ...(criteria.length > 0 ? { criteria } : {}),
+    ...(targetTime ? { targetTime } : {}),
+    ...(publicGoalBoundarySummary(record.autonomyEnvelope)
+      ? { boundarySummary: publicGoalBoundarySummary(record.autonomyEnvelope) } : {}),
+    ...(publicGoalAuthoritySummary(record.humanAuthorities)
+      ? { approvalSummary: publicGoalAuthoritySummary(record.humanAuthorities) } : {}),
+    ...(publicGoalCompletionSummary(record.evaluationPolicy)
+      ? { completionSummary: publicGoalCompletionSummary(record.evaluationPolicy) } : {}),
+  };
+}
+
+export function publicGoalView(goal: GoalRow): PublicGoal {
+  const criteria = Array.isArray(goal.criteria)
+    ? goal.criteria.flatMap((criterion) => {
+      const record = publicGoalRecord(criterion);
+      const id = typeof record.id === "string" && record.id.trim() ? record.id : null;
+      const label = typeof record.label === "string" && record.label.trim()
+        ? publicGoalText(record.label)
+        : null;
+      return id && label ? [{ id, label }] : [];
+    })
+    : [];
+  const evaluation = publicGoalRecord(goal.evaluationResult);
+  return {
+    id: goal.id,
+    orgId: goal.orgId,
+    title: goal.title,
+    description: goal.description,
+    lifecycle: goal.lifecycle as PublicGoal["lifecycle"],
+    status: goal.status as PublicGoal["status"],
+    outcomeStatement: goal.outcomeStatement ? publicGoalText(goal.outcomeStatement) : goal.outcomeStatement,
+    criteria,
+    ownerAgentId: goal.ownerAgentId,
+    focus: goal.focus,
+    evaluationResult: typeof evaluation.outcome === "string" ? { outcome: evaluation.outcome } : null,
+    evaluationDeadline: goal.evaluationDeadline,
+    actionDeadline: goal.actionDeadline,
+    continuationSummary: goal.continuationSummary ? publicGoalText(goal.continuationSummary) : goal.continuationSummary,
+    wakeCondition: goal.wakeCondition ? publicGoalText(goal.wakeCondition) : goal.wakeCondition,
+    alignmentQuestion: goal.alignmentQuestion ? publicGoalText(goal.alignmentQuestion) : goal.alignmentQuestion,
+    closeReason: goal.closeReason as PublicGoal["closeReason"],
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+  };
+}
+
+export function publicGoalActivity(
+  activity: typeof goalActivities.$inferSelect,
+  options: PublicEvidenceOptions = {},
+): PublicGoalActivity {
+  return {
+    id: activity.id,
+    orgId: activity.orgId,
+    goalId: activity.goalId,
+    activityKind: activity.activityKind as PublicGoalActivity["activityKind"],
+    summary: publicGoalActivitySummary(activity),
+    evidence: publicEvidenceItems(activity.evidenceRefs, {
+      ...options,
+      runAgentId: activity.submittedByAgentId,
+    }),
+    occurredAt: activity.occurredAt,
+    createdAt: activity.createdAt,
+  };
+}
+
+export function publicGoalDetail(input: GoalRow & {
+  ownerAssignment: typeof goalOwnerAssignments.$inferSelect | null;
+  plan: typeof goalPlans.$inferSelect | null;
+  activities: typeof goalActivities.$inferSelect[];
+}, options: PublicEvidenceOptions = {}) {
+  return {
+    ...publicGoalView(input),
+    ownerAssignment: input.ownerAssignment
+      ? {
+        agentId: input.ownerAssignment.agentId,
+        assignmentRevision: input.ownerAssignment.assignmentRevision,
+        startsAt: input.ownerAssignment.startsAt,
+        endsAt: input.ownerAssignment.endsAt,
+      }
+      : null,
+    plan: input.plan
+      ? {
+        revision: input.plan.revision,
+        summary: publicGoalText(input.plan.summary),
+      }
+      : null,
+    activities: input.activities.map((activity) => publicGoalActivity(activity, options)),
+  };
+}
+
+export function publicGoalPlan(plan: typeof goalPlans.$inferSelect): PublicGoalPlan {
+  return {
+    id: plan.id,
+    orgId: plan.orgId,
+    goalId: plan.goalId,
+    revision: plan.revision,
+    summary: publicGoalText(plan.summary),
+    createdAt: plan.createdAt,
+    updatedAt: plan.updatedAt,
+  };
+}
+
+export function publicGoalOwnerAssignment(assignment: typeof goalOwnerAssignments.$inferSelect): PublicGoalOwnerAssignment {
+  return {
+    id: assignment.id,
+    orgId: assignment.orgId,
+    goalId: assignment.goalId,
+    agentId: assignment.agentId,
+    assignmentRevision: assignment.assignmentRevision,
+    startsAt: assignment.startsAt,
+    endsAt: assignment.endsAt,
+    createdAt: assignment.createdAt,
+  };
+}
+
+export function publicGoalFeedback(entry: typeof goalFeedbackEntries.$inferSelect) {
+  return {
+    id: entry.id,
+    orgId: entry.orgId,
+    goalId: entry.goalId,
+    actorType: entry.actorType,
+    actorId: entry.actorId,
+    body: entry.body,
+    attachments: entry.attachments.map(({ name, mimeType, size }) => ({ name, mimeType, size })),
+    feedbackKind: entry.feedbackKind,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+export function publicGoalChangeProposal(
+  proposal: typeof goalChangeProposals.$inferSelect,
+  options: PublicEvidenceOptions = {},
+): PublicGoalChangeProposal {
+  return {
+    id: proposal.id,
+    approvalId: proposal.approvalId,
+    status: proposal.status,
+    rationale: publicGoalText(proposal.rationale),
+    evidence: publicEvidenceItems(proposal.evidenceRefs, { ...options, runAgentId: proposal.proposedByAgentId }),
+    beforeSummary: publicGoalContractSummary(proposal.beforeContract),
+    afterSummary: publicGoalContractSummary(proposal.afterContract),
+  };
+}
+
+export function publicGoalActivitySummary(
   activity: Pick<typeof goalActivities.$inferSelect, "activityKind" | "summary">,
 ) {
-  if (activity.activityKind !== "closeout") return activity.summary;
-  const legacyOutcome = /^Goal evaluated as\s+(.+)$/i.exec(activity.summary)?.[1]?.trim();
-  return legacyOutcome ? publicGoalOutcome(legacyOutcome) : activity.summary;
+  if (hasTechnicalRunSummary(activity.summary)) return "The Agent shared an update that needs attention.";
+  const summary = publicGoalText(activity.summary);
+  if (activity.activityKind !== "closeout") return summary;
+  const legacyOutcome = /^Goal evaluated as\s+(.+)$/i.exec(summary)?.[1]?.trim();
+  return legacyOutcome ? publicGoalOutcome(legacyOutcome) : summary;
+}
+
+export function publicGoalResultProposal(
+  proposal: typeof goalResultProposals.$inferSelect,
+  options: PublicEvidenceOptions = {},
+): PublicGoalResultProposal {
+  const preflight = publicGoalRecord(proposal.preflight);
+  const candidate = publicGoalRecord(proposal.candidate);
+  const outcome = typeof preflight.outcome === "string" ? preflight.outcome : "inconclusive";
+  const resultValue = preflight.resultValue ?? candidate.resultValue;
+  const decision = typeof preflight.decision === "string"
+    ? preflight.decision
+    : typeof candidate.decision === "string" ? candidate.decision : null;
+  const criteria = Array.isArray(preflight.criteria)
+    ? preflight.criteria.flatMap((criterion) => {
+      const record = publicGoalRecord(criterion);
+      const id = typeof record.id === "string" && record.id.trim() ? record.id : null;
+      const status = typeof record.status === "string" ? record.status : "unknown";
+      if (!id) return [];
+      return [{
+        id,
+        status,
+        missingEvidenceCount: Array.isArray(record.missingEvidence) ? record.missingEvidence.length : 0,
+      }];
+    })
+    : [];
+  return {
+    id: proposal.id,
+    status: proposal.status,
+    outcome,
+    outcomeLabel: outcome === "completed_with_result" && resultValue !== undefined
+      ? `Completed with result: ${String(resultValue)}`
+      : outcome === "decided" && decision
+        ? `Decision reached: ${decision}`
+        : publicGoalOutcome(outcome),
+    criteria,
+    evidence: publicEvidenceItems(candidate.evidenceRefs, { ...options, runAgentId: proposal.proposedByAgentId }),
+    riskSummary: proposal.riskSummary ? publicGoalText(proposal.riskSummary) : proposal.riskSummary,
+  };
 }
 
 function resultSummary(run: {
@@ -277,6 +676,78 @@ function resultSummary(run: {
     }
   }
   return run.error?.trim() || `Agent run is ${run.status}.`;
+}
+
+const PROVIDER_RESULT_ENVELOPE_PATTERN = /__RUDDER_RESULT_[a-z0-9-]+__/i;
+
+function publicProviderSummary(value: string) {
+  const envelope = PROVIDER_RESULT_ENVELOPE_PATTERN.exec(value);
+  if (!envelope) return value;
+  const payloadText = value.slice(envelope.index + envelope[0].length).trim();
+  try {
+    const payload = JSON.parse(payloadText) as Record<string, unknown>;
+    if (typeof payload.body === "string" && payload.body.trim()) return payload.body.trim();
+  } catch {
+    // Keep the visible text before a malformed internal envelope.
+  }
+  return value.slice(0, envelope.index).trim() || value;
+}
+
+const TECHNICAL_RUN_SUMMARY_PATTERNS = [
+  /(?:failed query|stack trace|traceback|drizzlequeryerror|connection ended|node_modules|\b(?:ECONN|ENOTFOUND|ETIMEDOUT)\b)/i,
+  /(?:^|\s)(?:error|exception):/i,
+  /\bat\s+[\w./-]+:\d+(?::\d+)?/i,
+  /(?:process adapter|missing command|adapter failure)/i,
+];
+
+function hasTechnicalRunSummary(value: string) {
+  return TECHNICAL_RUN_SUMMARY_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+export function publicRunSummary(run: {
+  status: string;
+  resultJson: Record<string, unknown> | null;
+  resultSummaryJson: Record<string, unknown> | null;
+  error: string | null;
+}) {
+  const rawSummary = publicProviderSummary(resultSummary(run));
+  if (hasTechnicalRunSummary(rawSummary)) {
+    if (["queued", "pending", "running", "started"].includes(run.status)) {
+      return "The Agent is working on this Goal.";
+    }
+    if (["succeeded", "completed"].includes(run.status)) {
+      return "The Agent completed its latest action.";
+    }
+    if (run.status === "failed") return "The Agent could not complete its latest action.";
+    if (["cancelled", "canceled"].includes(run.status)) return "The Agent stopped its latest action.";
+    if (["timed_out", "timeout"].includes(run.status)) return "The Agent's latest action needs attention.";
+    return "The Agent has a new update on this Goal.";
+  }
+  const internalRunPrefix = rawSummary.match(/^Agent run\s+[\w-]+\s+is\s+[^:]+(?::\s*(.+))?$/i);
+  if (internalRunPrefix) {
+    const detail = internalRunPrefix[1]?.trim();
+    if (detail && ["succeeded", "completed"].includes(run.status)) return publicGoalText(detail);
+    if (["queued", "pending", "running", "started"].includes(run.status)) return "The Agent is working on this Goal.";
+    if (["succeeded", "completed"].includes(run.status)) return "The Agent completed its latest action.";
+    if (run.status === "failed") return "The Agent could not complete its latest action.";
+    if (["cancelled", "canceled"].includes(run.status)) return "The Agent stopped its latest action.";
+    if (["timed_out", "timeout"].includes(run.status)) return "The Agent's latest action needs attention.";
+    return "The Agent has a new update on this Goal.";
+  }
+  const summary = publicGoalText(rawSummary);
+  const detailAfterInternalPrefix = summary.match(/^Agent run\s+[\w-]+\s+is\s+[^:]+:\s*(.+)$/i)?.[1]?.trim();
+  if (detailAfterInternalPrefix) return detailAfterInternalPrefix;
+  if (!/\bagent\s+run\b/i.test(summary)) return summary;
+  if (["queued", "pending", "running", "started"].includes(run.status)) {
+    return "The Agent is working on this Goal.";
+  }
+  if (["succeeded", "completed"].includes(run.status)) {
+    return "The Agent completed its latest action.";
+  }
+  if (run.status === "failed") return "The Agent could not complete its latest action.";
+  if (["cancelled", "canceled"].includes(run.status)) return "The Agent stopped its latest action.";
+  if (["timed_out", "timeout"].includes(run.status)) return "The Agent's latest action needs attention.";
+  return "The Agent has a new update on this Goal.";
 }
 
 function sameHashPayload(left: unknown, right: unknown) {
@@ -385,14 +856,14 @@ export function compileGoalStartPreview(
   const mode = goalMode(input);
   const context = input.context?.trim() || null;
   const success = context
-    ? `Evidence demonstrates that ${title} while satisfying: ${context}`
+    ? `We will know it worked when ${title} and this context is satisfied: ${context}`
     : mode === "decide"
       ? `A documented decision resolves: ${title}`
       : mode === "maximize"
-        ? `Measured evidence demonstrates progress toward: ${title}`
+        ? `Progress is measured toward: ${title}`
         : mode === "maintain"
-          ? `Evidence confirms the condition remained true: ${title}`
-          : `An inspectable artifact demonstrates that ${title}`;
+          ? `The condition remains true: ${title}`
+          : `A reviewable result shows that ${title}`;
   const firstAction = mode === "decide"
     ? "Gather the decision inputs and return with a clear recommendation and tradeoffs."
     : mode === "maximize"
@@ -425,7 +896,7 @@ export function compileGoalStartPreview(
       initialPlan: { summary: firstAction },
       initialContinuation: {
         kind: "commitment",
-        summary: "Advance the first bounded action and report evidence or a named blocker.",
+        summary: firstAction,
       },
   });
   const packet: GoalStartPacket = {
@@ -668,6 +1139,7 @@ export function goalService(db: Db) {
     pendingChange: typeof goalChangeProposals.$inferSelect | null,
     readyResult: typeof goalResultProposals.$inferSelect | null,
     pendingWakeup: Pick<typeof agentWakeupRequests.$inferSelect, "status"> | null = null,
+    externalWorkFact: Pick<ExternalGoalWorkFact, "runStatus"> | null = null,
   ) {
     if (goal.lifecycle === "closed") return "closed" as const;
     if (goal.lifecycle === "draft") return "needs_attention" as const;
@@ -676,6 +1148,7 @@ export function goalService(db: Db) {
     if (pendingWakeup?.status === "deferred_goal_focus") return "waiting_focus" as const;
     if (pendingWakeup?.status === "deferred_goal_blocked"
       || pendingWakeup?.status === "deferred_agent_paused") return "needs_attention" as const;
+    if (goalRunAttentionReason(externalWorkFact?.runStatus)) return "needs_attention" as const;
     if (goal.continuationKind === "wait") return "waiting_external" as const;
     return "agent_advancing" as const;
   }
@@ -903,7 +1376,7 @@ export function goalService(db: Db) {
       ...runFacts.map((run) => ({
         id: `work-status:run:${run.id}`,
         kind: "work_status" as const,
-        summary: `Agent run ${run.id.slice(0, 8)} is ${run.status}: ${resultSummary(run)}`,
+        summary: publicRunSummary(run),
         occurredAt: run.updatedAt,
         sourceId: run.id,
         sourceRunId: run.id,
@@ -916,20 +1389,49 @@ export function goalService(db: Db) {
       .map((run) => ({
         id: `work-status:run:${run.id}`,
         kind: "work_status" as const,
-        summary: `Agent run ${run.id.slice(0, 8)} is ${run.status}: ${resultSummary(run)}`,
+        summary: publicRunSummary(run),
         occurredAt: run.updatedAt,
         sourceId: run.id,
         sourceRunId: run.id,
         runStatus: run.status,
         evidenceRefs: [],
       }));
-    const allRunFacts = [...relatedFacts, ...directFacts].filter((fact) => fact.sourceId === fact.sourceRunId);
+    // Run facts use a public, namespaced source id while retaining the raw run id
+    // separately for evidence links and attention actions.
+    const allRunFacts = [...relatedFacts, ...directFacts].filter((fact) => fact.id.startsWith("work-status:run:"));
     const activeRunFacts = allRunFacts.filter((fact) => fact.runStatus && !TERMINAL_RUN_STATUSES.includes(fact.runStatus as typeof TERMINAL_RUN_STATUSES[number]));
     if (activeRunFacts.length > 0) {
       return activeRunFacts.sort((left, right) => {
         const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
         return timeDelta !== 0 ? timeDelta : right.id.localeCompare(left.id);
       })[0] ?? null;
+    }
+    const terminalRunFacts = allRunFacts.filter((fact) => (
+      fact.runStatus && TERMINAL_RUN_STATUSES.includes(fact.runStatus as typeof TERMINAL_RUN_STATUSES[number])
+    ));
+    if (terminalRunFacts.length > 0) {
+      const preferredTerminal = preferredRunId
+        ? terminalRunFacts.find((fact) => fact.sourceRunId === preferredRunId) ?? null
+        : null;
+      const latestTerminal = terminalRunFacts.sort((left, right) => {
+        const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
+        return timeDelta !== 0 ? timeDelta : right.id.localeCompare(left.id);
+      })[0] ?? null;
+      // Preserve the Run attached to the current evidence. A newer failed,
+      // cancelled, or timed-out Run still takes priority because it needs
+      // human attention; a generic successful Run must not hide the checkpoint
+      // the user is currently inspecting.
+      if (preferredTerminal) {
+        const latestNeedsAttention = latestTerminal?.runStatus === "failed"
+          || latestTerminal?.runStatus === "cancelled"
+          || latestTerminal?.runStatus === "canceled"
+          || latestTerminal?.runStatus === "timed_out"
+          || latestTerminal?.runStatus === "timeout";
+        if (!latestNeedsAttention || preferredTerminal.occurredAt >= latestTerminal!.occurredAt) {
+          return preferredTerminal;
+        }
+      }
+      return latestTerminal;
     }
     const preferredRun = preferredRunId
       ? allRunFacts.find((fact) => fact.sourceRunId === preferredRunId) ?? null
@@ -1118,6 +1620,7 @@ export function goalService(db: Db) {
     options: { cursor?: string | null; limit?: number } = {},
   ): Promise<GoalHistoryPage> {
     const goal = await requireGoal(db, id);
+    const orgUrlKey = await organizationUrlKey(db, goal.orgId);
     const cursor = decodeGoalHistoryCursor(options.cursor);
     const limit = options.limit ?? GOAL_HISTORY_DEFAULT_LIMIT;
     if (!Number.isInteger(limit) || limit < 1 || limit > GOAL_HISTORY_MAX_LIMIT) {
@@ -1186,7 +1689,10 @@ export function goalService(db: Db) {
           kind: "activity" as const,
           summary: publicGoalActivitySummary(activity),
           createdAt: activity.occurredAt,
-          evidenceRefs: stringEvidenceRefs(activity.evidenceRefs),
+          evidence: publicEvidenceItems(activity.evidenceRefs, {
+            orgUrlKey,
+            runAgentId: activity.submittedByAgentId,
+          }),
           actorType,
           actorId: activity.submittedByAgentId,
           actorName: actorName(actorType, activity.submittedByAgentId),
@@ -1198,7 +1704,7 @@ export function goalService(db: Db) {
         kind: "feedback" as const,
         summary: entry.body,
         createdAt: entry.createdAt,
-        evidenceRefs: [],
+        evidence: [],
         actorType: "user" as const,
         actorId: entry.actorId,
         actorName: actorName("user", entry.actorId),
@@ -1217,9 +1723,12 @@ export function goalService(db: Db) {
       ...changeRows.map((proposal) => ({
         id: proposal.id,
         kind: "change_proposal" as const,
-        summary: proposal.rationale,
+        summary: publicGoalText(proposal.rationale),
         createdAt: proposal.createdAt,
-        evidenceRefs: proposal.evidenceRefs,
+        evidence: publicEvidenceItems(proposal.evidenceRefs, {
+          orgUrlKey,
+          runAgentId: proposal.proposedByAgentId,
+        }),
         actorType: "agent" as const,
         actorId: proposal.proposedByAgentId,
         actorName: actorName("agent", proposal.proposedByAgentId),
@@ -1230,9 +1739,12 @@ export function goalService(db: Db) {
       ...resultRows.map((proposal) => ({
         id: proposal.id,
         kind: "result_proposal" as const,
-        summary: `${publicGoalOutcome(proposal.preflight.outcome)}. ${proposal.riskSummary}`,
+        summary: publicGoalText(`${publicGoalOutcome(proposal.preflight.outcome)}. ${proposal.riskSummary}`),
         createdAt: proposal.createdAt,
-        evidenceRefs: proposal.candidate.evidenceRefs,
+        evidence: publicEvidenceItems(proposal.candidate.evidenceRefs, {
+          orgUrlKey,
+          runAgentId: proposal.proposedByAgentId,
+        }),
         actorType: "agent" as const,
         actorId: proposal.proposedByAgentId,
         actorName: actorName("agent", proposal.proposedByAgentId),
@@ -1256,19 +1768,8 @@ export function goalService(db: Db) {
 
   async function workspaceFor(id: string) {
     const goal = await requireGoal(db, id);
-    const [ownerAssignment, plan, activities, historyPage, changes, results, evidenceActivity, pendingWakeup] = await Promise.all([
-      db.select().from(goalOwnerAssignments).where(and(
-        eq(goalOwnerAssignments.goalId, id),
-        isNull(goalOwnerAssignments.endsAt),
-      )).then((rows) => rows[0] ?? null),
-      goal.planRevision > 0
-        ? db.select().from(goalPlans).where(and(
-          eq(goalPlans.goalId, id),
-          eq(goalPlans.revision, goal.planRevision),
-        )).then((rows) => rows[0] ?? null)
-        : Promise.resolve(null),
-      db.select().from(goalActivities).where(eq(goalActivities.goalId, id))
-        .orderBy(desc(goalActivities.occurredAt), desc(goalActivities.createdAt)).limit(100),
+    const orgUrlKey = await organizationUrlKey(db, goal.orgId);
+    const [historyPage, changes, results, evidenceActivity, pendingWakeup] = await Promise.all([
       historyFor(id),
       db.select().from(goalChangeProposals).where(and(
         eq(goalChangeProposals.goalId, id),
@@ -1301,12 +1802,16 @@ export function goalService(db: Db) {
           ? publicGoalOutcome(acceptedResult.preflight.outcome)
           : publicGoalActivitySummary(evidenceActivity),
         sourceActivityId: evidenceActivity.id,
-        evidenceRefs: stringEvidenceRefs(evidenceActivity.evidenceRefs),
+        evidence: publicEvidenceItems(evidenceActivity.evidenceRefs, {
+          orgUrlKey,
+          runAgentId: evidenceActivity.submittedByAgentId,
+        }),
       }
       : null;
     const pendingChange = changes[0] ?? null;
     const readyResult = results.find((proposal) => proposal.status === "ready") ?? null;
-    const facet = facetFor(goal, pendingChange, readyResult, pendingWakeup);
+    const runAttentionReason = goalRunAttentionReason(externalWorkFact?.runStatus);
+    const facet = facetFor(goal, pendingChange, readyResult, pendingWakeup, externalWorkFact);
     const wakeupAttentionReason = goalWakeupAttentionReason(pendingWakeup);
     const attention = goal.lifecycle === "closed"
       ? null
@@ -1319,48 +1824,56 @@ export function goalService(db: Db) {
         : pendingChange
           ? {
             kind: "change_proposal" as const,
-            reason: pendingChange.rationale,
+            reason: publicGoalText(pendingChange.rationale),
             sourceId: pendingChange.id,
           }
-          : goal.lifecycle === "draft" && goal.alignmentQuestion
-            ? { kind: "alignment_question" as const, reason: goal.alignmentQuestion, sourceId: goal.id }
+            : goal.lifecycle === "draft" && goal.alignmentQuestion
+            ? { kind: "alignment_question" as const, reason: publicGoalText(goal.alignmentQuestion), sourceId: goal.id }
             : wakeupAttentionReason
               ? { kind: "owner_blocked" as const, reason: wakeupAttentionReason, sourceId: pendingWakeup?.status ?? null }
-              : null;
+              : runAttentionReason
+                ? { kind: "owner_blocked" as const, reason: runAttentionReason, sourceId: externalWorkFact?.sourceRunId ?? externalWorkFact?.sourceId ?? null }
+                : null;
+    const publicGoal = publicGoalView(goal);
     return {
-      goal: { ...goal, ownerAssignment, plan, activities },
+      goal: publicGoal,
       facet,
-      currentGoal: { summary: goal.outcomeStatement ?? goal.title, revision: goal.contractRevision },
+      currentGoal: { summary: publicGoal.outcomeStatement ?? goal.title, updatedFromEvidence: Boolean(progressSource) },
       currentProgress: progressSource
         ? {
           summary: progressSource.summary,
           sourceActivityId: progressSource.sourceActivityId,
-          evidenceRefs: progressSource.evidenceRefs,
+          evidence: progressSource.evidence,
         }
         : {
           summary: "No evidence-backed progress has been recorded yet.",
           sourceActivityId: null,
-          evidenceRefs: [],
+          evidence: [],
         },
-      agentAction: externalWorkFact
+      agentAction: readyResult
+        ? null
+        : externalWorkFact
         ? {
           summary: externalWorkFact.summary,
           sourceIds: [externalWorkFact.sourceId],
           ...(externalWorkFact.runStatus ? { status: externalWorkFact.runStatus } : {}),
         }
         : null,
-      nextStep: goal.continuationKind && goal.continuationSummary
-        ? {
-          kind: goal.continuationKind,
-          summary: goal.continuationSummary,
-          wakeCondition: goal.wakeCondition,
-        }
-        : null,
+      nextStep: readyResult
+        ? { summary: "Review the proposed result above.", wakeCondition: null }
+        : pendingChange
+          ? { summary: "Review the proposed Goal update above.", wakeCondition: null }
+          : goal.continuationKind && goal.continuationSummary
+            ? {
+              summary: publicGoalText(goal.continuationSummary),
+              wakeCondition: goal.wakeCondition ? publicGoalText(goal.wakeCondition) : null,
+            }
+            : null,
       attention,
       timeline: historyPage.items,
       timelineNextCursor: historyPage.nextCursor,
-      changeProposals: changes,
-      resultProposals: results,
+      changeProposals: changes.map((proposal) => publicGoalChangeProposal(proposal, { orgUrlKey })),
+      resultProposals: results.map((proposal) => publicGoalResultProposal(proposal, { orgUrlKey })),
     };
   }
 
@@ -1558,7 +2071,7 @@ export function goalService(db: Db) {
           submittedByAgentId: null,
           agentOwnerRefAtTime: input.packet.ownerAgentId,
           activityKind: "progress",
-          summary: `Goal activated with initial ${activation.initialContinuation.kind}: ${activation.initialContinuation.summary}`,
+          summary: publicGoalText(`The Agent is starting with: ${activation.initialContinuation.summary}`),
           evidenceRefs: [],
           idempotencyKey: `goal-start:${insertedRequest.id}`,
         });
@@ -1588,7 +2101,7 @@ export function goalService(db: Db) {
       const organizationGoals = await db.select().from(goals).where(eq(goals.orgId, orgId))
         .orderBy(asc(goals.createdAt));
       return Promise.all(organizationGoals.map(async (goal) => {
-        const [progress, pendingChange, readyResult, owner, pendingWakeup] = await Promise.all([
+        const [progress, pendingChange, readyResult, owner, pendingWakeup, externalWorkFact] = await Promise.all([
           db.select().from(goalActivities).where(and(
             eq(goalActivities.goalId, goal.id),
             inArray(goalActivities.activityKind, [...CURRENT_PROGRESS_ACTIVITY_KINDS]),
@@ -1614,6 +2127,7 @@ export function goalService(db: Db) {
             )).then((rows) => rows[0] ?? null)
             : Promise.resolve(null),
           pendingGoalWakeup(goal),
+          latestExternalWorkFact(goal),
         ]);
         const currentProgress = progress
           ? publicGoalActivitySummary(progress)
@@ -1624,22 +2138,25 @@ export function goalService(db: Db) {
             ? `Review the proposed Goal result: ${publicGoalOutcome(readyResult.preflight.outcome)}`
             : pendingChange?.rationale
               ?? (goal.lifecycle === "draft" ? goal.alignmentQuestion : null)
-              ?? goalWakeupAttentionReason(pendingWakeup);
+              ?? goalWakeupAttentionReason(pendingWakeup)
+              ?? goalRunAttentionReason(externalWorkFact?.runStatus);
         return {
           id: goal.id,
           orgId: goal.orgId,
           title: goal.title,
           lifecycle: goal.lifecycle,
           status: goal.status,
-          facet: facetFor(goal, pendingChange, readyResult, pendingWakeup),
+          facet: facetFor(goal, pendingChange, readyResult, pendingWakeup, externalWorkFact),
           ownerAgentId: goal.ownerAgentId,
           ownerName: owner?.name ?? null,
           currentProgress,
           progressSummary: currentProgress,
-          nextAction: goal.continuationSummary,
-          nextStepSummary: goal.continuationSummary ?? "No next step has been recorded.",
+          nextAction: goal.continuationSummary ? publicGoalText(goal.continuationSummary) : null,
+          nextStepSummary: goal.continuationSummary
+            ? publicGoalText(goal.continuationSummary)
+            : "No next step has been recorded.",
           targetTime: goal.evaluationDeadline ?? goal.actionDeadline,
-          attentionReason,
+          attentionReason: attentionReason ? publicGoalText(attentionReason) : null,
           focus: goal.focus,
           updatedAt: goal.updatedAt,
         };
@@ -1768,7 +2285,7 @@ export function goalService(db: Db) {
           submittedByAgentId: actorAgentId,
           agentOwnerRefAtTime: input.ownerAgentId,
           activityKind: "progress",
-          summary: `Goal activated with initial ${input.initialContinuation.kind}: ${input.initialContinuation.summary}`,
+          summary: publicGoalText(`The Agent is starting with: ${input.initialContinuation.summary}`),
           evidenceRefs: [],
         });
         return goal;

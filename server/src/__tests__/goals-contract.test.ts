@@ -7,8 +7,23 @@ import {
   startGoalSchema,
   updateGoalSchema,
 } from "@rudderhq/shared";
+import express from "express";
+import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { compileGoalStartPreview, goalService, reduceGoalEvaluation, stableGoalHash } from "../services/goals.js";
+import { errorHandler } from "../middleware/index.js";
+import { goalRoutes } from "../routes/goals.js";
+import {
+  compileGoalStartPreview,
+  goalService,
+  publicGoalActivitySummary,
+  publicGoalChangeProposal,
+  publicGoalResultProposal,
+  publicGoalText,
+  publicGoalView,
+  publicRunSummary,
+  reduceGoalEvaluation,
+  stableGoalHash,
+} from "../services/goals.js";
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG_ID = "22222222-2222-4222-8222-222222222222";
@@ -105,6 +120,9 @@ function createGoalDb(initialGoal = makeGoal()) {
         return builder;
       },
       innerJoin() {
+        return builder;
+      },
+      leftJoin() {
         return builder;
       },
       where() {
@@ -249,6 +267,48 @@ function evaluationInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Goal contract", () => {
+  it("returns change proposals as plain-language summaries without Contract fields", () => {
+    const proposal = publicGoalChangeProposal({
+      id: "change-1",
+      status: "pending",
+      rationale: "The autonomy envelope and evaluator changed; see artifact://private.",
+      evidenceRefs: ["artifact://private"],
+      beforeContract: {
+        outcomeStatement: "Ship the verified result",
+        objectiveMode: "target",
+        criteria: [{ id: "result", label: "The result is verified", evaluator: "artifact" }],
+        autonomyEnvelope: { allowed: ["bounded_reversible_work"] },
+        humanAuthorities: { acceptance: "board_human" },
+        evaluationPolicy: { terminalEvidenceRequired: true, humanAcceptanceRequired: true },
+        actionDeadline: null,
+        evaluationDeadline: "2026-08-20T10:00:00.000Z",
+      },
+      afterContract: {
+        outcomeStatement: "Ship the verified result after restart",
+        criteria: [{ id: "result", label: "The result remains verified", evaluator: "artifact" }],
+        autonomyEnvelope: {
+          allowed: ["bounded_reversible_work"],
+          requiresHumanApproval: ["external_publication"],
+        },
+        humanAuthorities: { acceptance: "board_human", externalPublication: "board_human" },
+        evaluationPolicy: { terminalEvidenceRequired: true, humanAcceptanceRequired: true },
+        evaluationDeadline: "2026-08-22T10:00:00.000Z",
+      },
+    } as never);
+    const text = JSON.stringify({
+      rationale: proposal.rationale,
+      beforeSummary: proposal.beforeSummary,
+      afterSummary: proposal.afterSummary,
+    });
+    expect(text).toContain("Ship the verified result after restart");
+    expect(text).toContain("publishing externally");
+    expect(text).toContain("You decide");
+    expect(text).not.toContain("autonomyEnvelope");
+    expect(text).not.toContain("objectiveMode");
+    expect(text).not.toContain("evaluator");
+    expect(text).not.toContain("artifact://");
+  });
+
   it("hashes the canonical Start packet that survives request validation unchanged", () => {
     const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
       title: "Publish a verified Goal Workspace release candidate",
@@ -311,6 +371,314 @@ describe("Goal contract", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.packet?.activation.outcomeStatement).toBe("Customers renew without manual support");
+    expect(preview.packet?.activation.initialContinuation.summary).toBe(preview.review?.firstAction);
+  });
+
+  it.each([
+    ["queued", "The Agent is working on this Goal."],
+    ["running", "The Agent is working on this Goal."],
+    ["succeeded", "The Agent completed its latest action."],
+    ["completed", "The Agent completed its latest action."],
+    ["failed", "The Agent could not complete its latest action."],
+    ["cancelled", "The Agent stopped its latest action."],
+    ["timed_out", "The Agent's latest action needs attention."],
+  ])("keeps %s run summaries plain-language even when the provider includes an internal identifier", (status, expected) => {
+    expect(publicRunSummary({
+      status,
+      resultJson: { summary: `Agent run 85d206b4 is ${status}.` },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe(expected);
+  });
+
+  it("preserves a readable run result without exposing the run concept", () => {
+    expect(publicRunSummary({
+      status: "succeeded",
+      resultJson: { summary: "The linked issue produced a reviewable artifact." },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The linked issue produced a reviewable artifact.");
+  });
+
+  it("strips the provider result envelope from Goal progress", () => {
+    const envelope = "__RUDDER_RESULT_TEST__" + JSON.stringify({
+      kind: "message",
+      body: "The Agent completed the requested verification.",
+      structuredPayload: { internal: "metadata" },
+    });
+    expect(publicRunSummary({
+      status: "succeeded",
+      resultJson: { summary: `Streaming reply for chat.\n${envelope}` },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The Agent completed the requested verification.");
+  });
+
+  it("keeps internal Goal implementation terms out of public progress language", () => {
+    expect(publicGoalText(
+      "Current Goal contract, objective mode, evaluator, evidence requirements, autonomy envelope, human authorities, continuation, change proposal, result proposal, and runtime evidence are being checked.",
+    )).toBe(
+      "Current Goal, Goal type, success check, what we need to verify, working boundaries, decisions that need you, next step, Goal update, result review, and supporting evidence are being checked.",
+    );
+    expect(publicGoalText("The contract and contract revision are ready for review.")).toBe(
+      "The agreement and Goal update are ready for review.",
+    );
+    expect(publicGoalActivitySummary({
+      activityKind: "progress",
+      summary: "Current Goal contract and runtime evidence are being checked.",
+    })).toBe("Current Goal and supporting evidence are being checked.");
+    expect(publicGoalActivitySummary({
+      activityKind: "progress",
+      summary: "Evidence demonstrates that the latest checkpoint is recorded for 85d206b4-6e1f-4f24-9d98-76e3c0f3d1a2.",
+    })).toBe("Supporting work shows that the latest checkpoint is recorded for the related item.");
+  });
+
+  it("preserves the useful part of an internal run summary", () => {
+    expect(publicRunSummary({
+      status: "succeeded",
+      resultJson: { summary: "Agent run 85d206b4 is succeeded: The linked issue produced a reviewable artifact." },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The linked issue produced a reviewable artifact.");
+  });
+
+  it("keeps free-form agent progress language user-facing", () => {
+    expect(publicRunSummary({
+      status: "succeeded",
+      resultJson: {
+        summary: "I'm reviewing the feedback against contract revision 1 and the recorded continuation. I'll use the `para-memory-files` skill for the required daily-note update.",
+      },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("I'm reviewing the feedback against Goal update 1 and the recorded next step. I'll use shared notes for the required notes update.");
+  });
+
+  it("hides provider errors and opaque identifiers from Goal progress", () => {
+    expect(publicRunSummary({
+      status: "failed",
+      resultJson: { error: "DrizzleQueryError: write CONNECTION_ENDED 127.0.0.1:55883" },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The Agent could not complete its latest action.");
+    expect(publicRunSummary({
+      status: "succeeded",
+      resultJson: { summary: "Agent run 85d206b4-6e1f-4f24-9d98-76e3c0f3d1a2 is succeeded: DrizzleQueryError: write failed" },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The Agent completed its latest action.");
+    expect(publicGoalText("Feedback 85d206b4-6e1f-4f24-9d98-76e3c0f3d1a2 is linked to goal-feedback:85d206b4-6e1f-4f24-9d98-76e3c0f3d1a2."))
+      .not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+  });
+
+  it("hides process adapter failures from the public Goal workspace", () => {
+    expect(publicRunSummary({
+      status: "failed",
+      resultJson: { error: "Process adapter missing command" },
+      resultSummaryJson: null,
+      error: null,
+    })).toBe("The Agent could not complete its latest action.");
+  });
+
+  it("keeps the Goal workspace read model separate from the internal Contract", () => {
+    const goal = publicGoalView(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: OWNER_ID,
+      focus: true,
+      autonomyEnvelope: { allowed: ["bounded_reversible_work"] },
+      humanAuthorities: { consequentialChanges: "board_human" },
+      evaluationPolicy: { humanAcceptanceRequired: true },
+      evaluationResult: { outcome: "achieved", resultPayload: { private: true } },
+    }) as any);
+
+    expect(goal).toMatchObject({ id: GOAL_ID, orgId: ORG_ID, ownerAgentId: OWNER_ID, focus: true });
+    expect(goal.criteria).toEqual([{ id: "result", label: "Result exists" }]);
+    expect(Object.keys(goal)).not.toEqual(expect.arrayContaining([
+      "objectiveMode",
+      "contractRevision",
+      "autonomyEnvelope",
+      "humanAuthorities",
+      "evaluationPolicy",
+      "resultPayload",
+      "planRevision",
+      "continuationKind",
+    ]));
+    expect(goal.evaluationResult).toEqual({ outcome: "achieved" });
+  });
+
+  it("keeps result proposals to public outcome fields", () => {
+    const proposal = publicGoalResultProposal({
+      id: "proposal-1",
+      status: "ready",
+      riskSummary: "The contract revision is ready; see artifact://private-proof.",
+      preflight: {
+        outcome: "achieved",
+        criteria: [{ id: "result", evaluator: "artifact", status: "met", missingEvidence: [] }],
+        resultValue: null,
+        decision: null,
+      },
+      candidate: {
+        evidenceRefs: ["artifact://private-proof"],
+        resultPayload: { private: true },
+      },
+      contractRevision: 4,
+      candidateHash: "private-hash",
+      idempotencyKey: "private-key",
+      proposedByAgentId: OWNER_ID,
+    } as any);
+
+    expect(proposal).toMatchObject({
+      id: "proposal-1",
+      status: "ready",
+      outcome: "achieved",
+      outcomeLabel: "Goal achieved",
+      criteria: [{ id: "result", status: "met", missingEvidenceCount: 0 }],
+      evidence: [{ label: "Supporting work 1", href: null, external: false }],
+      riskSummary: "The Goal update is ready; see supporting work",
+    });
+    expect(Object.keys(proposal)).not.toEqual(expect.arrayContaining([
+      "candidate",
+      "candidateHash",
+      "preflight",
+      "contractRevision",
+      "idempotencyKey",
+      "proposedByAgentId",
+    ]));
+  });
+
+  it("keeps the HTTP Goal Workspace response allowlisted", async () => {
+    const { db, state } = createGoalDb(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: OWNER_ID,
+      focus: true,
+    }));
+    state.resultProposals.push({
+      id: "result-1",
+      goalId: GOAL_ID,
+      status: "ready",
+      createdAt: new Date("2026-08-04T00:10:00.000Z"),
+      riskSummary: "The contract revision is ready; see artifact://private-proof.",
+      preflight: {
+        outcome: "achieved",
+        criteria: [{ id: "result", status: "met", missingEvidence: [] }],
+      },
+      candidate: {
+        evidenceRefs: ["artifact://private-proof"],
+        resultPayload: { private: true },
+      },
+      contractRevision: 9,
+      candidateHash: "private-candidate-hash",
+      idempotencyKey: "private-key",
+      proposedByAgentId: OWNER_ID,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = { type: "board", source: "local_implicit", userId: "board-user" };
+      next();
+    });
+    app.use("/api", goalRoutes(db));
+    app.use(errorHandler);
+
+    const response = await request(app).get(`/api/goals/${GOAL_ID}/workspace`);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body.goal).toMatchObject({ id: GOAL_ID, ownerAgentId: OWNER_ID, focus: true });
+    expect(Object.keys(response.body.goal)).not.toEqual(expect.arrayContaining([
+      "objectiveMode",
+      "contractRevision",
+      "autonomyEnvelope",
+      "humanAuthorities",
+      "evaluationPolicy",
+      "resultPayload",
+      "planRevision",
+      "continuationKind",
+    ]));
+    expect(response.body.agentAction).toBeNull();
+    expect(response.body.nextStep).toEqual({ summary: "Review the proposed result above.", wakeCondition: null });
+    expect(response.body.resultProposals[0]).toMatchObject({
+      id: "result-1",
+      status: "ready",
+      outcome: "achieved",
+      outcomeLabel: "Goal achieved",
+    });
+    expect(Object.keys(response.body.resultProposals[0])).not.toEqual(expect.arrayContaining([
+      "candidate",
+      "candidateHash",
+      "preflight",
+      "contractRevision",
+      "idempotencyKey",
+      "proposedByAgentId",
+    ]));
+    expect(JSON.stringify(response.body)).not.toContain("private-candidate-hash");
+  });
+
+  it("keeps legacy Goal read endpoints on the public read model", async () => {
+    const { db, state } = createGoalDb(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: OWNER_ID,
+    }));
+    state.activities.push({
+      id: "activity-1",
+      orgId: ORG_ID,
+      goalId: GOAL_ID,
+      activityKind: "progress",
+      submittedByAgentId: OWNER_ID,
+      evidenceRefs: ["artifact://private-progress"],
+      summary: "The Contract revision is backed by runtime evidence.",
+      occurredAt: new Date("2026-08-04T00:05:00.000Z"),
+      createdAt: new Date("2026-08-04T00:05:00.000Z"),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = { type: "board", source: "local_implicit", userId: "board-user" };
+      next();
+    });
+    app.use("/api", goalRoutes(db));
+    app.use(errorHandler);
+
+    const detail = await request(app).get(`/api/goals/${GOAL_ID}`);
+    const activities = await request(app).get(`/api/goals/${GOAL_ID}/activities`);
+
+    expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+    expect(activities.status, JSON.stringify(activities.body)).toBe(200);
+    expect(JSON.stringify(detail.body)).not.toContain("private-progress");
+    expect(JSON.stringify(activities.body)).not.toContain("private-progress");
+    expect(detail.body).not.toHaveProperty("objectiveMode");
+    expect(detail.body).not.toHaveProperty("contractRevision");
+    expect(detail.body.activities[0]).toMatchObject({
+      id: "activity-1",
+      evidence: [{ label: "Supporting work 1", href: null, external: false }],
+    });
+    expect(detail.body.activities[0]).not.toHaveProperty("evidenceRefs");
+    expect(activities.body[0]).not.toHaveProperty("evidenceRefs");
+  });
+
+  it("requires board authority to change the organization Focus Goal", async () => {
+    const { db } = createGoalDb(makeGoal({ lifecycle: "active", status: "active" }));
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "agent",
+        source: "agent_key",
+        orgId: ORG_ID,
+        agentId: OWNER_ID,
+      };
+      next();
+    });
+    app.use("/api", goalRoutes(db));
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post(`/api/goals/${GOAL_ID}/focus`)
+      .send({ focus: true });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(403);
+    expect(response.body.error).toBe("Board access required");
   });
 
   it("warns when an available Agent may not cover the Goal without blocking explicit user assignment", () => {

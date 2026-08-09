@@ -104,6 +104,7 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
     openNewAgent: vi.fn(),
+    openNewGoal: vi.fn(),
     openNewProject: vi.fn(),
   }),
 }));

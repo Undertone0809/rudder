@@ -217,6 +217,20 @@ function applyJsxRuntimeKey(
   return { ...(props ?? {}), key };
 }
 
+function createJsxRuntimeElement(
+  react: { createElement: (...args: unknown[]) => unknown },
+  withKey: typeof applyJsxRuntimeKey,
+  type: unknown,
+  props: Record<string, unknown> | null | undefined,
+  key: string | number | undefined,
+): unknown {
+  const nextProps = withKey(props, key);
+  const children = nextProps.children;
+  if (!Array.isArray(children)) return react.createElement(type, nextProps);
+  const { children: _children, ...propsWithoutChildren } = nextProps;
+  return react.createElement(type, propsWithoutChildren, ...children);
+}
+
 function getShimBlobUrl(specifier: "react" | "react-dom" | "react-dom/client" | "react/jsx-runtime" | "sdk-ui"): string {
   if (shimBlobUrls[specifier]) return shimBlobUrls[specifier];
 
@@ -240,8 +254,9 @@ function getShimBlobUrl(specifier: "react" | "react-dom" | "react-dom/client" | 
       source = `
         const R = globalThis.__rudderPluginBridge__?.react;
         const withKey = ${applyJsxRuntimeKey.toString()};
-        export const jsx = (type, props, key) => R.createElement(type, withKey(props, key));
-        export const jsxs = (type, props, key) => R.createElement(type, withKey(props, key));
+        const createWithChildren = ${createJsxRuntimeElement.toString()};
+        export const jsx = (type, props, key) => createWithChildren(R, withKey, type, props, key);
+        export const jsxs = (type, props, key) => createWithChildren(R, withKey, type, props, key);
         export const Fragment = R.Fragment;
       `;
       break;
@@ -851,4 +866,5 @@ export function _resetPluginModuleLoader(): void {
 }
 
 export const _applyJsxRuntimeKeyForTests = applyJsxRuntimeKey;
+export const _createJsxRuntimeElementForTests = createJsxRuntimeElement;
 export const _rewriteBareSpecifiersForTests = rewriteBareSpecifiers;

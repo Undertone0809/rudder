@@ -36,6 +36,8 @@ export interface RudderAppOptions {
    * supplies an explicit (deny-all by default) value.
    */
   mcpDeploymentAllowlists?: McpDeploymentAllowlists;
+  /** Exact origins that trusted plugin HTTP calls may reach, including local fixtures. */
+  pluginHttpAllowedOrigins?: string[];
   /** Host environment source used only through managed MCP allowlist policy. */
   mcpHostEnv?: Record<string, string | undefined>;
   instanceId?: string;

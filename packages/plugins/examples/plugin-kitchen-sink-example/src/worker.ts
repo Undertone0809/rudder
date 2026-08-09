@@ -868,6 +868,39 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
       };
     },
   );
+
+  ctx.tools.register(
+    TOOL_NAMES.httpPost,
+    {
+      displayName: "Kitchen Sink HTTP POST",
+      description: "POSTs a bounded message to the configured HTTP endpoint.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          message: { type: "string" },
+        },
+        required: ["message"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as { message?: string };
+      const message = typeof payload.message === "string" ? payload.message : "";
+      if (!message.trim()) return { error: "message is required" };
+
+      const config = await getConfig(ctx);
+      const url = config.httpDemoUrl || DEFAULT_CONFIG.httpDemoUrl;
+      const response = await ctx.http.fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message, runId: runCtx.runId, orgId: runCtx.orgId }),
+      });
+      const body = (await response.text()).slice(0, 2_000);
+      return {
+        content: body,
+        data: { status: response.status, statusText: response.statusText, body },
+      };
+    },
+  );
 }
 
 async function registerEventHandlers(ctx: PluginContext): Promise<void> {

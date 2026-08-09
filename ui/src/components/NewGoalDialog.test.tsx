@@ -18,6 +18,7 @@ vi.mock("@/lib/router", () => ({ useNavigate: () => navigate }));
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => open ? <div>{children}</div> : null,
   DialogContent: ({ children, showCloseButton: _showCloseButton, ...props }: { children: ReactNode; showCloseButton?: boolean }) => <div {...props}>{children}</div>,
+  DialogDescription: ({ children, ...props }: { children: ReactNode }) => <p {...props}>{children}</p>,
   DialogTitle: ({ children, ...props }: { children: ReactNode }) => <h2 {...props}>{children}</h2>,
 }));
 vi.mock("../context/DialogContext", () => ({ useDialog: () => ({ newGoalOpen: true, newGoalDefaults, closeNewGoal }) }));
@@ -183,8 +184,8 @@ describe("NewGoalDialog", () => {
     expect(container.textContent).toContain("First action");
 
     act(() => button("Create and start")?.click());
-    await waitUntil(() => expect(container.querySelector("[role=alert]")?.textContent).toContain("The response was lost"));
-    act(() => button("Create and start")?.click());
+    await waitUntil(() => expect(container.querySelector("[role=alert]")?.textContent).toContain("Unable to start this Goal right now"));
+    act(() => button("Retry create and start")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
 
     const firstPayload = vi.mocked(goalsApi.start).mock.calls[0]?.[1] as Record<string, unknown>;
@@ -193,6 +194,7 @@ describe("NewGoalDialog", () => {
     expect(retryPayload.requestKey).toBe("request-key-1");
     expect(firstPayload.packetHash).toBe(validPreview.packetHash);
     expect(firstPayload.packet).toBe(validPreview.packet);
+    expect(firstPayload).not.toHaveProperty("allowCapabilityMismatch");
     expect(randomUUID).toHaveBeenCalledTimes(1);
   });
 
@@ -203,7 +205,7 @@ describe("NewGoalDialog", () => {
     expect(goalsApi.previewStart).not.toHaveBeenCalledWith("org-1", expect.objectContaining({ ownerAgentId: agent.id }));
   });
 
-  it("shows a capability warning without silently downgrading the selected Agent to a Draft", async () => {
+  it("requires explicit confirmation before starting with a capability warning", async () => {
     vi.mocked(goalsApi.previewStart).mockResolvedValue({
       ...validPreview,
       warning: "This Agent may not be the best match for this Goal.",
@@ -214,11 +216,15 @@ describe("NewGoalDialog", () => {
 
     await waitUntil(() => {
       expect(container.textContent).toContain("This Agent may not be the best match for this Goal.");
-      expect(button("Create and start with this Agent")?.disabled).toBe(false);
+      expect(button("Start with selected Agent")?.disabled).toBe(false);
     });
-    act(() => button("Create and start with this Agent")?.click());
+    expect(button("Save draft for alignment")).toBeNull();
+    act(() => button("Start with selected Agent")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
-    expect(goalsApi.start).toHaveBeenCalled();
+    expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({
+      allowCapabilityMismatch: true,
+      packetHash: validPreview.packetHash,
+    }));
     expect(goalsApi.create).not.toHaveBeenCalled();
   });
 
@@ -281,6 +287,31 @@ describe("NewGoalDialog", () => {
     expect(assignee.textContent).toBe(alternateAgent.name);
     expect(container.textContent).not.toContain(pendingAgent.name);
     expect(container.textContent).not.toContain(terminatedAgent.name);
+  });
+
+  it("does not treat an Agent loading failure as an empty list", async () => {
+    vi.mocked(agentsApi.list).mockRejectedValueOnce(new Error("Failed to fetch"));
+    const container = renderDialog();
+    change(field("Goal"), "Ship Goal Workspace");
+
+    await waitUntil(() => {
+      expect(container.textContent).toContain("Available Agents could not be loaded");
+      expect(button("Retry Agents")).not.toBeNull();
+      expect(button("Create and start")?.disabled).toBe(true);
+    });
+  });
+
+  it("explains how to continue when no Agent is available", async () => {
+    vi.mocked(agentsApi.list).mockResolvedValueOnce([] as never);
+    const container = renderDialog();
+
+    await waitUntil(() => {
+      expect(container.textContent).toContain("No available Agents yet");
+      expect(button("Open Agents")).not.toBeNull();
+    });
+    act(() => button("Open Agents")?.click());
+    expect(closeNewGoal).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/agents");
   });
 
   it("saves an invalid preview as a Draft with its alignment question", async () => {

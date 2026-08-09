@@ -41,6 +41,11 @@ Product model:
 - A canonical Goal starts as a Draft with no implicit Owner or hierarchy. Its
   Contract declares the outcome, objective mode, criteria, autonomy envelope,
   human authorities, evaluation policy, and relevant deadlines.
+- The Goal Contract is a compiled, system-governed artifact. The primary user
+  surface does not require an operator to understand or enter Contract fields;
+  the operator expresses the intended result, boundaries, and feedback in
+  plain language, and the Agent/system compiles the structured Contract from
+  that alignment.
 - Activation assigns exactly one same-organization Agent Owner, creates the
   initial Plan and continuation, and records the Contract revision.
 - Plans are mutable revisions; Activity is append-only and carries the owner,
@@ -81,14 +86,24 @@ Product model:
 
 Flow:
 
-1. Board creates a Draft Goal in Goals UI or API.
-2. Board or an authorized Agent activates a complete Contract with an explicit
-   same-organization Owner, initial Plan, and continuation.
-3. Owner and authorized actors revise the Plan, append Activity, set Focus, and
-   submit evidence through the command APIs.
-4. Goal Detail exposes Contract, Plan, Owner and continuation, Activity, Proof,
-   and linked dependency previews where available.
-5. Before deletion, dependency preview/check prevents accidental loss of the
+1. Board creates a Draft Goal in the Goals UI or API with a result-oriented
+   title/context and may assign one same-organization Owner Agent.
+2. The system presents a plain-language start proposal. The Board confirms
+   the intended result or continues alignment; the confirmation is the one
+   user-facing activation decision.
+3. The Agent/system compiles the Contract, initial Plan, continuation, and
+   evaluation policy, then activates the Goal atomically with the explicit
+   Owner assignment.
+4. Owner and authorized actors advance the Goal through runs, append
+   evidence-backed Activity/Checkpoints, provide Feedback, and move Focus. The
+   Goal Workspace presents the public Outcome, Current progress, Latest Agent
+   activity, Next step, Feedback, Focus, History, and any Completion Proposal.
+   Internal Contract, evaluator, evidence-reference, and authority fields are
+   not required or exposed on this primary user path.
+5. A Completion Proposal includes the Agent's evidence and verifier result;
+   the Board must accept the result or reject it with feedback before the Goal
+   is terminal.
+6. Before deletion, dependency preview/check prevents accidental loss of the
    work loop's reason.
 
 Invariants:
@@ -109,12 +124,14 @@ Invariants:
 
 Evidence:
 
-- Goal Detail lifecycle E2E covers Draft activation, persistence, denial cases,
-  organization boundaries, Owner command authority, Plan/Activity/Focus, Run
+- Goal Detail lifecycle E2E covers Draft alignment and activation, persistence,
+  denial cases, organization boundaries, Owner command authority,
+  Plan/Activity/Focus, Feedback, Completion Proposal rejection/acceptance, Run
   closeout, idempotency, restart continuity, contradictory multi-criterion
   evaluation, and all objective modes.
-- Contract, Plan, Owner, continuation, Activity, Proof, and linked-work
-  surfaces show the Goal's downstream work.
+- The Goal Workspace shows the public result and evidence-backed progress;
+  Contract, Plan, Owner, continuation, Activity, Proof, and linked-work state
+  remain database-backed governance and execution state behind that projection.
 
 ## ORG.PROJECT.001
 

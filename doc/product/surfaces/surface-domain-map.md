@@ -57,8 +57,9 @@ owning domain contract.
 
 ## Goal Detail And Goals List
 
-- Goal Contract, Owner, Plan, continuation, Activity, Proof, dependency
-  protection, and linked work: `ORG.GOAL.001`.
+- Goal Workspace public Outcome, progress, Agent activity, next step, Feedback,
+  Focus, History, Completion Proposal, Owner, and linked work, plus the
+  underlying Contract/Proof governance: `ORG.GOAL.001`.
 - Full Goal-description authoring and rendering:
   `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Project and issue references remain governed by `ORG.PROJECT.001` and

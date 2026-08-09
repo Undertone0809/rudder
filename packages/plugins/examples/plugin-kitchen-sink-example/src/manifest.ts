@@ -177,6 +177,18 @@ const manifest: PaperclipPluginManifestV1 = {
         required: ["title"],
       },
     },
+    {
+      name: TOOL_NAMES.httpPost,
+      displayName: "Kitchen Sink HTTP POST",
+      description: "POSTs a bounded message to the configured HTTP endpoint.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          message: { type: "string" },
+        },
+        required: ["message"],
+      },
+    },
   ],
   ui: {
     slots: [

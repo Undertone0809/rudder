@@ -372,7 +372,7 @@ export function IssueProperties({
     () => (goals ?? []).filter((goal) => {
       if (!goalSearch.trim()) return true;
       const query = goalSearch.toLowerCase();
-      return `${goal.title} ${goal.description ?? ""} ${goal.level} ${goal.status}`.toLowerCase().includes(query);
+      return `${goal.title} ${goal.description ?? ""} ${goal.status}`.toLowerCase().includes(query);
     }),
     [goals, goalSearch],
   );

@@ -14,6 +14,7 @@ import { isPostgresError } from "./postgres-errors.js";
 const PLUGIN_EVENT_SET: ReadonlySet<string> = new Set(PLUGIN_EVENT_TYPES);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVITY_RUN_ID_FK_CONSTRAINT = "activity_log_run_id_heartbeat_runs_id_fk";
+const ACTIVITY_LOG_TRANSIENT_RETRIES = 2;
 
 let _pluginEventBus: PluginEventBus | null = null;
 
@@ -48,6 +49,10 @@ function isActivityRunIdPersistenceError(error: unknown): boolean {
   return isPostgresError(error, "23503", ACTIVITY_RUN_ID_FK_CONSTRAINT);
 }
 
+function isActivityLogTransientError(error: unknown): boolean {
+  return isPostgresError(error, "40P01") || isPostgresError(error, "40001");
+}
+
 export async function logActivity(db: Db, input: LogActivityInput) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
@@ -76,18 +81,24 @@ export async function logActivity(db: Db, input: LogActivityInput) {
   };
 
   let inserted: { id: string } | null = null;
-  try {
-    inserted = await insertActivity();
-  } catch (error) {
-    if (!persistedRunId || !isActivityRunIdPersistenceError(error)) {
-      throw error;
+  for (let attempt = 0; attempt <= ACTIVITY_LOG_TRANSIENT_RETRIES; attempt += 1) {
+    try {
+      inserted = await insertActivity();
+      break;
+    } catch (error) {
+      if (persistedRunId && isActivityRunIdPersistenceError(error)) {
+        logger.warn(
+          { err: error instanceof Error ? error.message : String(error), runId: persistedRunId, action: input.action },
+          "Activity run id did not match a heartbeat run; logging activity without run linkage",
+        );
+        persistedRunId = null;
+        continue;
+      }
+      if (!isActivityLogTransientError(error) || attempt === ACTIVITY_LOG_TRANSIENT_RETRIES) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
     }
-    logger.warn(
-      { err: error instanceof Error ? error.message : String(error), runId: persistedRunId, action: input.action },
-      "Activity run id did not match a heartbeat run; logging activity without run linkage",
-    );
-    persistedRunId = null;
-    inserted = await insertActivity();
   }
 
   if (!inserted) return null;
