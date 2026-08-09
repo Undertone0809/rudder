@@ -1422,16 +1422,7 @@ export async function runChildProcess(
         const startedAt = new Date().toISOString();
 
         if (opts.stdin != null && child.stdin) {
-          // A short-lived adapter may close stdin before its caller finishes writing.
-          // Handle that expected broken-pipe case so it becomes a normal run failure
-          // instead of an unhandled stream error that terminates the server.
-          child.stdin.on("error", (err: Error) => {
-            const errno = (err as NodeJS.ErrnoException).code;
-            if (errno !== "EPIPE") {
-              onLogError(err, runId, "failed to write child process stdin");
-            }
-          });
-          child.stdin.write(opts.stdin);
+          child.stdin.on("error", (err: Error) => (err as NodeJS.ErrnoException).code === "EPIPE" ? undefined : onLogError(err, runId, "failed to write child process stdin")); child.stdin.write(opts.stdin);
           child.stdin.end();
         }
 
