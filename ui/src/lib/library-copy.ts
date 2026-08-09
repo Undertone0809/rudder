@@ -19,7 +19,7 @@ type LibraryCopyKey =
   | "noLibraryFiles"
   | "noMatchingLibraryFiles"
   | "organizationSkillsHelp"
-  | "projectContextHelp"
+  | "projectSourcesHelp"
   | "resourceNotFoundInProjectLibrary"
   | "searchLibraryPlaceholder"
   | "libraryDocumentUnavailable"
@@ -54,9 +54,9 @@ const copy: Record<LibraryCopyKey, { en: string; "zh-CN": string }> = {
   liveLibraryLink: { en: "live Library link", "zh-CN": "实时文档链接" },
   noLibraryFiles: { en: "No Library files available.", "zh-CN": "暂无文档文件。" },
   noMatchingLibraryFiles: { en: "No matching Library files.", "zh-CN": "没有匹配的文档文件。" },
-  projectContextHelp: {
-    en: "Attach the codebases, Library files, URLs, and external systems agents should use for this project.",
-    "zh-CN": "添加这个项目中智能体应使用的代码库、文档文件、URL 和外部系统。",
+  projectSourcesHelp: {
+    en: "Project Sources are the codebases, Library files, local files, and URLs agents can use for this project.",
+    "zh-CN": "项目来源是智能体可在这个项目中使用的代码库、文档文件、本地文件和 URL。",
   },
   organizationSkillsHelp: {
     en: "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; Library-backed skills can be edited from Library.",

@@ -1,48 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { resolveOrganizationStorageKey } from "../../packages/agent-runtime-utils/src/organization-storage.ts";
 
-async function installDesktopShellStub(page: Page, pickedPath: string) {
-  await page.addInitScript((selectedPath) => {
-    const desktopShell = {
-      getBootState: async () => ({}),
-      onBootState: () => () => {},
-      openPath: async () => {},
-      copyText: async () => {},
-      setAppearance: async () => {},
-      restart: async () => {},
-      getAppVersion: async () => "0.0.0-test",
-      checkForUpdates: async () => ({
-        status: "unavailable",
-        currentVersion: "0.0.0-test",
-        checkedAt: "1970-01-01T00:00:00.000Z",
-      }),
-      sendFeedback: async () => {},
-      openExternal: async () => {},
-      openNotificationSettings: async () => ({ opened: false, platform: "darwin" }),
-      setBadgeCount: async () => {},
-      showNotification: async () => {},
-      pickPath: async () => ({ canceled: false, path: selectedPath }),
-    };
-
-    Object.defineProperty(window, "desktopShell", {
-      configurable: true,
-      value: desktopShell,
-    });
-  }, pickedPath);
-}
-
-async function computedBorderRadius(locator: Locator) {
-  return locator.evaluate((element) => getComputedStyle(element).borderRadius);
-}
-
-async function addExternalProjectResource(dialog: Locator) {
-  const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
-  const createExternalResourceAction = dialog.getByRole("button", { name: /Create external resource/ });
-  await expect(async () => {
-    await addResourcesButton.click({ force: true });
-    await expect(createExternalResourceAction).toBeVisible({ timeout: 1_000 });
-  }).toPass();
-  await createExternalResourceAction.click();
+async function addUrlProjectSource(page: Page, dialog: Locator, url: string) {
+  await dialog.getByRole("button", { name: "Add sources", exact: true }).click();
+  const sourcesDialog = page.getByTestId("new-project-add-sources-dialog");
+  await sourcesDialog.getByRole("button", { name: /Add from URL/ }).click();
+  await sourcesDialog.getByLabel("URL").fill(url);
+  await sourcesDialog.getByRole("button", { name: "Add source", exact: true }).click();
 }
 
 function parseRgbChannels(value: string): [number, number, number] {
@@ -233,7 +197,7 @@ test.describe("Primary rail create menu", () => {
     expect(created.status).toBe("in_progress");
   });
 
-  test("creates a project with an inline structured resource from the new project dialog", async ({ page }) => {
+  test("creates a project with a URL source from the new project dialog", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `PrimaryRail-Project-Resources-${Date.now()}`,
@@ -255,41 +219,13 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Structured Resource Project");
-    const resourceHelpText = "Attach the codebases, Library files, URLs, and external systems agents should use for this project.";
+    const resourceHelpText = "Project Sources are the codebases, Library files, local files, and URLs agents can use for this project.";
     await expect(dialog.getByText(resourceHelpText)).toHaveCount(0);
     await expect(dialog.getByText("No project-specific resources yet. You can still create the project now and attach resources later.")).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "About project context" }).hover();
+    await dialog.getByRole("button", { name: "About project sources" }).hover();
     await expect(page.getByText(resourceHelpText)).toBeVisible();
-
-    const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
-    await addExternalProjectResource(dialog);
-
-    const sharedControlRadius = await computedBorderRadius(addResourcesButton);
-    const resourceNameInput = dialog.getByPlaceholder("Rudder repo");
-    const resourceKindSelect = dialog.getByLabel("Kind");
-    const resourceLocatorInput = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
-    const resourceDescriptionInput = dialog.getByPlaceholder("What this resource contains and when agents should use it.");
-    const projectNoteInput = dialog.getByPlaceholder("Optional guidance specific to this project");
-    await expect(dialog.getByLabel("Project role")).toHaveCount(0);
-    await expect(dialog.getByText("Project note", { exact: true })).toBeVisible();
-
-    for (const control of [
-      resourceNameInput,
-      resourceKindSelect,
-      resourceLocatorInput,
-      resourceDescriptionInput,
-      projectNoteInput,
-    ]) {
-      expect(await computedBorderRadius(control)).toBe(sharedControlRadius);
-    }
-
-    await resourceNameInput.fill("Rudder repo");
-    await resourceLocatorInput.fill("~/projects/rudder");
-    await resourceDescriptionInput.fill(
-      "Main monorepo checkout for implementation work.",
-    );
-    await projectNoteInput.fill("Primary working set for implementation.");
+    await addUrlProjectSource(page, dialog, "https://example.com/rudder-reference");
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -301,28 +237,25 @@ test.describe("Primary rail create menu", () => {
       id: string;
       resources: Array<{
         role: string;
-        note: string | null;
-        resource: { name: string; kind: string; sourceType: string; locator: string; description: string | null };
+        resource: { name: string; kind: string; sourceType: string; locator: string };
       }>;
     };
 
     expect(created.resources).toHaveLength(1);
     expect(created.resources[0]).toEqual(expect.objectContaining({
-      role: "working_set",
-      note: "Primary working set for implementation.",
+      role: "reference",
       resource: expect.objectContaining({
-        name: "Rudder repo",
-        kind: "directory",
+        name: "rudder-reference",
+        kind: "url",
         sourceType: "external",
-        locator: "~/projects/rudder",
-        description: "Main monorepo checkout for implementation work.",
+        locator: "https://example.com/rudder-reference",
       }),
     }));
 
     const detailRes = await page.request.get(`/api/projects/${created.id}?orgId=${organization.id}`);
     expect(detailRes.ok()).toBe(true);
     const detail = await detailRes.json() as { resources: Array<{ resource: { name: string } }> };
-    expect(detail.resources.map((attachment) => attachment.resource.name)).toEqual(["Rudder repo"]);
+    expect(detail.resources.map((attachment) => attachment.resource.name)).toEqual(["rudder-reference"]);
   });
 
   test("keeps project creation actions reachable after adding multiple external resources", async ({ page }, testInfo) => {
@@ -348,16 +281,8 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByPlaceholder("Project name").fill("Multi Resource Project");
 
-    await addExternalProjectResource(dialog);
-    await addExternalProjectResource(dialog);
-
-    const resourceNameInputs = dialog.getByPlaceholder("Rudder repo");
-    const resourceLocatorInputs = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
-    await expect(resourceNameInputs).toHaveCount(2);
-    await resourceNameInputs.nth(0).fill("Rudder repo");
-    await resourceLocatorInputs.nth(0).fill("~/projects/rudder");
-    await resourceNameInputs.nth(1).fill("Company records");
-    await resourceLocatorInputs.nth(1).fill("~/projects/foundria/company-records");
+    await addUrlProjectSource(page, dialog, "https://example.com/rudder-repo");
+    await addUrlProjectSource(page, dialog, "https://example.com/company-records");
 
     const createProjectButton = dialog.getByRole("button", { name: "Create project" });
     await expect(createProjectButton).toBeVisible();
@@ -390,8 +315,8 @@ test.describe("Primary rail create menu", () => {
     };
 
     expect(created.resources.map((attachment) => attachment.resource.name)).toEqual([
-      "Rudder repo",
-      "Company records",
+      "rudder-repo",
+      "company-records",
     ]);
   });
 
@@ -425,8 +350,10 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByPlaceholder("Project name").fill("Docs Context Project");
 
-    await dialog.getByRole("button", { name: "Add resources" }).click();
-    await page.getByRole("button", { name: /project-brief\.md/ }).click();
+    await dialog.getByRole("button", { name: "Add sources", exact: true }).click();
+    const sourcesDialog = page.getByTestId("new-project-add-sources-dialog");
+    await sourcesDialog.getByRole("button", { name: /Add from library/ }).click();
+    await sourcesDialog.getByRole("button", { name: /project-brief\.md/ }).click();
     await expect(dialog.getByText("Library · File · projects/create-menu/project-brief.md")).toBeVisible();
 
     const createResponse = page.waitForResponse((response) =>
@@ -454,9 +381,7 @@ test.describe("Primary rail create menu", () => {
     }));
   });
 
-  test("uses the desktop file picker for inline directory resources in the new project dialog", async ({ page }) => {
-    await installDesktopShellStub(page, "/tmp/picked-repo");
-
+  test("uses the local file picker from the new project Sources dialog", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `PrimaryRail-Desktop-Picker-${Date.now()}`,
@@ -478,13 +403,19 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Desktop Picker Project");
-    await dialog.getByRole("button", { name: "Add resources" }).click();
-    await page.getByRole("button", { name: /Create external resource/ }).click();
-    await dialog.getByRole("button", { name: "Browse for directory" }).click();
+    await page.route("**/api/instance/path-picker", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ cancelled: false, path: "/tmp/picked-source.md" }),
+      });
+    });
+    await dialog.getByRole("button", { name: "Add sources", exact: true }).click();
+    const sourcesDialog = page.getByTestId("new-project-add-sources-dialog");
+    await sourcesDialog.getByRole("button", { name: /Select from local/ }).click();
+    await sourcesDialog.getByRole("button", { name: "Choose file" }).click();
 
-    const locatorInput = dialog.getByDisplayValue("/tmp/picked-repo");
-    await expect(locatorInput).toBeVisible();
-    await expect(dialog.getByDisplayValue("picked-repo")).toBeVisible();
+    await expect(dialog.getByText("picked-source.md", { exact: true })).toBeVisible();
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -501,9 +432,9 @@ test.describe("Primary rail create menu", () => {
     expect(created.resources).toEqual([
       expect.objectContaining({
         resource: expect.objectContaining({
-          name: "picked-repo",
-          kind: "directory",
-          locator: "/tmp/picked-repo",
+          name: "picked-source.md",
+          kind: "file",
+          locator: "/tmp/picked-source.md",
         }),
       }),
     ]);
