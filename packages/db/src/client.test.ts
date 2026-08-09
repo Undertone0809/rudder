@@ -241,7 +241,7 @@ afterEach(async () => {
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
     if (!tempPath) continue;
-    fs.rmSync(tempPath, {
+    await fs.promises.rm(tempPath, {
       recursive: true,
       force: true,
       maxRetries: 20,
