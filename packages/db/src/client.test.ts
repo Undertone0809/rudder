@@ -28,6 +28,8 @@ type LocalPostgresInstance = {
 
 const tempPaths: string[] = [];
 const runningInstances: LocalPostgresInstance[] = [];
+const migrationTestTimeout = (timeoutMs: number): number =>
+  process.platform === "win32" ? timeoutMs * 4 : timeoutMs;
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -248,7 +250,7 @@ afterEach(async () => {
       retryDelay: 250,
     });
   }
-});
+}, migrationTestTimeout(10_000));
 
 describe("applyPendingMigrations", () => {
   it(
@@ -292,7 +294,7 @@ describe("applyPendingMigrations", () => {
         await blocker.end();
       }
     },
-    30_000,
+    migrationTestTimeout(30_000),
   );
 
   it(
@@ -375,7 +377,7 @@ describe("applyPendingMigrations", () => {
         code: "foreign_keys_not_validated",
       }));
     },
-    30_000,
+    migrationTestTimeout(30_000),
   );
 
   it(
@@ -407,7 +409,7 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -451,7 +453,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -483,7 +485,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -592,7 +594,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -764,7 +766,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    40_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -914,7 +916,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    40_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -987,7 +989,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    40_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -1272,7 +1274,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1366,7 +1368,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1410,7 +1412,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1454,7 +1456,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1500,7 +1502,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1577,7 +1579,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1638,7 +1640,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1698,7 +1700,7 @@ describe("applyPendingMigrations", () => {
         await cleanupSql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1728,6 +1730,6 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 });
