@@ -241,7 +241,12 @@ afterEach(async () => {
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
     if (!tempPath) continue;
-    fs.rmSync(tempPath, { recursive: true, force: true });
+    fs.rmSync(tempPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
   }
 });
 
