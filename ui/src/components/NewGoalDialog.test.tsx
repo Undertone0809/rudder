@@ -27,17 +27,19 @@ vi.mock("../context/OrganizationContext", () => ({
 }));
 vi.mock("./AssigneeLabel", () => ({ AgentMenuLabel: ({ agent }: { agent: { name: string } }) => <span>{agent.name}</span> }));
 vi.mock("./InlineEntitySelector", () => ({
-  InlineEntitySelector: ({ value, options, ariaLabel, onChange, disablePortal }: {
+  InlineEntitySelector: ({ value, options, ariaLabel, onChange, disablePortal, side }: {
     value: string;
     options: Array<{ id: string; label: string }>;
     ariaLabel: string;
     onChange: (id: string) => void;
     disablePortal?: boolean;
+    side?: "top" | "right" | "bottom" | "left";
   }) => <button
     type="button"
     aria-label={ariaLabel}
     data-option-count={options.length}
     data-disable-portal={disablePortal ? "true" : "false"}
+    data-side={side}
     onClick={() => {
       const currentIndex = options.findIndex((option) => option.id === value);
       onChange(options[(currentIndex + 1) % options.length]?.id ?? "");
@@ -281,6 +283,7 @@ describe("NewGoalDialog", () => {
     const assignee = container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')!;
 
     expect(assignee.dataset.disablePortal).toBe("false");
+    expect(assignee.dataset.side).toBe("top");
     act(() => assignee.click());
     await waitUntil(() => expect(assignee.textContent).toBe(agent.name));
     act(() => assignee.click());

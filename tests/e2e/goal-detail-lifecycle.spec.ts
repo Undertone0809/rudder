@@ -325,7 +325,31 @@ test.describe("Goal Workspace v2", () => {
     await page.getByLabel("Context").fill(
       "The result must be inspectable, restart-safe, and ready for user acceptance.",
     );
-    await selectAgent(page, owner.name);
+    const assigneeTrigger = page.getByRole("button", { name: "Assignee" });
+    await assigneeTrigger.click();
+    const assigneeMenu = page.locator('[data-slot="popover-content"]');
+    await expect(assigneeMenu).toBeVisible();
+    await expect(assigneeMenu).toHaveAttribute("data-side", "top");
+    const assigneeMenuGeometry = await assigneeMenu.evaluate((menu) => {
+      const menuRect = menu.getBoundingClientRect();
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Assignee"]');
+      const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+      if (!trigger || !dialog) return null;
+      const triggerRect = trigger.getBoundingClientRect();
+      const dialogRect = dialog.getBoundingClientRect();
+      return {
+        menuTop: menuRect.top,
+        menuBottom: menuRect.bottom,
+        triggerTop: triggerRect.top,
+        dialogTop: dialogRect.top,
+        dialogBottom: dialogRect.bottom,
+      };
+    });
+    expect(assigneeMenuGeometry).not.toBeNull();
+    expect(assigneeMenuGeometry!.menuBottom).toBeLessThanOrEqual(assigneeMenuGeometry!.triggerTop);
+    expect(assigneeMenuGeometry!.menuTop).toBeGreaterThanOrEqual(assigneeMenuGeometry!.dialogTop);
+    expect(assigneeMenuGeometry!.menuBottom).toBeLessThanOrEqual(assigneeMenuGeometry!.dialogBottom);
+    await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
     await page.getByLabel("Target time").fill("2026-08-20T10:00");
 
     await expect(page.getByText("How we will know it worked", { exact: true })).toBeVisible();

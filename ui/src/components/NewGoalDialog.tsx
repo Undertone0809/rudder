@@ -284,6 +284,7 @@ export function NewGoalDialog() {
                   emptyMessage={agentsQuery.isError ? "Agents could not be loaded." : "No available Agents."}
                   ariaLabel="Assignee"
                   variant="field"
+                  side="top"
                   onChange={setOwnerAgentId}
                   renderTriggerValue={(option) => option && currentOwner
                     ? <AgentMenuLabel agent={currentOwner} agentAvatarStyle="bare" />
