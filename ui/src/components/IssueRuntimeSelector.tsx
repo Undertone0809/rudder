@@ -273,6 +273,11 @@ export function IssueRuntimeSelector({
     });
   };
 
+  const finishMenuSelection = () => {
+    closeMenu();
+    requestAnimationFrame(() => menuTriggerRef.current?.focus());
+  };
+
   useEffect(() => {
     if (!menuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
@@ -371,13 +376,13 @@ export function IssueRuntimeSelector({
     setDraftModel(nextModel);
     setDraftEffort(nextEffort);
     onApply(buildOverrides(overrides, nextModel, nextEffort, effortKey));
-    closeSubmenu("model");
+    finishMenuSelection();
   };
 
   const selectMenuEffort = (nextEffort: string | null) => {
     setDraftEffort(nextEffort);
     onApply(buildOverrides(overrides, selectedModel, nextEffort, effortKey));
-    closeSubmenu("effort");
+    finishMenuSelection();
   };
 
   if (variant === "menu") {
