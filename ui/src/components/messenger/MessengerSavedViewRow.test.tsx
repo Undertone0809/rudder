@@ -3,6 +3,7 @@
 import {
   MAX_BROWSER_FAVICON_LENGTH,
   type MessengerCustomGroupHydratedSavedViewEntry,
+  type MessengerCustomGroupWithEntries,
 } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -27,7 +28,9 @@ vi.mock("../ui/dropdown-menu", () => ({
   }) => <button type="button" onClick={onClick}>{children}</button>,
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuSubTrigger: ({ children, disabled }: { children: ReactNode; disabled?: boolean }) => (
+    <button type="button" disabled={disabled}>{children}</button>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -94,6 +97,28 @@ function savedViewEntry({
   } as unknown as MessengerCustomGroupHydratedSavedViewEntry;
 }
 
+function messengerGroup(
+  id: string,
+  name = id,
+  updatedAt = "2026-01-01T00:00:00.000Z",
+  icon: string | null = null,
+): MessengerCustomGroupWithEntries {
+  const timestamp = new Date(updatedAt);
+  return {
+    id,
+    orgId: "org-1",
+    userId: "user-1",
+    name,
+    icon,
+    sortOrder: 0,
+    collapsed: false,
+    pinnedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    entries: [],
+  };
+}
+
 function renderRow({
   active = false,
   currentGroupId = "group-a",
@@ -105,7 +130,7 @@ function renderRow({
   active?: boolean;
   currentGroupId?: string | null;
   entry?: MessengerCustomGroupHydratedSavedViewEntry;
-  groups?: Array<{ id: string; name: string }>;
+  groups?: MessengerCustomGroupWithEntries[];
   onMove?: ReturnType<typeof vi.fn>;
   onMoveOutOfGroup?: ReturnType<typeof vi.fn>;
 } = {}) {
@@ -130,7 +155,7 @@ function renderRow({
           listeners: undefined,
         }}
         entry={entry}
-        groups={groups as never}
+        groups={groups}
         onMove={onMove}
         onMoveOutOfGroup={onMoveOutOfGroup}
         onRemove={vi.fn()}
@@ -268,8 +293,8 @@ describe("MessengerSavedViewRow", () => {
     const onMove = vi.fn();
     const onMoveOutOfGroup = vi.fn();
     const groups = [
-      { id: "group-a", name: "Launch", icon: "rocket::rose" },
-      { id: "group-b", name: "Review", icon: "🚀::teal" },
+      messengerGroup("group-a", "Launch", "2026-08-04T10:00:00.000Z", "rocket::rose"),
+      messengerGroup("group-b", "Review", "2026-08-04T09:00:00.000Z", "🚀::teal"),
     ];
 
     renderRow({
@@ -312,5 +337,30 @@ describe("MessengerSavedViewRow", () => {
     expect(reviewButton?.textContent).toContain("🚀");
     act(() => moveLooseButton?.click());
     expect(onMoveOutOfGroup).toHaveBeenCalledWith("saved-view:saved-a");
+  });
+
+  it("keeps the move menu enabled and shows an empty state when all large-list groups are old", () => {
+    const groups = Array.from({ length: 11 }, (_, index) => messengerGroup(`old-${index}`));
+
+    renderRow({ currentGroupId: null, groups });
+
+    const moveToGroupTrigger = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Move to group"));
+    expect(moveToGroupTrigger?.disabled).toBe(false);
+    expect(host!.textContent).toContain("No recent groups");
+  });
+
+  it("keeps Move out of group while showing an empty recent target state", () => {
+    const groups = [
+      messengerGroup("current", "Current", "2026-08-05T11:00:00.000Z"),
+      ...Array.from({ length: 10 }, (_, index) => messengerGroup(`old-${index}`)),
+    ];
+    const onMoveOutOfGroup = vi.fn();
+
+    renderRow({ currentGroupId: "current", groups, onMoveOutOfGroup });
+
+    expect(host!.textContent).toContain("Move out of group");
+    expect(host!.textContent).toContain("No recent groups");
+    expect(host!.textContent).not.toContain("old-0");
   });
 });

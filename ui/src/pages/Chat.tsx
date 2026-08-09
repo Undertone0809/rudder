@@ -147,6 +147,7 @@ import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
 import { resolveLocalFileDisplayTarget, resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
 import { mentionChipNavigationPath, parseMentionChipHref } from "@/lib/mention-chips";
+import { getMessengerGroupMenuOptions } from "@/lib/messenger-group-menu";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
   archiveMessengerChatInCache,
@@ -544,7 +545,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.messenger.customGroups(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && !!selectedConversation,
-  }); const customGroups = customGroupsQuery.data?.groups ?? []; const selectedConversationStreamScopeKey = selectedConversation && selectedOrganizationId
+  }); const customGroups = customGroupsQuery.data?.groups ?? []; const moveToGroupOptions = getMessengerGroupMenuOptions(customGroups); const selectedConversationStreamScopeKey = selectedConversation && selectedOrganizationId
     ? chatGenerationScopeKey(selectedOrganizationId, selectedConversation)
     : null; const streamScopeKeyForChatId = useCallback((chatId: string) => (
       selectedConversation?.id === chatId && selectedConversationStreamScopeKey
@@ -3677,8 +3678,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             Move out of group
                           </DropdownMenuItem>
                         ) : null}
-                        {customGroups.length > 0 ? (
-                          customGroups.map((group) => (
+                        {moveToGroupOptions.length > 0 ? (
+                          moveToGroupOptions.map((group) => (
                             <DropdownMenuItem
                               key={group.id}
                               disabled={group.id === selectedConversationCustomGroupId}
@@ -3689,7 +3690,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             </DropdownMenuItem>
                           ))
                         ) : (
-                          <DropdownMenuItem disabled>No groups</DropdownMenuItem>
+                          <DropdownMenuItem disabled>
+                            {customGroups.length > 0 ? "No recent groups" : "No groups"}
+                          </DropdownMenuItem>
                         )}
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>

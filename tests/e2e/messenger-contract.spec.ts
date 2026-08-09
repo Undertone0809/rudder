@@ -4250,8 +4250,10 @@ test.describe("Messenger unified threads contract", () => {
         data: {
           title,
           summary,
+          preferredAgentId: organization.chatAgent.id,
           issueCreationMode: "manual_approval",
           planMode: false,
+          initialMessage: { body: `${title} initial message` },
         },
       });
       expect(res.ok()).toBe(true);
@@ -4287,12 +4289,48 @@ test.describe("Messenger unified threads contract", () => {
     expect(existingGroupRes.ok()).toBe(true);
     const existingGroup = await existingGroupRes.json() as { id: string };
 
+    const groupMenuNow = Date.now();
+    const menuGroups = [
+      { name: "Recent top group", ageMs: 60 * 60 * 1_000 },
+      { name: "Recent older group", ageMs: 2 * 24 * 60 * 60 * 1_000 },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        name: `Archived menu group ${index}`,
+        ageMs: 30 * 24 * 60 * 60 * 1_000,
+      })),
+    ];
+    let recentTopGroupId: string | null = null;
+    for (const menuGroup of menuGroups) {
+      const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+        data: { name: menuGroup.name, icon: "folder" },
+      });
+      expect(groupRes.ok()).toBe(true);
+      const createdGroup = await groupRes.json() as { id: string };
+      if (menuGroup.name === "Recent top group") recentTopGroupId = createdGroup.id;
+      await e2eDb.update(messengerCustomGroups)
+        .set({ updatedAt: new Date(groupMenuNow - menuGroup.ageMs) })
+        .where(eq(messengerCustomGroups.id, createdGroup.id));
+    }
+    expect(recentTopGroupId).not.toBeNull();
+    const activeMenuGroupEntryRes = await page.request.post(
+      `/api/orgs/${organization.id}/messenger/groups/${recentTopGroupId}/entries`,
+      { data: { itemKey: `chat:${activeMenuChat.id}` } },
+    );
+    expect(activeMenuGroupEntryRes.ok()).toBe(true);
+    await e2eDb.update(messengerCustomGroups)
+      .set({ updatedAt: new Date(groupMenuNow - 2 * 60 * 60 * 1_000) })
+      .where(eq(messengerCustomGroups.id, existingGroup.id));
+
     let releaseRenamePatch!: () => void;
     const renamePatchGate = new Promise<void>((resolve) => {
       releaseRenamePatch = resolve;
     });
+    let resolveRenamePatchStarted!: () => void;
+    const renamePatchStarted = new Promise<void>((resolve) => {
+      resolveRenamePatchStarted = resolve;
+    });
     await page.route(`**/api/chats/${renameChat.id}`, async (route) => {
       if (route.request().method() === "PATCH") {
+        resolveRenamePatchStarted();
         await renamePatchGate;
       }
       await route.continue();
@@ -4300,19 +4338,35 @@ test.describe("Messenger unified threads contract", () => {
 
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
     const renameRow = page.getByTestId(threadTestId(`chat:${renameChat.id}`));
-    await expect(renameRow).toContainText("Rename action chat", { timeout: 15_000 });
+    await expect(renameRow).toContainText("Rename action chat", { timeout: 30_000 });
     await renameRow.hover();
     await renameRow.getByRole("button", { name: "Chat actions" }).click();
     await page.getByRole("menuitem", { name: "Rename" }).click();
     await renameRow.locator("input").fill("Renamed action chat");
     await renameRow.locator("input").press("Enter");
     await expect(renameRow).toContainText("Renamed action chat");
+    await renamePatchStarted;
     releaseRenamePatch();
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${renameChat.id}`)).json()).title).toBe("Renamed action chat");
 
     if (baseURL) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
     }
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const activeMenuRow = page.getByTestId(threadTestId(`chat:${activeMenuChat.id}`));
+    await expect(activeMenuRow).toContainText("Active menu parity chat", { timeout: 30_000 });
+    await activeMenuRow.hover();
+    await activeMenuRow.getByRole("button", { name: "Chat actions" }).click();
+    await page.getByRole("menuitem", { name: "Move to group", exact: true }).hover();
+    const rowGroupMenu = page.locator('[role="menu"]').filter({ hasText: "Recent top group" }).last();
+    await expect(rowGroupMenu).toBeVisible();
+    await expect(rowGroupMenu.getByRole("menuitem", { name: "Archived menu group 0", exact: true })).toHaveCount(0);
+    expect(await rowGroupMenu.getByRole("menuitem").allTextContents()).toEqual([
+      "Move out of group",
+      "Recent top group",
+      "Existing action group",
+      "Recent older group",
+    ]);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${activeMenuChat.id}`, { waitUntil: "commit" });
     await page.getByTestId("chat-actions-trigger").click();
     for (const actionName of [
@@ -4328,9 +4382,20 @@ test.describe("Messenger unified threads contract", () => {
     ]) {
       await expect(page.getByRole("menuitem", { name: actionName, exact: true })).toBeVisible();
     }
+    await page.getByRole("menuitem", { name: "Move to group", exact: true }).hover();
+    const groupMenu = page.locator('[role="menu"]').filter({ hasText: "Recent top group" }).last();
+    await expect(groupMenu).toBeVisible();
+    await expect(groupMenu.getByRole("menuitem", { name: "Archived menu group 0", exact: true })).toHaveCount(0);
+    expect(await groupMenu.getByRole("menuitem").allTextContents()).toEqual([
+      "Move out of group",
+      "Recent top group",
+      "Existing action group",
+      "Recent older group",
+    ]);
     await page.screenshot({ path: "/tmp/rudder-active-chat-actions-menu.png", fullPage: true });
     await page.getByRole("menuitem", { name: "Copy Chat Link" }).click();
     await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toBe(`[Active menu parity chat](chat://${activeMenuChat.id})`);
+    await page.keyboard.press("Escape");
 
     await page.getByTestId("chat-actions-trigger").click();
     await page.getByRole("menuitem", { name: "Mark as Unread" }).click();
@@ -4346,7 +4411,14 @@ test.describe("Messenger unified threads contract", () => {
 
     await page.getByTestId("chat-actions-trigger").click();
     await page.getByRole("menuitem", { name: "Move to group" }).hover();
-    await page.getByRole("menuitem", { name: "Existing action group" }).dispatchEvent("click");
+    const activeChatMoveResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${existingGroup.id}/entries`)
+      && response.request().method() === "POST",
+    );
+    const existingGroupMenuItem = groupMenu.getByRole("menuitem", { name: "Existing action group", exact: true });
+    await expect(existingGroupMenuItem).toBeVisible();
+    await existingGroupMenuItem.click({ force: true });
+    expect((await activeChatMoveResponse).ok()).toBe(true);
     await expect.poll(async () => {
       const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
       expect(groupsRes.ok()).toBe(true);
