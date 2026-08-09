@@ -3761,8 +3761,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
           return false;
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return webview.getURL() === expectedUrl && addressBar.value === expectedUrl;
+        const historyLength = await webview.executeJavaScript("history.length");
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        return webview.getURL() === expectedUrl
+          && addressBar.value === expectedUrl
+          && (typeof webview.isLoading !== "function" || !webview.isLoading())
+          && (await webview.executeJavaScript("history.length")) === historyLength;
       }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
 
       const movingSideTab = sidePanel.locator(
@@ -3791,12 +3795,13 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           return {
             formValue: input?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker,
-            historyLength: history.length,
             scrollY: window.scrollY,
           };
         })()`);
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker,
           guestState,
           url: webview.getURL(),
@@ -3891,11 +3896,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         }
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker ?? null,
           guestState: await webview.executeJavaScript(`(() => ({
             formValue: document.querySelector("#smoke-input")?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker ?? null,
-            historyLength: history.length,
             scrollY: window.scrollY,
           }))()`),
           url: webview.getURL(),
@@ -3912,13 +3918,15 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         },
         {
           browserTabId: guestBeforeMove.browserTabId,
+          canGoBack: guestBeforeMove.canGoBack,
+          canGoForward: guestBeforeMove.canGoForward,
           domMarker: guestBeforeMove.domMarker,
           guestState: guestBeforeMoveStableState,
           url: guestBeforeMove.url,
           webContentsId: guestBeforeMove.webContentsId,
           zoomFactor: guestBeforeMove.zoomFactor,
         },
-        "Move must preserve the exact Browser guest, URL, history, form, zoom, and heap marker",
+        "Move must preserve the exact Browser guest, URL, navigation state, form, zoom, and heap marker",
       );
       assert.ok(
         Math.abs(guestAfterMoveScrollY - guestBeforeMoveScrollY) <= 32,
