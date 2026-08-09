@@ -1,4 +1,5 @@
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
+import { getMessengerGroupMenuOptions, MESSENGER_GROUP_MENU_THRESHOLD } from "@/lib/messenger-group-menu";
 import type { MessengerThreadDensity } from "@/lib/messenger-preferences";
 import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { Link } from "@/lib/router";
@@ -210,7 +211,9 @@ export function MessengerSavedViewRow({
   if (!savedView) return null;
   const resolvedItemKey = entry?.itemKey ?? itemKey ?? `saved-view:${savedView.id}`;
   const rowId = entry?.id ?? `loose-${savedView.id}`;
-  const otherGroups = groups.filter((group) => group.id !== currentGroupId);
+  const moveToGroupOptions = getMessengerGroupMenuOptions(groups);
+  const otherGroups = moveToGroupOptions.filter((group) => group.id !== currentGroupId);
+  const noRecentMoveToGroupOptions = groups.length > MESSENGER_GROUP_MENU_THRESHOLD && otherGroups.length === 0;
   const compact = density === "compact";
   const browser = savedView.targetPayload.kind === "browser";
   const displayTitle = savedViewDisplayTitle(savedView);
@@ -280,7 +283,7 @@ export function MessengerSavedViewRow({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="surface-overlay text-foreground">
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger disabled={otherGroups.length === 0 && !currentGroupId}>
+            <DropdownMenuSubTrigger disabled={groups.length === 0}>
               <FolderInput className="h-4 w-4" />
               Move to group
             </DropdownMenuSubTrigger>
@@ -290,12 +293,14 @@ export function MessengerSavedViewRow({
                   Move out of group
                 </DropdownMenuItem>
               ) : null}
-              {otherGroups.map((group) => (
+              {otherGroups.length > 0 ? otherGroups.map((group) => (
                 <DropdownMenuItem key={group.id} onClick={() => onMove(group.id, resolvedItemKey)}>
                   <CustomGroupIcon icon={group.icon} />
                   {group.name}
                 </DropdownMenuItem>
-              ))}
+              )) : noRecentMoveToGroupOptions ? (
+                <DropdownMenuItem disabled>No recent groups</DropdownMenuItem>
+              ) : null}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuItem

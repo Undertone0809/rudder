@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useActivitySummary } from "@/context/ActivityCoordinatorContext";
 import { useChatGenerationActive } from "@/context/ChatGenerationContext";
 import { displayChatTitle, isDefaultChatTitle } from "@/lib/chat-title";
+import { getMessengerGroupMenuOptions, MESSENGER_GROUP_MENU_THRESHOLD } from "@/lib/messenger-group-menu";
 import type { MessengerThreadDensity } from "@/lib/messenger-preferences";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import { Link } from "@/lib/router";
@@ -490,6 +491,12 @@ export function ChatThreadRow({
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const customGroupHandoffRef = useRef(false);
   const compact = density === "compact";
+  const moveToGroupOptions = customGroups ? getMessengerGroupMenuOptions(customGroups) : [];
+  const noRecentMoveToGroupOptions = Boolean(
+    customGroups
+      && customGroups.length > MESSENGER_GROUP_MENU_THRESHOLD
+      && moveToGroupOptions.every((group) => group.id === customGroupId),
+  );
   const rightActionClass = compact ? "right-1.5" : "right-2";
   const secondaryActionClass = compact ? "right-7" : "right-8";
 
@@ -762,19 +769,26 @@ export function ChatThreadRow({
                           Move out of group
                         </DropdownMenuItem>
                       ) : null}
-                      {customGroups.length > 0 ? (
-                        customGroups.map((group) => (
-                          <DropdownMenuItem
-                            key={group.id}
-                            disabled={group.id === customGroupId}
-                            onClick={() => onMoveToCustomGroup?.(group.id)}
-                          >
-                            <CustomGroupIcon icon={group.icon} />
-                            {group.name}
-                          </DropdownMenuItem>
-                        ))
+                      {moveToGroupOptions.length > 0 ? (
+                        <>
+                          {moveToGroupOptions.map((group) => (
+                            <DropdownMenuItem
+                              key={group.id}
+                              disabled={group.id === customGroupId}
+                              onClick={() => onMoveToCustomGroup?.(group.id)}
+                            >
+                              <CustomGroupIcon icon={group.icon} />
+                              {group.name}
+                            </DropdownMenuItem>
+                          ))}
+                          {noRecentMoveToGroupOptions ? (
+                            <DropdownMenuItem disabled>No recent groups</DropdownMenuItem>
+                          ) : null}
+                        </>
                       ) : (
-                        <DropdownMenuItem disabled>No groups</DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          {customGroups.length > 0 ? "No recent groups" : "No groups"}
+                        </DropdownMenuItem>
                       )}
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
@@ -845,6 +859,12 @@ export function ThreadRow({
   const Icon = threadIcon(thread.kind);
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
+  const moveToGroupOptions = customGroups ? getMessengerGroupMenuOptions(customGroups) : [];
+  const noRecentMoveToGroupOptions = Boolean(
+    customGroups
+      && customGroups.length > MESSENGER_GROUP_MENU_THRESHOLD
+      && moveToGroupOptions.every((group) => group.id === customGroupId),
+  );
   const [actionsOpen, setActionsOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1069,19 +1089,26 @@ export function ThreadRow({
                         Move out of group
                       </DropdownMenuItem>
                     ) : null}
-                    {customGroups.length > 0 ? (
-                      customGroups.map((group) => (
-                        <DropdownMenuItem
-                          key={group.id}
-                          disabled={group.id === customGroupId}
-                          onClick={() => onMoveToCustomGroup?.(group.id)}
-                        >
-                          <CustomGroupIcon icon={group.icon} />
-                          {group.name}
-                        </DropdownMenuItem>
-                      ))
+                    {moveToGroupOptions.length > 0 ? (
+                      <>
+                        {moveToGroupOptions.map((group) => (
+                          <DropdownMenuItem
+                            key={group.id}
+                            disabled={group.id === customGroupId}
+                            onClick={() => onMoveToCustomGroup?.(group.id)}
+                          >
+                            <CustomGroupIcon icon={group.icon} />
+                            {group.name}
+                          </DropdownMenuItem>
+                        ))}
+                        {noRecentMoveToGroupOptions ? (
+                          <DropdownMenuItem disabled>No recent groups</DropdownMenuItem>
+                        ) : null}
+                      </>
                     ) : (
-                      <DropdownMenuItem disabled>No groups</DropdownMenuItem>
+                      <DropdownMenuItem disabled>
+                        {customGroups.length > 0 ? "No recent groups" : "No groups"}
+                      </DropdownMenuItem>
                     )}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>

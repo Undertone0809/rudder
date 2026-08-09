@@ -147,6 +147,7 @@ import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
 import { resolveLocalFileDisplayTarget, resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
 import { mentionChipNavigationPath, parseMentionChipHref } from "@/lib/mention-chips";
+import { getMessengerGroupMenuOptions } from "@/lib/messenger-group-menu";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
   archiveMessengerChatInCache,
@@ -542,7 +543,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.messenger.customGroups(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && !!selectedConversation,
-  }); const customGroups = customGroupsQuery.data?.groups ?? []; const selectedConversationThreadKey = selectedConversation ? `chat:${selectedConversation.id}` : null; const selectedConversationCustomGroupId = selectedConversationThreadKey
+  }); const customGroups = customGroupsQuery.data?.groups ?? []; const moveToGroupOptions = getMessengerGroupMenuOptions(customGroups); const selectedConversationThreadKey = selectedConversation ? `chat:${selectedConversation.id}` : null; const selectedConversationCustomGroupId = selectedConversationThreadKey
     ? customGroups.find((group) => group.entries.some((entry) => entry.threadKey === selectedConversationThreadKey))?.id ?? null
     : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null;
@@ -3647,8 +3648,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             Move out of group
                           </DropdownMenuItem>
                         ) : null}
-                        {customGroups.length > 0 ? (
-                          customGroups.map((group) => (
+                        {moveToGroupOptions.length > 0 ? (
+                          moveToGroupOptions.map((group) => (
                             <DropdownMenuItem
                               key={group.id}
                               disabled={group.id === selectedConversationCustomGroupId}
@@ -3659,7 +3660,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             </DropdownMenuItem>
                           ))
                         ) : (
-                          <DropdownMenuItem disabled>No groups</DropdownMenuItem>
+                          <DropdownMenuItem disabled>
+                            {customGroups.length > 0 ? "No recent groups" : "No groups"}
+                          </DropdownMenuItem>
                         )}
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>
