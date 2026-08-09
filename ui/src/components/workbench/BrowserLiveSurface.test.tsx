@@ -371,7 +371,7 @@ describe("BrowserLiveSurface", () => {
     expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
   });
 
-  it("keeps the settled navigation generation fence for late earlier events", () => {
+  it("keeps the settled navigation fence for late earlier events", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -428,29 +428,81 @@ describe("BrowserLiveSurface", () => {
     onReplaceTarget.mockClear();
 
     guestUrl = thirdUrl;
+    const lateFirstStart = new Event("did-start-navigation");
+    Object.defineProperty(lateFirstStart, "url", { configurable: true, value: firstUrl });
+    const lateSecondStart = new Event("did-start-navigation");
+    Object.defineProperty(lateSecondStart, "url", { configurable: true, value: secondUrl });
     const lateFirst = new Event("did-navigate");
     Object.defineProperty(lateFirst, "url", { configurable: true, value: firstUrl });
     const lateSecond = new Event("did-navigate");
     Object.defineProperty(lateSecond, "url", { configurable: true, value: secondUrl });
     act(() => {
+      webview.dispatchEvent(lateFirstStart);
+      webview.dispatchEvent(lateSecondStart);
       webview.dispatchEvent(lateFirst);
       webview.dispatchEvent(lateSecond);
     });
 
     expect(onReplaceTarget).not.toHaveBeenCalled();
+  });
 
-    guestUrl = firstUrl;
-    const legitimateStart = new Event("did-start-navigation");
-    Object.defineProperty(legitimateStart, "url", { configurable: true, value: firstUrl });
-    const legitimateNavigation = new Event("did-navigate");
-    Object.defineProperty(legitimateNavigation, "url", { configurable: true, value: firstUrl });
+  it("allows an address-bar request to revisit a URL fenced as stale", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const secondUrl = "https://example.com/second";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
     act(() => {
-      webview.dispatchEvent(legitimateStart);
-      webview.dispatchEvent(legitimateNavigation);
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-explicit-stale",
+            url: firstUrl,
+            viewInstanceId: "view-explicit-stale",
+          }}
+          targetKey="browser-tab:explicit-stale"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
     });
 
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    act(() => {
+      address.value = secondUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    guestUrl = secondUrl;
+    const secondNavigation = new Event("did-navigate");
+    Object.defineProperty(secondNavigation, "url", { configurable: true, value: secondUrl });
+    act(() => webview.dispatchEvent(secondNavigation));
+    onReplaceTarget.mockClear();
+
+    act(() => {
+      address.value = firstUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    guestUrl = firstUrl;
+    const firstNavigation = new Event("did-navigate");
+    Object.defineProperty(firstNavigation, "url", { configurable: true, value: firstUrl });
+    act(() => webview.dispatchEvent(firstNavigation));
+
     expect(onReplaceTarget).toHaveBeenCalledWith(
-      "browser-tab:settled-generation",
+      "browser-tab:explicit-stale",
       expect.objectContaining({ url: firstUrl }),
     );
   });
