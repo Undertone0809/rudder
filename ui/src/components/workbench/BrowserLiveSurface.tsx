@@ -136,6 +136,7 @@ export function BrowserLiveSurface({
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
   const staleNavigationUrlsRef = useRef<string[]>([]);
+  const navigationLoadInFlightRef = useRef<Promise<void> | null>(null);
   const historyNavigationRef = useRef<BrowserHistoryNavigation | null>(null);
   const historyNavigationTokenRef = useRef(0);
   const historyNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -420,6 +421,9 @@ export function BrowserLiveSurface({
         return;
       }
       const nextUrl = safeCurrentWebviewUrl("");
+      if (nextUrl && nextUrl === navigationIntentRef.current?.expectedUrl) {
+        navigationIntentRef.current = null;
+      }
       if (nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
@@ -610,7 +614,18 @@ export function BrowserLiveSurface({
     setLoadErrorDetailsOpen(false);
     const loaded = safeWebviewCall((webview) => {
       if (!webview.loadURL) return false;
-      void webview.loadURL(nextUrl).catch(() => undefined);
+      const startNavigation = () => webview.loadURL!(nextUrl);
+      const previousNavigation = navigationLoadInFlightRef.current;
+      const currentNavigation = previousNavigation
+        ? previousNavigation.catch(() => undefined).then(startNavigation)
+        : Promise.resolve(startNavigation());
+      const trackedNavigation = currentNavigation.catch(() => undefined);
+      navigationLoadInFlightRef.current = trackedNavigation;
+      void trackedNavigation.then(() => {
+        if (navigationLoadInFlightRef.current === trackedNavigation) {
+          navigationLoadInFlightRef.current = null;
+        }
+      });
       return true;
     }, false);
     if (!loaded) setWebviewSrc(nextUrl);
