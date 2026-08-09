@@ -3802,7 +3802,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const browserTransferMarker = randomUUID();
       const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
         const webview = Array.from(document.querySelectorAll(
-          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+          "[data-testid='chat-side-panel-browser-webview']",
         )).find((candidate) => typeof candidate.getURL === "function" && candidate.getURL() === expectedUrl);
         if (!webview
           || typeof webview.getWebContentsId !== "function"
