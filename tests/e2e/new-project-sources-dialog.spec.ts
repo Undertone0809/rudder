@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
 
 test("adds recent local sources through the progressive Sources dialog", async ({ page }) => {
+  const dialogAccessibilityMessages: string[] = [];
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning")
+      && /DialogContent.*(?:DialogTitle|Description|aria-describedby)/s.test(message.text())
+    ) {
+      dialogAccessibilityMessages.push(message.text());
+    }
+  });
   await page.setViewportSize({ width: 1_440, height: 960 });
   const uniqueSuffix = Date.now().toString(36).slice(-6).toUpperCase();
   const orgRes = await page.request.post("/api/orgs", {
@@ -68,7 +77,9 @@ test("adds recent local sources through the progressive Sources dialog", async (
   await expect.poll(() => scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
   const chooseFileBeforeBox = await chooseFile.boundingBox();
+  const sourcesDialogBeforeBox = await sourcesDialog.boundingBox();
   expect(chooseFileBeforeBox).not.toBeNull();
+  expect(sourcesDialogBeforeBox).not.toBeNull();
   await scroller.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
     element.dispatchEvent(new Event("scroll"));
@@ -78,8 +89,12 @@ test("adds recent local sources through the progressive Sources dialog", async (
   ))).toBeLessThanOrEqual(1);
   await expect(chooseFile).toBeInViewport();
   const chooseFileAfterBox = await chooseFile.boundingBox();
+  const sourcesDialogAfterBox = await sourcesDialog.boundingBox();
   expect(chooseFileAfterBox).not.toBeNull();
-  expect(chooseFileAfterBox!.y).toBeCloseTo(chooseFileBeforeBox!.y, 0);
+  expect(sourcesDialogAfterBox).not.toBeNull();
+  const chooseFileOffsetBefore = chooseFileBeforeBox!.y - sourcesDialogBeforeBox!.y;
+  const chooseFileOffsetAfter = chooseFileAfterBox!.y - sourcesDialogAfterBox!.y;
+  expect(Math.abs(chooseFileOffsetAfter - chooseFileOffsetBefore)).toBeLessThanOrEqual(1);
 
   const firstSource = sourcesDialog.getByText("Recent local source 01", { exact: true });
   const secondSource = sourcesDialog.getByText("Recent local source 02", { exact: true });
@@ -125,6 +140,7 @@ test("adds recent local sources through the progressive Sources dialog", async (
   await expect(page.getByRole("button", { name: "Add sources", exact: true })).toBeVisible();
   await expect(page.getByText("Recent local source 01", { exact: true })).toBeVisible();
   await expect(page.getByText("Recent local source 02", { exact: true })).toBeVisible();
+  expect(dialogAccessibilityMessages).toEqual([]);
 });
 
 test("adds a URL in its own focused source step", async ({ page }) => {

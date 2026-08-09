@@ -121,6 +121,9 @@ vi.mock("@/components/ui/dialog", () => ({
       {children}
     </div>
   ),
+  DialogDescription: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <p className={className}>{children}</p>
+  ),
   DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
     <h2 className={className}>{children}</h2>
   ),
@@ -245,6 +248,22 @@ describe("NewProjectDialog", () => {
     expect(sourceDialog?.textContent).toContain("Add from URL");
     expect(sourceDialog?.textContent).not.toContain("Search Library");
     expect(sourceDialog?.textContent).not.toContain("Recent sources");
+  });
+
+  it("provides accessible titles and descriptions for both dialog layers", () => {
+    const container = renderDialog();
+    const projectDialog = container.querySelector('[data-slot="dialog-content"]');
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
+
+    expect(projectDialog?.querySelector("h2")?.textContent).toBe("New project");
+    expect(projectDialog?.querySelector("p")?.textContent).toContain("Create a project");
+
+    act(() => trigger!.click());
+
+    const sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]');
+    expect(sourceDialog?.querySelector("h2")?.textContent).toBe("Add sources");
+    expect(sourceDialog?.querySelector("p")?.textContent).toContain("Choose one source type");
   });
 
   it("keeps the new project footer visible while resource drafts scroll inside the dialog", () => {
