@@ -13,6 +13,7 @@ import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { AgentMenuLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
+import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 
 type PreviewInput = {
   title: string;
@@ -58,8 +59,9 @@ export function NewGoalDialog() {
   const [context, setContext] = useState("");
   const [ownerAgentId, setOwnerAgentId] = useState("");
   const [targetTime, setTargetTime] = useState("");
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const requestRef = useRef<{ identity: string; key: string } | null>(null);
-  const contextRef = useRef<HTMLTextAreaElement>(null);
+  const contextEditorRef = useRef<MarkdownEditorRef>(null);
 
   useEffect(() => {
     if (!newGoalOpen) return;
@@ -120,6 +122,7 @@ export function NewGoalDialog() {
   };
 
   const reset = () => {
+    setDocumentSessionId((current) => current + 1);
     setGoal("");
     setContext("");
     setOwnerAgentId("");
@@ -221,24 +224,26 @@ export function NewGoalDialog() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
                     event.preventDefault();
-                    contextRef.current?.focus();
+                    contextEditorRef.current?.focus();
                   }
                 }}
                 autoFocus
               />
             </label>
 
-            <label className="block space-y-1.5">
+            <div className="block space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Context</span>
-              <textarea
-                ref={contextRef}
-                aria-label="Context"
-                className="min-h-20 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/55 focus:border-ring"
+              <MarkdownEditor
+                ref={contextEditorRef}
+                engine="codemirror"
+                documentIdentity={`new-goal:${selectedOrganizationId ?? "none"}:${documentSessionId}`}
                 placeholder="Optional background or why this matters now"
                 value={context}
-                onChange={(event) => setContext(event.target.value)}
+                onChange={setContext}
+                bordered={false}
+                contentClassName="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/55 focus-within:border-ring"
               />
-            </label>
+            </div>
 
             <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 space-y-1.5">

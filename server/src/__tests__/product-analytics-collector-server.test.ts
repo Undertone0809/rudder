@@ -1,10 +1,28 @@
 import type { Db } from "@rudderhq/db";
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { parseProductAnalyticsCollectorConfig } from "../product-analytics-collector-config.js";
 import { createProductAnalyticsCollectorApp } from "../product-analytics-collector-server.js";
 import { createProductAnalyticsAssertionAuthorizer } from "../routes/product-analytics-collector.js";
+
+const activeServers = new Set<Server>();
+
+async function startApp(app: express.Express) {
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
+}
+
+afterEach(async () => {
+  await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 const baseEnv = {
   RUDDER_TELEMETRY_COLLECTOR_DATABASE_URL: "postgres://collector:secret@localhost/analytics",
@@ -38,7 +56,7 @@ describe("product analytics collector deployment", () => {
   });
 
   it("exposes a liveness endpoint without touching the database", async () => {
-    const app = createProductAnalyticsCollectorApp({ config: parseProductAnalyticsCollectorConfig(baseEnv), db: {} as Db, reportDb: {} as Db, maintenance: false });
+    const app = await startApp(createProductAnalyticsCollectorApp({ config: parseProductAnalyticsCollectorConfig(baseEnv), db: {} as Db, reportDb: {} as Db, maintenance: false }));
     const response = await request(app).get("/healthz");
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, service: "product-analytics-collector", schema: "rudder_analytics" });
@@ -59,9 +77,10 @@ describe("product analytics collector deployment", () => {
         res.status(401).json({ errorCode: "unauthorized" });
       }
     });
+    const server = await startApp(app);
     const installationId = "11111111-1111-4111-8111-111111111111";
     const pseudonymousInstallationId = "a".repeat(64);
-    const accepted = await request(app)
+    const accepted = await request(server)
       .get("/authorize")
       .set("authorization", "Bearer anonymous-deployment-secret")
       .set("x-rudder-installation-id", installationId)
@@ -71,7 +90,7 @@ describe("product analytics collector deployment", () => {
     expect(accepted.status).toBe(200);
     expect(accepted.body).toMatchObject({ installationId, mode: "anonymous", consentVersion: "v1", consentEpoch: 2, pseudonymousInstallationId });
 
-    const missingHeaders = await request(app)
+    const missingHeaders = await request(server)
       .get("/authorize")
       .set("authorization", "Bearer anonymous-deployment-secret")
       .set("x-rudder-installation-id", installationId);

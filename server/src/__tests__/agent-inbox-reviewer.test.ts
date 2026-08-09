@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 
@@ -52,7 +54,9 @@ vi.mock("@rudderhq/agent-runtime-opencode-local/server", () => ({
   ensureOpenCodeModelConfiguredAndAvailable: vi.fn(),
 }));
 
-function createApp() {
+const activeServers = new Set<Server>();
+
+async function createApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -67,7 +71,10 @@ function createApp() {
   });
   app.use("/api", agentRoutes({} as any, {} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 function issue(overrides: Record<string, unknown>) {
@@ -89,6 +96,13 @@ function issue(overrides: Record<string, unknown>) {
 describe("agent inbox reviewer rows", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("returns assignee and reviewer work with relationships", async () => {
@@ -130,7 +144,7 @@ describe("agent inbox reviewer rows", () => {
         }),
       ]);
 
-    const res = await request(createApp()).get("/api/agents/me/inbox-lite");
+    const res = await request(await createApp()).get("/api/agents/me/inbox-lite");
 
     expect(res.status).toBe(200);
     expect(mockIssueService.list).toHaveBeenNthCalledWith(1, "org-1", {

@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -90,6 +92,8 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
 }));
 
+const activeServers = new Set<Server>();
+
 async function createApp(actor: Record<string, unknown>) {
   const { organizationRoutes } = await import("../routes/orgs.js");
   const { errorHandler } = await import("../middleware/index.js");
@@ -101,7 +105,10 @@ async function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api/orgs", organizationRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("organization portability routes", () => {
@@ -113,6 +120,13 @@ describe("organization portability routes", () => {
     mockCompanyPortabilityService.previewImport.mockReset();
     mockCompanyPortabilityService.importBundle.mockReset();
     mockLogActivity.mockReset();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("rejects non-CEO agents from CEO-safe export preview routes", { timeout: 10000 }, async () => {

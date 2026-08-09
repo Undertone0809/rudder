@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockInstanceSettingsService = vi.hoisted(() => ({
   getBrowser: vi.fn(),
@@ -54,6 +56,8 @@ const mockProductAnalytics = vi.hoisted(() => ({
 
 vi.mock("../services/product-analytics.js", () => mockProductAnalytics);
 
+const activeServers = new Set<Server>();
+
 async function createApp(actor: any, deploymentMode: "local_trusted" | "authenticated" = "local_trusted") {
   const { errorHandler } = await import("../middleware/index.js");
   const { instanceSettingsRoutes } = await import("../routes/instance-settings.js");
@@ -65,13 +69,23 @@ async function createApp(actor: any, deploymentMode: "local_trusted" | "authenti
   });
   app.use("/api", instanceSettingsRoutes({} as any, { deploymentMode }));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 describe("instance settings routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,

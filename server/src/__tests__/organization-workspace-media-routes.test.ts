@@ -1,5 +1,7 @@
 import express from "express";
+import { once } from "node:events";
 import fs from "node:fs/promises";
+import type { Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
@@ -77,8 +79,9 @@ vi.mock("../services/organization-workspace-browser.js", () => ({
 }));
 
 const temporaryDirectories = new Set<string>();
+const activeServers = new Set<Server>();
 
-function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use((req, _res, next) => {
     (req as any).actor = actor;
@@ -86,7 +89,10 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api/orgs", organizationRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 async function binaryParser(response: NodeJS.ReadableStream, callback: (error: Error | null, body?: Buffer) => void) {
@@ -116,6 +122,10 @@ describe("organization workspace media content route", () => {
   });
 
   afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     await Promise.all(Array.from(temporaryDirectories, async (directory) => {
       await fs.rm(directory, { recursive: true, force: true });
       temporaryDirectories.delete(directory);
@@ -123,7 +133,7 @@ describe("organization workspace media content route", () => {
   });
 
   it("streams a complete inline media response with seek and safety headers", async () => {
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
     const response = await request(app)
       .get("/api/orgs/organization-1/workspace/file/content?path=media%2Fsample.mp4")
       .buffer(true)
@@ -140,7 +150,7 @@ describe("organization workspace media content route", () => {
   });
 
   it("returns full metadata without a response body for HEAD", async () => {
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
     const response = await request(app)
       .head("/api/orgs/organization-1/workspace/file/content?path=media%2Fsample.mp4");
 
@@ -156,7 +166,7 @@ describe("organization workspace media content route", () => {
     ["bytes=-4", "cdef", "bytes 12-15/16"],
     ["bytes=12-99", "cdef", "bytes 12-15/16"],
   ])("serves the single range %s", async (range, expectedBody, expectedContentRange) => {
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
     const response = await request(app)
       .get("/api/orgs/organization-1/workspace/file/content?path=media%2Fsample.mp4")
       .set("Range", range)
@@ -172,7 +182,7 @@ describe("organization workspace media content route", () => {
   it.each(["bytes=16-", "bytes=8-4", "bytes=-0", "bytes=0-1,4-5", "items=0-1"])(
     "returns 416 for the invalid or unsatisfiable range %s",
     async (range) => {
-      const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+      const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
       const response = await request(app)
         .get("/api/orgs/organization-1/workspace/file/content?path=media%2Fsample.mp4")
         .set("Range", range);
@@ -191,7 +201,7 @@ describe("organization workspace media content route", () => {
       resolvedPath: mediaPath,
       byteSize: mediaBytes.byteLength,
     });
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
     const response = await request(app)
       .get("/api/orgs/organization-1/workspace/file/content?path=archives%2Fsample.zip");
 
@@ -200,7 +210,7 @@ describe("organization workspace media content route", () => {
   });
 
   it("preserves organization authorization before resolving media", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-1",

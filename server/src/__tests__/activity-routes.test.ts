@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { activityRoutes } from "../routes/activity.js";
 
@@ -44,7 +46,9 @@ function createRunLookupDb(run: { orgId: string } | null) {
   };
 }
 
-function createApp(db: Record<string, unknown> = {}) {
+const activeServers = new Set<Server>();
+
+async function createApp(db: Record<string, unknown> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -59,18 +63,28 @@ function createApp(db: Record<string, unknown> = {}) {
   });
   app.use("/api", activityRoutes(db as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("activity routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("passes activity list principal filters to the service", async () => {
     mockActivityService.list.mockResolvedValue([]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/activity")
       .query({
         userId: "user-1",
@@ -97,7 +111,7 @@ describe("activity routes", () => {
       nextCursor: "next-page",
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/activity")
       .query({
         actorType: "system",
@@ -130,7 +144,7 @@ describe("activity routes", () => {
       nextCursor: null,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/users/me/activity-ledger")
       .query({
         since: "2026-06-18T00:00:00.000Z",
@@ -180,7 +194,7 @@ describe("activity routes", () => {
       },
     }]);
 
-    const res = await request(createApp()).get("/api/issues/PAP-475/runs");
+    const res = await request(await createApp()).get("/api/issues/PAP-475/runs");
 
     expect(res.status).toBe(200);
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
@@ -205,7 +219,7 @@ describe("activity routes", () => {
       },
     ]);
 
-    const res = await request(createApp(createRunLookupDb({ orgId: "organization-1" })))
+    const res = await request(await createApp(createRunLookupDb({ orgId: "organization-1" })))
       .get("/api/agent-runs/run-1/issues");
 
     expect(res.status).toBe(200);
@@ -220,7 +234,7 @@ describe("activity routes", () => {
       },
     ]);
 
-    const res = await request(createApp(createRunLookupDb({ orgId: "organization-2" })))
+    const res = await request(await createApp(createRunLookupDb({ orgId: "organization-2" })))
       .get("/api/agent-runs/run-1/issues");
 
     expect(res.status).toBe(403);
@@ -230,7 +244,7 @@ describe("activity routes", () => {
   it("keeps legacy heartbeat run issue lookup not-found copy", async () => {
     mockActivityService.issuesForRun.mockResolvedValue([]);
 
-    const res = await request(createApp(createRunLookupDb(null)))
+    const res = await request(await createApp(createRunLookupDb(null)))
       .get("/api/heartbeat-runs/run-1/issues");
 
     expect(res.status).toBe(404);
@@ -241,7 +255,7 @@ describe("activity routes", () => {
   it("uses agent-run issue lookup not-found copy", async () => {
     mockActivityService.issuesForRun.mockResolvedValue([]);
 
-    const res = await request(createApp(createRunLookupDb(null)))
+    const res = await request(await createApp(createRunLookupDb(null)))
       .get("/api/agent-runs/run-1/issues");
 
     expect(res.status).toBe(404);

@@ -1,4 +1,5 @@
 import express from "express";
+import { once } from "node:events";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import {
@@ -147,18 +148,26 @@ describe("HTTP request-body logging", () => {
       loggedBody = requestBodyForLogs(req, req.body);
       res.status(req.originalUrl.includes("clipboard") ? 401 : 403).json({ error: "rejected before route" });
     });
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
 
-    const unauthorized = await request(app)
-      .post("/api/browser/clipboard")
-      .send({ items: [{ entries: [{ text: "clipboard-secret" }] }] });
-    expect(unauthorized.status).toBe(401);
-    expect(loggedBody).toBe("[REDACTED]");
+    try {
+      const unauthorized = await request(server)
+        .post("/api/browser/clipboard")
+        .send({ items: [{ entries: [{ text: "clipboard-secret" }] }] });
+      expect(unauthorized.status).toBe(401);
+      expect(loggedBody).toBe("[REDACTED]");
 
-    const mismatched = await request(app)
-      .post("/api/browser/evaluate")
-      .send({ function: "() => 'private-value'" });
-    expect(mismatched.status).toBe(403);
-    expect(loggedBody).toBe("[REDACTED]");
+      const mismatched = await request(server)
+        .post("/api/browser/evaluate")
+        .send({ function: "() => 'private-value'" });
+      expect(mismatched.status).toBe(403);
+      expect(loggedBody).toBe("[REDACTED]");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it("redacts OAuth callback URL and query before auth or route middleware runs", () => {

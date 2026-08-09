@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 
@@ -153,7 +155,9 @@ function createDb(
   };
 }
 
-function createApp(db: Record<string, unknown> = createDb()) {
+const activeServers = new Set<Server>();
+
+async function createApp(db: Record<string, unknown> = createDb()) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -168,8 +172,18 @@ function createApp(db: Record<string, unknown> = createDb()) {
   });
   app.use("/api", agentRoutes(db as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 function makeAgent(agentRuntimeType: string) {
   return {
@@ -283,7 +297,7 @@ describe("agent skill routes", () => {
   let enabledSkillState: string[] = [];
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     enabledSkillState = [];
     mockAgentService.resolveByReference.mockResolvedValue({
       ambiguous: false,
@@ -405,7 +419,7 @@ describe("agent skill routes", () => {
   it("skips runtime materialization when listing Claude skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/skills?orgId=organization-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -419,7 +433,7 @@ describe("agent skill routes", () => {
   it("keeps runtime materialization for persistent skill adapters", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("codex_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/skills?orgId=organization-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -432,7 +446,7 @@ describe("agent skill routes", () => {
   it("skips runtime materialization when syncing Claude skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?orgId=organization-1")
       .send({ desiredSkills: ["rudder/rudder"] });
 
@@ -448,7 +462,7 @@ describe("agent skill routes", () => {
   it("canonicalizes desired skill references before syncing", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?orgId=organization-1")
       .send({ desiredSkills: ["rudder"] });
 
@@ -463,7 +477,7 @@ describe("agent skill routes", () => {
   it("accepts explicitly enabled user-installed skills when the adapter exposes an ephemeral managed surface", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?orgId=organization-1")
       .send({ desiredSkills: ["build-advisor"] });
 
@@ -478,7 +492,7 @@ describe("agent skill routes", () => {
   it("keeps bundled Rudder skills enabled when users clear optional skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?orgId=organization-1")
       .send({ desiredSkills: [] });
 
@@ -494,7 +508,7 @@ describe("agent skill routes", () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
     enabledSkillState = ["org:organization/organization-1/alpha-test"];
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/enable?orgId=organization-1")
       .send({ skills: ["build-advisor"] });
 
@@ -514,7 +528,7 @@ describe("agent skill routes", () => {
   });
 
   it("persists canonical desired skills when creating an agent directly", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "QA Agent",
@@ -546,7 +560,7 @@ describe("agent skill routes", () => {
     }));
     mockAgentService.list.mockResolvedValueOnce([makeAgent("codex_local")]);
 
-    await request(createApp())
+    await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "Codex Agent",
@@ -586,7 +600,7 @@ describe("agent skill routes", () => {
   it("does not create Codex organization intelligence defaults without the onboarding seed flag", async () => {
     mockAgentService.list.mockResolvedValueOnce([makeAgent("codex_local")]);
 
-    await request(createApp())
+    await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "Later Codex Agent",
@@ -603,7 +617,7 @@ describe("agent skill routes", () => {
   });
 
   it("does not create Codex organization intelligence defaults when another agent is already first", async () => {
-    await request(createApp(createDb(false, "22222222-2222-4222-8222-222222222222")))
+    await request(await createApp(createDb(false, "22222222-2222-4222-8222-222222222222")))
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "Second Codex Agent",
@@ -621,7 +635,7 @@ describe("agent skill routes", () => {
   });
 
   it("allows direct agent creation without an explicit name", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         role: "engineer",
@@ -646,7 +660,7 @@ describe("agent skill routes", () => {
     );
 
     for (const agentRuntimeType of ["pi_local", "opencode_local"]) {
-      const res = await request(createApp())
+      const res = await request(await createApp())
         .post("/api/orgs/organization-1/agents")
         .send({
           name: `${agentRuntimeType} custom model`,
@@ -681,7 +695,7 @@ describe("agent skill routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111")
       .send({
         agentRuntimeConfig: {
@@ -695,7 +709,7 @@ describe("agent skill routes", () => {
   });
 
   it("generates an Oreo avatar instead of preserving legacy named icons during direct creation", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "QA Agent",
@@ -715,7 +729,7 @@ describe("agent skill routes", () => {
     "oreo:bloom:unknown:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
     "oreo:bloom:rose-milk:not-a-uuid",
   ])("rejects an invalid Oreo avatar reference at the API boundary: %s", async (icon) => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "QA Agent",
@@ -730,7 +744,7 @@ describe("agent skill routes", () => {
   });
 
   it("materializes a managed SOUL.md for directly created local agents", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "QA Agent",
@@ -774,7 +788,7 @@ describe("agent skill routes", () => {
   });
 
   it("materializes the bundled Operator Assistant instruction set for default root agents", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "CEO",
@@ -803,7 +817,7 @@ describe("agent skill routes", () => {
   });
 
   it("materializes the bundled default instruction set for non-CEO agents with no prompt template", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
         name: "Engineer",
@@ -831,7 +845,7 @@ describe("agent skill routes", () => {
   it("includes canonical desired skills in hire approvals", async () => {
     const db = createDb(true);
 
-    const res = await request(createApp(db))
+    const res = await request(await createApp(db))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -861,7 +875,7 @@ describe("agent skill routes", () => {
   });
 
   it("generates an Oreo avatar during hires when the request omits icon", async () => {
-    const res = await request(createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -884,7 +898,7 @@ describe("agent skill routes", () => {
   });
 
   it("generates an Oreo avatar instead of preserving legacy named icons during hires", async () => {
-    const res = await request(createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -925,7 +939,7 @@ describe("agent skill routes", () => {
       runtimeConfig: {},
     }));
 
-    const res = await request(createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         role: "engineer",
@@ -945,7 +959,7 @@ describe("agent skill routes", () => {
   });
 
   it("uses managed SOUL config in hire approval payloads", async () => {
-    const res = await request(createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -976,7 +990,7 @@ describe("agent skill routes", () => {
   });
 
   it("materializes hire prompt templates even when clients send incomplete managed bundle metadata", async () => {
-    const res = await request(createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "Marketing Agent",

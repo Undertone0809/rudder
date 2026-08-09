@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 
@@ -97,7 +99,9 @@ vi.mock("../agent-runtimes/index.js", () => ({
   listAgentRuntimeModels: vi.fn(),
 }));
 
-function createApp(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -106,8 +110,18 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", agentRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 function makeAgent() {
   return {
@@ -127,7 +141,7 @@ function makeAgent() {
 
 describe("agent integration setup URL routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockAgentService.getById.mockResolvedValue(makeAgent());
     mockAgentIntegrationService.create.mockResolvedValue({
       id: "integration-1",
@@ -205,7 +219,7 @@ describe("agent integration setup URL routes", () => {
   });
 
   it("returns a browser-openable Feishu launcher URL with a prefilled bot name for board users", async () => {
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -245,7 +259,7 @@ describe("agent integration setup URL routes", () => {
       name: "ZST613 Bot 1782103161531",
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -264,7 +278,7 @@ describe("agent integration setup URL routes", () => {
   });
 
   it("denies setup URL generation for agents from another organization", async () => {
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "agent",
       agentId: "agent-from-other-org",
       orgId: "33333333-3333-4333-8333-333333333333",
@@ -288,7 +302,7 @@ describe("agent integration setup URL routes", () => {
       integration: null,
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -317,7 +331,7 @@ describe("agent integration setup URL routes", () => {
   });
 
   it("updates Feishu daily session notification settings for board users", async () => {
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -407,7 +421,7 @@ describe("agent integration setup URL routes", () => {
       },
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -482,7 +496,7 @@ describe("agent integration setup URL routes", () => {
     });
     mockEnsureFeishuIntegrationRuntimeStarted.mockResolvedValue({ enabled: true, started: 0, running: false });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -545,7 +559,7 @@ describe("agent integration setup URL routes", () => {
       },
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       source: "local_implicit",
       isInstanceAdmin: true,
@@ -565,7 +579,7 @@ describe("agent integration setup URL routes", () => {
   it("does not expose setup sessions outside the current agent boundary", async () => {
     mockFeishuAppRegistrationSessions.get.mockReturnValue(null);
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -616,7 +630,7 @@ describe("agent integration setup URL routes", () => {
       },
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],

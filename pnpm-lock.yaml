@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@paperclipai/adapter-utils': 2026.618.0
   axios: 1.16.0
   defu: 6.1.5
   fast-uri: 3.1.2

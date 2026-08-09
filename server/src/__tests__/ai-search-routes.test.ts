@@ -1,9 +1,12 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 
 const mockSearch = vi.hoisted(() => vi.fn());
+const activeServers = new Set<Server>();
 
 vi.mock("../services/ai-search.js", () => ({
   aiSearchService: () => ({ search: mockSearch }),
@@ -24,7 +27,10 @@ async function createApp() {
   });
   app.use("/api/orgs", aiSearchRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("AI Search routes", () => {
@@ -35,6 +41,13 @@ describe("AI Search routes", () => {
       answer: "Found one project.",
       results: [],
     });
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("uses the organization Smart Model search service for board requests", async () => {

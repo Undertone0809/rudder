@@ -12,7 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const tempRoots = [];
@@ -51,6 +53,16 @@ function createStageServerRepo() {
   mkdirSync(join(repo, "desktop", "scripts"), { recursive: true });
   mkdirSync(join(repo, "packages", "shared"), { recursive: true });
   mkdirSync(join(repo, "server"), { recursive: true });
+  const rootManifestPath = join(repo, "package.json");
+  writeJson(rootManifestPath, {
+    name: "rudder-stage-server-fixture",
+    private: true,
+    pnpm: {
+      patchedDependencies: {
+        "ui-only-package@1.0.0": "patches/ui-only-package.patch",
+      },
+    },
+  });
   cpSync(join(scriptsDir, "stage-server.mjs"), join(repo, "desktop", "scripts", "stage-server.mjs"));
   cpSync(
     join(scriptsDir, "optimize-server-package.mjs"),
@@ -115,6 +127,13 @@ function createStageServerRepo() {
     "const fs = require('node:fs');",
     "const path = require('node:path');",
     "const repo = process.cwd();",
+    "if (process.argv.includes('install')) {",
+    "  const required = ['--offline', '--frozen-lockfile', '--force'];",
+    "  if (process.argv.includes('--ignore-scripts')) process.exit(46);",
+    "  if (!required.every((arg) => process.argv.includes(arg))) process.exit(45);",
+    "  fs.writeFileSync(path.join(repo, '.workspace-install-restored'), 'ok\\n');",
+    "  process.exit(0);",
+    "}",
     "if (process.argv.includes('--legacy')) {",
     "  console.error('pnpm deploy --legacy is no longer supported');",
     "  process.exit(42);",
@@ -122,6 +141,11 @@ function createStageServerRepo() {
     "if (process.env.PNPM_CONFIG_FORCE_LEGACY_DEPLOY !== 'true') {",
     "  console.error('pnpm deploy requires force-legacy-deploy config for non-injected workspace packages');",
     "  process.exit(43);",
+    "}",
+    "const rootManifest = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));",
+    "if (rootManifest.pnpm?.allowNonAppliedPatches !== true) {",
+    "  console.error('pnpm deploy requires temporary non-applied patch allowance');",
+    "  process.exit(44);",
     "}",
     "const target = process.argv.at(-1);",
     "const publishedShared = {",
@@ -154,7 +178,7 @@ function createStageServerRepo() {
   }
   chmodSync(pnpmPath, 0o755);
 
-  return { repo, binDir, sharedManifestPath };
+  return { repo, binDir, rootManifestPath, sharedManifestPath };
 }
 
 afterEach(() => {
@@ -435,7 +459,8 @@ describe("desktop stage-server", () => {
   }, 15_000);
 
   it("restores source package manifests after pnpm deploy rewrites them", () => {
-    const { repo, binDir, sharedManifestPath } = createStageServerRepo();
+    const { repo, binDir, rootManifestPath, sharedManifestPath } = createStageServerRepo();
+    const rootBefore = readFileSync(rootManifestPath, "utf8");
     const before = readFileSync(sharedManifestPath, "utf8");
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
@@ -449,6 +474,8 @@ describe("desktop stage-server", () => {
     });
 
     expect(result.status).toBe(0);
+    expect(readFileSync(join(repo, ".workspace-install-restored"), "utf8")).toBe("ok\n");
+    expect(readFileSync(rootManifestPath, "utf8")).toBe(rootBefore);
     expect(readFileSync(sharedManifestPath, "utf8")).toBe(before);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',

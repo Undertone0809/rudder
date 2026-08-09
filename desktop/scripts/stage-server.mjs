@@ -46,6 +46,10 @@ async function exists(targetPath) {
 
 async function snapshotSourcePackageManifests() {
   const snapshots = new Map();
+  const rootManifestPath = path.join(repoRoot, "package.json");
+  if (await exists(rootManifestPath)) {
+    snapshots.set(rootManifestPath, await fs.readFile(rootManifestPath, "utf8"));
+  }
 
   async function walk(absDir) {
     if (!(await exists(absDir))) return;
@@ -71,10 +75,30 @@ async function snapshotSourcePackageManifests() {
   return snapshots;
 }
 
+async function allowNonAppliedPatchesForDeploy() {
+  const manifestPath = path.join(repoRoot, "package.json");
+  if (!await exists(manifestPath)) return;
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  manifest.pnpm = {
+    ...manifest.pnpm,
+    allowNonAppliedPatches: true,
+  };
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
 async function restoreSourcePackageManifests(snapshots) {
   await Promise.all(
     [...snapshots.entries()].map(([manifestPath, content]) => fs.writeFile(manifestPath, content, "utf8")),
   );
+}
+
+async function restoreWorkspaceDependencyLinks() {
+  await run(pnpmBin, [
+    "install",
+    "--offline",
+    "--frozen-lockfile",
+    "--force",
+  ], repoRoot);
 }
 
 async function writeFileBreakingLinks(filePath, content) {
@@ -367,6 +391,7 @@ async function main() {
 
   const sourceManifestSnapshots = await snapshotSourcePackageManifests();
   try {
+    await allowNonAppliedPatchesForDeploy();
     const deployTarget = path.relative(repoRoot, targetDir);
     await run(pnpmBin, [
       "--config.node-linker=hoisted",
@@ -382,6 +407,7 @@ async function main() {
     });
   } finally {
     await restoreSourcePackageManifests(sourceManifestSnapshots);
+    await restoreWorkspaceDependencyLinks();
   }
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);

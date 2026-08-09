@@ -1,14 +1,24 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { productAnalyticsCollectorRoutes } from "../routes/product-analytics-collector.js";
 import { createProductAnalyticsCollector, InMemoryProductAnalyticsCollectorStore } from "../services/product-analytics-collector.js";
 
 const installationId = "11111111-1111-4111-8111-111111111111";
 const eventId = "22222222-2222-4222-8222-222222222222";
+const activeServers = new Set<Server>();
 
-function app() {
+async function startApp(app: express.Express) {
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
+}
+
+async function app() {
   const store = new InMemoryProductAnalyticsCollectorStore();
   store.setInstallationState(installationId, { consentVersion: "v1", consentEpoch: 1, revoked: false });
   const collector = createProductAnalyticsCollector(store);
@@ -21,8 +31,15 @@ function app() {
     consentEpoch: 1,
   }), { consentSyncSecret: "identity-ledger-hook" }));
   server.use(errorHandler);
-  return { server, store };
+  return { server: await startApp(server), store };
 }
+
+afterEach(async () => {
+  await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 function event() {
   return {
@@ -61,17 +78,18 @@ describe("product analytics collector routes", () => {
       consentVersion: "v1",
       consentEpoch: 1,
     }), { consentSyncSecret: "identity-ledger-hook" }));
+    const listening = await startApp(server);
 
-    const beforeSync = await request(server).post("/api/analytics/v1/events:batch").send({ events: [event()] });
+    const beforeSync = await request(listening).post("/api/analytics/v1/events:batch").send({ events: [event()] });
     expect(beforeSync.body.rejected[0]).toMatchObject({ errorCode: "revoked" });
 
-    const sync = await request(server)
+    const sync = await request(listening)
       .post("/api/analytics/v1/internal/consent/sync")
       .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
       .send({ installationId, consentVersion: "v1", consentEpoch: 1, revoked: false });
     expect(sync.status).toBe(200);
 
-    const afterSync = await request(server).post("/api/analytics/v1/events:batch").send({ events: [event()] });
+    const afterSync = await request(listening).post("/api/analytics/v1/events:batch").send({ events: [event()] });
     expect(afterSync.body.accepted).toBe(1);
   });
 
@@ -88,21 +106,22 @@ describe("product analytics collector routes", () => {
       consentEpoch: 3,
       pseudonymousInstallationId,
     }), { anonymousAuthorization: "deployment-secret" }));
+    const listening = await startApp(server);
 
-    const unauthorized = await request(server)
+    const unauthorized = await request(listening)
       .post("/api/analytics/v1/internal/anonymous/consent")
       .set("x-rudder-telemetry-anonymous-authorization", "wrong")
       .send({ installationId, pseudonymousInstallationId, consentVersion: "v1", consentEpoch: 3, revoked: false });
     expect(unauthorized.status).toBe(401);
 
-    const registered = await request(server)
+    const registered = await request(listening)
       .post("/api/analytics/v1/internal/anonymous/consent")
       .set("x-rudder-telemetry-anonymous-authorization", "deployment-secret")
       .send({ installationId, pseudonymousInstallationId, consentVersion: "v1", consentEpoch: 3, revoked: false });
     expect(registered.status).toBe(200);
     expect(registered.body).toMatchObject({ installationId, pseudonymousInstallationId, consentEpoch: 3, revoked: false });
 
-    const accepted = await request(server)
+    const accepted = await request(listening)
       .post("/api/analytics/v1/events:batch")
       .set("authorization", "Bearer deployment-secret")
       .set("x-rudder-installation-id", installationId)
@@ -114,7 +133,7 @@ describe("product analytics collector routes", () => {
   });
 
   it("rejects consent synchronization without the private Identity hook secret", async () => {
-    const { server } = app();
+    const { server } = await app();
     const response = await request(server).post("/api/analytics/v1/internal/consent/sync").send({
       installationId,
       consentVersion: "v1",
@@ -125,7 +144,7 @@ describe("product analytics collector routes", () => {
   });
 
   it("rejects an empty account-linked subject instead of falling back to installation state", async () => {
-    const { server } = app();
+    const { server } = await app();
     const response = await request(server)
       .post("/api/analytics/v1/internal/consent/sync")
       .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
@@ -134,7 +153,7 @@ describe("product analytics collector routes", () => {
   });
 
   it("rejects a non-string account-linked subject instead of falling back to installation state", async () => {
-    const { server } = app();
+    const { server } = await app();
     const response = await request(server)
       .post("/api/analytics/v1/internal/consent/sync")
       .set("x-rudder-telemetry-consent-sync-secret", "identity-ledger-hook")
@@ -153,8 +172,9 @@ describe("product analytics collector routes", () => {
       consentVersion: "v1",
       consentEpoch: 1,
     }), { revokeSecret: "revoke-secret" }));
+    const listening = await startApp(server);
 
-    const response = await request(server)
+    const response = await request(listening)
       .post("/api/analytics/v1/internal/consent/revoke")
       .set("x-rudder-telemetry-revoke-secret", "revoke-secret")
       .send({ installationId, analyticsSubject: " ", consentVersion: "v1", consentEpoch: 2 });
@@ -162,7 +182,7 @@ describe("product analytics collector routes", () => {
   });
 
   it("returns idempotent batch acknowledgements without exposing request logging", async () => {
-    const { server, store } = app();
+    const { server, store } = await app();
     const payload = event();
     const first = await request(server).post("/api/analytics/v1/events:batch").send({ events: [payload] });
     const duplicate = await request(server).post("/api/analytics/v1/events:batch").send({ events: [payload] });
@@ -174,14 +194,14 @@ describe("product analytics collector routes", () => {
   });
 
   it("rejects a missing event batch with a schema error", async () => {
-    const { server } = app();
+    const { server } = await app();
     const response = await request(server).post("/api/analytics/v1/events:batch").send({});
     expect(response.status).toBe(422);
     expect(response.body.rejected[0]).toMatchObject({ errorCode: "invalid_schema" });
   });
 
   it("returns conflict for a reused event id with a different payload", async () => {
-    const { server } = app();
+    const { server } = await app();
     const first = event();
     await request(server).post("/api/analytics/v1/events:batch").send({ events: [first] });
     const response = await request(server).post("/api/analytics/v1/events:batch").send({ events: [{ ...first, properties: { work_surface: "issue" } }] });

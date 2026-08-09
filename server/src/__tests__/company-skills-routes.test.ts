@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { organizationSkillRoutes } from "../routes/organization-skills.js";
 
@@ -33,7 +35,9 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
 }));
 
-function createApp(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -42,7 +46,10 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", organizationSkillRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("organization skill mutation permissions", () => {
@@ -57,8 +64,15 @@ describe("organization skill mutation permissions", () => {
     mockAccessService.hasPermission.mockResolvedValue(false);
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("allows local board operators to mutate organization skills", async () => {
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "local-board",
       orgIds: ["organization-1"],
@@ -82,7 +96,7 @@ describe("organization skill mutation permissions", () => {
       permissions: {},
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-1",
@@ -105,7 +119,7 @@ describe("organization skill mutation permissions", () => {
       permissions: { canCreateAgents: true, canManageSkills: false },
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-1",
@@ -126,7 +140,7 @@ describe("organization skill mutation permissions", () => {
       permissions: { canCreateAgents: false, canManageSkills: true },
     });
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-1",
@@ -145,7 +159,7 @@ describe("organization skill mutation permissions", () => {
   it("requires skills:manage for non-admin board users", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "board-user",
       orgIds: ["organization-1"],
@@ -164,7 +178,7 @@ describe("organization skill mutation permissions", () => {
   it("keeps legacy agents:create board grants compatible for organization skill mutation", async () => {
     mockAccessService.canUser.mockImplementation(async (_orgId, _userId, permission) => permission === "agents:create");
 
-    const res = await request(createApp({
+    const res = await request(await createApp({
       type: "board",
       userId: "board-user",
       orgIds: ["organization-1"],

@@ -19,7 +19,9 @@ import { and, eq } from "drizzle-orm";
 import express from "express";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -198,6 +200,7 @@ describe("managedMcpConnectionService", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: LocalPostgresInstance | null = null;
   let dataDir = "";
+  const activeServers = new Set<Server>();
   const createClient = vi.fn<(options: ManagedMcpClientOptions) => Promise<ManagedMcpClient>>();
 
   beforeAll(async () => {
@@ -209,6 +212,10 @@ describe("managedMcpConnectionService", () => {
   }, 60_000);
 
   afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     createClient.mockReset();
     await db.delete(agentCustomIntegrationBindings);
     await db.delete(customIntegrationTools);
@@ -254,7 +261,7 @@ describe("managedMcpConnectionService", () => {
     };
   }
 
-  function apiApp() {
+  async function apiApp() {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -280,7 +287,10 @@ describe("managedMcpConnectionService", () => {
       dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
     }));
     app.use(errorHandler);
-    return app;
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
+    return server;
   }
 
   it("ensures curated providers from registry defaults without accepting client endpoints or credentials", async () => {
@@ -405,7 +415,7 @@ describe("managedMcpConnectionService", () => {
 
   it("accepts GitHub PAT through the real API/service/runtime path and reconnects after disable", async () => {
     const orgId = await seedOrg(db);
-    const app = apiApp();
+    const app = await apiApp();
     const initialPat = "github_pat_12345678901234567890";
     const replacementPat = "github_pat_22345678901234567890";
     const client = clientWithTools([
@@ -1123,17 +1133,20 @@ describe("managedMcpConnectionService", () => {
     });
     app.use("/api", secretRoutes(db));
     app.use(errorHandler);
-    const listResponse = await request(app).get(`/api/orgs/${orgId}/secrets`);
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
+    const listResponse = await request(server).get(`/api/orgs/${orgId}/secrets`);
     expect(listResponse.status).toBe(200);
     expect(listResponse.body).toEqual([]);
-    expect((await request(app)
+    expect((await request(server)
       .post(`/api/secrets/${storedSecret!.id}/rotate`)
       .send({ value: "member-rotation-must-fail" })).status).toBe(404);
-    expect((await request(app)
+    expect((await request(server)
       .patch(`/api/secrets/${storedSecret!.id}`)
       .send({ description: "member-update-must-fail" })).status).toBe(404);
-    expect((await request(app).delete(`/api/secrets/${storedSecret!.id}`)).status).toBe(404);
-    expect((await request(app)
+    expect((await request(server).delete(`/api/secrets/${storedSecret!.id}`)).status).toBe(404);
+    expect((await request(server)
       .post(`/api/orgs/${orgId}/secrets`)
       .send({
         name: "forged-purpose",

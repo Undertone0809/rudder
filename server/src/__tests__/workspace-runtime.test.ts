@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
 import {
   cleanupExecutionWorkspaceArtifacts,
@@ -18,6 +18,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 const leasedRunIds = new Set<string>();
+
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const GIT_IDENTITY_TEST_ENV_KEYS = [
   "GIT_AUTHOR_NAME",

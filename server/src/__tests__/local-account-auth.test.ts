@@ -32,7 +32,9 @@ import {
 import { eq, sql } from "drizzle-orm";
 import express from "express";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -103,6 +105,7 @@ describe("localAccountAuthService", () => {
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
   let claims!: VerifiedServerExchange;
+  const activeServers = new Set<Server>();
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -112,6 +115,10 @@ describe("localAccountAuthService", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     await db.execute(sql`drop trigger if exists fail_claim_activity on activity_log`);
     await db.execute(sql`drop function if exists fail_claim_activity()`);
     await db.delete(activityLog);
@@ -677,17 +684,21 @@ describe("localAccountAuthService", () => {
       res.status(error.status ?? 500).json({ error: error.message ?? "failed" });
     });
 
-    expect((await request(app).get("/api/orgs")).status).toBe(401);
-    const exchanged = await request(app)
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
+
+    expect((await request(server).get("/api/orgs")).status).toBe(401);
+    const exchanged = await request(server)
       .post("/api/auth/local-exchange")
       .send({ exchangeCode: "fixture-exchange-code" });
     expect(exchanged.status).toBe(200);
     const cookie = exchanged.headers["set-cookie"]?.[0];
     expect(cookie).toContain("HttpOnly");
-    expect((await request(app)
+    expect((await request(server)
       .post("/api/auth/local-claim")
       .set("Cookie", cookie!)).status).toBe(403);
-    const claimed = await request(app)
+    const claimed = await request(server)
       .post("/api/auth/local-claim")
       .set("Cookie", cookie!)
       .set("Origin", "http://127.0.0.1:3100");
@@ -703,28 +714,28 @@ describe("localAccountAuthService", () => {
       lastReadAt: upgradeReadAt,
     }]);
     claims.jti = "exchange-2";
-    const secondExchange = await request(app)
+    const secondExchange = await request(server)
       .post("/api/auth/local-exchange")
       .send({ exchangeCode: "second-fixture-exchange-code" });
     const secondCookie = secondExchange.headers["set-cookie"]?.[0];
     expect(secondExchange.status).toBe(200);
-    expect((await request(app)
+    expect((await request(server)
       .get("/api/browser/session-check")
       .set("Cookie", secondCookie!)).status).toBe(200);
-    const signedOut = await request(app)
+    const signedOut = await request(server)
       .post("/api/auth/local-signout-all")
       .set("Cookie", cookie!)
       .set("Origin", "http://127.0.0.1:3100");
     expect(signedOut.status).toBe(200);
     expect(signedOut.body).toEqual({ revokedSessionCount: 2 });
     expect(await db.select().from(authSessions)).toHaveLength(0);
-    expect((await request(app)
+    expect((await request(server)
       .get("/api/browser/session-check")
       .set("Cookie", cookie!)).status).toBe(401);
-    expect((await request(app)
+    expect((await request(server)
       .get("/api/cli/session-check")
       .set("Cookie", secondCookie!)).status).toBe(401);
-    expect((await request(app)
+    expect((await request(server)
       .post("/api/auth/local-exchange")
       .send({ exchangeCode: "second-fixture-exchange-code" })).status).toBe(409);
   });

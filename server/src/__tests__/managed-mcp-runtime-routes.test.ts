@@ -3,8 +3,10 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/client";
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forbidden } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { managedMcpRuntimeRoutes } from "../routes/managed-mcp-runtime.js";
@@ -28,7 +30,9 @@ const runtime = {
   callTool: vi.fn(),
 };
 
-function app(requestActor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function app(requestActor: Record<string, unknown>) {
   const instance = express();
   instance.use(express.json());
   instance.use((req, _res, next) => {
@@ -37,12 +41,15 @@ function app(requestActor: Record<string, unknown>) {
   });
   instance.use("/api", managedMcpRuntimeRoutes(runtime as never));
   instance.use(errorHandler);
-  return instance;
+  const server = instance.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("managed MCP run-scoped proxy route", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     runtime.requireBindingAccess.mockResolvedValue({});
     runtime.listTools.mockResolvedValue([{
       name: "external.alpha.read",
@@ -54,13 +61,20 @@ describe("managed MCP run-scoped proxy route", () => {
     });
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("rejects board users, generic agent keys, and JWT actors without signed run context", async () => {
     for (const invalidActor of [
       { type: "board", source: "local_implicit", isInstanceAdmin: true },
       { type: "agent", source: "agent_key", orgId: actor.orgId, agentId: actor.agentId },
       { type: "agent", source: "agent_jwt", orgId: actor.orgId, agentId: actor.agentId },
     ]) {
-      const response = await request(app(invalidActor))
+      const response = await request(await app(invalidActor))
         .post(`/api/mcp/runtime/bindings/${bindingId}`)
         .send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       expect(response.status).toBe(403);
@@ -70,7 +84,7 @@ describe("managed MCP run-scoped proxy route", () => {
   });
 
   it("supports initialize, initialized notification, ping, tools/list, and tools/call", async () => {
-    const api = app(actor);
+    const api = await app(actor);
     const initialize = await request(api)
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({
@@ -159,7 +173,7 @@ describe("managed MCP run-scoped proxy route", () => {
     runtime.listTools.mockRejectedValueOnce(
       forbidden("secret binding and token details"),
     );
-    const denied = await request(app(actor))
+    const denied = await request(await app(actor))
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({ jsonrpc: "2.0", id: 4, method: "tools/list" });
     expect(denied.status).toBe(200);
@@ -173,7 +187,7 @@ describe("managed MCP run-scoped proxy route", () => {
     runtime.callTool.mockRejectedValueOnce(
       new ManagedMcpClientError("mcp_tool_timeout", "upstream secret timeout"),
     );
-    const failed = await request(app(actor))
+    const failed = await request(await app(actor))
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({
         jsonrpc: "2.0",
@@ -190,20 +204,20 @@ describe("managed MCP run-scoped proxy route", () => {
   });
 
   it("rejects malformed and unsupported JSON-RPC requests without invoking a tool", async () => {
-    const malformed = await request(app(actor))
+    const malformed = await request(await app(actor))
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({ jsonrpc: "1.0", id: 1, method: "tools/call" });
     expect(malformed.status).toBe(400);
     expect(malformed.body.error.code).toBe(-32600);
 
-    const unsupported = await request(app(actor))
+    const unsupported = await request(await app(actor))
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({ jsonrpc: "2.0", id: 2, method: "resources/list" });
     expect(unsupported.status).toBe(200);
     expect(unsupported.body.error.code).toBe(-32601);
 
     runtime.requireBindingAccess.mockClear();
-    const notification = await request(app(actor))
+    const notification = await request(await app(actor))
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
       .send({ jsonrpc: "2.0", method: "notifications/custom" });
     expect(notification.status).toBe(202);
@@ -219,10 +233,7 @@ describe("managed MCP run-scoped proxy route", () => {
   });
 
   it("works end-to-end through the pinned Streamable HTTP SDK client", async () => {
-    const api = app(actor);
-    const server = await new Promise<ReturnType<typeof api.listen>>((resolve) => {
-      const listening = api.listen(0, "127.0.0.1", () => resolve(listening));
-    });
+    const server = await app(actor);
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing proxy port");
     const origin = `http://127.0.0.1:${address.port}`;
@@ -253,6 +264,7 @@ describe("managed MCP run-scoped proxy route", () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
+      activeServers.delete(server);
     }
   });
 });

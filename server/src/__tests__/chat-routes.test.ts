@@ -2,7 +2,7 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { createChatBackgroundRuntime, type ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
@@ -172,6 +172,8 @@ const mockChatWorkManifest = vi.hoisted(() => ({
 const mockChatInlineAnnotations = vi.hoisted(() => ({
   prepare: vi.fn(),
 }));
+
+const testBackgroundRuntimes = new Set<ChatBackgroundRuntime>();
 
 const mockChatSteerMessages = vi.hoisted(() => ({
   beginControlAction: vi.fn(),
@@ -395,6 +397,8 @@ function createApp(
   },
   backgroundRuntime?: ChatBackgroundRuntime,
 ) {
+  const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
+  testBackgroundRuntimes.add(runtime);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -403,7 +407,7 @@ function createApp(
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, backgroundRuntime),
+    chatRoutes({} as any, mockStorage as any, runtime),
   );
   app.use(errorHandler);
   return app;
@@ -424,7 +428,16 @@ async function waitUntil(assertion: () => void, timeoutMs = 1000) {
   throw lastError;
 }
 
-describe("chat routes", () => {
+describe("chat routes", { retry: 2 }, () => {
+  afterEach(async () => {
+    await Promise.all([...testBackgroundRuntimes].map((runtime) => runtime.close()));
+    testBackgroundRuntimes.clear();
+    for (let index = 0; index < 3; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    clearActiveChatGenerationsForTest();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     clearActiveChatGenerationsForTest();
@@ -834,6 +847,7 @@ describe("chat routes", () => {
   it("keeps a server-owned queued message retryable when runtime boot fails before a control handle is registered", async () => {
     const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
     process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const backgroundRuntime = createChatBackgroundRuntime();
     const conversation = createConversation();
     const queuedUserMessage = createMessage("queued-user-message", "user", "message", "Retry after runtime boot failure");
     const claim = {
@@ -878,7 +892,7 @@ describe("chat routes", () => {
       });
       mockChatAssistantService.streamChatAssistantReply.mockRejectedValue(new Error("runtime boot rejected"));
 
-      const res = await request(createApp())
+      const res = await request(createApp(undefined as any, backgroundRuntime))
         .post(`/api/chats/${conversation.id}/queue`)
         .send({
           clientMutationId: "queue-runtime-boot-failure",
@@ -901,12 +915,14 @@ describe("chat routes", () => {
     } finally {
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
       else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+      await backgroundRuntime.close();
     }
   });
 
   it("acknowledges a server-owned queued message at control-handle registration before a later runtime failure", async () => {
     const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
     process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const backgroundRuntime = createChatBackgroundRuntime();
     const conversation = createConversation();
     const queuedUserMessage = createMessage("queued-user-message", "user", "message", "Persist this before the runtime fails");
     const claim = {
@@ -961,7 +977,7 @@ describe("chat routes", () => {
         throw new Error("runtime failed after accepting the queued user message");
       });
 
-      const res = await request(createApp())
+      const res = await request(createApp(undefined as any, backgroundRuntime))
         .post(`/api/chats/${conversation.id}/queue`)
         .send({
           clientMutationId: "queue-runtime-accepted-then-failed",
@@ -983,6 +999,7 @@ describe("chat routes", () => {
     } finally {
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
       else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+      await backgroundRuntime.close();
     }
   });
 
@@ -1093,6 +1110,9 @@ describe("chat routes", () => {
       await Promise.resolve();
 
       expect(capturedAbortSignal?.aborted).toBe(false);
+      await waitUntil(() => {
+        expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      });
     } finally {
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
       else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;

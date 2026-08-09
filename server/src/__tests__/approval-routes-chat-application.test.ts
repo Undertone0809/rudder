@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { approvalRoutes } from "../routes/approvals.js";
 
@@ -67,7 +69,9 @@ vi.mock("../services/index.js", () => ({
   secretService: () => mockSecretService,
 }));
 
-function createApp(db: any = {}) {
+const activeServers = new Set<Server>();
+
+async function createApp(db: any = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -82,12 +86,22 @@ function createApp(db: any = {}) {
   });
   app.use("/api", approvalRoutes(db));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 describe("approval routes chat application", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockHeartbeatService.wakeup.mockResolvedValue(null);
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
@@ -128,7 +142,7 @@ describe("approval routes chat application", () => {
       appliedRevision: 2,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Apply the reviewed change" });
 
@@ -166,7 +180,7 @@ describe("approval routes chat application", () => {
       appliedRevision: null,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/reject")
       .send({ decisionNote: "Keep the current Goal" });
 
@@ -217,7 +231,7 @@ describe("approval routes chat application", () => {
       applied: true,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Looks good" });
 
@@ -304,7 +318,7 @@ describe("approval routes chat application", () => {
       applied: true,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Approved" });
 
@@ -377,7 +391,7 @@ describe("approval routes chat application", () => {
     });
     mockAccessService.canUser.mockResolvedValue(false);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Looks good" });
 
@@ -402,7 +416,7 @@ describe("approval routes chat application", () => {
       },
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Looks good" });
 
@@ -436,7 +450,7 @@ describe("approval routes chat application", () => {
       })),
     };
 
-    const res = await request(createApp(db))
+    const res = await request(await createApp(db))
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Looks good" });
 
@@ -494,7 +508,7 @@ describe("approval routes chat application", () => {
       })),
     };
 
-    const res = await request(createApp(db))
+    const res = await request(await createApp(db))
       .post("/api/approvals/approval-1/approve")
       .send({ payload });
 
@@ -533,7 +547,7 @@ describe("approval routes chat application", () => {
       applied: true,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({ decisionNote: "Ship it" });
 

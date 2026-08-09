@@ -1,8 +1,10 @@
 import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
 import { buildAgentMentionHref } from "@rudderhq/shared";
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
@@ -123,7 +125,7 @@ function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RU
   };
 }
 
-function createApp(actor = createBoardActor()) {
+async function createApp(actor = createBoardActor()) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -132,7 +134,17 @@ function createApp(actor = createBoardActor()) {
   });
   app.use("/api", issueRoutes({} as any, {} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
+}
+
+const activeServers = new Set<Server>();
+
+async function createClient(actor = createBoardActor()) {
+  const server = await createApp(actor);
+  return request(server);
 }
 
 function makeIssue(overrides?: Partial<{
@@ -187,6 +199,14 @@ async function flushAsyncWork() {
 }
 
 describe("issue lifecycle routes", () => {
+  afterEach(async () => {
+    await flushAsyncWork();
+    await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
@@ -273,7 +293,7 @@ describe("issue lifecycle routes", () => {
   it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111");
 
     expect(res.status).toBe(200);
@@ -284,7 +304,7 @@ describe("issue lifecycle routes", () => {
   it("does not synthesize the default goal in heartbeat context for an explicitly goal-less issue", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
 
     expect(res.status).toBe(200);
@@ -295,7 +315,7 @@ describe("issue lifecycle routes", () => {
   it("returns 410 for retired issue document routes", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
       .send({
         title: null,
@@ -316,7 +336,7 @@ describe("issue lifecycle routes", () => {
     });
     mockIssueService.getById.mockResolvedValue(issue);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
 
     expect(res.status).toBe(200);
@@ -335,7 +355,7 @@ describe("issue lifecycle routes", () => {
     });
     mockIssueService.getById.mockResolvedValue(issue);
 
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
       .send({
         sha: "ABC1234def5678",
@@ -395,7 +415,7 @@ describe("issue lifecycle routes", () => {
       contextSnapshot: { issueId: issue.id },
     });
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
       .send({
         sha: "abc1234def5678",
@@ -425,7 +445,7 @@ describe("issue lifecycle routes", () => {
       contextSnapshot: { issueId: "99999999-9999-4999-8999-999999999999" },
     });
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, UNBOUND_RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, UNBOUND_RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
       .send({
         sha: "abc1234def5678",
@@ -448,7 +468,7 @@ describe("issue lifecycle routes", () => {
     });
     mockIssueService.getById.mockResolvedValue(issue);
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, null)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, null)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
       .send({
         sha: "abc1234def5678",
@@ -505,13 +525,13 @@ describe("issue lifecycle routes", () => {
     });
 
     const [first, second] = await Promise.all([
-      request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
         .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
         .send({
           sha: "abc1234def5678",
           message: "fix: first agent commit",
         }),
-      request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+      request(await createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
         .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
         .send({
           sha: "def5678abc1234",
@@ -556,7 +576,7 @@ describe("issue lifecycle routes", () => {
       previousBoardOrder: 3000,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/issues/reorder")
       .send({
         issueId: "11111111-1111-4111-8111-111111111111",
@@ -592,7 +612,7 @@ describe("issue lifecycle routes", () => {
   });
 
   it("requires board access to reorder issue board lanes", async () => {
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues/reorder")
       .send({
         issueId: "11111111-1111-4111-8111-111111111111",
@@ -632,6 +652,9 @@ describe("issue lifecycle routes", () => {
     });
     app.use("/api", issueRoutes({} as any, storage));
     app.use(errorHandler);
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
 
     mockIssueService.getById.mockResolvedValue(makeIssue());
     mockIssueService.createAttachment.mockResolvedValue({
@@ -653,7 +676,7 @@ describe("issue lifecycle routes", () => {
       updatedAt: new Date(),
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments")
       .field("usage", "comment_inline")
       .attach("file", Buffer.from("hello"), { filename: "note.txt", contentType: "text/plain" });
@@ -677,7 +700,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp()).post("/api/orgs/organization-1/issues").send({
+    const res = await request(await createApp()).post("/api/orgs/organization-1/issues").send({
       title: "Lifecycle hardening",
       status: "todo",
       priority: "high",
@@ -719,7 +742,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .post("/api/orgs/organization-1/issues")
       .send({
         title: "Agent-created issue",
@@ -753,7 +776,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const explicitAssignee = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const explicitAssignee = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .post("/api/orgs/organization-1/issues")
       .send({
         title: "Explicit assignee",
@@ -771,7 +794,7 @@ describe("issue lifecycle routes", () => {
     );
     expect(explicitAssignee.body.assigneeAgentId).toBe(REVIEWER_AGENT_ID);
 
-    const explicitNull = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const explicitNull = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .post("/api/orgs/organization-1/issues")
       .send({
         title: "Explicit null assignee",
@@ -805,7 +828,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/issues")
       .send({
         title: "Board-created issue",
@@ -834,7 +857,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/orgs/organization-1/issues")
       .send({
         title: "Board-created issue",
@@ -865,7 +888,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp()).post("/api/orgs/organization-1/issues").send({
+    const res = await request(await createApp()).post("/api/orgs/organization-1/issues").send({
       title: "Lifecycle hardening",
       status: "in_review",
       priority: "high",
@@ -905,7 +928,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "in_review" });
 
@@ -936,7 +959,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         runWorkspaceId,
@@ -959,7 +982,7 @@ describe("issue lifecycle routes", () => {
   });
 
   it("rejects conflicting canonical and legacy run workspace fields", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         runWorkspaceId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
@@ -986,7 +1009,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/work-products")
       .send({
         runWorkspaceId,
@@ -1026,7 +1049,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ projectId: newProjectId });
 
@@ -1062,7 +1085,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ title: "Renamed title", description: "Edited description" });
 
@@ -1109,7 +1132,7 @@ describe("issue lifecycle routes", () => {
     });
     mockIssueService.update.mockResolvedValue(updatedChildIssue);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch(`/api/issues/${issueId}`)
       .send({ parentId: parentIssueId });
 
@@ -1139,7 +1162,7 @@ describe("issue lifecycle routes", () => {
     mockIssueService.getById.mockResolvedValue(issue);
     mockIssueService.update.mockResolvedValue(issue);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ comment: "Leaving an evidence note." });
 
@@ -1176,7 +1199,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "blocked", comment: "Blocked by missing credentials." });
 
@@ -1216,7 +1239,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "done" });
 
@@ -1272,7 +1295,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "done" });
 
@@ -1306,7 +1329,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "in_progress", comment: "Please tighten the lifecycle tests." });
 
@@ -1372,7 +1395,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "todo", comment: "Please rework the handoff payload." });
 
@@ -1412,7 +1435,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "in_progress" });
 
@@ -1450,7 +1473,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "request_changes",
@@ -1513,7 +1536,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "request_changes",
@@ -1563,7 +1586,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "approve",
@@ -1610,7 +1633,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "blocked",
@@ -1662,7 +1685,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "needs_followup",
@@ -1702,7 +1725,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         reviewDecision: "approve",
@@ -1727,7 +1750,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "todo" });
 
@@ -1767,7 +1790,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([ASSIGNEE_AGENT_ID]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
@@ -1805,7 +1828,7 @@ describe("issue lifecycle routes", () => {
       authorUserId: "local-board",
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Worker](${buildAgentMentionHref(mentionedAgentId, "code", "wake")}) please check this` });
 
@@ -1864,7 +1887,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "Close-out evidence." });
 
@@ -1893,7 +1916,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, null)))
+    const res = await request(await createApp(createAgentActor(PEER_AGENT_ID, null)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "Unbound collaborator response." });
 
@@ -1921,7 +1944,7 @@ describe("issue lifecycle routes", () => {
       },
     });
 
-    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+    const res = await request(await createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "Bound response without lifecycle authority.", reopen: true });
 
@@ -1934,7 +1957,7 @@ describe("issue lifecycle routes", () => {
   it("allows a board user to edit their own issue comment and records safe activity", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
       .send({ body: "Updated comment body" });
 
@@ -1997,7 +2020,7 @@ describe("issue lifecycle routes", () => {
       }],
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
       .send({ body: editedBody });
 
@@ -2034,7 +2057,7 @@ describe("issue lifecycle routes", () => {
     });
     mockLogActivity.mockRejectedValueOnce(new Error("activity store unavailable"));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
       .send({ body: editedBody });
 
@@ -2047,7 +2070,7 @@ describe("issue lifecycle routes", () => {
   it("allows a board user to delete their own issue comment without logging the deleted body", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
 
     expect(res.status).toBe(200);
@@ -2103,14 +2126,14 @@ describe("issue lifecycle routes", () => {
       },
     ]);
 
-    const getRes = await request(createApp())
+    const getRes = await request(await createApp())
       .get(`/api/issues/${issueId}/comments/${commentRef}`);
-    const listRes = await request(createApp())
+    const listRes = await request(await createApp())
       .get(`/api/issues/${issueId}/comments?after=${commentRef}&order=asc`);
-    const patchRes = await request(createApp())
+    const patchRes = await request(await createApp())
       .patch(`/api/issues/${issueId}/comments/${commentRef}`)
       .send({ body: "Updated via short ref" });
-    const deleteRes = await request(createApp())
+    const deleteRes = await request(await createApp())
       .delete(`/api/issues/${issueId}/comments/${commentRef}`);
 
     expect(getRes.status).toBe(200);
@@ -2140,15 +2163,16 @@ describe("issue lifecycle routes", () => {
 
   it("returns route-level errors for missing, ambiguous, cross-issue, and cross-org comment refs", async () => {
     const issueId = "11111111-1111-4111-8111-111111111111";
+    const boardClient = await createClient();
     mockIssueService.getById.mockResolvedValue(makeIssue({ id: issueId }));
 
     mockIssueService.resolveCommentReference.mockRejectedValueOnce(new HttpError(404, "Issue comment not found"));
-    const missingRes = await request(createApp())
+    const missingRes = await boardClient
       .get(`/api/issues/${issueId}/comments/cmt_ffffffff`);
     expect(missingRes.status).toBe(404);
 
     mockIssueService.resolveCommentReference.mockRejectedValueOnce(new HttpError(409, "Issue comment short ref is ambiguous for this issue. Use the comment ID."));
-    const ambiguousRes = await request(createApp())
+    const ambiguousRes = await boardClient
       .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
     expect(ambiguousRes.status).toBe(409);
 
@@ -2159,12 +2183,12 @@ describe("issue lifecycle routes", () => {
       orgId: "organization-1",
       body: "Other issue",
     });
-    const crossIssueRes = await request(createApp())
+    const crossIssueRes = await boardClient
       .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
     expect(crossIssueRes.status).toBe(404);
 
     mockIssueService.getById.mockResolvedValueOnce(makeIssue({ id: issueId, orgId: "organization-2" }));
-    const crossOrgRes = await request(createApp(createAgentActor()))
+    const crossOrgRes = await (await createClient(createAgentActor()))
       .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
     expect(crossOrgRes.status).toBe(403);
   });
@@ -2172,10 +2196,10 @@ describe("issue lifecycle routes", () => {
   it("rejects agent attempts to edit or delete issue comments", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
 
-    const patchRes = await request(createApp(createAgentActor()))
+    const patchRes = await request(await createApp(createAgentActor()))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
       .send({ body: "Agent edit" });
-    const deleteRes = await request(createApp(createAgentActor()))
+    const deleteRes = await request(await createApp(createAgentActor()))
       .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
 
     expect(patchRes.status).toBe(403);
@@ -2204,7 +2228,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "done", comment: "Implemented the requested changes." });
 
@@ -2282,7 +2306,7 @@ describe("issue lifecycle routes", () => {
         },
       });
 
-      const res = await request(createApp(createAgentActor(agentId, RUN_ID)))
+      const res = await request(await createApp(createAgentActor(agentId, RUN_ID)))
         .patch("/api/issues/11111111-1111-4111-8111-111111111111")
         .send({ description: `${relationship} verified` });
 
@@ -2300,7 +2324,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+    const res = await request(await createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ description: "collaborator should not mutate protected fields" });
 
@@ -2333,7 +2357,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ description: "relationship-authorized update" });
 
@@ -2357,7 +2381,7 @@ describe("issue lifecycle routes", () => {
       actorRunId: RUN_ID,
     }));
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "done", comment: "This run should not close out." });
 
@@ -2404,7 +2428,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) I handled the review feedback.` });
 
@@ -2448,7 +2472,7 @@ describe("issue lifecycle routes", () => {
       contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
     });
 
-    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+    const res = await request(await createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) note to self.` });
 
@@ -2468,7 +2492,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({
         body: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) can you check the interaction copy?`,
@@ -2500,7 +2524,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, "chat-run-not-a-uuid")))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, "chat-run-not-a-uuid")))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "This should not persist." });
 
@@ -2530,7 +2554,7 @@ describe("issue lifecycle routes", () => {
       authorUserId: "local-board",
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "please check the retry path" });
 
@@ -2561,7 +2585,7 @@ describe("issue lifecycle routes", () => {
       authorUserId: "local-board",
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Assigned Agent](${mention}) please check the retry path` });
 
@@ -2636,7 +2660,7 @@ describe("issue lifecycle routes", () => {
       authorUserId: "local-board",
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Reviewer](${mention}) please verify the merged result` });
 
@@ -2701,7 +2725,7 @@ describe("issue lifecycle routes", () => {
       authorUserId: "local-board",
     }));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "please reopen and continue", reopen: true });
 
@@ -2779,7 +2803,7 @@ describe("issue lifecycle routes", () => {
     const mention = `[Assigned Agent](${buildAgentMentionHref(ASSIGNEE_AGENT_ID, null, "wake")})`;
     const body = `please reopen and continue ${mention}`;
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body, reopen: true });
 
@@ -2819,7 +2843,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "reopening because I found the missing case", reopen: true });
 
@@ -2844,7 +2868,7 @@ describe("issue lifecycle routes", () => {
     mockIssueService.findMentionedAgents.mockResolvedValue([REVIEWER_AGENT_ID]);
 
     const body = `[Reviewer](${buildAgentMentionHref(REVIEWER_AGENT_ID, "code", "wake")}) can you review this?`;
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body });
 
@@ -2878,7 +2902,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "parking this for later" });
 
@@ -2896,7 +2920,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) can you look at the UX?` });
 
@@ -2922,7 +2946,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) can you take a look?` });
 
@@ -2960,7 +2984,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         comment: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) please own this one.`,
@@ -3010,7 +3034,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
 
-    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ comment: `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) I handled the review feedback.` });
 
@@ -3052,7 +3076,7 @@ describe("issue lifecycle routes", () => {
       contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111", wakeSource: "comment.mention" },
     });
 
-    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+    const res = await request(await createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({ status: "done" });
 
@@ -3076,7 +3100,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .set("X-Rudder-Run-Id", RUN_ID)
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] });
@@ -3105,7 +3129,7 @@ describe("issue lifecycle routes", () => {
       }),
     );
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] });
 

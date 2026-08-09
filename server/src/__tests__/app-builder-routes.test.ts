@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { appBuilderRoutes } from "../routes/app-builder.js";
 
@@ -56,7 +58,9 @@ function appRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createApp(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -65,7 +69,10 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", appBuilderRoutes({} as never));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("App Builder routes", () => {
@@ -95,11 +102,18 @@ describe("App Builder routes", () => {
     mockAppBuilderService.clearLocalBinding.mockResolvedValue(appRecord());
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("rejects App Builder API access while Sites is disabled", async () => {
     mockInstanceSettingsService.getGeneral.mockResolvedValueOnce({
       experimentalSitesEnabled: false,
     });
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -114,7 +128,7 @@ describe("App Builder routes", () => {
   });
 
   it("lists only Apps in an organization the actor can access", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -130,7 +144,7 @@ describe("App Builder routes", () => {
   });
 
   it("creates an organization App without a backing Project", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -155,7 +169,7 @@ describe("App Builder routes", () => {
   });
 
   it("creates one Project app and records a safe activity", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -191,7 +205,7 @@ describe("App Builder routes", () => {
   });
 
   it("allows only the board actor to create a Project app", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -212,7 +226,7 @@ describe("App Builder routes", () => {
   });
 
   it("rejects unsafe source roots before invoking the service", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -233,7 +247,7 @@ describe("App Builder routes", () => {
   });
 
   it("prevents an agent from reading a Project in another organization", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-2",
       orgId: otherOrgId,
@@ -248,7 +262,7 @@ describe("App Builder routes", () => {
   });
 
   it("records a build-start activity tied to the reviewed run", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -286,7 +300,7 @@ describe("App Builder routes", () => {
   });
 
   it("rejects Agent build updates without the authenticated run ID", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -311,7 +325,7 @@ describe("App Builder routes", () => {
   });
 
   it("accepts verified source only from the matching authenticated run", async () => {
-    const boardApp = createApp({
+    const boardApp = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -328,7 +342,7 @@ describe("App Builder routes", () => {
       });
     expect(boardResponse.status).toBe(403);
 
-    const agentApp = createApp({
+    const agentApp = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -356,7 +370,7 @@ describe("App Builder routes", () => {
   });
 
   it("prevents Agents from writing Desktop lifecycle states", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -377,7 +391,7 @@ describe("App Builder routes", () => {
 
   it("attaches a reserved App to its Chat as a board mutation", async () => {
     const conversationId = "66666666-6666-4666-8666-666666666666";
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
@@ -405,7 +419,7 @@ describe("App Builder routes", () => {
   });
 
   it("allows only the board actor to attach opaque local bindings", async () => {
-    const agentApp = createApp({
+    const agentApp = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -420,7 +434,7 @@ describe("App Builder routes", () => {
     expect(agentResponse.status).toBe(403);
     expect(mockAppBuilderService.bindLocalRuntime).not.toHaveBeenCalled();
 
-    const boardApp = createApp({
+    const boardApp = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],

@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { productAnalyticsRoutes } from "../routes/product-analytics.js";
 
@@ -37,7 +39,9 @@ vi.mock("../services/product-analytics.js", () => ({
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
 
-function createApp(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -46,11 +50,14 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", productAnalyticsRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockService.summary.mockResolvedValue({ metrics: { ledger_event_count: 0 } });
   mockService.listEvents.mockResolvedValue([]);
   mockOutbox.acknowledge.mockResolvedValue({ updatedCount: 1, state: "delivered" });
@@ -59,9 +66,16 @@ beforeEach(() => {
   mockOutbox.getState.mockResolvedValue(null);
 });
 
+afterEach(async () => {
+  await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
+
 describe("product analytics routes", () => {
   it("returns an organization-scoped summary", async () => {
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       source: "local_implicit",
       isInstanceAdmin: true,
@@ -72,7 +86,7 @@ describe("product analytics routes", () => {
   });
 
   it("rejects malformed dates, event names, limits, and organization ids", async () => {
-    const app = createApp({ type: "board", source: "local_implicit", isInstanceAdmin: true });
+    const app = await createApp({ type: "board", source: "local_implicit", isInstanceAdmin: true });
 
     await expect(request(app).get(`/api/orgs/${ORG_ID}/analytics/product?from=not-a-date`)).resolves.toMatchObject({ status: 422 });
     await expect(request(app).get(`/api/orgs/${ORG_ID}/analytics/product/events?eventName=unknown`)).resolves.toMatchObject({ status: 422 });
@@ -82,7 +96,7 @@ describe("product analytics routes", () => {
   });
 
   it("does not allow an agent key to read another organization", async () => {
-    const response = await request(createApp({ type: "agent", orgId: ORG_ID, agentId: "agent-1" }))
+    const response = await request(await createApp({ type: "agent", orgId: ORG_ID, agentId: "agent-1" }))
       .get("/api/orgs/22222222-2222-4222-8222-222222222222/analytics/product");
 
     expect(response.status).toBe(403);
@@ -104,7 +118,7 @@ describe("product analytics routes", () => {
       pendingCount: 1,
     });
 
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       source: "session",
       userId: "user-b",
@@ -118,7 +132,7 @@ describe("product analytics routes", () => {
   it("forwards the installation secret when acknowledging an outbox claim", async () => {
     const installationId = "installation-1";
     const eventId = "22222222-2222-4222-8222-222222222222";
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       source: "local_implicit",
       isInstanceAdmin: true,
@@ -142,7 +156,7 @@ describe("product analytics routes", () => {
 
   it("binds account-linked outbox claims to the signed-in local user", async () => {
     const installationId = "installation-1";
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       source: "session",
       userId: "user-a",
@@ -162,7 +176,7 @@ describe("product analytics routes", () => {
   });
 
   it("rejects account-linked claims from the synthetic local actor", async () => {
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       source: "local_implicit",
       userId: "local-board",

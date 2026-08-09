@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 import { registerAgentManagementRoutes } from "../routes/agents.management-routes.js";
@@ -72,7 +74,16 @@ vi.mock("../agent-runtimes/index.js", () => ({
   listAgentRuntimeModels: vi.fn(),
 }));
 
-function createApp(
+const activeServers = new Set<Server>();
+
+async function startApp(app: express.Express) {
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
+}
+
+async function createApp(
   actor: Record<string, unknown> = {
     type: "board",
     userId: "local-board",
@@ -89,10 +100,10 @@ function createApp(
   });
   app.use("/api", agentRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  return startApp(app);
 }
 
-function createManagementApp(db: Record<string, unknown>, actor: Record<string, unknown>) {
+async function createManagementApp(db: Record<string, unknown>, actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -110,7 +121,7 @@ function createManagementApp(db: Record<string, unknown>, actor: Record<string, 
   } as any);
   app.use("/api", router);
   app.use(errorHandler);
-  return app;
+  return startApp(app);
 }
 
 function createRunIdLookupDb(rows: Array<{ id: string }>) {
@@ -132,10 +143,17 @@ describe("agent run retry route", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("lists agent runs by date range without applying the default recency limit", async () => {
     mockHeartbeatService.list.mockResolvedValue([]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/heartbeat-runs")
       .query({
         startDate: "2026-06-10T00:00:00.000Z",
@@ -160,7 +178,7 @@ describe("agent run retry route", () => {
       recent: [],
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/agent-runs/overview");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -218,7 +236,7 @@ describe("agent run retry route", () => {
       name: "Wesley",
       agentRuntimeType: "codex_local",
     });
-    const app = createManagementApp({}, {
+    const app = await createManagementApp({}, {
       type: "board",
       userId: "board-user",
       orgIds: ["organization-1"],
@@ -296,7 +314,7 @@ describe("agent run retry route", () => {
       },
     ]);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/orgs/organization-1/agent-runs")
       .query({
         agentId: "agent-1",
@@ -352,7 +370,7 @@ describe("agent run retry route", () => {
       },
     });
 
-    const res = await request(createApp()).post("/api/heartbeat-runs/run-1/retry").send({});
+    const res = await request(await createApp()).post("/api/heartbeat-runs/run-1/retry").send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
@@ -396,7 +414,7 @@ describe("agent run retry route", () => {
       },
     });
 
-    const res = await request(createApp()).post("/api/agent-runs/run-1/retry").send({});
+    const res = await request(await createApp()).post("/api/agent-runs/run-1/retry").send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
@@ -436,7 +454,7 @@ describe("agent run retry route", () => {
     });
 
     const res = await request(
-      createApp({
+      await createApp({
         type: "agent",
         orgId: "organization-1",
         agentId: "agent-1",
@@ -476,7 +494,7 @@ describe("agent run retry route", () => {
       contextSnapshot: {},
     });
 
-    const res = await request(createManagementApp(createRunIdLookupDb([
+    const res = await request(await createManagementApp(createRunIdLookupDb([
       { id: "609695f1-f90a-4b17-be61-4f0c6fe37c42" },
     ]), {
       type: "board",
@@ -508,7 +526,7 @@ describe("agent run retry route", () => {
     });
 
     const res = await request(
-      createApp({
+      await createApp({
         type: "agent",
         orgId: "organization-1",
         agentId: "agent-1",
@@ -533,7 +551,7 @@ describe("agent run retry route", () => {
   it("returns 404 when the source run does not exist", async () => {
     mockHeartbeatService.getRun.mockResolvedValue(null);
 
-    const res = await request(createApp()).post("/api/heartbeat-runs/missing/retry").send({});
+    const res = await request(await createApp()).post("/api/heartbeat-runs/missing/retry").send({});
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Heartbeat run not found" });
@@ -543,7 +561,7 @@ describe("agent run retry route", () => {
   it("returns agent-run 404 copy through the agent-runs alias", async () => {
     mockHeartbeatService.getRun.mockResolvedValue(null);
 
-    const res = await request(createApp()).post("/api/agent-runs/missing/retry").send({});
+    const res = await request(await createApp()).post("/api/agent-runs/missing/retry").send({});
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Agent run not found" });

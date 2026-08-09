@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { projectRoutes } from "../routes/projects.js";
 
@@ -79,7 +81,9 @@ function createProject() {
   };
 }
 
-function createApp(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -88,7 +92,10 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", projectRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("POST /api/orgs/:orgId/projects", () => {
@@ -103,9 +110,16 @@ describe("POST /api/orgs/:orgId/projects", () => {
     mockResourceCatalogService.removeProjectResourceAttachment.mockReset();
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("ignores workspace payload from legacy callers", async () => {
     mockProjectService.create.mockResolvedValue(createProject());
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
@@ -142,7 +156,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
 
   it("allows authenticated agents to create projects in their organization", async () => {
     mockProjectService.create.mockResolvedValue(createProject());
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-1",
@@ -179,7 +193,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     mockProjectService.create.mockResolvedValue({ ...createProject(), icon: "plane" });
     mockProjectService.getById.mockResolvedValue({ ...createProject(), icon: "plane" });
     mockProjectService.update.mockResolvedValue({ ...createProject(), icon: "book" });
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
@@ -212,7 +226,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
   });
 
   it("rejects agent project creation outside the authenticated organization", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-2",
@@ -235,7 +249,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       ...createProject(),
       orgId: "organization-1",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-2",
@@ -253,7 +267,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       ...createProject(),
       orgId: "organization-1",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId: "organization-2",
@@ -297,7 +311,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       updatedAt: new Date("2026-04-16T09:00:00.000Z"),
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",

@@ -11,6 +11,7 @@ packages:
 # pnpm 11 reads security overrides here; package.json mirrors them for the
 # pnpm 9 version pinned by this repository and CI.
 overrides:
+  '@paperclipai/adapter-utils': 2026.618.0
   axios: 1.16.0
   defu: 6.1.5
   fast-uri: 3.1.2

@@ -1,6 +1,10 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { costRoutes } from "../routes/costs.js";
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const selectChain = {
@@ -93,9 +97,16 @@ vi.mock("../services/quota-windows.js", () => ({
   fetchAllQuotaWindows: mockFetchAllQuotaWindows,
 }));
 
+const activeServers = new Set<Server>();
+
+async function startApp(app: express.Express) {
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
+}
+
 async function createApp() {
-  const { costRoutes } = await import("../routes/costs.js");
-  const { errorHandler } = await import("../middleware/index.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -104,12 +115,10 @@ async function createApp() {
   });
   app.use("/api", costRoutes(makeDb() as any));
   app.use(errorHandler);
-  return app;
+  return await startApp(app);
 }
 
 async function createAppWithActor(actor: any) {
-  const { costRoutes } = await import("../routes/costs.js");
-  const { errorHandler } = await import("../middleware/index.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -118,12 +127,18 @@ async function createAppWithActor(actor: any) {
   });
   app.use("/api", costRoutes(makeDb() as any));
   app.use(errorHandler);
-  return app;
+  return await startApp(app);
 }
 
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
+
 beforeEach(() => {
-  vi.resetModules();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockCompanyService.update.mockResolvedValue({
     id: "organization-1",
     name: "Rudder",

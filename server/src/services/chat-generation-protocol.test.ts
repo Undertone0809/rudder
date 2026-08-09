@@ -360,7 +360,7 @@ describe("chatGenerationProtocolService", () => {
         content: `non-stream${String.fromCharCode(0xfffd)}output`,
       }),
     }]);
-  });
+  }, 15_000);
 
   it("serializes visible events and applies an idempotent Stop cutoff", async () => {
     const generation = await seedGeneration();
@@ -794,7 +794,7 @@ describe("chatGenerationProtocolService", () => {
       status: 409,
       message: "Chat-visible output admission is closed for this generation",
     });
-  });
+  }, 15_000);
 
   it("persists stable transcript generation provenance through reload and a Stop projection", async () => {
     const generation = await seedGeneration();

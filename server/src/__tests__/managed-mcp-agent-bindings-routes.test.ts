@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { managedMcpAgentBindingRoutes } from "../routes/managed-mcp-agent-bindings.js";
 
@@ -18,7 +20,9 @@ const bindingService = {
 const findAgent = vi.fn();
 const getMembership = vi.fn();
 
-function app(actor: Record<string, unknown>) {
+const activeServers = new Set<Server>();
+
+async function app(actor: Record<string, unknown>) {
   const instance = express();
   instance.use(express.json());
   instance.use((req, _res, next) => {
@@ -31,12 +35,15 @@ function app(actor: Record<string, unknown>) {
     getMembership,
   }));
   instance.use(errorHandler);
-  return instance;
+  const server = instance.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("managed MCP agent binding routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     findAgent.mockResolvedValue({ id: agentId, orgId });
     bindingService.listForAgent.mockResolvedValue([]);
     bindingService.listProviderAvailability.mockResolvedValue([]);
@@ -48,6 +55,13 @@ describe("managed MCP agent binding routes", () => {
     });
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("lets organization board users list, upsert, patch, and revoke bindings", async () => {
     const actor = {
       type: "board",
@@ -56,7 +70,7 @@ describe("managed MCP agent binding routes", () => {
       orgIds: [orgId],
       isInstanceAdmin: false,
     };
-    const api = app(actor);
+    const api = await app(actor);
 
     expect((await request(api).get(`/api/agents/${agentId}/mcp-connections`)).status)
       .toBe(200);
@@ -89,7 +103,7 @@ describe("managed MCP agent binding routes", () => {
   });
 
   it("rejects agent keys and cross-organization board users", async () => {
-    const agentResponse = await request(app({
+    const agentResponse = await request(await app({
       type: "agent",
       source: "agent_key",
       orgId,
@@ -97,7 +111,7 @@ describe("managed MCP agent binding routes", () => {
     })).get(`/api/agents/${agentId}/mcp-connections`);
     expect(agentResponse.status).toBe(403);
 
-    const crossOrgResponse = await request(app({
+    const crossOrgResponse = await request(await app({
       type: "board",
       source: "session",
       userId: "owner-1",
@@ -113,7 +127,7 @@ describe("managed MCP agent binding routes", () => {
       status: "active",
       membershipRole: "member",
     });
-    const api = app({
+    const api = await app({
       type: "board",
       source: "session",
       userId: "member-1",
@@ -140,18 +154,18 @@ describe("managed MCP agent binding routes", () => {
       userId: "local-board",
       isInstanceAdmin: true,
     };
-    const invalid = await request(app(actor))
+    const invalid = await request(await app(actor))
       .put(`/api/agents/${agentId}/mcp-connections/${connectionId}`)
       .send({ enabledToolIds: ["not-a-uuid"] });
     expect(invalid.status).toBe(400);
     expect(bindingService.upsert).not.toHaveBeenCalled();
 
     findAgent.mockResolvedValueOnce(null);
-    expect((await request(app(actor))
+    expect((await request(await app(actor))
       .get(`/api/agents/${agentId}/mcp-connections`)).status).toBe(404);
 
     bindingService.revoke.mockResolvedValueOnce(null);
-    expect((await request(app(actor))
+    expect((await request(await app(actor))
       .delete(`/api/agents/${agentId}/mcp-connections/${connectionId}`)).status)
       .toBe(404);
   });

@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 
@@ -64,7 +66,9 @@ vi.mock("../agent-runtimes/index.js", () => ({
   listAgentRuntimeModels: vi.fn(),
 }));
 
-function createApp() {
+const activeServers = new Set<Server>();
+
+async function createApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -79,7 +83,10 @@ function createApp() {
   });
   app.use("/api", agentRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 function makeAgent() {
@@ -214,8 +221,15 @@ describe("agent instructions bundle routes", () => {
     });
   });
 
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
+  });
+
   it("returns bundle metadata", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?orgId=organization-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -245,7 +259,7 @@ describe("agent instructions bundle routes", () => {
         files: [],
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?orgId=organization-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -254,7 +268,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   it("reads a bundle file without reconciling or persisting repaired metadata", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1&path=SOUL.md");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -271,7 +285,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   it("writes a bundle file and persists compatibility config", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1")
       .send({
         path: "SOUL.md",
@@ -299,7 +313,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   it("persists healed managed metadata when deleting a bundle file", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .delete("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1&path=docs%2FTOOLS.md");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -332,7 +346,7 @@ describe("agent instructions bundle routes", () => {
     mockAgentService.getById.mockResolvedValue(existingAgent);
     mockAgentService.getInternalById.mockResolvedValue(existingAgent);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?orgId=organization-1")
       .send({
         agentRuntimeType: "claude_local",
@@ -373,7 +387,7 @@ describe("agent instructions bundle routes", () => {
     mockAgentService.getById.mockResolvedValue(existingAgent);
     mockAgentService.getInternalById.mockResolvedValue(existingAgent);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?orgId=organization-1")
       .send({
         agentRuntimeConfig: {
@@ -411,7 +425,7 @@ describe("agent instructions bundle routes", () => {
       },
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?orgId=organization-1")
       .send({
         name: "Ella",
@@ -437,7 +451,7 @@ describe("agent instructions bundle routes", () => {
     mockAgentService.getById.mockResolvedValue(existingAgent);
     mockAgentService.getInternalById.mockResolvedValue(existingAgent);
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?orgId=organization-1")
       .send({
         replaceAgentRuntimeConfig: true,

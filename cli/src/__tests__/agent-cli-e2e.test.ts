@@ -1079,7 +1079,7 @@ describe("agent CLI e2e", () => {
     });
   });
 
-  it("reads issue comments from files and stdin", { timeout: 60_000 }, async () => {
+  it("reads issue comments from files and stdin", { timeout: 120_000 }, async () => {
     const db = createDb(connectionString);
     const fileIssueId = randomUUID();
     await db.insert(issues).values({

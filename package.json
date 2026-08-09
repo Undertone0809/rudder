@@ -28,7 +28,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",
-    "test:run": "pnpm --filter @rudderhq/identity-core build && vitest run",
+    "test:run": "pnpm --filter @rudderhq/identity-core build && node scripts/run-vitest-projects.mjs",
     "db:generate": "pnpm --filter @rudderhq/db generate",
     "db:migrate": "pnpm --filter @rudderhq/db migrate",
     "secrets:migrate-inline-env": "tsx scripts/migrate-inline-env-secrets.ts",
@@ -83,6 +83,7 @@
   },
   "pnpm": {
     "overrides": {
+      "@paperclipai/adapter-utils": "2026.618.0",
       "axios": "1.16.0",
       "defu": "6.1.5",
       "fast-uri": "3.1.2",

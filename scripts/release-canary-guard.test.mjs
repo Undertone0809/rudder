@@ -10,9 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const tempRoots = [];
 

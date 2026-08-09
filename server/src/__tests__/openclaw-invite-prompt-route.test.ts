@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAccessService = vi.hoisted(() => ({
   hasPermission: vi.fn(),
@@ -32,6 +34,7 @@ const mockBoardAuthService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const activeServers = new Set<Server>();
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -92,7 +95,10 @@ async function createApp(actor: Record<string, unknown>, db: Record<string, unkn
     }),
   );
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
@@ -100,6 +106,13 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
     vi.resetAllMocks();
     mockAccessService.canUser.mockResolvedValue(false);
     mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("rejects non-CEO agent callers", async () => {

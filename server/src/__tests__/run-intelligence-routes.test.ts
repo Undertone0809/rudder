@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 
@@ -22,7 +24,7 @@ vi.mock("../services/run-intelligence.js", () => ({
   getObservedRunDetail: mockGetObservedRunDetail,
 }));
 
-function createApp() {
+function createExpressApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -40,8 +42,14 @@ function createApp() {
   return app;
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
+let appServer: Server;
+
+function createApp() {
+  return appServer;
+}
+
+beforeEach(async () => {
+  vi.resetAllMocks();
   mockListObservedRuns.mockResolvedValue([]);
   mockListRunSummaries.mockResolvedValue({
     items: [],
@@ -103,6 +111,14 @@ beforeEach(() => {
       { kind: "tool_result", ts: "2026-06-11T00:00:03.000Z", toolUseId: "tool-1", toolName: "exec_command", content: "ERR".repeat(1000), isError: true },
       { kind: "result", ts: "2026-06-11T00:00:04.000Z", text: "failed", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "error", isError: true, errors: ["boom"] },
     ],
+  });
+  appServer = createExpressApp().listen(0, "127.0.0.1");
+  await once(appServer, "listening");
+});
+
+afterEach(async () => {
+  await new Promise<void>((resolve, reject) => {
+    appServer.close((error) => error ? reject(error) : resolve());
   });
 });
 

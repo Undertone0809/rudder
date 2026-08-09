@@ -3,8 +3,10 @@ import {
   RUDDER_CORE_MCP_TOOL_NAMES,
 } from "@rudderhq/shared";
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 import { configureBrowserCapabilityDeployment } from "../services/browser-capability.js";
@@ -175,7 +177,9 @@ function createDbStub(options?: {
   };
 }
 
-function createApp(
+const activeServers = new Set<Server>();
+
+async function createApp(
   actor: Record<string, unknown>,
   options?: {
     schedulerRows?: Array<Record<string, unknown>>;
@@ -191,12 +195,22 @@ function createApp(
   });
   app.use("/api", agentRoutes(db));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 describe("agent permission routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getInternalById.mockResolvedValue(null);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
@@ -276,7 +290,7 @@ describe("agent permission routes", () => {
       status: "idle",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -292,7 +306,7 @@ describe("agent permission routes", () => {
   });
 
   it("omits system-managed copilot agents from instance scheduler heartbeats", async () => {
-    const app = createApp(
+    const app = await createApp(
       {
         type: "board",
         userId: "board-user",
@@ -361,7 +375,7 @@ describe("agent permission routes", () => {
   });
 
   it("grants tasks:assign by default when board creates a new agent", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -411,7 +425,7 @@ describe("agent permission routes", () => {
       },
     ]);
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -432,7 +446,7 @@ describe("agent permission routes", () => {
       agentRuntimeType: "codex_local",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -477,7 +491,7 @@ describe("agent permission routes", () => {
       openLinksIn: "built_in",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -507,7 +521,7 @@ describe("agent permission routes", () => {
       agentRuntimeType: "process",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -534,7 +548,7 @@ describe("agent permission routes", () => {
   });
 
   it("does not leak runtime integration or Browser setting metadata in a restricted agent detail", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: peerAgentId,
       orgId,
@@ -555,7 +569,7 @@ describe("agent permission routes", () => {
       workspaceKey: "builder--11111111",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -577,7 +591,7 @@ describe("agent permission routes", () => {
   it("does not expose the instructions Library path for explicit external bundles", async () => {
     mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -601,7 +615,7 @@ describe("agent permission routes", () => {
     });
     mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -623,7 +637,7 @@ describe("agent permission routes", () => {
   it("does not let a legacy agents:create grant bypass an explicit agent creation denial", async () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
 
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId,
       orgId,
@@ -649,7 +663,7 @@ describe("agent permission routes", () => {
   it("does not let a legacy agents:create grant expose agent configurations after explicit denial", async () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
 
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId,
       orgId,
@@ -665,7 +679,7 @@ describe("agent permission routes", () => {
   });
 
   it("does not let same-org non-owner agent keys access another agent's custom integrations", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: peerAgentId,
       orgId,
@@ -704,7 +718,7 @@ describe("agent permission routes", () => {
   });
 
   it("lets an owner agent key access only its own custom integration runtime surface", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId,
       orgId,
@@ -736,7 +750,7 @@ describe("agent permission routes", () => {
       name: "Target",
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId,
       orgId,
@@ -764,7 +778,7 @@ describe("agent permission routes", () => {
       permissions: { canCreateAgents: true, canManageSkills: true },
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -795,7 +809,7 @@ describe("agent permission routes", () => {
       permissions: { canCreateAgents: false, canManageSkills: false },
     });
 
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "board-user",
       source: "local_implicit",

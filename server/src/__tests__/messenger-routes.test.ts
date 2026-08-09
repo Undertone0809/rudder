@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { messengerRoutes } from "../routes/messenger.js";
 
@@ -62,6 +64,22 @@ function createApp(actor: Record<string, unknown> = {
   return app;
 }
 
+const activeServers = new Set<Server>();
+
+async function createClient(actor?: Record<string, unknown>) {
+  const server = createApp(actor).listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return request(server);
+}
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
+
 describe("Messenger custom group title routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -90,7 +108,7 @@ describe("Messenger custom group title routes", () => {
       stdout: "Planning and Issues",
     });
 
-    const res = await request(createApp())
+    const res = await (await createClient())
       .post("/api/orgs/org-1/messenger/groups/merge")
       .send({
         name: "Planning chat",
@@ -120,7 +138,7 @@ describe("Messenger custom group title routes", () => {
   it("falls back to the provided merge name when group title generation fails", async () => {
     mockProductIntelligence.execute.mockRejectedValueOnce(new Error("Fast Intelligence unavailable"));
 
-    const res = await request(createApp())
+    const res = await (await createClient())
       .post("/api/orgs/org-1/messenger/groups/merge")
       .send({
         name: "Planning chat",
@@ -141,7 +159,7 @@ describe("Messenger custom group title routes", () => {
   });
 
   it("forwards the exact loose row anchor for atomic group reuse", async () => {
-    const res = await request(createApp())
+    const res = await (await createClient())
       .post("/api/orgs/org-1/messenger/groups/merge")
       .send({
         name: "Planning chat",
@@ -168,7 +186,7 @@ describe("Messenger custom group title routes", () => {
       resultJson: { stdout: "Planning Triage" },
     });
 
-    const res = await request(createApp())
+    const res = await (await createClient())
       .post("/api/orgs/org-1/messenger/groups/group-1/title/regenerate")
       .send();
 
@@ -187,7 +205,7 @@ describe("Messenger custom group title routes", () => {
       stdout: "```",
     });
 
-    const res = await request(createApp())
+    const res = await (await createClient())
       .post("/api/orgs/org-1/messenger/groups/group-1/title/regenerate")
       .send();
 
@@ -203,23 +221,23 @@ describe("Messenger Saved View and generic group routes", () => {
     mockSavedViewsService.get.mockResolvedValue({ id: "view-1" });
     mockSavedViewsService.keep.mockResolvedValue({ savedView: { id: "view-1" }, group: { id: "group-1", name: "Work" } });
     mockSavedViewsService.update.mockResolvedValue({ id: "view-1" });
-    mockSavedViewsService.reorder.mockResolvedValue([]);
+    mockSavedViewsService.reorder.mockReset().mockResolvedValue([]);
     mockSavedViewsService.remove.mockResolvedValue({ id: "view-1" });
     mockMessengerService.assignThreadToCustomGroup.mockResolvedValue({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111" });
     mockMessengerService.reorderCustomGroupEntries.mockResolvedValue({ groups: [] });
   });
 
   it("scopes Saved View CRUD and list visibility to the current board user", async () => {
-    const app = createApp();
+    const app = await createClient();
     const savedViewId = "33333333-3333-4333-8333-333333333333";
-    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views?visibility=hidden&limit=20&offset=40")).status).toBe(200);
+    expect((await app.get("/api/orgs/org-1/messenger/saved-views?visibility=hidden&limit=20&offset=40")).status).toBe(200);
     expect(mockSavedViewsService.list).toHaveBeenCalledWith("org-1", "user-1", {
       visibility: "hidden",
       limit: 20,
       offset: 40,
     });
 
-    const deprecatedCreate = await request(app)
+    const deprecatedCreate = await app
       .post("/api/orgs/org-1/messenger/saved-views")
       .send({
         target: { kind: "browser", tabId: "tab-1", url: "https://example.test", viewInstanceId: "view-1" },
@@ -229,7 +247,7 @@ describe("Messenger Saved View and generic group routes", () => {
     expect(deprecatedCreate.body.error).toContain("/keep");
     expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
 
-    const kept = await request(app)
+    const kept = await app
       .post("/api/orgs/org-1/messenger/saved-views/keep")
       .send({
         target: { kind: "browser", tabId: "tab-1", url: "https://example.test", viewInstanceId: "view-1" },
@@ -244,7 +262,7 @@ describe("Messenger Saved View and generic group routes", () => {
     }));
 
     mockSavedViewsService.keep.mockResolvedValueOnce({ savedView: { id: "view-2" }, group: null });
-    const keptLoose = await request(app)
+    const keptLoose = await app
       .post("/api/orgs/org-1/messenger/saved-views/keep")
       .send({
         target: { kind: "library_file", filePath: "README.md", viewInstanceId: "view-2" },
@@ -258,22 +276,22 @@ describe("Messenger Saved View and generic group routes", () => {
       placement: { kind: "loose" },
     }));
 
-    expect((await request(app).get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
+    expect((await app.get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
     expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
-    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(400);
+    expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(400);
     expect(mockSavedViewsService.update).not.toHaveBeenCalled();
-    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ title: "Updated" })).status).toBe(200);
+    expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ title: "Updated" })).status).toBe(200);
     expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { title: "Updated" });
-    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: false })).status).toBe(200);
+    expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: false })).status).toBe(200);
     expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: false });
-    expect((await request(app).delete(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
+    expect((await app.delete(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
     expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
 
-    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views/not-a-uuid")).status).toBe(400);
+    expect((await app.get("/api/orgs/org-1/messenger/saved-views/not-a-uuid")).status).toBe(400);
   });
 
   it("rejects invalid Saved View targets and inaccessible organizations", async () => {
-    const invalid = await request(createApp())
+    const invalid = await (await createClient())
       .post("/api/orgs/org-1/messenger/saved-views/keep")
       .send({
         target: { kind: "browser", tabId: "tab-1", url: "about:blank", viewInstanceId: "view-1" },
@@ -284,9 +302,9 @@ describe("Messenger Saved View and generic group routes", () => {
     expect(invalid.status).toBe(400);
     expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
 
-    expect((await request(createApp()).get("/api/orgs/org-1/messenger/saved-views?limit=101")).status).toBe(400);
+    expect((await (await createClient()).get("/api/orgs/org-1/messenger/saved-views?limit=101")).status).toBe(400);
 
-    const forbidden = await request(createApp({
+    const forbidden = await (await createClient({
       type: "agent",
       source: "api_key",
       agentId: "agent-1",
@@ -297,27 +315,27 @@ describe("Messenger Saved View and generic group routes", () => {
   });
 
   it("normalizes canonical and legacy custom-group item aliases", async () => {
-    const app = createApp();
-    expect((await request(app)
+    const app = await createClient();
+    expect((await app
       .post("/api/orgs/org-1/messenger/groups/group-1/entries")
       .send({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111" })).status).toBe(201);
     expect(mockMessengerService.assignThreadToCustomGroup).toHaveBeenLastCalledWith(
       "org-1", "user-1", "group-1", "saved-view:11111111-1111-4111-8111-111111111111",
     );
 
-    expect((await request(app)
+    expect((await app
       .post("/api/orgs/org-1/messenger/groups/group-1/entries")
       .send({ threadKey: "chat:chat-1" })).status).toBe(201);
     expect(mockMessengerService.assignThreadToCustomGroup).toHaveBeenLastCalledWith(
       "org-1", "user-1", "group-1", "chat:chat-1",
     );
 
-    const mismatch = await request(app)
+    const mismatch = await app
       .post("/api/orgs/org-1/messenger/groups/group-1/entries")
       .send({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111", threadKey: "chat:chat-1" });
     expect(mismatch.status).toBe(400);
 
-    expect((await request(app)
+    expect((await app
       .patch("/api/orgs/org-1/messenger/groups/group-1/entries/reorder")
       .send({ itemKeys: ["saved-view:11111111-1111-4111-8111-111111111111", "chat:chat-1"] })).status).toBe(200);
     expect(mockMessengerService.reorderCustomGroupEntries).toHaveBeenCalledWith(
@@ -328,7 +346,7 @@ describe("Messenger Saved View and generic group routes", () => {
   it("validates and forwards Saved View reorder requests for the current board user", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";
-    mockSavedViewsService.reorder.mockResolvedValueOnce({
+    mockSavedViewsService.reorder.mockReset().mockResolvedValue({
       items: [
         { id: secondId, sortOrder: 0 },
         { id: firstId, sortOrder: 1 },
@@ -336,7 +354,7 @@ describe("Messenger Saved View and generic group routes", () => {
       pageInfo: { limit: 50, offset: 0, total: 2, hasMore: false, nextOffset: null },
     });
 
-    const response = await request(createApp())
+    const response = await (await createClient())
       .patch("/api/orgs/org-1/messenger/saved-views/reorder")
       .send({ ids: [secondId, firstId] });
     expect(response.status).toBe(200);
@@ -349,7 +367,7 @@ describe("Messenger Saved View and generic group routes", () => {
     });
     expect(mockSavedViewsService.reorder).toHaveBeenCalledWith("org-1", "user-1", [secondId, firstId]);
 
-    const invalid = await request(createApp())
+    const invalid = await (await createClient())
       .patch("/api/orgs/org-1/messenger/saved-views/reorder")
       .send({ ids: [firstId, firstId] });
     expect(invalid.status).toBe(400);

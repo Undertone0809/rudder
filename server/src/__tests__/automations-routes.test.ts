@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -81,6 +83,7 @@ const mockAccessService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const activeServers = new Set<Server>();
 
 async function createApp(actor: Record<string, unknown>) {
   vi.resetModules();
@@ -105,12 +108,15 @@ async function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", automationRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("automation routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockAutomationService.create.mockResolvedValue(automation);
     mockAutomationService.get.mockResolvedValue(automation);
     mockAutomationService.getTrigger.mockResolvedValue(trigger);
@@ -123,6 +129,13 @@ describe("automation routes", () => {
     });
     mockAccessService.canUser.mockResolvedValue(false);
     mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("requires tasks:assign permission for non-admin board automation creation", async () => {

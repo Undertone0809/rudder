@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { requestBodyForLogs } from "../middleware/logger.js";
 import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
@@ -75,7 +77,7 @@ function connectionSummary() {
   };
 }
 
-function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -99,12 +101,29 @@ function createApp(actor: Record<string, unknown>) {
     next(error);
   });
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
+
+const activeServers = new Set<Server>();
+
+async function createClient(actor: Record<string, unknown>) {
+  const server = await createApp(actor);
+  return request(server);
+}
+
+afterEach(async () => {
+  await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+  activeServers.clear();
+});
 
 describe("managed MCP connection organization routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     capturedErrorBody = undefined;
     mockMembership.mockResolvedValue({
       status: "active",
@@ -149,7 +168,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("allows organization members to read catalog, connections, and tools", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "member-1",
       orgIds: [orgId],
@@ -168,7 +187,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("atomically ensures an official provider through the provider-level connect endpoint", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -205,7 +224,7 @@ describe("managed MCP connection organization routes", () => {
     };
     mockService.ensureOfficial.mockResolvedValueOnce(github);
     mockService.get.mockResolvedValueOnce(github);
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -240,7 +259,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("rejects official providers from the generic connection create endpoint", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -272,7 +291,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("rejects GitHub from generic patch before it can persist a PAT or activate", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -305,7 +324,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("marks a GitHub PAT connect request sensitive and rejects missing credentials", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -323,7 +342,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("rejects an official provider connect request without an explicit scope", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -340,7 +359,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("starts an explicit Supabase account upgrade through a dedicated endpoint", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -366,7 +385,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("stages an organization access change through OAuth without patching the live connection", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -394,7 +413,7 @@ describe("managed MCP connection organization routes", () => {
       provider: "github",
       status: "active",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -417,7 +436,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("rejects agent API keys and cross-organization board access for all management reads", async () => {
-    const agentResponse = await request(createApp({
+    const agentResponse = await request(await createApp({
       type: "agent",
       agentId: "agent-1",
       orgId,
@@ -425,7 +444,7 @@ describe("managed MCP connection organization routes", () => {
     })).get(`/api/orgs/${orgId}/mcp/connections`);
     expect(agentResponse.status).toBe(403);
 
-    const crossOrgResponse = await request(createApp({
+    const crossOrgResponse = await request(await createApp({
       type: "board",
       userId: "member-1",
       orgIds: [otherOrgId],
@@ -441,7 +460,7 @@ describe("managed MCP connection organization routes", () => {
       status: "active",
       membershipRole: "member",
     });
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "board",
       userId: "member-1",
       orgIds: [orgId],
@@ -470,7 +489,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("marks secret-bearing create and patch bodies sensitive before validation fails", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -499,21 +518,21 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("allows active owners, instance administrators, and local implicit board users to mutate", async () => {
-    const owner = createApp({
+    const owner = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
       source: "session",
       isInstanceAdmin: false,
     });
-    const admin = createApp({
+    const admin = await createApp({
       type: "board",
       userId: "admin-1",
       orgIds: [],
       source: "session",
       isInstanceAdmin: true,
     });
-    const local = createApp({
+    const local = await createApp({
       type: "board",
       userId: "local-board",
       source: "local_implicit",
@@ -533,7 +552,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("exposes create, patch, and access-mode endpoints without duplicating service-owned audit", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -588,7 +607,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("maps standard OAuth callback query names and prevents browser propagation", async () => {
-    const response = await request(createApp({
+    const response = await request(await createApp({
       type: "none",
       source: "none",
     })).get(
@@ -614,7 +633,7 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("lets organization members read the OAuth grant without exposing project selection endpoints", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "member-1",
       orgIds: [orgId],
@@ -634,13 +653,13 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("rejects agents and cross-organization boards from every OAuth management endpoint", async () => {
-    const agent = createApp({
+    const agent = await createClient({
       type: "agent",
       agentId: "agent-1",
       orgId,
       source: "agent_key",
     });
-    const crossOrg = createApp({
+    const crossOrg = await createClient({
       type: "board",
       userId: "owner-1",
       orgIds: [otherOrgId],
@@ -655,12 +674,12 @@ describe("managed MCP connection organization routes", () => {
       { method: "post", path: "disconnect", body: {} },
     ] as const;
 
-    for (const app of [agent, crossOrg]) {
+    for (const client of [agent, crossOrg]) {
       for (const endpoint of endpoints) {
         const base = `/api/orgs/${orgId}/mcp/connections/${connectionId}/${endpoint.path}`;
         const response = endpoint.method === "get"
-          ? await request(app).get(base)
-          : await request(app).post(base).send(endpoint.body);
+          ? await client.get(base)
+          : await client.post(base).send(endpoint.body);
         expect(response.status).toBe(403);
       }
     }
@@ -673,21 +692,21 @@ describe("managed MCP connection organization routes", () => {
   });
 
   it("allows owners, instance administrators, and local implicit boards to manage OAuth", async () => {
-    const owner = createApp({
+    const owner = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
       source: "session",
       isInstanceAdmin: false,
     });
-    const admin = createApp({
+    const admin = await createApp({
       type: "board",
       userId: "admin-1",
       orgIds: [],
       source: "session",
       isInstanceAdmin: true,
     });
-    const local = createApp({
+    const local = await createApp({
       type: "board",
       userId: "local-board",
       source: "local_implicit",
@@ -716,7 +735,7 @@ describe("managed MCP connection organization routes", () => {
       provider: "linear",
       status: "active",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],
@@ -759,7 +778,7 @@ describe("managed MCP connection organization routes", () => {
     mockService.get.mockResolvedValue(github);
     mockService.reconnect.mockResolvedValue({ ...github, status: "active" });
     mockService.disconnect.mockResolvedValue({ ...github, status: "disabled", enabled: false });
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "owner-1",
       orgIds: [orgId],

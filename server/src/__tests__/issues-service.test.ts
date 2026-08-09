@@ -22,7 +22,9 @@ import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@r
 import { eq } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -113,6 +115,7 @@ describe("issueService.list participantAgentId", () => {
   let svc!: ReturnType<typeof issueService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  const activeServers = new Set<Server>();
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -123,6 +126,10 @@ describe("issueService.list participantAgentId", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     await db.delete(productAnalyticsEvents);
     await db.delete(issueComments);
     await db.delete(organizationMemberships);
@@ -235,8 +242,11 @@ describe("issueService.list participantAgentId", () => {
     });
     app.use("/api", issueRoutes(db, {} as any));
     app.use(errorHandler);
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
 
-    const pendingResponse = await request(app).get(`/api/orgs/${orgId}/issues`);
+    const pendingResponse = await request(server).get(`/api/orgs/${orgId}/issues`);
     expect(pendingResponse.status, JSON.stringify(pendingResponse.body)).toBe(200);
     const pendingIssue = pendingResponse.body.find((row: { id: string }) => row.id === issueId);
     expect(pendingIssue?.activeRun).toMatchObject({ id: runId, status: "failed" });
@@ -253,7 +263,7 @@ describe("issueService.list participantAgentId", () => {
     expect(pendingIssue.activeRun).not.toHaveProperty("terminalEffectsPending");
 
     await db.update(heartbeatRuns).set({ terminalEffectsPending: false }).where(eq(heartbeatRuns.id, runId));
-    const completedResponse = await request(app).get(`/api/orgs/${orgId}/issues`);
+    const completedResponse = await request(server).get(`/api/orgs/${orgId}/issues`);
     expect(completedResponse.status, JSON.stringify(completedResponse.body)).toBe(200);
     const completedIssue = completedResponse.body.find((row: { id: string }) => row.id === issueId);
     expect(completedIssue?.activeRun).toBeNull();

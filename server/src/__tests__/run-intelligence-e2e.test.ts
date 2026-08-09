@@ -11,7 +11,9 @@ import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { asc, eq } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -89,7 +91,9 @@ async function startTempDatabase() {
   return { connectionString, dataDir, instance };
 }
 
-function createApp(db: ReturnType<typeof createDb>, allowedOrgId: string) {
+const activeServers = new Set<Server>();
+
+async function createApp(db: ReturnType<typeof createDb>, allowedOrgId: string) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -104,7 +108,10 @@ function createApp(db: ReturnType<typeof createDb>, allowedOrgId: string) {
   });
   app.use("/api", runIntelligenceRoutes(db));
   app.use(errorHandler);
-  return app;
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 function transcriptEvent(input: {
@@ -144,6 +151,10 @@ describe("run intelligence real route workflow", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
@@ -319,7 +330,7 @@ describe("run intelligence real route workflow", () => {
       logSha256: finalizedLog.sha256,
     }).where(eq(heartbeatRuns.id, runId));
 
-    const app = createApp(db, orgId);
+    const app = await createApp(db, orgId);
 
     const summary = await request(app)
       .get(`/api/run-intelligence/orgs/${orgId}/runs`)
