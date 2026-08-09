@@ -24,6 +24,7 @@ import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js"
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
+  agentIssueCreationService,
   agentService,
   automationService,
   goalService,
@@ -38,6 +39,7 @@ import {
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { StorageService } from "../storage/types.js";
+import { registerAgentIssueCreationRoutes } from "./agent-issue-creation.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachments.js";
 import { registerIssueMutationRoutes } from "./issues.mutations.js";
@@ -73,6 +75,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const automationsSvc = automationService(db);
+  const agentIssueCreationSvc = agentIssueCreationService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -1061,6 +1064,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
     statusForReviewDecision,
     statusAcceptsReviewerDecision,
     commitSubject,
+    agentIssueCreationSvc,
+  });
+
+  registerAgentIssueCreationRoutes({
+    router,
+    db,
+    service: agentIssueCreationSvc,
+    heartbeat,
+    assertCanAssignTasks,
+    logActivity,
   });
 
   registerIssueCommentAttachmentRoutes({

@@ -5,10 +5,11 @@ import { accessApi } from "../api/access";
 import { AGENT_RUN_LIST_DEFAULT_LIMIT, agentRunsApi } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
+import { authApi } from "../api/auth";
 import { chatsApi } from "../api/chats";
 import { ApiError } from "../api/client";
 import { dashboardApi } from "../api/dashboard";
-import { issuesApi } from "../api/issues";
+import { issuesApi, type AgentIssueCreationRequest } from "../api/issues";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -119,6 +120,31 @@ function readIssueIdFromRun(run: HeartbeatRun): string | null {
   return null;
 }
 
+function readAgentIssueCreationRequestFromRun(run: HeartbeatRun): {
+  id: string;
+  requestedByUserId: string | null;
+} | null {
+  const context = run.contextSnapshot;
+  if (!context) return null;
+  const directId = context.agentIssueCreationRequestId;
+  const nested = context.agentIssueCreationRequest;
+  const nestedRecord = nested && typeof nested === "object" && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : null;
+  const id = typeof directId === "string" && directId.trim()
+    ? directId.trim()
+    : typeof nestedRecord?.id === "string" && nestedRecord.id.trim()
+      ? nestedRecord.id.trim()
+      : null;
+  if (!id) return null;
+  return {
+    id,
+    requestedByUserId: typeof nestedRecord?.requestedByUserId === "string"
+      ? nestedRecord.requestedByUserId
+      : typeof context.requestedByUserId === "string" ? context.requestedByUserId : null,
+  };
+}
+
 function InboxRowLeading({
   children,
 }: {
@@ -132,24 +158,38 @@ function FailedRunInboxRow({
   issueById,
   agentName: linkedAgentName,
   issueLinkState,
+  currentUserId,
   onDismiss,
   onRetry,
+  onRetryAgentIssue,
   isRetrying,
+  isRetryingAgentIssue,
 }: {
   run: HeartbeatRun;
   issueById: Map<string, Issue>;
   agentName: string | null;
   issueLinkState: unknown;
+  currentUserId: string | null;
   onDismiss: () => void;
   onRetry: () => void;
+  onRetryAgentIssue: () => void;
   isRetrying: boolean;
+  isRetryingAgentIssue: boolean;
 }) {
   const issueId = readIssueIdFromRun(run);
   const issue = issueId ? issueById.get(issueId) ?? null : null;
+  const agentIssueRequest = readAgentIssueCreationRequestFromRun(run);
+  const canRetryAgentIssue = Boolean(
+    agentIssueRequest?.requestedByUserId && agentIssueRequest.requestedByUserId === currentUserId,
+  );
+  const isAgentIssueFailure = Boolean(agentIssueRequest);
   const displayError = runFailureMessage(run);
 
   return (
-    <div className="group border-b border-border px-2 py-2.5 last:border-b-0 sm:px-1 sm:pr-3 sm:py-2">
+    <div
+      data-testid={`inbox-failed-agent-run-${run.id}`}
+      className="group border-b border-border px-2 py-2.5 last:border-b-0 sm:px-1 sm:pr-3 sm:py-2"
+    >
       <div className="flex items-start gap-2 sm:items-center">
         <Link
           to={`/agents/${run.agentId}/runs/${run.id}`}
@@ -169,7 +209,10 @@ function FailedRunInboxRow({
                     {issue.title}
                   </>
                 ) : (
-                  <>Failed run{linkedAgentName ? ` — ${linkedAgentName}` : ""}</>
+                    <>
+                      {isAgentIssueFailure ? "Agent Issue creation failed" : "Failed run"}
+                      {linkedAgentName && !isAgentIssueFailure ? ` — ${linkedAgentName}` : ""}
+                    </>
                 )}
               </span>
               <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:inline">
@@ -178,12 +221,66 @@ function FailedRunInboxRow({
             </span>
             <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground sm:mt-0">
               <StatusBadge status={run.status} />
+              {isAgentIssueFailure ? <span>Agent Issue request failed</span> : null}
               {linkedAgentName && issue ? <span>{linkedAgentName}</span> : null}
               <span>{timeAgo(run.createdAt)}</span>
             </span>
           </span>
         </Link>
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
+          {isAgentIssueFailure ? (
+            canRetryAgentIssue ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 px-2.5"
+                onClick={onRetryAgentIssue}
+                disabled={isRetryingAgentIssue}
+              >
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                {isRetryingAgentIssue ? "Retrying…" : "Retry Agent Issue"}
+              </Button>
+            ) : null
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 px-2.5"
+              onClick={onRetry}
+              disabled={isRetrying}
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              {isRetrying ? "Retrying…" : "Retry"}
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 flex gap-2 sm:hidden">
+        {isAgentIssueFailure ? (
+          canRetryAgentIssue ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 px-2.5"
+              onClick={onRetryAgentIssue}
+              disabled={isRetryingAgentIssue}
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              {isRetryingAgentIssue ? "Retrying…" : "Retry Agent Issue"}
+            </Button>
+          ) : null
+        ) : (
           <Button
             type="button"
             variant="outline"
@@ -194,6 +291,84 @@ function FailedRunInboxRow({
           >
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
             {isRetrying ? "Retrying…" : "Retry"}
+          </Button>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          aria-label="Dismiss"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FailedAgentIssueRequestInboxRow({
+  request,
+  agentName,
+  onDismiss,
+  onRetry,
+  isRetrying,
+}: {
+  request: AgentIssueCreationRequest;
+  agentName: string | null;
+  onDismiss: () => void;
+  onRetry: () => void;
+  isRetrying: boolean;
+}) {
+  const runHref = request.runId ? `/agents/${request.agentId}/runs/${request.runId}` : null;
+  const details = (
+    <>
+      <InboxRowLeading>
+        <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+      </InboxRowLeading>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium">
+            Agent Issue creation failed{agentName ? ` — ${agentName}` : ""}
+          </span>
+          <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:inline">
+            {request.error ?? "Agent run completed without creating an Issue"}
+          </span>
+        </span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground sm:mt-0">
+          <StatusBadge status={request.status} />
+          <span>Agent Issue request failed</span>
+          <span>{timeAgo(request.updatedAt ?? request.createdAt)}</span>
+        </span>
+      </span>
+    </>
+  );
+
+  return (
+    <div className="group border-b border-border px-2 py-2.5 last:border-b-0 sm:px-1 sm:pr-3 sm:py-2">
+      <div className="flex items-start gap-2 sm:items-center">
+        {runHref ? (
+          <Link
+            to={runHref}
+            className="flex min-w-0 flex-1 items-start gap-2.5 rounded-md px-1 py-1 no-underline text-inherit transition-colors hover:bg-accent/50"
+          >
+            {details}
+          </Link>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-start gap-2.5 rounded-md px-1 py-1">
+            {details}
+          </div>
+        )}
+        <div className="hidden shrink-0 items-center gap-2 sm:flex">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 px-2.5"
+            onClick={onRetry}
+            disabled={isRetrying}
+          >
+            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+            {isRetrying ? "Retrying…" : "Retry Agent Issue"}
           </Button>
           <button
             type="button"
@@ -215,7 +390,7 @@ function FailedRunInboxRow({
           disabled={isRetrying}
         >
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-          {isRetrying ? "Retrying…" : "Retry"}
+          {isRetrying ? "Retrying…" : "Retry Agent Issue"}
         </Button>
         <button
           type="button"
@@ -375,7 +550,10 @@ function IssueInboxRow({
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
 
   return (
-    <div className="border-b border-border px-2 py-2.5 last:border-b-0 sm:px-1 sm:pr-3 sm:py-2">
+    <div
+      data-testid={`inbox-issue-${issue.id}`}
+      className="border-b border-border px-2 py-2.5 last:border-b-0 sm:px-1 sm:pr-3 sm:py-2"
+    >
       <div className="flex items-center gap-2">
         <Link
           to={`/issues/${issue.identifier ?? issue.id}`}
@@ -470,6 +648,11 @@ export function Inbox() {
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Inbox" }]);
@@ -538,6 +721,12 @@ export function Inbox() {
     enabled: !!selectedOrganizationId,
   });
 
+  const { data: agentIssueRequests = [], isLoading: isAgentIssueRequestsLoading } = useQuery({
+    queryKey: queryKeys.issues.agentIssueCreationRequests(selectedOrganizationId!),
+    queryFn: () => issuesApi.listAgentIssueCreationRequests(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId,
+  });
+
   const { data: chats = [], isLoading: isChatsLoading } = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
@@ -570,6 +759,18 @@ export function Inbox() {
     () => getLatestFailedRunsByAgent(heartbeatRuns ?? []).filter((r) => !dismissed.has(`run:${r.id}`)),
     [heartbeatRuns, dismissed],
   );
+  const agentIssueRequestsToRender = useMemo(() => {
+    const requestIdsShownByRun = new Set(
+      failedRuns
+        .map(readAgentIssueCreationRequestFromRun)
+        .filter((request): request is NonNullable<ReturnType<typeof readAgentIssueCreationRequestFromRun>> => Boolean(request))
+        .map((request) => request.id),
+    );
+    return agentIssueRequests.filter((request) =>
+      !requestIdsShownByRun.has(request.id)
+      && !dismissed.has(`agent-issue-request:${request.id}`),
+    );
+  }, [agentIssueRequests, dismissed, failedRuns]);
   const liveIssueIds = useMemo(() => {
     const ids = new Set<string>();
     for (const run of heartbeatRuns ?? []) {
@@ -612,6 +813,7 @@ export function Inbox() {
         chats: tab === "all" && !showChatsCategory ? [] : attentionChats,
         approvals: tab === "all" && !showApprovalsCategory ? [] : approvalsToRender,
         failedRuns: failedRunsForTab,
+        agentIssueRequests: tab === "all" && !showFailedRunsCategory ? [] : agentIssueRequestsToRender,
       }),
     [
       approvalsToRender,
@@ -622,6 +824,8 @@ export function Inbox() {
       showTouchedCategory,
       tab,
       failedRunsForTab,
+      agentIssueRequestsToRender,
+      showFailedRunsCategory,
     ],
   );
 
@@ -682,6 +886,7 @@ export function Inbox() {
   });
 
   const [retryingRunIds, setRetryingRunIds] = useState<Set<string>>(new Set());
+  const [retryingAgentIssueRequestIds, setRetryingAgentIssueRequestIds] = useState<Set<string>>(new Set());
 
   const retryRunMutation = useMutation({
     mutationFn: async (run: HeartbeatRun) => ({
@@ -701,6 +906,61 @@ export function Inbox() {
       setRetryingRunIds((prev) => {
         const next = new Set(prev);
         next.delete(run.id);
+        return next;
+      });
+    },
+  });
+
+  const retryAgentIssueMutation = useMutation({
+    mutationFn: async (run: HeartbeatRun) => {
+      const request = readAgentIssueCreationRequestFromRun(run);
+      if (!request || !selectedOrganizationId) throw new Error("Agent Issue retry is unavailable.");
+      return issuesApi.retryAgentIssueRequest(selectedOrganizationId, request.id);
+    },
+    onMutate: (run) => {
+      const request = readAgentIssueCreationRequestFromRun(run);
+      if (!request) return;
+      setRetryingAgentIssueRequestIds((prev) => new Set(prev).add(request.id));
+    },
+    onSuccess: (_request, run) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(run.orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(run.orgId) });
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : "Failed to retry Agent Issue request");
+    },
+    onSettled: (_data, _error, run) => {
+      const request = run ? readAgentIssueCreationRequestFromRun(run) : null;
+      if (!request) return;
+      setRetryingAgentIssueRequestIds((prev) => {
+        const next = new Set(prev);
+        next.delete(request.id);
+        return next;
+      });
+    },
+  });
+
+  const retryAgentIssueRequestMutation = useMutation({
+    mutationFn: (request: AgentIssueCreationRequest) => {
+      if (!selectedOrganizationId) throw new Error("Agent Issue retry is unavailable.");
+      return issuesApi.retryAgentIssueRequest(selectedOrganizationId, request.id);
+    },
+    onMutate: (request) => {
+      setRetryingAgentIssueRequestIds((prev) => new Set(prev).add(request.id));
+    },
+    onSuccess: (_request, request) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.agentIssueCreationRequests(request.orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(request.orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(request.orgId) });
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : "Failed to retry Agent Issue request");
+    },
+    onSettled: (_data, _error, request) => {
+      if (!request) return;
+      setRetryingAgentIssueRequestIds((prev) => {
+        const next = new Set(prev);
+        next.delete(request.id);
         return next;
       });
     },
@@ -796,6 +1056,7 @@ export function Inbox() {
     !isIssuesLoading &&
     !isTouchedIssuesLoading &&
     !isRunsLoading &&
+    !isAgentIssueRequestsLoading &&
     !isChatsLoading;
 
   const showSeparatorBefore = (key: SectionKey) => visibleSections.indexOf(key) > 0;
@@ -804,7 +1065,7 @@ export function Inbox() {
     .map((issue) => issue.id);
   const canMarkAllRead = unreadIssueIds.length > 0;
   return (
-    <div className="space-y-6">
+    <div data-testid="inbox-page" className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
@@ -930,9 +1191,28 @@ export function Inbox() {
                       issueById={issueById}
                       agentName={agentName(item.run.agentId)}
                       issueLinkState={issueLinkState}
+                      currentUserId={currentUserId}
                       onDismiss={() => dismiss(`run:${item.run.id}`)}
                       onRetry={() => retryRunMutation.mutate(item.run)}
+                      onRetryAgentIssue={() => retryAgentIssueMutation.mutate(item.run)}
                       isRetrying={retryingRunIds.has(item.run.id)}
+                      isRetryingAgentIssue={(() => {
+                        const request = readAgentIssueCreationRequestFromRun(item.run);
+                        return request ? retryingAgentIssueRequestIds.has(request.id) : false;
+                      })()}
+                    />
+                  );
+                }
+
+                if (item.kind === "agent_issue_request") {
+                  return (
+                    <FailedAgentIssueRequestInboxRow
+                      key={`agent-issue-request:${item.request.id}`}
+                      request={item.request}
+                      agentName={agentName(item.request.agentId)}
+                      onDismiss={() => dismiss(`agent-issue-request:${item.request.id}`)}
+                      onRetry={() => retryAgentIssueRequestMutation.mutate(item.request)}
+                      isRetrying={retryingAgentIssueRequestIds.has(item.request.id)}
                     />
                   );
                 }

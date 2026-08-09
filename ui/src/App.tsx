@@ -58,6 +58,7 @@ import { Costs } from "./pages/Costs";
 import { Dashboard } from "./pages/Dashboard";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Goals } from "./pages/Goals";
+import { Inbox } from "./pages/Inbox";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
@@ -268,8 +269,8 @@ function boardRoutes() {
       </Route>
       <Route path="costs" element={<Costs />} />
       <Route path="activity" element={<Activity />} />
-      <Route path="inbox" element={<LegacyInboxRedirect />} />
-      <Route path="inbox/*" element={<LegacyInboxRedirect />} />
+      <Route path="inbox" element={<Inbox />} />
+      <Route path="inbox/*" element={<Inbox />} />
       <Route path="ui-lab" element={<UiLab />} />
       <Route path="design-guide" element={<UiLab initialSection="design-guide" />} />
       <Route path="tests/ux/runs" element={<UiLab initialSection="transcripts" />} />
@@ -292,15 +293,6 @@ function LegacyMessengerRedirect() {
       replace
     />
   );
-}
-
-function LegacyInboxRedirect() {
-  const location = useLocation();
-  const { orgPrefix } = useParams<{ orgPrefix?: string }>();
-  if (!orgPrefix) {
-    return <Navigate to={`/messenger${location.search}${location.hash}`} replace />;
-  }
-  return <Navigate to={`/${orgPrefix}/messenger${location.search}${location.hash}`} replace />;
 }
 
 function LegacyCalendarRedirect() {
@@ -635,8 +627,8 @@ export function App() {
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="messenger" element={<UnprefixedBoardRedirect />} />
           <Route path="messenger/*" element={<UnprefixedBoardRedirect />} />
-          <Route path="inbox" element={<LegacyInboxRedirect />} />
-          <Route path="inbox/*" element={<LegacyInboxRedirect />} />
+          <Route path="inbox" element={<UnprefixedBoardRedirect />} />
+          <Route path="inbox/*" element={<UnprefixedBoardRedirect />} />
           <Route path="chat" element={<LegacyMessengerRedirect />} />
           <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
           <Route path="ui-lab" element={<UnprefixedBoardRedirect />} />

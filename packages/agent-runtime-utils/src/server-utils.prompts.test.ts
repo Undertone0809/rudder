@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_ISSUE_CREATION_PROMPT_TEMPLATE,
   COMMENT_MENTION_PROMPT_TEMPLATE,
   DEFAULT_AGENT_PROMPT_TEMPLATE,
   ISSUE_ASSIGN_PROMPT_TEMPLATE,
@@ -18,6 +19,80 @@ import {
 } from "./server-utils.js";
 
 describe("server-utils prompt contracts", () => {
+  it("selects the dedicated single-issue prompt for Agent Issue creation wakes", () => {
+    const context = {
+      wakeReason: "agent_issue_creation_requested",
+      wakeSource: "on_demand",
+      targetType: "agent_issue_creation",
+      targetId: "request-1",
+      agentIssueCreationRequestId: "request-1",
+      agentIssueCreationRequest: {
+        id: "request-1",
+        requestedByUserId: "user-1",
+        projectId: "project-1",
+        goalId: null,
+        parentId: null,
+        instruction: "Track the browser recovery regression.",
+      },
+    };
+
+    expect(selectPromptTemplate("custom template", context)).toBe(AGENT_ISSUE_CREATION_PROMPT_TEMPLATE);
+
+    const rendered = renderTemplate(selectPromptTemplate(undefined, context), {
+      agent: { id: "agent-1", name: "Builder" },
+      context: {
+        ...context,
+        rudderWorkspace: { orgResourcesPrompt: "" },
+      },
+    });
+    expect(rendered).toContain("Request ID: request-1");
+    expect(rendered).toContain("Track the browser recovery regression.");
+    expect(rendered).toContain("exactly one real Rudder Issue");
+    expect(rendered).toContain("rudder issue create");
+  });
+
+  it("keeps the dedicated prompt on retries when the authoritative request identity is preserved", () => {
+    const request = {
+      id: "request-retry",
+      requestedByUserId: "user-1",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      instruction: "Create the retry regression issue.",
+    };
+
+    expect(selectPromptTemplate("custom template", {
+      wakeReason: "process_lost_retry",
+      wakeSource: "on_demand",
+      targetType: "agent_issue_creation",
+      targetId: request.id,
+      agentIssueCreationRequestId: request.id,
+      agentIssueCreationRequest: request,
+    })).toBe(AGENT_ISSUE_CREATION_PROMPT_TEMPLATE);
+  });
+
+  it("does not treat unverified request-shaped context as an Agent Issue creation wake", () => {
+    const request = {
+      id: "request-spoof",
+      instruction: "Do not use this as an issue request.",
+    };
+
+    expect(selectPromptTemplate("custom template", {
+      wakeReason: "agent_issue_creation_requested",
+      wakeSource: "on_demand",
+      agentIssueCreationRequest: request,
+    })).toBe("custom template");
+
+    expect(selectPromptTemplate(undefined, {
+      wakeReason: "agent_issue_creation_requested",
+      wakeSource: "on_demand",
+      targetType: "agent_issue_creation",
+      targetId: "different-request",
+      agentIssueCreationRequestId: request.id,
+      agentIssueCreationRequest: request,
+    })).toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
+  });
+
   it("renders explicit issue ownership and timestamp metadata for issue-aware wakes", () => {
     const issue = {
       id: "issue-575",

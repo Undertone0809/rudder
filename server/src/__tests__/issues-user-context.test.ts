@@ -127,4 +127,37 @@ describe("deriveIssueUserContext", () => {
     expect(context.lastExternalCommentAt?.toISOString()).toBe("2026-03-06T11:00:00.000Z");
     expect(context.isUnreadForMe).toBe(true);
   });
+
+  it("marks a notification-only issue unread without a user touch", () => {
+    const notificationAt = new Date("2026-03-06T12:00:00.000Z");
+    const context = deriveIssueUserContext(
+      makeIssue(),
+      "user-1",
+      {
+        myLastCommentAt: null,
+        myLastReadAt: null,
+        lastExternalCommentAt: null,
+        lastExternalActivityAt: notificationAt,
+      },
+    );
+
+    expect(context.myLastTouchAt).toBeNull();
+    expect(context.lastExternalActivityAt).toEqual(notificationAt);
+    expect(context.isUnreadForMe).toBe(true);
+  });
+
+  it("keeps a notification-only issue read after a newer read watermark", () => {
+    const context = deriveIssueUserContext(
+      makeIssue(),
+      "user-1",
+      {
+        myLastCommentAt: null,
+        myLastReadAt: new Date("2026-03-06T13:00:00.000Z"),
+        lastExternalCommentAt: null,
+        lastExternalActivityAt: new Date("2026-03-06T12:00:00.000Z"),
+      },
+    );
+
+    expect(context.isUnreadForMe).toBe(false);
+  });
 });

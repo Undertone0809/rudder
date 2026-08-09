@@ -12,6 +12,10 @@ import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
+  getAgentIssueCreationRequestIdFromRunContext,
+  hasAgentIssueCreationRequestContext,
+} from "../services/agent-issue-creation.js";
+import {
   completeProductAnalyticsWorkCycle,
   ensureProductAnalyticsWorkCycle,
   invalidateProductAnalyticsWorkCycle,
@@ -205,6 +209,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     statusForReviewDecision,
     statusAcceptsReviewerDecision,
     commitSubject,
+    agentIssueCreationSvc,
   } = ctx;
   router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -215,10 +220,36 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     }
 
     const actor = getActorInfo(req);
+    let agentIssueCreationRequest = null;
+    if (actor.actorType === "agent" && actor.agentId && actor.runId && typeof heartbeat?.getRun === "function") {
+      const run = await heartbeat.getRun(actor.runId);
+      const hasAgentIssueCreationContext = hasAgentIssueCreationRequestContext(run?.contextSnapshot);
+      const requestId = getAgentIssueCreationRequestIdFromRunContext(run?.contextSnapshot);
+      if (hasAgentIssueCreationContext && !requestId) {
+        throw forbidden("Agent Issue creation run context is ambiguous");
+      }
+      if (run) {
+        if (typeof agentIssueCreationSvc?.resolveForRun !== "function") {
+          throw forbidden("Agent Issue creation run context is unavailable");
+        }
+        agentIssueCreationRequest = await agentIssueCreationSvc.resolveForRun(
+          orgId,
+          actor.agentId,
+          actor.runId,
+        );
+      }
+    }
     const createInput = {
       ...body,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      ...(agentIssueCreationRequest
+        ? {
+          originKind: "agent_issue_creation",
+          originId: agentIssueCreationRequest.id,
+          originRunId: actor.runId,
+        }
+        : {}),
     };
     const hasExplicitAssignee =
       Object.prototype.hasOwnProperty.call(body, "assigneeAgentId") ||
@@ -227,41 +258,73 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       createInput.assigneeAgentId = actor.agentId;
     }
 
-    const issue = await svc.create(orgId, {
-      ...createInput,
-    });
+    const createResult = agentIssueCreationRequest && typeof svc.createWithResult === "function"
+      ? await svc.createWithResult(orgId, createInput)
+      : {
+          issue: await svc.create(orgId, {
+            ...createInput,
+          }),
+          created: true,
+        };
+    const issue = createResult.issue;
 
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.created",
-      entityType: "issue",
-      entityId: issue.id,
-      details: { title: issue.title, identifier: issue.identifier },
-    });
+    if (createResult.created) {
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.created",
+        entityType: "issue",
+        entityId: issue.id,
+        details: { title: issue.title, identifier: issue.identifier },
+      });
 
-    void queueIssueAssignmentWakeup({
-      heartbeat,
-      issue,
-      reason: "issue_assigned",
-      mutation: "create",
-      contextSource: "issue.create",
-      requestedByActorType: actor.actorType,
-      requestedByActorId: actor.actorId,
-    });
+      void queueIssueAssignmentWakeup({
+        heartbeat,
+        issue,
+        reason: "issue_assigned",
+        mutation: "create",
+        contextSource: "issue.create",
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+      });
 
-    void queueIssueReviewWakeup({
-      heartbeat,
-      issue,
-      mutation: "create_in_review",
-      contextSource: "issue.create",
-      requestedByActorType: actor.actorType,
-      requestedByActorId: actor.actorId,
-      actorAgentId: actor.agentId,
-    });
+      void queueIssueReviewWakeup({
+        heartbeat,
+        issue,
+        mutation: "create_in_review",
+        contextSource: "issue.create",
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        actorAgentId: actor.agentId,
+      });
+    }
+
+    if (agentIssueCreationRequest && actor.agentId && actor.runId) {
+      try {
+        await agentIssueCreationSvc?.completeForCreatedIssue({
+          orgId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          issueId: issue.id,
+          requestId: agentIssueCreationRequest?.id ?? null,
+        });
+      } catch (error) {
+        logger.warn(
+          {
+            err: error,
+            orgId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            issueId: issue.id,
+            requestId: agentIssueCreationRequest?.id ?? null,
+          },
+          "failed to settle Agent Issue creation request after Issue creation",
+        );
+      }
+    }
 
     res.status(201).json(issue);
   });

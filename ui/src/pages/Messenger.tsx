@@ -844,9 +844,19 @@ export function MessengerApprovalsView() {
   );
 }
 
-async function runSystemAction(action: MessengerEvent["actions"][number]) {
+async function runSystemAction(orgId: string, action: MessengerEvent["actions"][number]) {
   if (!action.href || action.method !== "POST") {
     throw new Error("Unsupported Messenger action.");
+  }
+
+  const agentIssueRetryMatch = action.href.match(
+    /^\/orgs\/([^/]+)\/agent-issue-creation-requests\/([^/]+)\/retry$/,
+  );
+  if (agentIssueRetryMatch) {
+    const [, actionOrgId, requestId] = agentIssueRetryMatch;
+    if (actionOrgId !== orgId || !requestId) throw new Error("Invalid Agent Issue retry target.");
+    await issuesApi.retryAgentIssueRequest(orgId, requestId);
+    return;
   }
 
   const retryMatch = action.href.match(/^\/(?:agent-runs|heartbeat-runs)\/([^/]+)\/retry$/);
@@ -913,7 +923,7 @@ function MessengerSystemCard({
     : null;
 
   const actionMutation = useMutation({
-    mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(action),
+    mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(orgId, action),
     onSuccess: async (_data, action) => {
       await invalidateMessengerQueries(queryClient, orgId);
       if (item.kind === "join-requests") {
@@ -926,6 +936,7 @@ function MessengerSystemCard({
       }
       if (item.kind === "failed-runs") {
         await queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(orgId) });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.issues.agentIssueCreationRequests(orgId) });
       }
       pushToast({ title: action.label, body: "Completed.", tone: "success" });
     },

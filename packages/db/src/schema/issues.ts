@@ -121,5 +121,11 @@ export const issues = pgTable(
           and ${table.executionRunId} is not null
           and ${table.status} in ('backlog', 'todo', 'in_progress', 'in_review', 'blocked')`,
       ),
+    agentIssueCreationOriginIdx: uniqueIndex("issues_agent_issue_creation_origin_uq")
+      .on(table.orgId, table.originKind, table.originId)
+      .where(
+        sql`${table.originKind} = 'agent_issue_creation'
+          and ${table.originId} is not null`,
+      ),
   }),
 );

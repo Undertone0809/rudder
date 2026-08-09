@@ -29,11 +29,17 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
+const mockAgentIssueCreationService = vi.hoisted(() => ({
+  resolveForRun: vi.fn(),
+  completeForCreatedIssue: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  agentIssueCreationService: () => mockAgentIssueCreationService,
   documentService: () => ({}),
   runWorkspaceService: () => ({}),
   executionWorkspaceService: () => ({}),

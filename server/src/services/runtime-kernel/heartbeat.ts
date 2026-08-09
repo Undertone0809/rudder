@@ -28,6 +28,10 @@ import { notFound } from "../../errors.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import {
+  agentIssueCreationService,
+  getAgentIssueCreationRequestIdFromRunContext,
+} from "../agent-issue-creation.js";
+import {
   agentRunContextService
 } from "../agent-run-context.js";
 import { approvalService } from "../approvals.js";
@@ -173,6 +177,7 @@ export function heartbeatService(
   const runContextSvc = agentRunContextService(db);
   const approvalsSvc = approvalService(db);
   const issuesSvc = issueService(db);
+  const agentIssueCreationSvc = agentIssueCreationService(db);
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const budgetHooks = {
@@ -687,6 +692,44 @@ export function heartbeatService(
       expectedExecutionOwnerToken?: string | null;
     },
   ) {
+    const runBeforeTerminal = await getRun(runId);
+    const agentIssueCreationSettlement = runBeforeTerminal
+      ? await (async () => {
+          const contextRequestId = getAgentIssueCreationRequestIdFromRunContext(runBeforeTerminal.contextSnapshot);
+          if (contextRequestId) {
+            return {
+              orgId: runBeforeTerminal.orgId,
+              agentId: runBeforeTerminal.agentId,
+              runId: runBeforeTerminal.id,
+              requestId: contextRequestId,
+            } satisfies NonNullable<TerminalEffectIntent["agentIssueCreationSettlement"]>;
+          }
+          return await agentIssueCreationSvc
+            .getSettlementIntentForRun(runBeforeTerminal.orgId, runBeforeTerminal.agentId, runBeforeTerminal.id)
+            .catch((error) => {
+              logger.warn({ err: error, runId }, "failed to resolve Agent Issue creation settlement terminal effect");
+              return null;
+            });
+        })()
+      : null;
+    const agentIssueCreationNotification = runBeforeTerminal
+      ? await agentIssueCreationSvc
+        .getNotificationIntentForRun(runBeforeTerminal.orgId, runBeforeTerminal.agentId, runId)
+        .catch((error) => {
+          logger.warn({ err: error, runId }, "failed to resolve Agent Issue creation notification terminal effect");
+          return null;
+        })
+      : null;
+    const terminalEffectsIntent: TerminalEffectIntent = {
+      version: 1,
+      ...(opts?.terminalEffectsIntent ?? {}),
+      ...(agentIssueCreationSettlement
+        ? { agentIssueCreationSettlement }
+        : {}),
+      ...(agentIssueCreationNotification
+        ? { agentIssueCreationNotification }
+        : {}),
+    };
     const updated = await transitionHeartbeatRunToTerminal(db, {
       runId,
       status,
@@ -694,11 +737,49 @@ export function heartbeatService(
       expectedStatuses: opts?.expectedStatuses,
       activityWatermark: opts?.activityWatermark,
       terminalEffectsPending: opts?.terminalEffectsPending,
-      terminalEffectsIntent: opts?.terminalEffectsIntent,
+      terminalEffectsIntent,
       processExitedAt: opts?.processExitedAt,
       expectedExecutionOwnerToken: opts?.expectedExecutionOwnerToken,
     });
-    if (updated) publishRunStatus(updated);
+    if (updated) {
+      publishRunStatus(updated);
+      const context = parseObject(updated.contextSnapshot);
+      const requestId = agentIssueCreationSettlement?.requestId
+        ?? getAgentIssueCreationRequestIdFromRunContext(context);
+      if (requestId) {
+        const settledRequest = await agentIssueCreationSvc.settleForRun({
+          orgId: updated.orgId,
+          agentId: updated.agentId,
+          runId: updated.id,
+          requestId,
+          runStatus: updated.status as "succeeded" | "failed" | "cancelled" | "timed_out",
+          error: updated.error,
+        }).catch((error) => {
+          logger.warn(
+            { err: error, orgId: updated.orgId, agentId: updated.agentId, runId: updated.id, requestId },
+            "failed to settle Agent Issue creation request after run termination",
+          );
+          return null;
+        });
+        if (settledRequest?.status === "succeeded" && settledRequest.createdIssueId) {
+          await reconcileTerminalEffectsIntent(updated.id, {
+            version: 1,
+            agentIssueCreationNotification: {
+              orgId: updated.orgId,
+              agentId: updated.agentId,
+              runId: updated.id,
+              requestId: settledRequest.id,
+              issueId: settledRequest.createdIssueId,
+            },
+          }).catch((error) => {
+            logger.warn(
+              { err: error, orgId: updated.orgId, agentId: updated.agentId, runId: updated.id, requestId },
+              "failed to record Agent Issue creation notification terminal effect",
+            );
+          });
+        }
+      }
+    }
     return updated;
   }
 
@@ -1275,20 +1356,20 @@ export function heartbeatService(
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = opts?.now ?? new Date();
     const recoveryCutoff = opts?.recoveryCutoff ?? now;
-
-    // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
-    const activeRuns = await db
-      .select({
-        run: heartbeatRuns,
-        agentRuntimeType: agents.agentRuntimeType,
-      })
-      .from(heartbeatRuns)
-      .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .where(or(eq(heartbeatRuns.status, "running"), eq(heartbeatRuns.terminalEffectsPending, true)));
-
     const reaped: string[] = [];
 
-    for (const { run, agentRuntimeType } of activeRuns) {
+    try {
+      // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
+      const activeRuns = await db
+        .select({
+          run: heartbeatRuns,
+          agentRuntimeType: agents.agentRuntimeType,
+        })
+        .from(heartbeatRuns)
+        .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+        .where(or(eq(heartbeatRuns.status, "running"), eq(heartbeatRuns.terminalEffectsPending, true)));
+
+      for (const { run, agentRuntimeType } of activeRuns) {
       if (run.terminalEffectsPending) {
         if (!run.processExitedAt) {
           const exited = await terminateRunProcessAndWait(run, agentRuntimeType);
@@ -1402,6 +1483,13 @@ export function heartbeatService(
       runningProcesses.delete(claimedRun.id);
       if (!completed) continue;
       reaped.push(claimedRun.id);
+      }
+    } finally {
+      // Terminal effects are the fast path. Keep a request-scoped sweep as a
+      // second durable path for runs whose effect was lost or dead-lettered.
+      await agentIssueCreationSvc.reconcileTerminalSettlements().catch((error) => {
+        logger.warn({ err: error }, "failed to reconcile terminal Agent Issue creation requests");
+      });
     }
 
     if (reaped.length > 0) {
@@ -1818,6 +1906,54 @@ export function heartbeatService(
         }));
       }
 
+      const agentIssueCreationSettlement = intent.agentIssueCreationSettlement;
+      if (agentIssueCreationSettlement) {
+        await runClaimedEffect("agent_issue_creation_settlement", async () => {
+          const settledRequest = await agentIssueCreationSvc.settleForRun({
+            orgId: agentIssueCreationSettlement.orgId,
+            agentId: agentIssueCreationSettlement.agentId,
+            runId: agentIssueCreationSettlement.runId,
+            requestId: agentIssueCreationSettlement.requestId,
+            runStatus: current.status as "succeeded" | "failed" | "cancelled" | "timed_out",
+            error: current.error,
+          });
+          const request = settledRequest
+            ?? await agentIssueCreationSvc.getById(
+              agentIssueCreationSettlement.orgId,
+              agentIssueCreationSettlement.requestId,
+            );
+          if (request?.status === "succeeded" && request.createdIssueId) {
+            const notificationIntent = {
+              orgId: agentIssueCreationSettlement.orgId,
+              agentId: agentIssueCreationSettlement.agentId,
+              runId: agentIssueCreationSettlement.runId,
+              requestId: request.id,
+              issueId: request.createdIssueId,
+            } satisfies NonNullable<TerminalEffectIntent["agentIssueCreationNotification"]>;
+            intent.agentIssueCreationNotification ??= notificationIntent;
+            await reconcileTerminalEffectsIntent(current.id, {
+              version: 1,
+              agentIssueCreationNotification: notificationIntent,
+            });
+          } else if (
+            request
+            && !request.createdIssueId
+            && ["queued", "running", "deferred"].includes(request.status)
+          ) {
+            throw new Error("Agent Issue creation request remained active after terminal settlement");
+          }
+          return settledRequest;
+        });
+      }
+
+      const agentIssueCreationNotification = intent.agentIssueCreationNotification;
+      if (agentIssueCreationNotification) {
+        await runClaimedEffect(
+          "agent_issue_creation_notification",
+          () => agentIssueCreationSvc.publishNotificationForRequest(agentIssueCreationNotification),
+        );
+      }
+
       if (intent.processLossRetry) {
         await runClaimedEffect("process_loss_retry", () => {
           if (!agent) throw new Error("Agent not found while replaying process-loss retry");
@@ -2230,6 +2366,8 @@ export function heartbeatService(
     reapInactiveRuns,
 
     reapTimedOutRuns,
+
+    startNextQueuedRunForAgent,
 
     resumeQueuedRuns,
 

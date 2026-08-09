@@ -17,6 +17,8 @@ export type TerminalEffectName =
   | "automation_chat"
   | "runtime_cost"
   | "task_session"
+  | "agent_issue_creation_settlement"
+  | "agent_issue_creation_notification"
   | "process_loss_retry"
   | "issue_release";
 
@@ -55,6 +57,19 @@ export type TerminalEffectIntent = {
     sessionDisplayId?: string | null;
     lastRunId?: string | null;
     lastError?: string | null;
+  };
+  agentIssueCreationSettlement?: {
+    orgId: string;
+    agentId: string;
+    runId: string;
+    requestId: string;
+  };
+  agentIssueCreationNotification?: {
+    orgId: string;
+    agentId: string;
+    runId: string;
+    requestId: string;
+    issueId: string;
   };
   processLossRetry?: boolean;
 };
@@ -165,6 +180,31 @@ function normalizeTaskSessionIntent(value: TerminalEffectIntent["taskSession"] |
   } satisfies NonNullable<TerminalEffectIntent["taskSession"]>;
 }
 
+function normalizeAgentIssueCreationNotificationIntent(
+  value: TerminalEffectIntent["agentIssueCreationNotification"] | undefined,
+) {
+  if (!value) return undefined;
+  const orgId = boundedString(value.orgId, 200);
+  const agentId = boundedString(value.agentId, 200);
+  const runId = boundedString(value.runId, 200);
+  const requestId = boundedString(value.requestId, 200);
+  const issueId = boundedString(value.issueId, 200);
+  if (!orgId || !agentId || !runId || !requestId || !issueId) return undefined;
+  return { orgId, agentId, runId, requestId, issueId } satisfies NonNullable<TerminalEffectIntent["agentIssueCreationNotification"]>;
+}
+
+function normalizeAgentIssueCreationSettlementIntent(
+  value: TerminalEffectIntent["agentIssueCreationSettlement"] | undefined,
+) {
+  if (!value) return undefined;
+  const orgId = boundedString(value.orgId, 200);
+  const agentId = boundedString(value.agentId, 200);
+  const runId = boundedString(value.runId, 200);
+  const requestId = boundedString(value.requestId, 200);
+  if (!orgId || !agentId || !runId || !requestId) return undefined;
+  return { orgId, agentId, runId, requestId } satisfies NonNullable<TerminalEffectIntent["agentIssueCreationSettlement"]>;
+}
+
 function boundTerminalEffectIntent(intent: TerminalEffectIntent): TerminalEffectIntent {
   if (serializedBytes(intent) <= MAX_TERMINAL_EFFECT_INTENT_BYTES) return intent;
   const withoutSessionParams = intent.taskSession
@@ -218,6 +258,12 @@ export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | nul
     : {};
   const normalizedUsage = boundedRecord(runtimeInput?.normalizedUsage, 8 * 1024) as Record<string, number> | null;
   const taskSession = normalizeTaskSessionIntent(intent?.taskSession);
+  const agentIssueCreationNotification = normalizeAgentIssueCreationNotificationIntent(
+    intent?.agentIssueCreationNotification,
+  );
+  const agentIssueCreationSettlement = normalizeAgentIssueCreationSettlementIntent(
+    intent?.agentIssueCreationSettlement,
+  );
   return boundTerminalEffectIntent({
     version: 2,
     ...(intent?.automation
@@ -241,6 +287,8 @@ export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | nul
         }
       : {}),
     ...(taskSession ? { taskSession } : {}),
+    ...(agentIssueCreationSettlement ? { agentIssueCreationSettlement } : {}),
+    ...(agentIssueCreationNotification ? { agentIssueCreationNotification } : {}),
     ...(intent?.processLossRetry ? { processLossRetry: true } : {}),
   });
 }
@@ -250,6 +298,8 @@ export function terminalEffectNames(intent: TerminalEffectIntent): TerminalEffec
     ...(intent.automation ? ["automation_chat" as const] : []),
     ...(intent.runtime ? ["runtime_cost" as const] : []),
     ...(intent.taskSession ? ["task_session" as const] : []),
+    ...(intent.agentIssueCreationSettlement ? ["agent_issue_creation_settlement" as const] : []),
+    ...(intent.agentIssueCreationNotification ? ["agent_issue_creation_notification" as const] : []),
     ...(intent.processLossRetry ? ["process_loss_retry" as const] : []),
     "issue_release",
   ];
@@ -855,6 +905,10 @@ export async function reconcileHeartbeatRunTerminalEffectsIntent(
       automation: existing.automation ?? incoming.automation,
       runtime: existing.runtime ?? incoming.runtime,
       taskSession: existing.taskSession ?? incoming.taskSession,
+      agentIssueCreationSettlement:
+        existing.agentIssueCreationSettlement ?? incoming.agentIssueCreationSettlement,
+      agentIssueCreationNotification:
+        existing.agentIssueCreationNotification ?? incoming.agentIssueCreationNotification,
       processLossRetry: existing.processLossRetry ?? incoming.processLossRetry,
     });
     return tx

@@ -1,5 +1,6 @@
 import {
   activityLog,
+  agentIssueCreationRequests,
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
@@ -95,6 +96,7 @@ vi.mock("../agent-runtimes/index.ts", async () => {
   };
 });
 
+import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 
 type EmbeddedPostgresInstance = {
@@ -1659,6 +1661,60 @@ describe("heartbeat run concurrency", () => {
     await waitForCondition(() => Promise.resolve(mockRuntimeAdapter.calls.length === 1));
   });
 
+  it("rebinds Agent Issue creation requests to recovery runs atomically", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const requestId = randomUUID();
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      terminalEffectsPending: false,
+      processExitedAt: new Date(),
+      finishedAt: new Date(),
+      contextSnapshot: {
+        agentIssueCreationRequestId: requestId,
+        agentIssueCreationRequest: { id: requestId },
+        taskKey: `agent-issue-creation:${requestId}`,
+      },
+    });
+    await db.insert(agentIssueCreationRequests).values({
+      id: requestId,
+      orgId,
+      requestedByUserId: "board-user-agent-issue-recovery",
+      agentId,
+      instruction: "Create the recovery-bound Issue.",
+      contextSnapshot: { source: "recovery-rebind-test" },
+      idempotencyKey: `agent-issue-recovery-${requestId}`,
+      status: "failed",
+      runId: sourceRunId,
+      error: "Process lost",
+      finishedAt: new Date(),
+    });
+
+    const recovery = await heartbeatService(db).retryRun(sourceRunId);
+    const rebound = await db
+      .select()
+      .from(agentIssueCreationRequests)
+      .where(eq(agentIssueCreationRequests.id, requestId))
+      .then((rows) => rows[0]);
+
+    expect(recovery).toMatchObject({ retryOfRunId: sourceRunId });
+    expect(rebound).toMatchObject({
+      id: requestId,
+      status: "queued",
+      wakeupRequestId: recovery.wakeupRequestId,
+      runId: recovery.id,
+      error: null,
+      finishedAt: null,
+    });
+    await expect(agentIssueCreationService(db).resolveForRun(orgId, agentId, recovery.id))
+      .resolves.toMatchObject({ id: requestId, runId: recovery.id, status: "queued" });
+  });
+
   it("claims one persisted comment-mention wake request across concurrent consumers", async () => {
     const { orgId, agentId } = await seedAgentFixture(3);
     const issueId = await seedIssueFixture({ orgId });
@@ -1705,6 +1761,44 @@ describe("heartbeat run concurrency", () => {
     const wakeups = await listWakeupRequestsForAgent(agentId);
     expect(wakeups.find((wakeup) => wakeup.id === wakeupRequestId)?.runId).toBe(firstRun?.id);
     await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+  });
+
+  it("deduplicates concurrent idempotent taskless wakeups when the wakeup insert races", async () => {
+    const { agentId, orgId } = await seedAgentFixture(3);
+    const requestId = randomUUID();
+    const idempotencyKey = `agent-issue-creation:${requestId}`;
+    const wakeupOptions = {
+      source: "on_demand" as const,
+      triggerDetail: "system" as const,
+      reason: "agent_issue_creation_requested",
+      idempotencyKey,
+      startImmediately: false,
+      payload: { agentIssueCreationRequestId: requestId },
+      contextSnapshot: {
+        taskKey: idempotencyKey,
+        targetType: "agent_issue_creation",
+        targetId: requestId,
+        agentIssueCreationRequestId: requestId,
+      },
+    };
+
+    const [firstRun, secondRun] = await Promise.all([
+      heartbeatService(db).wakeup(agentId, wakeupOptions),
+      heartbeatService(db).wakeup(agentId, wakeupOptions),
+    ]);
+
+    expect(firstRun?.id).toBeTruthy();
+    expect(secondRun?.id).toBe(firstRun?.id);
+    const linkedRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.orgId, orgId),
+        eq(heartbeatRuns.agentId, agentId),
+        eq(heartbeatRuns.wakeupRequestId, firstRun!.wakeupRequestId!),
+      ));
+    expect(linkedRuns).toHaveLength(1);
+    expect(linkedRuns[0]?.id).toBe(firstRun?.id);
   });
 
   it("skips timer heartbeats before launching the runtime when no actionable work exists", async () => {

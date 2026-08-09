@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { agentsApi, type AgentRuntimeModel } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
+import { ApiError } from "../api/client";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
@@ -105,6 +106,7 @@ type StagedIssueFile = {
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
+type IssueCreationMode = "manual" | "agent";
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
@@ -196,6 +198,17 @@ function defaultProjectWorkspaceIdForProject(project: {
     ?? "";
 }
 
+function createAgentIssueIdempotencyKey() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `agent-issue-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function shouldRotateAgentIssueIdempotencyKey(error: unknown) {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -205,6 +218,9 @@ export function NewIssueDialog() {
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [creationMode, setCreationMode] = useState<IssueCreationMode>("manual");
+  const [agentCreationAgentId, setAgentCreationAgentId] = useState("");
+  const [agentInstruction, setAgentInstruction] = useState("");
   const [status, setStatus] = useState("todo");
   const [priority, setPriority] = useState("");
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
@@ -227,6 +243,8 @@ export function NewIssueDialog() {
   const [redirectingIssueRef, setRedirectingIssueRef] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
+  const agentIssueIdempotencyKeyRef = useRef<string | null>(null);
+  const agentIssueSubmissionInFlightRef = useRef(false);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
   const previousAssigneeAgentIdRef = useRef<string | null>(null);
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
@@ -302,7 +320,7 @@ export function NewIssueDialog() {
     : null;
 
   const assigneeAdapterType = currentAssignee?.agentRuntimeType ?? null;
-  const configuredAssigneeModel = typeof currentAssignee?.agentRuntimeConfig.model === "string"
+  const configuredAssigneeModel = typeof currentAssignee?.agentRuntimeConfig?.model === "string"
     ? currentAssignee.agentRuntimeConfig.model
     : "";
   const effectiveAssigneeModel = assigneeModelOverride || configuredAssigneeModel;
@@ -369,6 +387,14 @@ export function NewIssueDialog() {
       };
     }
   }, [location.pathname, location.search, newIssueOpen]);
+
+  useEffect(() => {
+    if (!newIssueOpen) return;
+    setCreationMode("manual");
+    setAgentInstruction("");
+    setAgentCreationAgentId(newIssueDefaults.assigneeAgentId ?? "");
+    agentIssueIdempotencyKeyRef.current = createAgentIssueIdempotencyKey();
+  }, [newIssueOpen]);
 
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
@@ -502,6 +528,56 @@ export function NewIssueDialog() {
       }
     },
   });
+  const createAgentIssueRequest = useMutation({
+    mutationFn: async ({
+      orgId,
+      agentId,
+      instruction,
+      projectId: requestProjectId,
+      goalId: requestGoalId,
+      parentId,
+      contextSnapshot,
+      idempotencyKey,
+    }: {
+      orgId: string;
+      agentId: string;
+      instruction: string;
+      projectId: string | null;
+      goalId: string | null;
+      parentId: string | null;
+      contextSnapshot: Record<string, unknown>;
+      idempotencyKey: string;
+    }) => issuesApi.createAgentIssueRequest(orgId, {
+      agentId,
+      instruction,
+      projectId: requestProjectId,
+      goalId: requestGoalId,
+      parentId,
+      contextSnapshot,
+      idempotencyKey,
+    }),
+    onSuccess: () => {
+      clearPendingDraftSave();
+      clearIssueAutosave();
+      deleteIssueDraft(activeSavedIssueDraftId);
+      pushToast({
+        title: "已发送给 Agent，完成后会在 Inbox 通知你",
+        tone: "success",
+      });
+      reset();
+      closeNewIssue();
+    },
+    onError: (error) => {
+      // A received terminal HTTP response means the server has rejected this
+      // key; keep network/transport failures replayable for idempotency.
+      if (shouldRotateAgentIssueIdempotencyKey(error)) {
+        agentIssueIdempotencyKeyRef.current = createAgentIssueIdempotencyKey();
+      }
+    },
+    onSettled: () => {
+      agentIssueSubmissionInFlightRef.current = false;
+    },
+  });
   const createLabel = useMutation({
     mutationFn: (data: { name: string; color: string }) => issuesApi.createLabel(effectiveCompanyId!, data),
     onSuccess: async (created) => {
@@ -532,6 +608,7 @@ export function NewIssueDialog() {
   // Save draft on meaningful changes
   useEffect(() => {
     if (!newIssueOpen) return;
+    if (creationMode !== "manual") return;
     if (!hasMeaningfulIssueDraft({
       title,
       description,
@@ -580,6 +657,7 @@ export function NewIssueDialog() {
     assigneeThinkingEffort,
     assigneeChrome,
     effectiveCompanyId,
+    creationMode,
     newIssueOpen,
     activeSavedIssueDraftId,
     scheduleSave,
@@ -737,6 +815,9 @@ export function NewIssueDialog() {
     setDocumentSessionId((current) => current + 1);
     setTitle("");
     setDescription("");
+    setCreationMode("manual");
+    setAgentCreationAgentId("");
+    setAgentInstruction("");
     setStatus("todo");
     setPriority("");
     setSelectedLabelIds([]);
@@ -757,6 +838,8 @@ export function NewIssueDialog() {
     setCompanyOpen(false);
     setActiveSavedIssueDraftId(null);
     setRedirectingIssueRef(null);
+    agentIssueIdempotencyKeyRef.current = null;
+    agentIssueSubmissionInFlightRef.current = false;
   }
 
   function handleCloseNewIssue() {
@@ -769,6 +852,7 @@ export function NewIssueDialog() {
     setDialogCompanyId(orgId);
     setAssigneeValue("");
     setReviewerValue("");
+    setAgentCreationAgentId("");
     setProjectId("");
     setGoalId("");
     setProjectWorkspaceId("");
@@ -809,8 +893,39 @@ export function NewIssueDialog() {
     closeNewIssue();
   }
 
+  function changeCreationMode(nextMode: IssueCreationMode) {
+    if (isCreatingOrRedirecting || nextMode === creationMode) return;
+    if (nextMode === "agent") clearPendingDraftSave();
+    setCreationMode(nextMode);
+    if (nextMode === "agent" && !agentCreationAgentId && selectedAssigneeAgentId) {
+      setAgentCreationAgentId(selectedAssigneeAgentId);
+    }
+  }
+
   function handleSubmit() {
-    if (!effectiveCompanyId || !hasIssueTitle || createIssue.isPending || redirectingIssueRef) return;
+    if (!effectiveCompanyId || isCreatingOrRedirecting) return;
+    if (creationMode === "agent") {
+      if (agentIssueSubmissionInFlightRef.current) return;
+      const instruction = agentInstruction.trim();
+      if (!agentCreationAgentId || !instruction) return;
+      agentIssueSubmissionInFlightRef.current = true;
+      createAgentIssueRequest.mutate({
+        orgId: effectiveCompanyId,
+        agentId: agentCreationAgentId,
+        instruction,
+        projectId: projectId || null,
+        goalId: goalId || null,
+        parentId: newIssueDefaults.parentId ?? null,
+        contextSnapshot: {
+          source: "new-issue-dialog",
+          pathname: openContextLocationRef.current?.pathname ?? location.pathname,
+          search: openContextLocationRef.current?.search ?? location.search,
+        },
+        idempotencyKey: agentIssueIdempotencyKeyRef.current ??= createAgentIssueIdempotencyKey(),
+      });
+      return;
+    }
+    if (!hasIssueTitle) return;
     setRedirectingIssueRef(null);
     const assigneeAgentRuntimeOverrides = buildAssigneeAdapterOverrides({
       agentRuntimeType: assigneeAdapterType,
@@ -988,6 +1103,18 @@ export function NewIssueDialog() {
     ],
     [agents, currentUserId, recentAssigneeIds],
   );
+  const agentCreationOptions = useMemo<InlineEntityOption[]>(
+    () => sortAgentsByRecency(
+      (agents ?? []).filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
+      recentAssigneeIds,
+    ).map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+      searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
+    })),
+    [agents, recentAssigneeIds],
+  );
+  const agentCreationAgent = (agents ?? []).find((agent) => agent.id === agentCreationAgentId) ?? null;
   const reviewerOptions = useMemo<InlineEntityOption[]>(
     () => [
       ...currentUserAssigneeOption(currentUserId),
@@ -1037,8 +1164,15 @@ export function NewIssueDialog() {
   });
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
-  const isCreatingOrRedirecting = createIssue.isPending || Boolean(redirectingIssueRef);
+  const createAgentIssueErrorMessage =
+    createAgentIssueRequest.error instanceof Error
+      ? createAgentIssueRequest.error.message
+      : "Failed to send the Agent request. Try again.";
+  const isCreatingOrRedirecting =
+    createIssue.isPending || createAgentIssueRequest.isPending || Boolean(redirectingIssueRef);
   const hasIssueTitle = title.trim().length > 0;
+  const hasAgentInstruction = agentCreationAgentId.length > 0 && agentInstruction.trim().length > 0;
+  const canSubmit = creationMode === "agent" ? hasAgentInstruction : hasIssueTitle;
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1181,8 +1315,34 @@ export function NewIssueDialog() {
             event.preventDefault();
           }
         }}
-      >
+        >
         <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
+        <div className="flex items-center justify-center border-b border-border/60 px-4 py-2 shrink-0">
+          <div
+            className="inline-flex items-center rounded-md border border-border bg-muted/30 p-0.5"
+            role="tablist"
+            aria-label="Issue creation mode"
+          >
+            {(["manual", "agent"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={creationMode === mode}
+                className={cn(
+                  "rounded px-3 py-1 text-xs font-medium transition-colors",
+                  creationMode === mode
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                disabled={isCreatingOrRedirecting}
+                onClick={() => changeCreationMode(mode)}
+              >
+                {mode === "manual" ? "Manual" : "Agent"}
+              </button>
+            ))}
+          </div>
+        </div>
         {redirectingIssueRef ? (
           <div
             className="motion-new-issue-created-banner absolute left-1/2 top-4 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-md border border-[color:color-mix(in_oklab,var(--accent-base)_42%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_82%,var(--surface-elevated))] px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-sm)]"
@@ -1292,6 +1452,117 @@ export function NewIssueDialog() {
           </div>
         ) : null}
 
+        {creationMode === "agent" ? (
+          <div className="min-h-0 overflow-y-auto px-4 py-5">
+            <div className="mx-auto w-full max-w-2xl space-y-5">
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">Agent</div>
+                <InlineEntitySelector
+                  value={agentCreationAgentId}
+                  options={agentCreationOptions}
+                  placeholder="Select an Agent"
+                  noneLabel="Select an Agent"
+                  searchPlaceholder="Search Agents..."
+                  emptyMessage="No callable Agents found."
+                  variant="field"
+                  className={ISSUE_METADATA_SELECTOR_CLASSNAME}
+                  disablePortal
+                  onChange={(value) => {
+                    setAgentCreationAgentId(value);
+                    if (value) trackRecentAssignee(value);
+                  }}
+                  renderTriggerValue={(option) =>
+                    option && agentCreationAgent ? (
+                      <AgentMenuLabel agent={agentCreationAgent} agentAvatarStyle="bare" />
+                    ) : (
+                      <span className="text-muted-foreground">Select an Agent</span>
+                    )
+                  }
+                  renderOption={(option) => {
+                    if (!option.id) return <span className="truncate">{option.label}</span>;
+                    const agent = (agents ?? []).find((candidate) => candidate.id === option.id);
+                    return agent
+                      ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
+                      : <span className="truncate">{option.label}</span>;
+                  }}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="agent-issue-instruction">
+                  Instruction
+                </label>
+                <textarea
+                  id="agent-issue-instruction"
+                  data-slot="agent-issue-instruction"
+                  className="min-h-36 w-full resize-y rounded-md border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder="Describe the Issue you want the Agent to create..."
+                  value={agentInstruction}
+                  onChange={(event) => setAgentInstruction(event.target.value)}
+                  readOnly={isCreatingOrRedirecting}
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="min-w-0 space-y-1">
+                  <div className="text-[11px] font-medium text-muted-foreground">Project context</div>
+                  <InlineEntitySelector
+                    ref={projectSelectorRef}
+                    value={projectId}
+                    options={projectOptions}
+                    placeholder="No project"
+                    disablePortal
+                    noneLabel="No project"
+                    searchPlaceholder="Search projects..."
+                    emptyMessage="No projects found."
+                    variant="field"
+                    className={ISSUE_METADATA_SELECTOR_CLASSNAME}
+                    onChange={handleProjectChange}
+                    renderTriggerValue={(option) =>
+                      option && currentProject ? (
+                        <>
+                          <ProjectIcon color={currentProject.color} icon={currentProject.icon} size="xs" />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">No project</span>
+                      )
+                    }
+                  />
+                </div>
+                {goalsEnabled ? (
+                  <div className="min-w-0 space-y-1">
+                    <div className="text-[11px] font-medium text-muted-foreground">Goal context</div>
+                    <InlineEntitySelector
+                      value={goalId}
+                      options={goalOptions}
+                      placeholder="No goal"
+                      disablePortal
+                      noneLabel="No goal"
+                      searchPlaceholder="Search goals..."
+                      emptyMessage="No goals found."
+                      variant="field"
+                      className={ISSUE_METADATA_SELECTOR_CLASSNAME}
+                      onChange={setGoalId}
+                      renderTriggerValue={(option) =>
+                        option && currentGoal ? (
+                          <>
+                            <Target className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{option.label}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">No goal</span>
+                        )
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Title */}
         <div className="px-4 pt-4 pb-2 shrink-0">
           <textarea
@@ -1788,9 +2059,16 @@ export function NewIssueDialog() {
           </Popover>
         </div>
 
+          </>
+        )}
+
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border shrink-0">
-          {activeSavedIssueDraftId ? (
+          {creationMode === "agent" ? (
+            <span className="min-h-8 inline-flex items-center text-xs text-muted-foreground">
+              Agent request
+            </span>
+          ) : activeSavedIssueDraftId ? (
             <div className="inline-flex min-h-8 items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <CheckCircle2 className="h-3.5 w-3.5" />
               Saved to Draft Issues
@@ -1811,27 +2089,34 @@ export function NewIssueDialog() {
           )}
           <div className="flex items-center gap-3">
             <div className="min-h-5 text-right">
-              {redirectingIssueRef ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--accent-base)]">
-                  <CheckCircle2 className="h-3 w-3" />
-                  Opening issue...
-                </span>
-              ) : createIssue.isPending ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {isSubIssueDraft ? "Creating sub-issue..." : "Creating issue..."}
-                </span>
-              ) : createIssue.isError ? (
+                {redirectingIssueRef ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--accent-base)]">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Opening issue...
+                  </span>
+                ) : createIssue.isPending ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {isSubIssueDraft ? "Creating sub-issue..." : "Creating issue..."}
+                  </span>
+                ) : createAgentIssueRequest.isPending ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Sending to Agent...
+                  </span>
+                ) : createIssue.isError ? (
                 <span className="text-xs text-destructive">{createIssueErrorMessage}</span>
-              ) : null}
+                ) : creationMode === "agent" && createAgentIssueRequest.isError ? (
+                  <span className="text-xs text-destructive">{createAgentIssueErrorMessage}</span>
+                ) : null}
             </div>
             <Button
               size="sm"
               className={cn(
                 "min-w-[8.5rem] disabled:opacity-100",
-                !hasIssueTitle && "disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:ring-1 disabled:ring-inset disabled:ring-border/80 disabled:shadow-none",
+                !canSubmit && "disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:ring-1 disabled:ring-inset disabled:ring-border/80 disabled:shadow-none",
               )}
-              disabled={!hasIssueTitle || isCreatingOrRedirecting}
+              disabled={!canSubmit || isCreatingOrRedirecting}
               onClick={handleSubmit}
               aria-busy={isCreatingOrRedirecting}
             >
@@ -1840,15 +2125,21 @@ export function NewIssueDialog() {
                   <CheckCircle2 className="h-3.5 w-3.5" />
                 ) : createIssue.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : createAgentIssueRequest.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : null}
                 <span>
                   {redirectingIssueRef
                     ? "Opening..."
                     : createIssue.isPending
                       ? "Creating..."
-                      : isSubIssueDraft
-                        ? "Create sub-issue"
-                        : "Create Issue"}
+                      : createAgentIssueRequest.isPending
+                        ? "Sending..."
+                        : creationMode === "agent"
+                          ? "Send to Agent"
+                          : isSubIssueDraft
+                            ? "Create sub-issue"
+                            : "Create Issue"}
                 </span>
               </span>
             </Button>

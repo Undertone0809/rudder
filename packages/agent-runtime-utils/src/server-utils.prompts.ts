@@ -5,6 +5,27 @@ export const DEFAULT_AGENT_PROMPT_TEMPLATE =
 {{context.rudderWorkspace.orgResourcesPrompt}}
 `;
 
+export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A Rudder user explicitly asked you to create one issue in the background.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+## Agent Issue Creation Request
+
+- Request ID: {{context.agentIssueCreationRequest.id}}
+- Requested by user: {{context.agentIssueCreationRequest.requestedByUserId}}
+- Project context: {{context.agentIssueCreationRequest.projectId}}
+- Goal context: {{context.agentIssueCreationRequest.goalId}}
+- Parent issue context: {{context.agentIssueCreationRequest.parentId}}
+
+**User instruction:**
+{{context.agentIssueCreationRequest.instruction}}
+
+## Required Behavior
+
+Interpret the user's instruction and create exactly one real Rudder Issue. Generate a clear, specific title and a complete description that preserves the user's intent and relevant context. Use the stable Rudder Issue creation tool when it is available; otherwise use the existing \`rudder issue create\` CLI compatibility path.
+
+Carry the project, goal, and parent issue context into the created Issue when it is valid and relevant. The request record is already durable; do not create an Issue for the request itself, do not create duplicates, and do not modify unrelated Issues or files. Do not invent an assignee or notification target. After the single Issue is created, report its identifier and stop.`;
+
 export const COMMENT_TRIGGERED_ISSUE_WAKE_REASONS = new Set([
   "issue_commented",
   "issue_comment_mentioned",
@@ -280,6 +301,9 @@ ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
  *   "This is a recovery run, not a fresh task ..."
  *   Includes original run id, failure metadata, and a continue-preferred instruction to
  *   inspect prior progress/side effects before resuming.
+ * - Agent Issue creation:
+ *   "A Rudder user explicitly asked you to create one issue in the background."
+ *   Includes the authoritative request id, instruction, and validated context.
  * - passive issue follow-up:
  *   "This is a passive issue follow-up, not a fresh assignment ..."
  *   Includes close-out lineage and tells the agent to comment, finish, block, or hand off.
@@ -292,7 +316,9 @@ ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
  *  Comment: @agent please check timeout handling in retry path."
  *
  * Reasoning:
- * - Keep backward compatibility: custom configured templates always win.
+ * - Keep backward compatibility: custom configured templates win for ordinary wakes.
+ *   The platform-owned Agent Issue creation rail intentionally takes precedence so
+ *   a request cannot be changed into an unrelated runtime task by a custom prompt.
  * - Keep first-turn latency low: include the minimum task context directly in prompt text.
  * - Keep behavior deterministic across runtimes: template selection is centralized here.
  *
@@ -306,6 +332,24 @@ export function selectPromptTemplate(
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
+  const agentIssueCreationRequest = context.agentIssueCreationRequest;
+  const agentIssueCreationRequestRecord =
+    typeof agentIssueCreationRequest === "object" &&
+    agentIssueCreationRequest !== null &&
+    !Array.isArray(agentIssueCreationRequest)
+      ? (agentIssueCreationRequest as Record<string, unknown>)
+      : null;
+  const rawAgentIssueCreationRequestId = agentIssueCreationRequestRecord?.id;
+  const agentIssueCreationRequestId =
+    typeof rawAgentIssueCreationRequestId === "string"
+      ? rawAgentIssueCreationRequestId.trim()
+      : "";
+  const hasAgentIssueCreationRequest = Boolean(
+    agentIssueCreationRequestId &&
+    context.targetType === "agent_issue_creation" &&
+    context.targetId === agentIssueCreationRequestId &&
+    context.agentIssueCreationRequestId === agentIssueCreationRequestId,
+  );
   const relationship = String(context.relationship ?? "");
   const isCommentMention =
     wakeSource === "comment.mention" || wakeReason === "issue_comment_mentioned";
@@ -337,6 +381,8 @@ export function selectPromptTemplate(
       (wakeSource === "comment.mention" ||
         wakeReason === "issue_comment_mentioned" ||
         isCommentTriggeredIssueWakeReason(wakeReason)));
+
+  if (hasAgentIssueCreationRequest) return AGENT_ISSUE_CREATION_PROMPT_TEMPLATE;
 
   // Custom prompt bodies still win, but platform-owned issue execution rails do not.
   if (configuredTemplate?.trim()) {

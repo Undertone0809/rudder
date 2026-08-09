@@ -1,4 +1,6 @@
 import type {
+  AgentIssueCreationRequestStatus,
+  CreateAgentIssueCreationRequest,
   Issue,
   IssueAttachment,
   IssueComment,
@@ -10,6 +12,23 @@ import type {
   ReorderIssue,
 } from "@rudderhq/shared";
 import { api } from "./client";
+
+export interface AgentIssueCreationRequest extends CreateAgentIssueCreationRequest {
+  id: string;
+  orgId: string;
+  requestedByUserId: string;
+  status: AgentIssueCreationRequestStatus;
+  wakeupAttempt: number;
+  wakeupAttemptId: string;
+  wakeupRequestId: string | null;
+  runId: string | null;
+  createdIssueId: string | null;
+  error: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export const issuesApi = {
   list: (
@@ -78,6 +97,12 @@ export const issuesApi = {
   unfollow: (id: string) => api.delete<{ ok: true }>(`/issues/${id}/follow`),
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Issue>(`/orgs/${orgId}/issues`, data),
+  listAgentIssueCreationRequests: (orgId: string) =>
+    api.get<AgentIssueCreationRequest[]>(`/orgs/${orgId}/agent-issue-creation-requests`),
+  createAgentIssueRequest: (orgId: string, data: CreateAgentIssueCreationRequest) =>
+    api.post<AgentIssueCreationRequest>(`/orgs/${orgId}/agent-issue-creation-requests`, data),
+  retryAgentIssueRequest: (orgId: string, requestId: string) =>
+    api.post<AgentIssueCreationRequest>(`/orgs/${orgId}/agent-issue-creation-requests/${requestId}/retry`, {}),
   update: (id: string, data: Record<string, unknown>) => api.patch<Issue>(`/issues/${id}`, data),
   reorder: (orgId: string, data: ReorderIssue) => api.post<Issue>(`/orgs/${orgId}/issues/reorder`, data),
   remove: (id: string) => api.delete<Issue>(`/issues/${id}`),

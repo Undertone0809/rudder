@@ -158,6 +158,7 @@ export interface Issue {
   searchMatch?: IssueSearchMatch | null;
   myLastTouchAt?: Date | null;
   lastExternalCommentAt?: Date | null;
+  lastExternalActivityAt?: Date | null;
   isUnreadForMe?: boolean;
   createdAt: Date;
   updatedAt: Date;

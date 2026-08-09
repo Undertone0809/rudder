@@ -617,6 +617,7 @@ function invalidateHeartbeatQueries(
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(orgId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.issues.agentIssueCreationRequests(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.costs(orgId) });
@@ -646,6 +647,12 @@ function invalidateActivityQueries(
 
   const entityType = readString(payload.entityType);
   const entityId = readString(payload.entityId);
+
+  if (entityType === "agent_issue_creation_request") {
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.agentIssueCreationRequests(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.system(orgId, "failed-runs") });
+    return;
+  }
 
   if (entityType === "issue") {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });

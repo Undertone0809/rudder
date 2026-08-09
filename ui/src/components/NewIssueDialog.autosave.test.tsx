@@ -2,9 +2,10 @@
 
 import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import { NewIssueDialog } from "./NewIssueDialog";
 
 (
@@ -13,7 +14,15 @@ import { NewIssueDialog } from "./NewIssueDialog";
 
 const mockState = vi.hoisted(() => ({
   adapterModels: [] as unknown[],
-  agents: [{ id: "agent-1", name: "Ella", urlKey: "ella", icon: null, status: "active", agentRuntimeType: "codex_local" }],
+  agents: [{
+    id: "agent-1",
+    name: "Ella",
+    urlKey: "ella",
+    icon: null,
+    status: "active",
+    agentRuntimeType: "codex_local",
+    agentRuntimeConfig: {},
+  }],
   closeNewIssue: vi.fn(),
   labels: [] as unknown[],
   recentAssigneeIds: [] as string[],
@@ -21,6 +30,8 @@ const mockState = vi.hoisted(() => ({
   organizationSkills: [] as unknown[],
   projects: [] as unknown[],
   pushToast: vi.fn(),
+  mutationCalls: [] as Array<{ variables: Record<string, unknown> }>,
+  agentMutationOutcome: "success" as "success" | "deferred" | "failure" | "terminal-failure" | "pending",
   skills: {
     agentRuntimeType: "codex_local",
     supported: true,
@@ -45,13 +56,42 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "organization-skills") return { data: mockState.organizationSkills };
     return { data: undefined };
   },
-  useMutation: () => ({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn(),
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
+  useMutation: (options: {
+    onError?: (error: Error, variables: Record<string, unknown>) => void;
+    onSettled?: (...args: unknown[]) => void;
+    onSuccess?: (data: Record<string, unknown>, variables: Record<string, unknown>) => void;
+  } = {}) => {
+    const isAgentMutation = typeof options.onSettled === "function";
+    const [agentMutationStarted, setAgentMutationStarted] = useState(false);
+    return {
+      mutate: vi.fn((variables: Record<string, unknown>) => {
+        mockState.mutationCalls.push({ variables });
+        if (!isAgentMutation) return;
+        if (mockState.agentMutationOutcome === "pending") {
+          setAgentMutationStarted(true);
+          return;
+        }
+        if (mockState.agentMutationOutcome === "failure" || mockState.agentMutationOutcome === "terminal-failure") {
+          const error = mockState.agentMutationOutcome === "terminal-failure"
+            ? new ApiError("Agent request key is terminal", 409, { error: "Agent Issue request is already terminal" })
+            : new Error("Agent request failed");
+          options.onError?.(error, variables);
+          options.onSettled?.(undefined, error, variables, undefined);
+          return;
+        }
+        options.onSuccess?.({ status: mockState.agentMutationOutcome }, variables);
+        options.onSettled?.(undefined, null, variables, undefined);
+      }),
+      mutateAsync: vi.fn(),
+      isPending: isAgentMutation && mockState.agentMutationOutcome === "pending" && agentMutationStarted,
+      isError: isAgentMutation && mockState.agentMutationOutcome === "failure",
+      error: isAgentMutation && (mockState.agentMutationOutcome === "failure" || mockState.agentMutationOutcome === "terminal-failure")
+        ? mockState.agentMutationOutcome === "terminal-failure"
+          ? new ApiError("Agent request key is terminal", 409, { error: "Agent Issue request is already terminal" })
+          : new Error("Agent request failed")
+        : null,
+    };
+  },
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
     setQueryData: vi.fn(),
@@ -134,6 +174,7 @@ vi.mock("../api/issues", () => ({
     createLabel: vi.fn(),
     upsertDocument: vi.fn(),
     uploadAttachment: vi.fn(),
+    createAgentIssueRequest: vi.fn(),
   },
 }));
 
@@ -213,6 +254,8 @@ beforeEach(() => {
   document.body.innerHTML = "";
   mockState.closeNewIssue.mockReset();
   mockState.pushToast.mockReset();
+  mockState.mutationCalls.length = 0;
+  mockState.agentMutationOutcome = "success";
   mockState.newIssueDefaults = {};
 });
 
@@ -264,5 +307,170 @@ describe("NewIssueDialog autosave", () => {
       title: "Ordinary new issue",
       description: "Keep recovering this one",
     });
+  });
+
+  it("submits Agent mode once without saving a Manual draft", async () => {
+    mockState.agentMutationOutcome = "pending";
+    mockState.newIssueDefaults = {
+      title: "Manual-only context should not be saved from Agent mode",
+      assigneeAgentId: "agent-1",
+    };
+
+    await renderDialog();
+    const agentTab = document.querySelector<HTMLButtonElement>(
+      'button[role="tab"][aria-selected="false"]',
+    );
+    expect(agentTab).not.toBeNull();
+    await act(async () => {
+      agentTab?.click();
+    });
+
+    const instruction = document.querySelector<HTMLTextAreaElement>(
+      '[data-slot="agent-issue-instruction"]',
+    );
+    expect(instruction).not.toBeNull();
+    await fillTextarea(instruction!, "Create an issue for the onboarding regression.");
+
+    const sendButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Send to Agent",
+    );
+    expect(sendButton).not.toBeNull();
+    await act(async () => {
+      sendButton?.click();
+      sendButton?.click();
+    });
+
+    const agentCalls = mockState.mutationCalls.filter(
+      ({ variables }) => variables.instruction === "Create an issue for the onboarding regression.",
+    );
+    expect(agentCalls).toHaveLength(1);
+    expect(agentCalls[0]?.variables).toMatchObject({
+      orgId: "org-1",
+      agentId: "agent-1",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      idempotencyKey: expect.any(String),
+    });
+
+    await advanceAutosaveDebounce();
+    expect(window.localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY)).toBeNull();
+    expect(document.body.textContent).not.toContain("Save Draft");
+  });
+
+  it("shows the exact accepted-request toast and closes after a deferred response", async () => {
+    mockState.agentMutationOutcome = "deferred";
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      "Create the deferred issue.",
+    );
+    await act(async () => {
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Send to Agent")
+        ?.click();
+    });
+
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "已发送给 Agent，完成后会在 Inbox 通知你",
+      tone: "success",
+    });
+    expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Agent submit disabled while the request is pending", async () => {
+    mockState.agentMutationOutcome = "pending";
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      "Create the pending issue.",
+    );
+    const sendButton = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Send to Agent") as HTMLButtonElement | undefined;
+    expect(sendButton).not.toBeUndefined();
+    expect(sendButton?.disabled).toBe(false);
+    await act(async () => {
+      sendButton?.click();
+    });
+
+    expect(sendButton?.disabled).toBe(true);
+    expect(mockState.mutationCalls).toHaveLength(1);
+    await act(async () => {
+      sendButton?.click();
+    });
+    expect(mockState.mutationCalls).toHaveLength(1);
+  });
+
+  it("keeps the dialog open and exposes a failed Agent response", async () => {
+    mockState.agentMutationOutcome = "failure";
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      "Create the failed issue.",
+    );
+    await act(async () => {
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Send to Agent")
+        ?.click();
+    });
+
+    expect(document.body.textContent).toContain("Agent request failed");
+    expect(mockState.closeNewIssue).not.toHaveBeenCalled();
+    expect(mockState.mutationCalls).toHaveLength(1);
+
+    const firstKey = mockState.mutationCalls[0]?.variables.idempotencyKey;
+    await act(async () => {
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Send to Agent")
+        ?.click();
+    });
+    expect(mockState.mutationCalls[1]?.variables.idempotencyKey).toBe(firstKey);
+  });
+
+  it("rotates the Agent request key after a terminal HTTP response", async () => {
+    mockState.agentMutationOutcome = "terminal-failure";
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      "Create the retryable issue.",
+    );
+
+    await act(async () => {
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Send to Agent")
+        ?.click();
+    });
+    const firstKey = mockState.mutationCalls[0]?.variables.idempotencyKey;
+
+    await act(async () => {
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Send to Agent")
+        ?.click();
+    });
+
+    expect(mockState.mutationCalls).toHaveLength(2);
+    expect(mockState.mutationCalls[1]?.variables.idempotencyKey).toEqual(expect.any(String));
+    expect(mockState.mutationCalls[1]?.variables.idempotencyKey).not.toBe(firstKey);
   });
 });

@@ -1058,6 +1058,13 @@
       "when": 1786303912000,
       "tag": "0150_rudder_plugins_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1786410000000,
+      "tag": "0151_agent_issue_creation_requests",
+      "breakpoints": true
     }
   ]
 }

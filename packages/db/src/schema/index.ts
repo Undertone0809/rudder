@@ -9,6 +9,7 @@ export { agentIntegrationInboundDedup } from "./agent_integration_inbound_dedup.
 export { agentIntegrationOutboundMessages } from "./agent_integration_outbound_messages.js";
 export { agentIntegrationUserBindings } from "./agent_integration_user_bindings.js";
 export { agentIntegrations } from "./agent_integrations.js";
+export { agentIssueCreationRequests } from "./agent_issue_creation_requests.js";
 export { agentRuntimeState } from "./agent_runtime_state.js";
 export { agentTaskSessions } from "./agent_task_sessions.js";
 export { agentWakeupRequests } from "./agent_wakeup_requests.js";

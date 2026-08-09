@@ -1,5 +1,6 @@
 import {
   activityLog,
+  agentIssueCreationRequests,
   agentRuntimeState,
   agents,
   agentTaskSessions,
@@ -23,6 +24,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
+import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { appendHeartbeatRunEvent } from "../services/run-events.ts";
 import {
@@ -156,6 +158,7 @@ describe("heartbeat orphaned process recovery", () => {
       try {
         await db.delete(issues);
         await db.delete(activityLog);
+        await db.delete(agentIssueCreationRequests);
         await db.delete(heartbeatRunEvents);
         await db.delete(agentTaskSessions);
         await db.delete(heartbeatRuns);
@@ -659,6 +662,150 @@ describe("heartbeat orphaned process recovery", () => {
     expect(JSON.stringify(attention[0]?.details)).not.toContain("customer-secret-123");
     const current = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
     expect(current?.terminalEffectsLastError).not.toContain("customer-secret-123");
+  });
+
+  it("persists Agent Issue settlement when immediate and first replay settlement both fail", async () => {
+    const requestId = randomUUID();
+    const { orgId, agentId, runId, issueId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      contextSnapshot: {
+        agentIssueCreationRequestId: requestId,
+        agentIssueCreationRequest: { id: requestId },
+      },
+    });
+    await db.insert(agentIssueCreationRequests).values({
+      id: requestId,
+      orgId,
+      requestedByUserId: "board-user-agent-issue-settlement",
+      agentId,
+      instruction: "Create the issue before terminal settlement.",
+      contextSnapshot: { source: "terminal-settlement-fault-injection" },
+      idempotencyKey: `agent-issue-settlement-${requestId}`,
+      runId,
+      status: "running",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Terminal settlement issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "ASET-1",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: requestId,
+      originRunId: runId,
+    });
+
+    const failingDb = new Proxy(db as object, {
+      get(target, property) {
+        const failAgentIssueUpdate = (table: unknown) => {
+          if (table === agentIssueCreationRequests) {
+            throw new Error("Agent Issue settlement update unavailable");
+          }
+          return (target as any).update(table);
+        };
+        if (property === "transaction") {
+          return (callback: (tx: unknown) => unknown) => (target as any).transaction((tx: any) =>
+            callback(new Proxy(tx, {
+              get(transactionTarget, transactionProperty) {
+                if (transactionProperty === "update") return failAgentIssueUpdate;
+                const value = Reflect.get(transactionTarget, transactionProperty);
+                return typeof value === "function" ? value.bind(transactionTarget) : value;
+              },
+            })));
+        }
+        if (property === "update") return failAgentIssueUpdate;
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as typeof db;
+
+    await expect(agentIssueCreationService(failingDb).completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId,
+      issueId,
+      requestId,
+    })).rejects.toThrow("Agent Issue settlement update unavailable");
+
+    await expect(heartbeatService(failingDb).reapOrphanedRuns()).rejects.toThrow(
+      "Agent Issue settlement update unavailable",
+    );
+
+    const pendingRequest = await db
+      .select()
+      .from(agentIssueCreationRequests)
+      .where(eq(agentIssueCreationRequests.id, requestId))
+      .then((rows) => rows[0]);
+    expect(pendingRequest).toMatchObject({ status: "running", createdIssueId: null, runId });
+    const pendingRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(pendingRun).toMatchObject({
+      status: "failed",
+      terminalEffectsPending: true,
+      terminalEffectsJson: {
+        agentIssueCreationSettlement: { orgId, agentId, runId, requestId },
+      },
+      terminalEffectsAttemptsJson: { agent_issue_creation_settlement: 1 },
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({ terminalEffectsNextAttemptAt: new Date(Date.now() + 60_000) })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeatService(db).reapOrphanedRuns()).resolves.toMatchObject({
+      reaped: 0,
+      runIds: [],
+    });
+
+    const reconciledRequest = await db
+      .select()
+      .from(agentIssueCreationRequests)
+      .where(eq(agentIssueCreationRequests.id, requestId))
+      .then((rows) => rows[0]);
+    expect(reconciledRequest).toMatchObject({
+      status: "succeeded",
+      runId,
+      createdIssueId: issueId,
+    });
+
+    await db
+      .update(heartbeatRuns)
+      .set({ terminalEffectsNextAttemptAt: new Date(0) })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await expect(heartbeatService(db).reapOrphanedRuns()).resolves.toMatchObject({
+      reaped: 1,
+      runIds: [runId],
+    });
+
+    const settledRequest = await db
+      .select()
+      .from(agentIssueCreationRequests)
+      .where(eq(agentIssueCreationRequests.id, requestId))
+      .then((rows) => rows[0]);
+    expect(settledRequest).toMatchObject({
+      status: "succeeded",
+      runId,
+      createdIssueId: issueId,
+    });
+    const recoveredRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(recoveredRun).toMatchObject({ terminalEffectsPending: false, terminalEffectsJson: null });
+    const notifications = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "agent.issue_created_notification"));
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({ entityId: issueId });
   });
 
   it("never touches a persisted pid after process exit was acknowledged", async () => {

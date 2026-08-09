@@ -1,6 +1,7 @@
 // @ts-nocheck
 import {
   activityLog,
+  agentIssueCreationRequests,
   agents,
   agentWakeupRequests,
   heartbeatRuns,
@@ -10,7 +11,7 @@ import type {
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import { conflict } from "../../errors.js";
 import { issueMaterialUpdateActivitySql } from "../issue-activity-filters.js";
@@ -103,6 +104,10 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         : explicitResumeSession?.sessionDisplayId ??
           await resolveSessionBeforeForWakeup(agent, taskKey);
     const recovery = recoveryContextSnapshot.recovery as HeartbeatRunRecoveryContext;
+    const agentIssueCreationRequest = parseObject(recoveryContextSnapshot.agentIssueCreationRequest);
+    const agentIssueCreationRequestId =
+      readNonEmptyString(recoveryContextSnapshot.agentIssueCreationRequestId)
+      ?? readNonEmptyString(agentIssueCreationRequest.id);
     const requestPayload: Record<string, unknown> = {
       originalRunId: run.id,
       failureKind: recovery.failureKind,
@@ -259,6 +264,31 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           updatedAt: opts.now,
         })
         .where(eq(agentWakeupRequests.id, wakeupRequest.id));
+
+      const requestMatch = agentIssueCreationRequestId
+        ? [
+            eq(agentIssueCreationRequests.id, agentIssueCreationRequestId),
+            or(isNull(agentIssueCreationRequests.runId), eq(agentIssueCreationRequests.runId, run.id)),
+          ]
+        : [eq(agentIssueCreationRequests.runId, run.id)];
+      await tx
+        .update(agentIssueCreationRequests)
+        .set({
+          status: "queued",
+          wakeupRequestId: wakeupRequest.id,
+          runId: recoveryRun.id,
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          updatedAt: opts.now,
+        })
+        .where(and(
+          eq(agentIssueCreationRequests.orgId, run.orgId),
+          eq(agentIssueCreationRequests.agentId, run.agentId),
+          ...requestMatch,
+          isNull(agentIssueCreationRequests.createdIssueId),
+          inArray(agentIssueCreationRequests.status, ["queued", "running", "deferred", "failed", "cancelled"]),
+        ));
 
       if (issueRow) {
         await tx

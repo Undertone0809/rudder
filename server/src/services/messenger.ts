@@ -9,6 +9,7 @@
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
+  agentIssueCreationRequests,
   agents,
   approvalComments,
   approvals,
@@ -38,10 +39,12 @@ import {
   type MessengerApprovalThreadItem,
   type MessengerBudgetThreadItem,
   type MessengerCustomGroupsResponse,
+  type MessengerEvent,
   type MessengerFailedRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
   type MessengerRunOriginDescriptor,
+  type MessengerSystemThreadItem,
   type MessengerSystemThreadKind,
   type MessengerThreadAction,
   type MessengerThreadDetail,
@@ -80,6 +83,7 @@ const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
   "issue.followed",
   "automation.issue_created_notification",
+  "agent.issue_created_notification",
   "issue.approval_linked",
   "issue.work_product_created",
   "issue.work_product_updated",
@@ -303,6 +307,25 @@ type FailedRunRow = MessengerFailedRunOriginRow & {
   agentId: string;
   status: string;
   resultJson: Record<string, unknown> | null;
+  agentIssueCreationRequestId: string | null;
+  agentIssueCreationRequestedByUserId: string | null;
+  agentIssueCreationError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FailedRunAgentIssueContext = Pick<
+  FailedRunRow,
+  "agentIssueCreationRequestId" | "agentIssueCreationRequestedByUserId" | "agentIssueCreationError"
+>;
+
+type FailedAgentIssueRequestRow = {
+  id: string;
+  orgId: string;
+  agentId: string;
+  runId: string | null;
+  status: string;
+  error: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -322,6 +345,17 @@ function maxDate(...values: Array<Date | string | null | undefined>) {
   const dates = values.map(normalizeDate).filter((value): value is Date => Boolean(value));
   if (dates.length === 0) return null;
   return dates.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+}
+
+function failedRunSummary(run: FailedRunAgentIssueContext & { resultJson?: Record<string, unknown> | null }) {
+  const summary = failedRunUserSummary(run);
+  return run.agentIssueCreationRequestId
+    ? `Agent Issue creation failed. ${summary}`
+    : summary;
+}
+
+function failedAgentIssueRequestSummary(request: Pick<FailedAgentIssueRequestRow, "error">) {
+  return `Agent Issue creation failed. ${request.error ?? "Agent run completed without creating an Issue"}`;
 }
 
 function compareLatestActivity<T extends { latestActivityAt: Date | null; title: string; threadKey?: string }>(a: T, b: T) {
@@ -514,6 +548,8 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
       return "Followed";
     case "automation.issue_created_notification":
       return "Automation created issue";
+    case "agent.issue_created_notification":
+      return "Agent created issue";
     case "issue.approval_linked":
       return "Approval linked";
     case "issue.work_product_created":
@@ -869,21 +905,39 @@ function failedRunCard(
   run: FailedRunRow,
   agentName: string | null,
   origin: MessengerRunOriginDescriptor,
+  orgId: string,
+  userId: string,
 ): MessengerFailedRunThreadItem {
-  const summary = failedRunUserSummary(run);
+  const summary = failedRunSummary(run);
   const sourceAction = messengerFailedRunSourceAction(origin);
+  const agentIssueRequestId = run.agentIssueCreationRequestId;
+  const canRetryAgentIssue = Boolean(
+    agentIssueRequestId
+    && run.agentIssueCreationRequestedByUserId === userId,
+  );
+  const retryAction = agentIssueRequestId
+    ? canRetryAgentIssue
+      ? buildAction(
+        "Retry Agent Issue",
+        `/orgs/${orgId}/agent-issue-creation-requests/${agentIssueRequestId}/retry`,
+        "POST",
+      )
+      : null
+    : buildAction("Retry", `/agent-runs/${run.id}/retry`, "POST");
   return {
     id: run.id,
     threadKey: "failed-runs",
     kind: "failed-runs",
-    title: agentName ? `${agentName} · Failed run` : "Failed run",
-    subtitle: run.status.replaceAll("_", " "),
+    title: agentIssueRequestId
+      ? (agentName ? `${agentName} · Agent Issue creation failed` : "Agent Issue creation failed")
+      : (agentName ? `${agentName} · Failed run` : "Failed run"),
+    subtitle: agentIssueRequestId ? "Agent Issue request failed" : run.status.replaceAll("_", " "),
     body: summary,
     preview: summary,
     href: `/agents/${run.agentId}/runs/${run.id}`,
     latestActivityAt: run.updatedAt ?? run.createdAt,
     actions: [
-      buildAction("Retry", `/agent-runs/${run.id}/retry`, "POST"),
+      ...(retryAction ? [retryAction] : []),
       ...(sourceAction ? [sourceAction] : []),
       buildAction("Open run", `/agents/${run.agentId}/runs/${run.id}`, "GET"),
     ],
@@ -891,8 +945,53 @@ function failedRunCard(
       runId: run.id,
       agentId: run.agentId,
       status: run.status,
+      ...(agentIssueRequestId
+        ? {
+          agentIssueCreationRequestId: agentIssueRequestId,
+          agentIssueCreationRetryable: canRetryAgentIssue,
+          agentIssueCreationError: run.agentIssueCreationError,
+        }
+        : {}),
     },
     origin,
+  };
+}
+
+function failedAgentIssueRequestCard(
+  request: FailedAgentIssueRequestRow,
+  agentName: string | null,
+  orgId: string,
+): MessengerEvent {
+  const summary = failedAgentIssueRequestSummary(request);
+  return {
+    id: request.id,
+    threadKey: "failed-runs",
+    kind: "failed-runs",
+    title: agentName ? `${agentName} · Agent Issue creation failed` : "Agent Issue creation failed",
+    subtitle: "Agent Issue request failed",
+    body: summary,
+    preview: summary,
+    href: request.runId ? `/agents/${request.agentId}/runs/${request.runId}` : null,
+    latestActivityAt: request.updatedAt ?? request.createdAt,
+    actions: [
+      buildAction(
+        "Retry Agent Issue",
+        `/orgs/${orgId}/agent-issue-creation-requests/${request.id}/retry`,
+        "POST",
+      ),
+      ...(request.runId
+        ? [buildAction("Open run", `/agents/${request.agentId}/runs/${request.runId}`, "GET")]
+        : []),
+    ],
+    metadata: {
+      requestId: request.id,
+      agentId: request.agentId,
+      status: request.status,
+      agentIssueCreationRequestId: request.id,
+      agentIssueCreationRetryable: true,
+      agentIssueCreationError: request.error,
+      ...(request.runId ? { runId: request.runId } : {}),
+    },
   };
 }
 
@@ -1679,7 +1778,7 @@ export function messengerService(db: Db) {
           and notification_issue.org_id = automation_notification_activity.org_id
         where automation_notification_activity.org_id = ${orgId}
           and automation_notification_activity.entity_type = 'issue'
-          and automation_notification_activity.action = 'automation.issue_created_notification'
+          and automation_notification_activity.action in ('automation.issue_created_notification', 'agent.issue_created_notification')
           and automation_notification_activity.details->>'userId' = ${userId}
           and notification_issue.hidden_at is null
       ),
@@ -1783,7 +1882,7 @@ export function messengerService(db: Db) {
               where automation_notification_visibility.org_id = ${orgId}
                 and automation_notification_visibility.entity_type = 'issue'
                 and automation_notification_visibility.entity_id = issue_row.id::text
-                and automation_notification_visibility.action = 'automation.issue_created_notification'
+                and automation_notification_visibility.action in ('automation.issue_created_notification', 'agent.issue_created_notification')
                 and automation_notification_visibility.details->>'userId' = ${userId}
             )
           )
@@ -1825,6 +1924,10 @@ export function messengerService(db: Db) {
             and activity_row.entity_id = issue_row.id::text
             and activity_row.action in (${issueActionSqlList})
             and not ${lowSignalContentOnlyActivity}
+            and (
+              activity_row.action not in ('automation.issue_created_notification', 'agent.issue_created_notification')
+              or activity_row.details->>'userId' = ${userId}
+            )
           order by activity_row.created_at desc, activity_row.id desc
           limit 1
         ) latest_activity on true
@@ -1844,6 +1947,10 @@ export function messengerService(db: Db) {
             and external_activity_row.action in (${issueActionSqlList})
             and not ${externalLowSignalContentOnlyActivity}
             and (external_activity_row.actor_type <> 'user' or external_activity_row.actor_id <> ${userId})
+            and (
+              external_activity_row.action not in ('automation.issue_created_notification', 'agent.issue_created_notification')
+              or external_activity_row.details->>'userId' = ${userId}
+            )
           order by external_activity_row.created_at desc, external_activity_row.id desc
           limit 1
         ) latest_external_activity on true
@@ -2418,10 +2525,8 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadFailedRunData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
-    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
-
-    const [runRows, agentRows] = await Promise.all([
+  async function loadFailedRunRows(orgId: string, userId: string) {
+    const [runRows, requestRows, agentRows] = await Promise.all([
       db
         .select({
           id: heartbeatRuns.id,
@@ -2436,10 +2541,36 @@ export function messengerService(db: Db) {
           contextSnapshot: heartbeatRuns.contextSnapshot,
           createdAt: heartbeatRuns.createdAt,
           updatedAt: heartbeatRuns.updatedAt,
+          agentIssueCreationRequestId: agentIssueCreationRequests.id,
+          agentIssueCreationRequestedByUserId: agentIssueCreationRequests.requestedByUserId,
+          agentIssueCreationError: agentIssueCreationRequests.error,
         })
         .from(heartbeatRuns)
+        .leftJoin(agentIssueCreationRequests, and(
+          eq(agentIssueCreationRequests.orgId, heartbeatRuns.orgId),
+          eq(agentIssueCreationRequests.runId, heartbeatRuns.id),
+        ))
         .where(and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.status, "failed")))
         .orderBy(desc(heartbeatRuns.updatedAt), desc(heartbeatRuns.createdAt)),
+      db
+        .select({
+          id: agentIssueCreationRequests.id,
+          orgId: agentIssueCreationRequests.orgId,
+          agentId: agentIssueCreationRequests.agentId,
+          runId: agentIssueCreationRequests.runId,
+          status: agentIssueCreationRequests.status,
+          error: agentIssueCreationRequests.error,
+          createdAt: agentIssueCreationRequests.createdAt,
+          updatedAt: agentIssueCreationRequests.updatedAt,
+        })
+        .from(agentIssueCreationRequests)
+        .where(and(
+          eq(agentIssueCreationRequests.orgId, orgId),
+          eq(agentIssueCreationRequests.requestedByUserId, userId),
+          inArray(agentIssueCreationRequests.status, ["failed", "cancelled"]),
+          isNull(agentIssueCreationRequests.createdIssueId),
+        ))
+        .orderBy(desc(agentIssueCreationRequests.updatedAt), desc(agentIssueCreationRequests.createdAt)),
       db
         .select({
           id: agents.id,
@@ -2448,18 +2579,41 @@ export function messengerService(db: Db) {
         .from(agents)
         .where(eq(agents.orgId, orgId)),
     ]);
+    const linkedRequestIds = new Set(
+      runRows
+        .map((run) => run.agentIssueCreationRequestId)
+        .filter((requestId): requestId is string => Boolean(requestId)),
+    );
+    return {
+      runRows,
+      requestRows: requestRows.filter((request) => !linkedRequestIds.has(request.id)),
+      agentRows,
+    };
+  }
+
+  async function loadFailedRunData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
+    const { runRows, requestRows, agentRows } = await loadFailedRunRows(orgId, userId);
     const lastReadAt = await lastReadAtPromise;
     const agentNames = new Map(agentRows.map((row) => [row.id, row.name]));
     const origins = await hydrateMessengerFailedRunOrigins(db, orgId, runRows);
-    const items = runRows.map((run) => failedRunCard(
+    const runItems = runRows.map((run) => failedRunCard(
       run,
       agentNames.get(run.agentId) ?? null,
       origins.get(run.id)!,
+      orgId,
+      userId,
     ));
+    const requestItems = requestRows.map((request) => failedAgentIssueRequestCard(
+      request,
+      agentNames.get(request.agentId) ?? null,
+      orgId,
+    ));
+    const items: MessengerSystemThreadItem[] = [...runItems, ...requestItems];
     const latestFirstItems = [...items].sort(compareLatestActivity);
     const chronologicalItems = [...items].sort(compareChronologicalActivity);
     const latestActivityAt = latestFirstItems[0]?.latestActivityAt ?? null;
-    const unreadCount = systemUnreadCountSince(runRows, lastReadAt);
+    const unreadCount = systemUnreadCountSince([...runRows, ...requestRows], lastReadAt);
     return {
       summary: systemSummary(
         "failed-runs",
@@ -2485,59 +2639,37 @@ export function messengerService(db: Db) {
         href: "/messenger/system/failed-runs",
         description: "Recent failed agent runs",
         items: chronologicalItems,
-      } satisfies MessengerThreadDetail<MessengerFailedRunThreadItem>,
+      } satisfies MessengerThreadDetail<MessengerSystemThreadItem>,
     };
   }
 
   async function loadFailedRunSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
     const lastReadAt = await lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
-    const latestActivitySql = sql<Date | null>`max(coalesce(${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt}))`;
-    const failedRunPredicate = and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.status, "failed"));
-
-    const [summaryRows, latestRows, unreadRows] = await Promise.all([
-      db
-        .select({
-          itemCount: sql<number>`count(*)::int`,
-          latestActivityAt: latestActivitySql,
-        })
-        .from(heartbeatRuns)
-        .where(failedRunPredicate),
-      db
-        .select({
-          error: heartbeatRuns.error,
-          errorCode: heartbeatRuns.errorCode,
-          resultJson: heartbeatRuns.resultJson,
-          stderrExcerpt: heartbeatRuns.stderrExcerpt,
-        })
-        .from(heartbeatRuns)
-        .where(failedRunPredicate)
-        .orderBy(desc(heartbeatRuns.updatedAt), desc(heartbeatRuns.createdAt))
-        .limit(1),
-      lastReadAt
-        ? db
-          .select({
-            unreadCount: sql<number>`count(*)::int`,
-          })
-          .from(heartbeatRuns)
-          .where(and(failedRunPredicate, gt(heartbeatRuns.updatedAt, lastReadAt)))
-        : Promise.resolve([]),
-    ]);
-
-    const summaryRow = summaryRows[0];
-    const latestRun = latestRows[0] ?? null;
-    const itemCount = Number(summaryRow?.itemCount ?? 0);
-    const unreadCount = lastReadAt ? Number(unreadRows[0]?.unreadCount ?? 0) : itemCount;
+    const { runRows, requestRows } = await loadFailedRunRows(orgId, userId);
+    const failureRows = [...runRows, ...requestRows];
+    const itemCount = failureRows.length;
+    const latestRow = [...failureRows].sort((a, b) => {
+      const aTime = normalizeDate(a.updatedAt ?? a.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const bTime = normalizeDate(b.updatedAt ?? b.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      return bTime - aTime;
+    })[0] ?? null;
+    const unreadCount = systemUnreadCountSince(failureRows, lastReadAt);
+    const latestPreview = latestRow
+      ? "agentIssueCreationRequestId" in latestRow
+        ? failedRunSummary(latestRow)
+        : failedAgentIssueRequestSummary(latestRow)
+      : null;
     return {
       itemCount,
       summary: systemSummary(
         "failed-runs",
         "Failed runs",
         itemCount,
-        normalizeDate(summaryRow?.latestActivityAt ?? null),
+        normalizeDate(latestRow?.updatedAt ?? latestRow?.createdAt ?? null),
         unreadCount,
         lastReadAt,
         "No failed runs yet",
-        latestRun ? failedRunUserSummary(latestRun) : null,
+        latestPreview,
       ),
     };
   }
@@ -2936,7 +3068,7 @@ export function messengerService(db: Db) {
             where automation_notification_activity.org_id = ${orgId}
               and automation_notification_activity.entity_type = 'issue'
               and automation_notification_activity.entity_id = ${issues.id}::text
-              and automation_notification_activity.action = 'automation.issue_created_notification'
+              and automation_notification_activity.action in ('automation.issue_created_notification', 'agent.issue_created_notification')
               and automation_notification_activity.details->>'userId' = ${userId}
           )`,
         ),

@@ -38,20 +38,9 @@ export function HoverTimestampLabel({
       data-testid={testId}
       title={exactLabel}
       aria-label={exactLabel}
-      className={cn("inline-grid whitespace-nowrap tabular-nums", className)}
+      className={cn("inline-block whitespace-nowrap tabular-nums", className)}
     >
-      <span
-        aria-hidden
-        className="col-start-1 row-start-1 transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0"
-      >
-        {label}
-      </span>
-      <span
-        aria-hidden
-        className="col-start-1 row-start-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
-      >
-        {exactLabel}
-      </span>
+      {label}
     </span>
   );
 }

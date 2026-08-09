@@ -7,6 +7,7 @@ import type {
   JoinRequest,
   MessengerThreadSummary,
 } from "@rudderhq/shared";
+import type { AgentIssueCreationRequest } from "../api/issues";
 
 export const RECENT_ISSUES_LIMIT = 100;
 export const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);
@@ -35,6 +36,11 @@ export type InboxWorkItem =
       kind: "failed_run";
       timestamp: number;
       run: HeartbeatRun;
+    }
+  | {
+      kind: "agent_issue_request";
+      timestamp: number;
+      request: AgentIssueCreationRequest;
     };
 
 export interface InboxBadgeData {
@@ -197,11 +203,13 @@ export function getInboxWorkItems({
   approvals,
   chats = [],
   failedRuns = [],
+  agentIssueRequests = [],
 }: {
   issues: Issue[];
   approvals: Approval[];
   chats?: ChatConversation[];
   failedRuns?: HeartbeatRun[];
+  agentIssueRequests?: AgentIssueCreationRequest[];
 }): InboxWorkItem[] {
   return [
     ...issues.map((issue) => ({
@@ -224,6 +232,11 @@ export function getInboxWorkItems({
       timestamp: normalizeTimestamp(run.createdAt),
       run,
     })),
+    ...agentIssueRequests.map((request) => ({
+      kind: "agent_issue_request" as const,
+      timestamp: normalizeTimestamp(request.updatedAt ?? request.createdAt),
+      request,
+    })),
   ].sort((a, b) => {
     const timestampDiff = b.timestamp - a.timestamp;
     if (timestampDiff !== 0) return timestampDiff;
@@ -237,6 +250,10 @@ export function getInboxWorkItems({
     if (a.kind === "chat" && b.kind === "chat") {
       return normalizeTimestamp(b.conversation.lastMessageAt ?? b.conversation.updatedAt)
         - normalizeTimestamp(a.conversation.lastMessageAt ?? a.conversation.updatedAt);
+    }
+    if (a.kind === "agent_issue_request" && b.kind === "agent_issue_request") {
+      return normalizeTimestamp(b.request.updatedAt ?? b.request.createdAt)
+        - normalizeTimestamp(a.request.updatedAt ?? a.request.createdAt);
     }
 
     return a.kind === "approval" ? -1 : 1;

@@ -8,6 +8,7 @@
  */
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
   agents,
   assets,
   documents,
@@ -67,6 +68,7 @@ import {
   withIssueLabels,
   type IssueFilters,
   type IssueRow,
+  type IssueUserCommentStats,
   type IssueWithLabelsAndRun,
   type IssueWithSearchMatch
 } from "./issues.helpers.js";
@@ -98,6 +100,14 @@ function normalizeIssueListOffset(offset: number | undefined): number | undefine
 
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
+  type IssueCreateInput = Omit<typeof issues.$inferInsert, "orgId"> & { labelIds?: string[] };
+  const issueCreateResults = new WeakMap<object, boolean>();
+  let createIssue!: (orgId: string, data: IssueCreateInput) => Promise<any>;
+
+  function rememberIssueCreateResult<T extends object>(issue: T, created: boolean): T {
+    issueCreateResults.set(issue, created);
+    return issue;
+  }
 
   function redactIssueComment<T extends { body: string }>(comment: T, censorUsernameInLogs: boolean): T {
     return {
@@ -431,7 +441,7 @@ export function issueService(db: Db) {
     }));
   }
 
-  return {
+  const service = {
     listFollows: async (orgId: string, userId: string) => {
       const rows = await db
         .select({
@@ -690,6 +700,23 @@ export function issueService(db: Db) {
           ),
         )
         .groupBy(issueComments.issueId);
+      const notificationRows = await db
+        .select({
+          issueId: activityLog.entityId,
+          lastExternalActivityAt: sql<Date | null>`MAX(${activityLog.createdAt})`,
+        })
+        .from(activityLog)
+        .where(and(
+          eq(activityLog.orgId, orgId),
+          eq(activityLog.entityType, "issue"),
+          inArray(activityLog.entityId, issueIds),
+          inArray(activityLog.action, [
+            "automation.issue_created_notification",
+            "agent.issue_created_notification",
+          ]),
+          sql`${activityLog.details}->>'userId' = ${contextUserId}`,
+        ))
+        .groupBy(activityLog.entityId);
       const readRows = await db
         .select({
           issueId: issueReadStates.issueId,
@@ -703,7 +730,18 @@ export function issueService(db: Db) {
             inArray(issueReadStates.issueId, issueIds),
           ),
         );
-      const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
+      const statsByIssueId = new Map<string, IssueUserCommentStats>(statsRows.map((row) => [row.issueId, row]));
+      for (const row of notificationRows) {
+        const existing = statsByIssueId.get(row.issueId);
+        statsByIssueId.set(row.issueId, {
+          ...(existing ?? {
+            issueId: row.issueId,
+            myLastCommentAt: null,
+            lastExternalCommentAt: null,
+          }),
+          lastExternalActivityAt: row.lastExternalActivityAt,
+        });
+      }
       const readByIssueId = new Map(readRows.map((row) => [row.issueId, row.myLastReadAt]));
 
       return withSearchMatches.map((row) => ({
@@ -712,6 +750,7 @@ export function issueService(db: Db) {
           myLastCommentAt: statsByIssueId.get(row.id)?.myLastCommentAt ?? null,
           myLastReadAt: readByIssueId.get(row.id) ?? null,
           lastExternalCommentAt: statsByIssueId.get(row.id)?.lastExternalCommentAt ?? null,
+          lastExternalActivityAt: statsByIssueId.get(row.id)?.lastExternalActivityAt ?? null,
         }),
       }));
     },
@@ -803,12 +842,54 @@ export function issueService(db: Db) {
       return enriched;
     },
 
+    getByOrigin: async (orgId: string, originKind: string, originId: string) => {
+      const row = await db
+        .select()
+        .from(issues)
+        .where(and(
+          eq(issues.orgId, orgId),
+          eq(issues.originKind, originKind),
+          eq(issues.originId, originId),
+        ))
+        .then((rows) => rows[0] ?? null);
+      if (!row) return null;
+      const [enriched] = await withIssueLabels(db, [row]);
+      return enriched;
+    },
+
+    createWithResult: async (orgId: string, data: IssueCreateInput) => {
+      const issue = await createIssue(orgId, data);
+      return {
+        issue,
+        created: issueCreateResults.get(issue) ?? true,
+      };
+    },
+
     create: async (
       orgId: string,
-      data: Omit<typeof issues.$inferInsert, "orgId"> & { labelIds?: string[] },
+      data: IssueCreateInput,
     ) => {
       const { labelIds: inputLabelIds, ...rawIssueData } = data;
       const issueData = { ...rawIssueData };
+      const agentIssueCreationOrigin = issueData.originKind === "agent_issue_creation"
+        && typeof issueData.originId === "string"
+        ? issueData.originId
+        : null;
+      if (agentIssueCreationOrigin) {
+        const existing = await db
+          .select()
+          .from(issues)
+          .where(and(
+            eq(issues.orgId, orgId),
+            eq(issues.originKind, "agent_issue_creation"),
+            eq(issues.originId, agentIssueCreationOrigin),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (existing) {
+          const [enriched] = await withIssueLabels(db, [existing]);
+          return rememberIssueCreateResult(enriched, false);
+        }
+      }
       if (data.assigneeAgentId && data.assigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
@@ -843,7 +924,8 @@ export function issueService(db: Db) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
-      return db.transaction(async (tx) => {
+      try {
+        return await db.transaction(async (tx) => {
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
@@ -985,8 +1067,25 @@ export function issueService(db: Db) {
           });
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
-        return enriched;
-      });
+        return rememberIssueCreateResult(enriched, true);
+        });
+      } catch (error) {
+        if (!agentIssueCreationOrigin || !isUniqueConstraintConflict(error, "issues_agent_issue_creation_origin_uq")) {
+          throw error;
+        }
+        const existing = await db
+          .select()
+          .from(issues)
+          .where(and(
+            eq(issues.orgId, orgId),
+            eq(issues.originKind, "agent_issue_creation"),
+            eq(issues.originId, agentIssueCreationOrigin),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) throw error;
+        const [enriched] = await withIssueLabels(db, [existing]);
+        return rememberIssueCreateResult(enriched, false);
+      }
     },
 
     update: async (
@@ -1783,4 +1882,6 @@ export function issueService(db: Db) {
       }));
     },
   };
+  createIssue = service.create;
+  return service;
 }

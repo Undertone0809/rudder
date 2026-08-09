@@ -445,6 +445,45 @@ describe("Messenger page headers", () => {
     expect(html).not.toContain("1 items");
   });
 
+  it("renders the requester-scoped Agent Issue retry action", () => {
+    messengerModel.systemThreadDetail = {
+      title: "Failed runs",
+      description: "Recent failed agent runs",
+      unreadCount: 1,
+      items: [
+        {
+          id: "agent-issue-run-1",
+          kind: "failed-runs",
+          title: "Issue Builder · Agent Issue creation failed",
+          subtitle: "Agent Issue request failed",
+          body: "Agent Issue creation failed. The Agent process exited before creating the Issue.",
+          preview: "Agent Issue creation failed. The Agent process exited before creating the Issue.",
+          href: "/agents/agent-1/runs/agent-issue-run-1",
+          latestActivityAt: "2026-04-11T11:00:00.000Z",
+          actions: [
+            {
+              label: "Retry Agent Issue",
+              href: "/orgs/org-1/agent-issue-creation-requests/request-1/retry",
+              method: "POST",
+            },
+            { label: "Open run", href: "/agents/agent-1/runs/agent-issue-run-1", method: "GET" },
+          ],
+          metadata: {
+            status: "failed",
+            agentIssueCreationRequestId: "request-1",
+            agentIssueCreationRetryable: true,
+          },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerSystemView threadKind="failed-runs" />);
+
+    expect(html).toContain("Agent Issue creation failed");
+    expect(html).toContain("Retry Agent Issue");
+    expect(html).not.toContain(">Retry</button>");
+  });
+
   it("renders exact source-card links, heartbeat agent identity, and missing-source fallbacks", () => {
     messengerModel.systemThreadDetail = {
       title: "Failed runs",

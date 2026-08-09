@@ -14,6 +14,7 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   checkout: vi.fn(),
   create: vi.fn(),
+  createWithResult: vi.fn(),
   createAttachment: vi.fn(),
   findMentionedAgents: vi.fn(),
   findMentionedProjectIds: vi.fn(),
@@ -51,6 +52,11 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
+const mockAgentIssueCreationService = vi.hoisted(() => ({
+  resolveForRun: vi.fn(),
+  completeForCreatedIssue: vi.fn(),
+}));
+
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -81,6 +87,7 @@ const UNBOUND_RUN_ID = "77777777-7777-4777-8777-777777777777";
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  agentIssueCreationService: () => mockAgentIssueCreationService,
   runWorkspaceService: () => ({}),
   executionWorkspaceService: () => ({}),
   goalService: () => mockGoalService,
@@ -737,6 +744,120 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("logs the Issue creation activity before settling the Agent request", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    const actionOrder: string[] = [];
+    const createdIssue = makeIssue({
+      title: "Agent-created lifecycle issue",
+      createdByAgentId: ASSIGNEE_AGENT_ID,
+      createdByUserId: null,
+    });
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: requestId },
+    });
+    mockAgentIssueCreationService.resolveForRun.mockResolvedValue({ id: requestId });
+    mockIssueService.createWithResult.mockResolvedValue({ issue: createdIssue, created: true });
+    mockLogActivity.mockImplementation(async (_db: unknown, input: { action: string }) => {
+      actionOrder.push(input.action);
+    });
+    mockAgentIssueCreationService.completeForCreatedIssue.mockImplementation(async () => {
+      actionOrder.push("agent.issue_created_notification");
+    });
+
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/orgs/organization-1/issues")
+      .send({ title: createdIssue.title, status: "todo", priority: "medium" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.createWithResult).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        originKind: "agent_issue_creation",
+        originId: requestId,
+        originRunId: RUN_ID,
+      }),
+    );
+    expect(actionOrder).toEqual(["issue.created", "agent.issue_created_notification"]);
+    expect(mockAgentIssueCreationService.completeForCreatedIssue).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      runId: RUN_ID,
+      issueId: createdIssue.id,
+      requestId,
+    });
+  });
+
+  it.each([
+    ["mismatched", 409, "Agent Issue creation request does not match the active run"],
+    ["cross-organization", 403, "Agent Issue creation run context does not belong to this organization and Agent"],
+    ["terminal", 409, "Agent Issue creation run is already terminal"],
+  ] as const)("does not create an Issue when the authoritative run context is %s", async (_case, status, message) => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: requestId },
+    });
+    mockAgentIssueCreationService.resolveForRun.mockRejectedValue(new HttpError(status, message));
+
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/orgs/organization-1/issues")
+      .send({ title: "Must not be created", status: "todo", priority: "medium" });
+
+    expect(res.status).toBe(status);
+    expect(res.body.error).toBe(message);
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockIssueService.createWithResult).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.created" }),
+    );
+  });
+
+  it("suppresses duplicate Agent-created Issue activity and assignment wakeups", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    const existingIssue = makeIssue({
+      title: "Existing Agent-created issue",
+      createdByAgentId: ASSIGNEE_AGENT_ID,
+      createdByUserId: null,
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+    });
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: requestId },
+    });
+    mockAgentIssueCreationService.resolveForRun.mockResolvedValue({ id: requestId });
+    mockIssueService.createWithResult.mockResolvedValue({ issue: existingIssue, created: false });
+
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/orgs/organization-1/issues")
+      .send({ title: existingIssue.title, status: "todo", priority: "medium" });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.created" }),
+    );
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockAgentIssueCreationService.completeForCreatedIssue).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      runId: RUN_ID,
+      issueId: existingIssue.id,
+      requestId,
+    });
   });
 
   it("defaults agent-created issues without an assignee to the creating agent", async () => {

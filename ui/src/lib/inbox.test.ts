@@ -9,6 +9,7 @@ import type {
   MessengerThreadSummary,
 } from "@rudderhq/shared";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { AgentIssueCreationRequest } from "../api/issues";
 import {
   computeInboxBadgeData,
   getApprovalsForTab,
@@ -329,6 +330,7 @@ describe("inbox helpers", () => {
         if (item.kind === "issue") return `issue:${item.issue.id}`;
         if (item.kind === "approval") return `approval:${item.approval.id}`;
         if (item.kind === "chat") return `chat:${item.conversation.id}`;
+        if (item.kind === "agent_issue_request") return `agent-issue-request:${item.request.id}`;
         return `run:${item.run.id}`;
       }),
     ).toEqual([
@@ -336,6 +338,41 @@ describe("inbox helpers", () => {
       "approval:approval-between",
       "issue:2",
     ]);
+  });
+
+  it("surfaces requester-scoped Agent Issue failures in the feed", () => {
+    const request: AgentIssueCreationRequest = {
+      id: "request-1",
+      orgId: "organization-1",
+      requestedByUserId: "user-1",
+      agentId: "agent-1",
+      instruction: "Create the issue.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: null,
+      idempotencyKey: "request-key",
+      wakeupAttempt: 0,
+      wakeupAttemptId: "attempt-1",
+      status: "failed",
+      wakeupRequestId: null,
+      runId: null,
+      createdIssueId: null,
+      error: "Agent run completed without creating an Issue",
+      startedAt: null,
+      finishedAt: new Date("2026-03-11T05:00:00.000Z"),
+      createdAt: new Date("2026-03-11T04:00:00.000Z"),
+      updatedAt: new Date("2026-03-11T05:00:00.000Z"),
+    };
+
+    expect(getInboxWorkItems({
+      issues: [],
+      approvals: [],
+      agentIssueRequests: [request],
+    })).toMatchObject([{
+      kind: "agent_issue_request",
+      request: { id: "request-1", status: "failed" },
+    }]);
   });
 
   it("can include sections on recent without forcing them to be unread", () => {

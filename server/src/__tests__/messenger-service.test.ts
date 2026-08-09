@@ -2,6 +2,7 @@ import {
   activityLog,
   agentIntegrationChatBindings,
   agentIntegrations,
+  agentIssueCreationRequests,
   agents,
   agentWakeupRequests,
   applyPendingMigrations,
@@ -52,6 +53,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.ts";
 import {
   chatInlineAnnotationService,
@@ -59,6 +61,7 @@ import {
 } from "../services/chat-inline-annotations.ts";
 import { chatSteerMessageService } from "../services/chat-steer-messages.ts";
 import { chatService } from "../services/chats.ts";
+import { heartbeatService } from "../services/heartbeat.ts";
 import { issueService } from "../services/issues.ts";
 import {
   messengerSavedViewCanonicalResourceKey,
@@ -241,11 +244,12 @@ describe("messengerService and issue follows", () => {
     await db.delete(approvals);
     await db.delete(automationRuns);
     await db.delete(automations);
+    await db.delete(agentIssueCreationRequests);
+    await db.delete(activityLog);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(joinRequests);
     await db.delete(invites);
-    await db.delete(activityLog);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
     await db.delete(documents);
@@ -5718,6 +5722,1021 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.preview).toBe("Followed issue — Review Summary: render enough comment body to judge the issue update");
   });
 
+  it("surfaces a requester-only Agent-created issue notification as unread", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "board-user-agent-issue-notification";
+    const otherUserId = "board-user-agent-issue-other";
+    const issueId = randomUUID();
+    const otherOrgIssueId = randomUUID();
+    const agentId = randomUUID();
+    const createdAt = new Date("2026-05-03T12:01:00.000Z");
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger Agent Issue Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Agent Issue Org"),
+        issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger Agent Issue Other Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Agent Issue Other Org"),
+        issuePrefix: `B${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Issue Builder",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId,
+        title: "Agent-created issue",
+        status: "todo",
+        priority: "medium",
+        identifier: "AIC-1",
+        reviewerUserId: otherUserId,
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        id: otherOrgIssueId,
+        orgId: otherOrgId,
+        title: "Other organization issue",
+        status: "todo",
+        priority: "medium",
+        identifier: "BIO-1",
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ]);
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        agentId,
+        action: "agent.issue_created_notification",
+        entityType: "issue",
+        entityId: issueId,
+        details: {
+          issueId,
+          identifier: "AIC-1",
+          title: "Agent-created issue",
+          agentId,
+          userId,
+          source: "agent.issue_created_notification",
+        },
+        createdAt,
+      },
+      {
+        orgId: otherOrgId,
+        actorType: "agent",
+        actorId: agentId,
+        agentId: null,
+        action: "agent.issue_created_notification",
+        entityType: "issue",
+        entityId: otherOrgIssueId,
+        details: { userId },
+        createdAt,
+      },
+    ]);
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const item = thread.detail.items.find((entry) => entry.issueId === issueId);
+
+    expect(item).toMatchObject({
+      issueId,
+      preview: "Agent created issue",
+    });
+    expect(thread.detail.items.some((entry) => entry.issueId === otherOrgIssueId)).toBe(false);
+    expect(thread.detail.unreadCount).toBe(1);
+    expect(thread.detail.needsAttention).toBe(true);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    const otherUserThread = await messengerSvc.getIssuesThread(orgId, otherUserId);
+    const otherUserItem = otherUserThread.detail.items.find((entry) => entry.issueId === issueId);
+    expect(otherUserItem).toMatchObject({ issueId });
+    expect(otherUserItem?.preview).not.toBe("Agent created issue");
+    expect(otherUserThread.detail.unreadCount).toBe(0);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, otherUserId)).resolves.toBe(0);
+
+    await messengerSvc.setThreadRead(orgId, userId, `issue:${issueId}`, createdAt);
+    const readThread = await messengerSvc.getIssuesThread(orgId, userId);
+    expect(readThread.detail.unreadCount).toBe(0);
+    expect(readThread.detail.needsAttention).toBe(false);
+  });
+
+  it("emits one requester notification when an Agent Issue request completes idempotently", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-agent-issue-service";
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+    const service = agentIssueCreationService(db);
+    const requestInput = {
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create the onboarding regression issue.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: { source: "new-issue-dialog" },
+      idempotencyKey: "agent-request-replay",
+    } as const;
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Issue Service Org",
+      urlKey: deriveOrganizationUrlKey("Agent Issue Service Org"),
+      issuePrefix: `AIS${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Onboarding Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const first = await service.create(requestInput);
+    const replay = await service.create(requestInput);
+    expect(first.created).toBe(true);
+    expect(replay.created).toBe(false);
+    expect(first.needsAdmission).toBe(true);
+    expect(replay.needsAdmission).toBe(true);
+    expect(replay.request.id).toBe(first.request.id);
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: {
+        agentIssueCreationRequestId: first.request.id,
+      },
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Onboarding regression",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-1",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: first.request.id,
+      originRunId: runId,
+    });
+    await service.update(orgId, first.request.id, { status: "running", runId }, { expectedStatuses: ["queued"] });
+    await expect(service.create(requestInput)).resolves.toMatchObject({
+      created: false,
+      needsAdmission: false,
+      request: { id: first.request.id, status: "running" },
+    });
+
+    const completed = await service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId,
+      issueId,
+    });
+    const duplicateCompletion = await service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId,
+      issueId,
+    });
+    const notifications = await db
+      .select()
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.orgId, orgId),
+        eq(activityLog.action, "agent.issue_created_notification"),
+      ));
+
+    expect(completed).toMatchObject({
+      id: first.request.id,
+      status: "succeeded",
+      createdIssueId: issueId,
+      requestedByUserId: userId,
+    });
+    expect(duplicateCompletion).toBeNull();
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      entityId: issueId,
+      details: expect.objectContaining({
+        requestId: first.request.id,
+        userId,
+        source: "agent.issue_created_notification",
+      }),
+    });
+
+    const failedRunId = randomUUID();
+    const failedRequest = await service.create({
+      ...requestInput,
+      instruction: "Create the failed onboarding issue.",
+      idempotencyKey: "agent-request-failure",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: failedRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      contextSnapshot: { agentIssueCreationRequestId: failedRequest.request.id },
+    });
+    await service.update(orgId, failedRequest.request.id, {
+      status: "running",
+      runId: failedRunId,
+    }, { expectedStatuses: ["queued"] });
+    const settledFailure = await service.settleForRun({
+      orgId,
+      agentId,
+      runId: failedRunId,
+      requestId: failedRequest.request.id,
+      runStatus: "failed",
+      error: "Agent process exited before creating the Issue",
+    });
+
+    expect(settledFailure).toMatchObject({
+      id: failedRequest.request.id,
+      status: "failed",
+      error: "Agent process exited before creating the Issue",
+    });
+    await expect(service.create({
+      ...requestInput,
+      instruction: "Create the failed onboarding issue.",
+      idempotencyKey: "agent-request-failure",
+    })).rejects.toMatchObject({ status: 409 });
+    const retriedFailure = await service.retry(orgId, failedRequest.request.id, userId);
+    expect(retriedFailure).toMatchObject({
+      id: failedRequest.request.id,
+      status: "queued",
+      idempotencyKey: "agent-request-failure",
+      wakeupAttempt: 1,
+      wakeupAttemptId: expect.any(String),
+      wakeupRequestId: null,
+      runId: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+    });
+    expect(retriedFailure.wakeupAttemptId).not.toBe(failedRequest.request.wakeupAttemptId);
+
+    const delayedOriginalPost = await service.create({
+      ...requestInput,
+      instruction: "Create the failed onboarding issue.",
+      idempotencyKey: "agent-request-failure",
+    });
+    expect(delayedOriginalPost).toMatchObject({
+      created: false,
+      needsAdmission: true,
+      request: {
+        id: failedRequest.request.id,
+        idempotencyKey: "agent-request-failure",
+        wakeupAttempt: 1,
+        wakeupAttemptId: retriedFailure.wakeupAttemptId,
+      },
+    });
+    const replayedRequests = await db
+      .select({ id: agentIssueCreationRequests.id })
+      .from(agentIssueCreationRequests)
+      .where(and(
+        eq(agentIssueCreationRequests.orgId, orgId),
+        eq(agentIssueCreationRequests.requestedByUserId, userId),
+        eq(agentIssueCreationRequests.idempotencyKey, "agent-request-failure"),
+      ));
+    const replayedRuns = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.orgId, orgId),
+        sql`${heartbeatRuns.contextSnapshot}->>'agentIssueCreationRequestId' = ${failedRequest.request.id}`,
+      ));
+    const replayedIssues = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(
+        eq(issues.orgId, orgId),
+        eq(issues.originKind, "agent_issue_creation"),
+        eq(issues.originId, failedRequest.request.id),
+      ));
+    expect(replayedRequests).toHaveLength(1);
+    expect(replayedRuns).toHaveLength(1);
+    expect(replayedIssues).toHaveLength(0);
+
+    const isolatedRequest = await service.create({
+      ...requestInput,
+      instruction: "Create the isolated onboarding issue.",
+      idempotencyKey: "agent-request-isolation",
+    });
+    const isolatedRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: isolatedRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: isolatedRequest.request.id },
+    });
+    await service.update(orgId, isolatedRequest.request.id, {
+      status: "running",
+      runId: isolatedRunId,
+    }, { expectedStatuses: ["queued"] });
+
+    expect(await service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: randomUUID(),
+      issueId,
+      requestId: isolatedRequest.request.id,
+    })).toBeNull();
+    expect(await service.completeForCreatedIssue({
+      orgId,
+      agentId: randomUUID(),
+      runId: isolatedRunId,
+      issueId,
+      requestId: isolatedRequest.request.id,
+    })).toBeNull();
+    expect(await service.settleForRun({
+      orgId,
+      agentId,
+      runId: randomUUID(),
+      requestId: isolatedRequest.request.id,
+      runStatus: "failed",
+      error: "wrong run must not settle the request",
+    })).toBeNull();
+    await expect(service.getById(orgId, isolatedRequest.request.id)).resolves.toMatchObject({
+      status: "running",
+      runId: isolatedRunId,
+    });
+    await expect(service.settleForRun({
+      orgId,
+      agentId,
+      runId: isolatedRunId,
+      requestId: isolatedRequest.request.id,
+      runStatus: "failed",
+      error: "isolated run failed",
+    })).resolves.toMatchObject({
+      id: isolatedRequest.request.id,
+      status: "failed",
+    });
+
+    const mismatchedRequest = await service.create({
+      ...requestInput,
+      instruction: "Leave the mismatched origin request untouched.",
+      idempotencyKey: "agent-request-mismatched-origin",
+    });
+    const mismatchedRunId = randomUUID();
+    const mismatchedOriginRunId = randomUUID();
+    const mismatchedIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: mismatchedRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: mismatchedRequest.request.id },
+    });
+    await service.update(orgId, mismatchedRequest.request.id, {
+      status: "running",
+      runId: mismatchedRunId,
+    }, { expectedStatuses: ["queued"] });
+    await db.insert(issues).values({
+      id: mismatchedIssueId,
+      orgId,
+      title: "Mismatched origin issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-4",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: mismatchedRequest.request.id,
+      originRunId: mismatchedOriginRunId,
+    });
+
+    expect(await service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: mismatchedRunId,
+      issueId: mismatchedIssueId,
+      requestId: mismatchedRequest.request.id,
+    })).toBeNull();
+    expect(await service.settleForRun({
+      orgId,
+      agentId,
+      runId: mismatchedRunId,
+      requestId: mismatchedRequest.request.id,
+      runStatus: "failed",
+      error: "mismatched origin must not fail the request",
+    })).toBeNull();
+    await expect(service.getById(orgId, mismatchedRequest.request.id)).resolves.toMatchObject({
+      status: "running",
+      runId: mismatchedRunId,
+    });
+    await db.delete(issues).where(eq(issues.id, mismatchedIssueId));
+
+    const reconcileRequest = await service.create({
+      ...requestInput,
+      instruction: "Reconcile the issue created before terminal settlement.",
+      idempotencyKey: "agent-request-terminal-reconciliation",
+    });
+    const reconcileRunId = randomUUID();
+    const reconcileIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: reconcileRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      contextSnapshot: { agentIssueCreationRequestId: reconcileRequest.request.id },
+    });
+    await service.update(orgId, reconcileRequest.request.id, {
+      status: "running",
+      runId: reconcileRunId,
+    }, { expectedStatuses: ["queued"] });
+    await db.insert(issues).values({
+      id: reconcileIssueId,
+      orgId,
+      title: "Reconciled onboarding issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-2",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: reconcileRequest.request.id,
+      originRunId: reconcileRunId,
+    });
+    await expect(service.settleForRun({
+      orgId,
+      agentId,
+      runId: reconcileRunId,
+      requestId: reconcileRequest.request.id,
+      runStatus: "failed",
+      error: "terminal run reported failure after the Issue was created",
+    })).resolves.toMatchObject({
+      id: reconcileRequest.request.id,
+      status: "succeeded",
+      createdIssueId: reconcileIssueId,
+      error: null,
+    });
+
+    const retryRequest = await service.create({
+      ...requestInput,
+      instruction: "Retry the requester notification after a transient failure.",
+      idempotencyKey: "agent-request-notification-retry",
+    });
+    const retryRunId = randomUUID();
+    const retryIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: retryRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: retryRequest.request.id },
+    });
+    await service.update(orgId, retryRequest.request.id, {
+      status: "running",
+      runId: retryRunId,
+    }, { expectedStatuses: ["queued"] });
+    await db.insert(issues).values({
+      id: retryIssueId,
+      orgId,
+      title: "Notification retry issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-3",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: retryRequest.request.id,
+      originRunId: retryRunId,
+    });
+
+    const firstClaim = service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: retryRunId,
+      issueId: retryIssueId,
+      requestId: retryRequest.request.id,
+    });
+    const secondClaim = service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: retryRunId,
+      issueId: retryIssueId,
+      requestId: retryRequest.request.id,
+    });
+    const claims = await Promise.all([firstClaim, secondClaim]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.filter((claim) => claim?.status === "succeeded")).toHaveLength(1);
+
+    const afterConcurrentClaims = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "agent.issue_created_notification"));
+    expect(afterConcurrentClaims.filter((entry) => (entry.details as Record<string, unknown> | null)?.requestId === retryRequest.request.id))
+      .toHaveLength(1);
+
+    expect(await service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: retryRunId,
+      issueId: retryIssueId,
+      requestId: retryRequest.request.id,
+    })).toBeNull();
+
+    const deferredRequest = await service.create({
+      ...requestInput,
+      instruction: "Resume the deferred onboarding issue request.",
+      idempotencyKey: "agent-request-deferred-terminal-context",
+    });
+    const deferredRunId = randomUUID();
+    const deferredIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: deferredRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "timed_out",
+      contextSnapshot: { agentIssueCreationRequestId: deferredRequest.request.id },
+    });
+    await service.update(orgId, deferredRequest.request.id, {
+      status: "deferred",
+    }, { expectedStatuses: ["queued"] });
+    await db.insert(issues).values({
+      id: deferredIssueId,
+      orgId,
+      title: "Deferred onboarding issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-5",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: deferredRequest.request.id,
+      originRunId: deferredRunId,
+    });
+    await expect(service.settleForRun({
+      orgId,
+      agentId,
+      runId: deferredRunId,
+      runStatus: "timed_out",
+      error: "the resumed run timed out after creating the Issue",
+    })).resolves.toMatchObject({
+      id: deferredRequest.request.id,
+      status: "succeeded",
+      runId: deferredRunId,
+      createdIssueId: deferredIssueId,
+    });
+    await expect(service.getById(orgId, deferredRequest.request.id)).resolves.toMatchObject({
+      status: "succeeded",
+      runId: deferredRunId,
+      createdIssueId: deferredIssueId,
+    });
+
+    for (const [terminalStatus, expectedRequestStatus] of [
+      ["succeeded", "failed"],
+      ["failed", "failed"],
+      ["cancelled", "cancelled"],
+      ["timed_out", "failed"],
+    ] as const) {
+      const terminalRequest = await service.create({
+        ...requestInput,
+        instruction: `Record the ${terminalStatus} Agent Issue request.`,
+        idempotencyKey: `agent-request-terminal-${terminalStatus}`,
+      });
+      const terminalRunId = randomUUID();
+      await db.insert(heartbeatRuns).values({
+        id: terminalRunId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: terminalStatus,
+        contextSnapshot: { agentIssueCreationRequestId: terminalRequest.request.id },
+      });
+      await service.update(orgId, terminalRequest.request.id, {
+        status: "running",
+        runId: terminalRunId,
+      }, { expectedStatuses: ["queued"] });
+
+      await expect(service.settleForRun({
+        orgId,
+        agentId,
+        runId: terminalRunId,
+        requestId: terminalRequest.request.id,
+        runStatus: terminalStatus,
+      })).resolves.toMatchObject({
+        id: terminalRequest.request.id,
+        status: expectedRequestStatus,
+        runId: terminalRunId,
+      });
+    }
+
+    const rollbackRequest = await service.create({
+      ...requestInput,
+      instruction: "Retry the requester notification after a rollback.",
+      idempotencyKey: "agent-request-notification-rollback",
+    });
+    const rollbackRunId = randomUUID();
+    const rollbackIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: rollbackRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: rollbackRequest.request.id },
+    });
+    await service.update(orgId, rollbackRequest.request.id, {
+      status: "running",
+      runId: rollbackRunId,
+    }, { expectedStatuses: ["queued"] });
+    await db.insert(issues).values({
+      id: rollbackIssueId,
+      orgId,
+      title: "Notification rollback issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIS-6",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: rollbackRequest.request.id,
+      originRunId: rollbackRunId,
+    });
+
+    const failingDb = new Proxy(db as object, {
+      get(target, property) {
+        if (property === "transaction") {
+          return (callback: (tx: unknown) => unknown) => (target as any).transaction(async (tx: any) => {
+            const failingTransaction = new Proxy(tx, {
+              get(transactionTarget, transactionProperty) {
+                if (transactionProperty === "insert") {
+                  return (table: unknown) => {
+                    if (table === activityLog) throw new Error("notification insert unavailable");
+                    return transactionTarget.insert(table);
+                  };
+                }
+                const value = Reflect.get(transactionTarget, transactionProperty);
+                return typeof value === "function" ? value.bind(transactionTarget) : value;
+              },
+            });
+            return callback(failingTransaction);
+          });
+        }
+        if (property === "insert") {
+          return (table: unknown) => {
+            if (table === activityLog) throw new Error("notification insert unavailable");
+            return (target as any).insert(table);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as typeof db;
+    const failingService = agentIssueCreationService(failingDb);
+
+    await expect(failingService.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: rollbackRunId,
+      issueId: rollbackIssueId,
+      requestId: rollbackRequest.request.id,
+    })).resolves.toMatchObject({
+      id: rollbackRequest.request.id,
+      status: "succeeded",
+      createdIssueId: rollbackIssueId,
+    });
+    await expect(service.getById(orgId, rollbackRequest.request.id)).resolves.toMatchObject({
+      status: "succeeded",
+      runId: rollbackRunId,
+      createdIssueId: rollbackIssueId,
+    });
+    await expect(service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: rollbackRunId,
+      issueId: rollbackIssueId,
+      requestId: rollbackRequest.request.id,
+    })).resolves.toBeNull();
+    const rollbackNotifications = await db
+      .select()
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.orgId, orgId),
+        eq(activityLog.action, "agent.issue_created_notification"),
+      ));
+    expect(rollbackNotifications.filter((entry) =>
+      (entry.details as Record<string, unknown> | null)?.requestId === rollbackRequest.request.id,
+    )).toHaveLength(1);
+  });
+
+  it("replays a persisted Agent Issue notification after terminal worker recovery", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-agent-issue-recovery";
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+    const completedAt = new Date("2026-05-03T13:01:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Issue Recovery Org",
+      urlKey: deriveOrganizationUrlKey("Agent Issue Recovery Org"),
+      issuePrefix: `AIR${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Recovery Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const service = agentIssueCreationService(db);
+    const created = await service.create({
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create the issue before the terminal worker restarts.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: { source: "terminal-recovery-test" },
+      idempotencyKey: "agent-issue-terminal-recovery",
+    });
+    expect(created.request.id).toBeDefined();
+
+    // Model the crash boundary: request and Issue settlement committed, while
+    // the durable terminal notification effect still awaits a worker.
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      finishedAt: completedAt,
+      processExitedAt: completedAt,
+      terminalEffectsPending: true,
+      terminalEffectsJson: {
+        version: 1,
+        agentIssueCreationNotification: {
+          orgId,
+          agentId,
+          runId,
+          requestId: created.request.id,
+          issueId,
+        },
+      },
+      contextSnapshot: { agentIssueCreationRequestId: created.request.id },
+      createdAt: completedAt,
+      updatedAt: completedAt,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Recovered Agent-created issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "AIR-1",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: created.request.id,
+      originRunId: runId,
+      createdAt: completedAt,
+      updatedAt: completedAt,
+    });
+    await db.update(agentIssueCreationRequests)
+      .set({
+        status: "succeeded",
+        runId,
+        createdIssueId: issueId,
+        finishedAt: completedAt,
+        error: null,
+        updatedAt: completedAt,
+      })
+      .where(eq(agentIssueCreationRequests.id, created.request.id));
+
+    const recovery = await heartbeatService(db).reapOrphanedRuns();
+    expect(recovery).toEqual({ reaped: 1, runIds: [runId] });
+
+    const recoveredRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(recoveredRun).toMatchObject({
+      status: "failed",
+      terminalEffectsPending: false,
+      terminalEffectsJson: null,
+      terminalEffectsClaimToken: null,
+    });
+
+    const notifications = await db
+      .select()
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.orgId, orgId),
+        eq(activityLog.action, "agent.issue_created_notification"),
+      ));
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      entityId: issueId,
+      details: expect.objectContaining({
+        requestId: created.request.id,
+        userId,
+        source: "agent.issue_created_notification",
+      }),
+    });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    expect(thread.detail.items.find((entry) => entry.issueId === issueId)).toMatchObject({
+      issueId,
+      preview: "Agent created issue",
+    });
+    expect(thread.detail.unreadCount).toBe(1);
+    expect(thread.detail.needsAttention).toBe(true);
+  });
+
+  it("resolves persisted run linkage before snapshot fallback and handles the wakeup race", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-run-linkage";
+    const agentId = randomUUID();
+    const service = agentIssueCreationService(db);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Issue Run Linkage Org",
+      urlKey: deriveOrganizationUrlKey("Agent Issue Run Linkage Org"),
+      issuePrefix: `ARL${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Run Linkage Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const persisted = await service.create({
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create the persisted-run linkage issue.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: { source: "run-linkage-test" },
+      idempotencyKey: "persisted-run-linkage",
+    });
+    const persistedRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: persistedRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { source: "runtime-before-context-hydration" },
+    });
+    await service.update(orgId, persisted.request.id, {
+      status: "running",
+      runId: persistedRunId,
+    }, { expectedStatuses: ["queued"] });
+
+    const mismatchedContext = await service.create({
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create the request named by the mismatched run context.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: { source: "run-linkage-test" },
+      idempotencyKey: "persisted-run-linkage-mismatched-context",
+    });
+    await db.update(heartbeatRuns)
+      .set({ contextSnapshot: { agentIssueCreationRequestId: mismatchedContext.request.id } })
+      .where(eq(heartbeatRuns.id, persistedRunId));
+
+    await expect(service.resolveForRun(orgId, agentId, persistedRunId))
+      .rejects.toMatchObject({ status: 409, message: "Agent Issue creation request does not match the active run" });
+    await expect(service.settleForRun({
+      orgId,
+      agentId,
+      runId: persistedRunId,
+      runStatus: "failed",
+      error: "mismatched context must not settle the persisted request",
+    })).resolves.toBeNull();
+    await expect(service.getById(orgId, persisted.request.id)).resolves.toMatchObject({
+      status: "running",
+      runId: persistedRunId,
+    });
+
+    await db.update(heartbeatRuns)
+      .set({ contextSnapshot: { source: "runtime-before-context-hydration" } })
+      .where(eq(heartbeatRuns.id, persistedRunId));
+
+    await expect(service.resolveForRun(orgId, agentId, persistedRunId)).resolves.toMatchObject({
+      id: persisted.request.id,
+      runId: persistedRunId,
+      status: "running",
+    });
+    await expect(service.settleForRun({
+      orgId,
+      agentId,
+      runId: persistedRunId,
+      requestId: persisted.request.id,
+      runStatus: "failed",
+      error: "persisted run failed before issue creation",
+    })).resolves.toMatchObject({
+      id: persisted.request.id,
+      status: "failed",
+      runId: persistedRunId,
+    });
+
+    const race = await service.create({
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create the issue during the wakeup linkage race.",
+      projectId: null,
+      goalId: null,
+      parentId: null,
+      contextSnapshot: { source: "run-linkage-test" },
+      idempotencyKey: "run-linkage-wakeup-race",
+    });
+    const raceRunId = randomUUID();
+    const raceIssueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: raceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "running",
+      contextSnapshot: { agentIssueCreationRequestId: race.request.id },
+    });
+    await db.insert(issues).values({
+      id: raceIssueId,
+      orgId,
+      title: "Wakeup linkage race issue",
+      status: "todo",
+      priority: "medium",
+      identifier: "ARL-1",
+      createdByAgentId: agentId,
+      originKind: "agent_issue_creation",
+      originId: race.request.id,
+      originRunId: raceRunId,
+    });
+
+    await expect(service.completeForCreatedIssue({
+      orgId,
+      agentId,
+      runId: raceRunId,
+      issueId: raceIssueId,
+      requestId: race.request.id,
+    })).resolves.toMatchObject({
+      id: race.request.id,
+      status: "succeeded",
+      runId: raceRunId,
+      createdIssueId: raceIssueId,
+    });
+    await expect(service.getById(orgId, race.request.id)).resolves.toMatchObject({
+      status: "succeeded",
+      runId: raceRunId,
+      createdIssueId: raceIssueId,
+    });
+  });
+
   it("can split tracked issue notifications into Messenger thread summaries", async () => {
     const orgId = randomUUID();
     const userId = "board-user-split-issues";
@@ -9736,6 +10755,167 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items[1]).not.toHaveProperty("run");
     expect(JSON.stringify(thread.detail.items[1])).not.toMatch(
       /contextSnapshot|resumeFromRunId|source-run-id|private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
+  });
+
+  it("shows Agent Issue failure context and only gives the requester the Agent Issue retry action", async () => {
+    const orgId = randomUUID();
+    const userId = "agent-issue-requester";
+    const otherUserId = "agent-issue-observer";
+    const agentId = randomUUID();
+    const requestId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Agent Issue Failure Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Agent Issue Failure Org"),
+      issuePrefix: `AF${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Issue Builder",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "failed",
+      error: "Agent process exited before creating the Issue",
+      contextSnapshot: { agentIssueCreationRequestId: requestId },
+    });
+    await db.insert(agentIssueCreationRequests).values({
+      id: requestId,
+      orgId,
+      requestedByUserId: userId,
+      agentId,
+      instruction: "Create a reliability follow-up.",
+      idempotencyKey: "agent-issue-failure-messenger",
+      runId,
+      status: "failed",
+      error: "Agent process exited before creating the Issue",
+    });
+
+    const requesterThread = await messengerSvc.getSystemThread(orgId, userId, "failed-runs");
+    const requesterItem = requesterThread.detail.items[0]!;
+    expect(requesterItem.title).toContain("Agent Issue creation failed");
+    expect(requesterItem.body).toContain("Agent Issue creation failed");
+    expect(requesterItem.actions.map((action) => action.label)).toContain("Retry Agent Issue");
+    expect(requesterItem.actions.map((action) => action.label)).not.toContain("Retry");
+    expect(requesterItem.actions).toContainEqual({
+      label: "Retry Agent Issue",
+      href: `/orgs/${orgId}/agent-issue-creation-requests/${requestId}/retry`,
+      method: "POST",
+    });
+
+    const observerThread = await messengerSvc.getSystemThread(orgId, otherUserId, "failed-runs");
+    const observerItem = observerThread.detail.items[0]!;
+    expect(observerItem.actions.map((action) => action.label)).not.toContain("Retry Agent Issue");
+    expect(observerItem.actions.map((action) => action.label)).not.toContain("Retry");
+  });
+
+  it("surfaces runless and successful-without-Issue Agent requests only to their requester", async () => {
+    const orgId = randomUUID();
+    const userId = "agent-issue-requester-without-run";
+    const otherUserId = "agent-issue-observer-without-run";
+    const agentId = randomUUID();
+    const requestId = randomUUID();
+    const successfulRequestId = randomUUID();
+    const successfulRunId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Issue Request Visibility Org",
+      urlKey: deriveOrganizationUrlKey("Agent Issue Request Visibility Org"),
+      issuePrefix: `ARV${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Request Visibility Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: successfulRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "succeeded",
+      contextSnapshot: { agentIssueCreationRequestId: successfulRequestId },
+    });
+    await db.insert(agentIssueCreationRequests).values([
+      {
+        id: requestId,
+        orgId,
+        requestedByUserId: userId,
+        agentId,
+        instruction: "Create the runless failure issue.",
+        idempotencyKey: "runless-agent-issue-failure",
+        status: "failed",
+        error: "Agent wakeup was not accepted",
+      },
+      {
+        id: successfulRequestId,
+        orgId,
+        requestedByUserId: userId,
+        agentId,
+        instruction: "Create an issue but do not create one.",
+        idempotencyKey: "successful-without-issue",
+        runId: successfulRunId,
+        status: "running",
+      },
+    ]);
+
+    const settled = await agentIssueCreationService(db).settleForRun({
+      orgId,
+      agentId,
+      runId: successfulRunId,
+      requestId: successfulRequestId,
+      runStatus: "succeeded",
+    });
+    expect(settled).toMatchObject({
+      id: successfulRequestId,
+      status: "failed",
+      error: "Agent run completed without creating an Issue",
+    });
+
+    const requesterThread = await messengerSvc.getSystemThread(orgId, userId, "failed-runs");
+    expect(requesterThread.detail.items).toHaveLength(2);
+    expect(requesterThread.detail.items.map((item) => item.id)).toEqual(
+      expect.arrayContaining([requestId, successfulRequestId]),
+    );
+    for (const item of requesterThread.detail.items) {
+      expect(item.actions).toContainEqual({
+        label: "Retry Agent Issue",
+        href: `/orgs/${orgId}/agent-issue-creation-requests/${item.id}/retry`,
+        method: "POST",
+      });
+    }
+
+    const observerThread = await messengerSvc.getSystemThread(orgId, otherUserId, "failed-runs");
+    expect(observerThread.detail.items).toHaveLength(0);
+    await expect(agentIssueCreationService(db).listForRequester(orgId, userId)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: requestId }),
+        expect.objectContaining({ id: successfulRequestId }),
+      ]),
     );
   });
 

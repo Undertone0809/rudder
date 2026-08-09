@@ -74,6 +74,7 @@ export const queryKeys = {
     listAssignedToMe: (orgId: string) => ["issues", orgId, "assigned-to-me"] as const,
     listTouchedByMe: (orgId: string) => ["issues", orgId, "touched-by-me"] as const,
     listUnreadTouchedByMe: (orgId: string) => ["issues", orgId, "unread-touched-by-me"] as const,
+    agentIssueCreationRequests: (orgId: string) => ["issues", orgId, "agent-issue-creation-requests"] as const,
     labels: (orgId: string) => ["issues", orgId, "labels"] as const,
     listByProject: (orgId: string, projectId: string) =>
       ["issues", orgId, "project", projectId] as const,

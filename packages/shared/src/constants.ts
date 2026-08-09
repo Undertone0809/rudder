@@ -238,7 +238,7 @@ export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
-export const ISSUE_ORIGIN_KINDS = ["manual", "automation_execution", "agent_integration"] as const;
+export const ISSUE_ORIGIN_KINDS = ["manual", "automation_execution", "agent_integration", "agent_issue_creation"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
 export const AGENT_INTEGRATION_PROVIDERS = ["feishu"] as const;

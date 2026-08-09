@@ -101,6 +101,7 @@ export type IssueUserCommentStats = {
   issueId: string;
   myLastCommentAt: Date | null;
   lastExternalCommentAt: Date | null;
+  lastExternalActivityAt?: Date | null;
 };
 export type IssueUserContextInput = {
   createdByUserId: string | null;
@@ -153,6 +154,11 @@ export function fieldSearchMatch(row: IssueRow, query: string, searchFields: Rea
   return null;
 }
 
+const ISSUE_CREATED_NOTIFICATION_ACTIONS = [
+  "automation.issue_created_notification",
+  "agent.issue_created_notification",
+] as const;
+
 export function touchedByUserCondition(orgId: string, userId: string) {
   return sql<boolean>`
     (
@@ -160,7 +166,7 @@ export function touchedByUserCondition(orgId: string, userId: string) {
       OR ${issues.assigneeUserId} = ${userId}
       OR ${issues.reviewerUserId} = ${userId}
       OR ${followedByUserCondition(orgId, userId)}
-      OR ${automationIssueNotifiedToUserCondition(orgId, userId)}
+      OR ${issueCreatedNotificationToUserCondition(orgId, userId)}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}
@@ -193,6 +199,10 @@ export function followedByUserCondition(orgId: string, userId: string) {
 }
 
 export function automationIssueNotifiedToUserCondition(orgId: string, userId: string) {
+  return issueCreatedNotificationToUserCondition(orgId, userId);
+}
+
+export function issueCreatedNotificationToUserCondition(orgId: string, userId: string) {
   return sql<boolean>`
     EXISTS (
       SELECT 1
@@ -200,7 +210,7 @@ export function automationIssueNotifiedToUserCondition(orgId: string, userId: st
       WHERE ${activityLog.orgId} = ${orgId}
         AND ${activityLog.entityType} = 'issue'
         AND ${activityLog.entityId} = ${issues.id}::text
-        AND ${activityLog.action} = 'automation.issue_created_notification'
+        AND ${activityLog.action} IN (${sql.join(ISSUE_CREATED_NOTIFICATION_ACTIONS.map((action) => sql`${action}`), sql`, `)})
         AND ${activityLog.details}->>'userId' = ${userId}
     )
   `;
@@ -211,7 +221,7 @@ export function automationExecutionVisibleToUserCondition(orgId: string, userId:
     (
       ${issues.originKind} <> 'automation_execution'
       OR ${followedByUserCondition(orgId, userId)}
-      OR ${automationIssueNotifiedToUserCondition(orgId, userId)}
+      OR ${issueCreatedNotificationToUserCondition(orgId, userId)}
     )
   `;
 }
@@ -298,6 +308,16 @@ export function unreadForUserCondition(orgId: string, userId: string) {
           )
           AND ${issueComments.createdAt} > ${myLastTouchAt}
       )
+      OR EXISTS (
+        SELECT 1
+        FROM ${activityLog}
+        WHERE ${activityLog.orgId} = ${orgId}
+          AND ${activityLog.entityType} = 'issue'
+          AND ${activityLog.entityId} = ${issues.id}::text
+          AND ${activityLog.action} IN (${sql.join(ISSUE_CREATED_NOTIFICATION_ACTIONS.map((action) => sql`${action}`), sql`, `)})
+          AND ${activityLog.details}->>'userId' = ${userId}
+          AND ${activityLog.createdAt} > ${myLastTouchAt}
+      )
     )
   `;
 }
@@ -310,6 +330,7 @@ export function deriveIssueUserContext(
       myLastCommentAt: Date | string | null;
       myLastReadAt: Date | string | null;
       lastExternalCommentAt: Date | string | null;
+      lastExternalActivityAt?: Date | string | null;
     }
     | null
     | undefined,
@@ -330,15 +351,20 @@ export function deriveIssueUserContext(
     .filter((value): value is Date => value instanceof Date)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const lastExternalCommentAt = normalizeDate(stats?.lastExternalCommentAt);
+  const lastExternalActivityAt = normalizeDate(stats?.lastExternalActivityAt);
+  const latestExternalAt = [lastExternalCommentAt, lastExternalActivityAt]
+    .filter((value): value is Date => value instanceof Date)
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const isUnreadForMe = Boolean(
-    myLastTouchAt &&
-    lastExternalCommentAt &&
-    lastExternalCommentAt.getTime() > myLastTouchAt.getTime(),
+    latestExternalAt &&
+    ((lastExternalActivityAt && !myLastTouchAt) ||
+      (myLastTouchAt && latestExternalAt.getTime() > myLastTouchAt.getTime())),
   );
 
   return {
     myLastTouchAt,
     lastExternalCommentAt,
+    lastExternalActivityAt,
     isUnreadForMe,
   };
 }

@@ -166,6 +166,20 @@ export function createHeartbeatWakeupHandlers(context: any) {
         .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? targetRun);
     };
 
+    const findLinkedRun = async (database: any, wakeupRequest: any) => {
+      if (!wakeupRequest?.runId) return null;
+      return database
+        .select()
+        .from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.id, wakeupRequest.runId),
+          eq(heartbeatRuns.orgId, agent.orgId),
+          eq(heartbeatRuns.agentId, agentId),
+          eq(heartbeatRuns.wakeupRequestId, wakeupRequest.id),
+        ))
+        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? null);
+    };
+
     const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
       const skippedPayload = diagnostics
         ? {
@@ -637,6 +651,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
               idempotencyKey: opts.idempotencyKey ?? null,
             });
 
+        const existingRun = await findLinkedRun(tx, wakeupRequest);
+        if (existingRun) return { kind: "coalesced" as const, run: existingRun };
+
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({
@@ -830,6 +847,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }
 
       if (!wakeupRequest) throw notFound("Wakeup request not found");
+      const existingRun = await findLinkedRun(tx, wakeupRequest);
+      if (existingRun) return { run: existingRun, created: false };
+
       const newRun = await tx
         .insert(heartbeatRuns)
         .values({
