@@ -770,9 +770,7 @@ function DesktopSidePanelSlot({
       onMove: onPointerMove,
       onStop: () => {
         sidePanelResizeCleanupRef.current = null;
-        sidePanelResizeActiveRef.current = false;
-        sidePanelResizeShieldRef.current?.classList.add("hidden");
-        setResizingSidePanel(false);
+        sidePanelResizeActiveRef.current = false; sidePanelResizeShieldRef.current?.classList.add("hidden"); setResizingSidePanel(false);
         if (!collapsedByDrag && latestWidth <= collapseWidth) {
           sidePanel.hidePanel();
           resetSidePanelWidth();
@@ -781,10 +779,7 @@ function DesktopSidePanelSlot({
     });
     stopResizing = lifecycle.stop;
     sidePanelResizeCleanupRef.current = lifecycle.isActive() ? stopResizing : null;
-    if (lifecycle.isActive()) {
-      flushSync(() => setResizingSidePanel(true));
-      sidePanelResizeShieldRef.current?.classList.remove("hidden");
-    }
+    if (lifecycle.isActive()) { flushSync(() => setResizingSidePanel(true)); sidePanelResizeShieldRef.current?.classList.remove("hidden"); }
   }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && sidePanel.open;
@@ -837,12 +832,7 @@ function DesktopSidePanelSlot({
         />
         <div className="workspace-column-resizer-line" />
       </div>
-      <div
-        ref={sidePanelResizeShieldRef}
-        data-testid="side-panel-resize-shield"
-        className="fixed inset-0 z-[200] hidden cursor-col-resize"
-        aria-hidden="true"
-      />
+      <div ref={sidePanelResizeShieldRef} data-testid="side-panel-resize-shield" className="fixed inset-0 z-[200] hidden cursor-col-resize" aria-hidden="true" />
       <div
         key="panel"
         className={cn(
