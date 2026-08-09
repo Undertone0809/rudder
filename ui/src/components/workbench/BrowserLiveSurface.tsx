@@ -403,12 +403,31 @@ export function BrowserLiveSurface({
     const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
+    const comparableNavigationUrl = (value: string) => {
+      try {
+        const url = new URL(value);
+        return `${url.origin}${url.pathname === "/" ? "" : url.pathname}${url.search}${url.hash}`;
+      } catch {
+        return value;
+      }
+    };
+    const matchesExpectedNavigation = (nextUrl: string, expectedUrl: string | undefined) => {
+      if (!expectedUrl) return false;
+      return comparableNavigationUrl(nextUrl) === comparableNavigationUrl(expectedUrl);
+    };
     const ignoreStaleNavigation = (nextUrl: string, acceptUnexpected = false) => {
       if (historyNavigationRef.current) return true;
       const intent = navigationIntentRef.current;
       const settledFence = settledNavigationFenceRef.current;
       if (!nextUrl) return false;
-      if (nextUrl === intent?.expectedUrl || nextUrl === settledFence?.expectedUrl) return false;
+      if (
+        matchesExpectedNavigation(nextUrl, intent?.expectedUrl)
+        || matchesExpectedNavigation(nextUrl, settledFence?.expectedUrl)
+      ) {
+        navigationIntentRef.current = null;
+        settledNavigationFenceRef.current = null;
+        return false;
+      }
       const staleUrls = intent?.staleUrls ?? settledFence?.staleUrls ?? [];
       if (staleUrls.includes(nextUrl)) {
         return true;
@@ -445,7 +464,9 @@ export function BrowserLiveSurface({
       const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
       const nextUrl = "url" in event && typeof event.url === "string" ? event.url : "";
       if (!isMainFrame || !nextUrl) return;
-      if (!ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
+      const expectedUrl = navigationIntentRef.current?.expectedUrl ?? settledNavigationFenceRef.current?.expectedUrl;
+      const matchesExpected = matchesExpectedNavigation(nextUrl, expectedUrl);
+      if (!ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current && !matchesExpected) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
     };
@@ -456,8 +477,10 @@ export function BrowserLiveSurface({
         return;
       }
       const nextUrl = safeCurrentWebviewUrl("");
+      const expectedUrl = navigationIntentRef.current?.expectedUrl ?? settledNavigationFenceRef.current?.expectedUrl;
+      const matchesExpected = matchesExpectedNavigation(nextUrl, expectedUrl);
       if (nextUrl) settleNavigationIntent(nextUrl);
-      if (nextUrl && !ignoreStaleNavigation(nextUrl, true) && nextUrl !== currentUrlRef.current) {
+      if (nextUrl && !ignoreStaleNavigation(nextUrl, true) && nextUrl !== currentUrlRef.current && !matchesExpected) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
@@ -467,7 +490,7 @@ export function BrowserLiveSurface({
       const nextUrl = "url" in event && typeof event.url === "string"
         ? event.url
         : physicalUrl;
-      if (nextUrl && !ignoreStaleNavigation(nextUrl)) {
+      if (nextUrl && !ignoreStaleNavigation(nextUrl, event.type === "did-navigate-in-page")) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
