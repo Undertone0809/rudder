@@ -424,12 +424,10 @@ export function BrowserLiveSurface({
         matchesExpectedNavigation(nextUrl, intent?.expectedUrl)
         || matchesExpectedNavigation(nextUrl, settledFence?.expectedUrl)
       ) {
-        navigationIntentRef.current = null;
-        settledNavigationFenceRef.current = null;
         return false;
       }
       const staleUrls = intent?.staleUrls ?? settledFence?.staleUrls ?? [];
-      if (staleUrls.includes(nextUrl)) {
+      if (staleUrls.some((staleUrl) => matchesExpectedNavigation(nextUrl, staleUrl))) {
         return true;
       }
       // Keep an explicit address-bar request authoritative until its target
@@ -443,7 +441,7 @@ export function BrowserLiveSurface({
 
     const settleNavigationIntent = (nextUrl: string) => {
       const intent = navigationIntentRef.current;
-      if (!intent || intent.expectedUrl !== nextUrl) return;
+      if (!intent || !matchesExpectedNavigation(nextUrl, intent.expectedUrl)) return;
       navigationIntentRef.current = null;
       settledNavigationFenceRef.current = { ...intent };
       if (settledNavigationFenceTimerRef.current !== null) {
@@ -466,7 +464,8 @@ export function BrowserLiveSurface({
       if (!isMainFrame || !nextUrl) return;
       const expectedUrl = navigationIntentRef.current?.expectedUrl ?? settledNavigationFenceRef.current?.expectedUrl;
       const matchesExpected = matchesExpectedNavigation(nextUrl, expectedUrl);
-      if (!ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current && !matchesExpected) {
+      const preservesExpectedAddress = matchesExpected && expectedUrl !== nextUrl;
+      if (!ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current && !preservesExpectedAddress) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
     };
@@ -479,8 +478,14 @@ export function BrowserLiveSurface({
       const nextUrl = safeCurrentWebviewUrl("");
       const expectedUrl = navigationIntentRef.current?.expectedUrl ?? settledNavigationFenceRef.current?.expectedUrl;
       const matchesExpected = matchesExpectedNavigation(nextUrl, expectedUrl);
+      const preservesExpectedAddress = matchesExpected && expectedUrl !== nextUrl;
       if (nextUrl) settleNavigationIntent(nextUrl);
-      if (nextUrl && !ignoreStaleNavigation(nextUrl, true) && nextUrl !== currentUrlRef.current && !matchesExpected) {
+      if (
+        nextUrl
+        && !ignoreStaleNavigation(nextUrl, true)
+        && nextUrl !== currentUrlRef.current
+        && !preservesExpectedAddress
+      ) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
@@ -490,7 +495,14 @@ export function BrowserLiveSurface({
       const nextUrl = "url" in event && typeof event.url === "string"
         ? event.url
         : physicalUrl;
-      if (nextUrl && !ignoreStaleNavigation(nextUrl, event.type === "did-navigate-in-page")) {
+      const expectedUrl = navigationIntentRef.current?.expectedUrl ?? settledNavigationFenceRef.current?.expectedUrl;
+      const matchesExpected = matchesExpectedNavigation(nextUrl, expectedUrl);
+      const preservesExpectedAddress = matchesExpected && expectedUrl !== nextUrl;
+      if (
+        nextUrl
+        && !ignoreStaleNavigation(nextUrl, event.type === "did-navigate-in-page")
+        && !preservesExpectedAddress
+      ) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();
@@ -694,6 +706,13 @@ export function BrowserLiveSurface({
   }, [replaceBrowserTarget, safeWebviewCall]);
 
   const reloadCurrentPage = useCallback(() => {
+    navigationIntentRef.current = null;
+    settledNavigationFenceRef.current = null;
+    if (settledNavigationFenceTimerRef.current !== null) {
+      clearTimeout(settledNavigationFenceTimerRef.current);
+      settledNavigationFenceTimerRef.current = null;
+    }
+    historyNavigationRef.current = null;
     setLoadErrorDetailsOpen(false);
     safeWebviewCall((webview) => {
       webview.reload?.();
