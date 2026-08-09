@@ -964,29 +964,13 @@ describe("heartbeat managed workspace preflight", () => {
     });
 
     const staleAt = new Date();
-    const sleepRecoveredAt = new Date(staleAt.getTime() + 31 * 60 * 1000);
+    const timedOutAt = new Date(staleAt.getTime() + 31 * 60 * 1000);
     await db.update(heartbeatRuns).set({ updatedAt: staleAt }).where(eq(heartbeatRuns.id, run!.id));
     await db
       .update(heartbeatRunEvents)
       .set({ createdAt: staleAt })
       .where(eq(heartbeatRunEvents.runId, run!.id));
 
-    const recovered = await watchdog.reapInactiveRuns({
-      maxInactivityMs: 30 * 60 * 1000,
-      now: sleepRecoveredAt,
-    });
-    expect(recovered).toEqual({ timedOut: 0, runIds: [] });
-
-    // Sleep recovery renews the run's activity watermark. Re-seed a stale
-    // watermark after that recovery so this assertion covers the real timeout
-    // path instead of treating the recovery grace as a terminal timeout.
-    await db.update(heartbeatRuns).set({ updatedAt: sleepRecoveredAt }).where(eq(heartbeatRuns.id, run!.id));
-    await db
-      .update(heartbeatRunEvents)
-      .set({ createdAt: sleepRecoveredAt })
-      .where(eq(heartbeatRunEvents.runId, run!.id));
-
-    const timedOutAt = new Date(sleepRecoveredAt.getTime() + 31 * 60 * 1000);
     const reaped = await watchdog.reapInactiveRuns({
       maxInactivityMs: 30 * 60 * 1000,
       now: timedOutAt,

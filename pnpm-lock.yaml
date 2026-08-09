@@ -903,9 +903,6 @@ importers:
       '@rudderhq/agent-runtime-gemini-local':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/gemini-local
-      '@rudderhq/agent-runtime-hermes-gateway':
-        specifier: workspace:*
-        version: link:../packages/agent-runtimes/hermes-gateway
       '@rudderhq/agent-runtime-openclaw-gateway':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/openclaw-gateway

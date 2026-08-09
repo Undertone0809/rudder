@@ -686,10 +686,7 @@ export function RunsTab({
           className="agent-runs-list-pane w-[clamp(14rem,24vw,24rem)] shrink-0 overflow-clip rounded-lg border border-border"
           data-testid="agent-runs-list-pane"
         >
-          <div
-            className="agent-runs-list-scroll sticky top-4 overflow-y-auto"
-            style={{ maxHeight: "calc(100vh - 2rem)" }}
-          >
+          <div className="agent-runs-list-scroll overflow-y-auto">
             {selectedRunOutsideFilters && (
               <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 Selected run is outside the current filters.

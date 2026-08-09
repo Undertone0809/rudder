@@ -16,18 +16,6 @@ const { previewLocalFile, readDesktopShell } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
-vi.mock("../MarkdownBody", () => ({
-  MarkdownBody: ({ children }: { children: string }) => <div>{children}</div>,
-}));
-vi.mock("@/components/MarkdownBody", () => ({
-  MarkdownBody: ({ children }: { children: string }) => <div>{children}</div>,
-}));
-vi.mock("@codesandbox/sandpack-react", () => ({}));
-vi.mock("@/components/chat/ResponseAnnotations", () => ({
-  AnchoredResponseAnnotationMarkers: () => null,
-  ResponseAnnotationEditor: () => null,
-  SentResponseAnnotationsCard: () => null,
-}));
 vi.mock("../InspectableImage", () => ({
   InspectableImage: ({ src, name }: { src: string; name: string }) => (
     <button type="button" data-testid="inspectable-image" data-src={src}>{name}</button>

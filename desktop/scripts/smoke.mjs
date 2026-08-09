@@ -1976,11 +1976,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
-  // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
-  const args = [
-    ...(process.platform === "linux" ? ["--no-sandbox"] : []),
-    ...(mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")]),
-  ];
+  const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
@@ -3739,9 +3735,13 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         if (!webview || typeof webview.getURL !== "function" || typeof webview.executeJavaScript !== "function") {
           return false;
         }
-        if (webview.getURL() !== expectedUrl) return false;
-        const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
-        return heading === "Rudder Browser fixture";
+        try {
+          if (webview.getURL() !== expectedUrl) return false;
+          const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
+          return heading === "Rudder Browser fixture";
+        } catch {
+          return false;
+        }
       }, { expectedUrl: localAddressBarUrl }, { timeout: 30_000 });
 
       const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
@@ -3902,26 +3902,17 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
         };
       }, { browserTabId: guestBeforeMove.browserTabId });
-      const { scrollY: guestBeforeMoveScrollY, ...guestBeforeMoveStableState } = guestBeforeMove.guestState;
-      const { scrollY: guestAfterMoveScrollY, ...guestAfterMoveStableState } = guestAfterMove.guestState;
       assert.deepEqual(
-        {
-          ...guestAfterMove,
-          guestState: guestAfterMoveStableState,
-        },
+        guestAfterMove,
         {
           browserTabId: guestBeforeMove.browserTabId,
           domMarker: guestBeforeMove.domMarker,
-          guestState: guestBeforeMoveStableState,
+          guestState: guestBeforeMove.guestState,
           url: guestBeforeMove.url,
           webContentsId: guestBeforeMove.webContentsId,
           zoomFactor: guestBeforeMove.zoomFactor,
         },
-        "Move must preserve the exact Browser guest, URL, history, form, zoom, and heap marker",
-      );
-      assert.ok(
-        Math.abs(guestAfterMoveScrollY - guestBeforeMoveScrollY) <= 32,
-        `Move must preserve Browser guest scroll position within 32px: expected ${guestBeforeMoveScrollY}, got ${guestAfterMoveScrollY}`,
+        "Move must preserve the exact Browser guest, URL, history, form, scroll, zoom, and heap marker",
       );
 
       const fullBleed = await page.evaluate(() => {

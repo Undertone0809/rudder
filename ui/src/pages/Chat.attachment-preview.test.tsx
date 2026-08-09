@@ -146,17 +146,6 @@ const mockState = vi.hoisted(() => ({
   savedViewPromotionEnabled: false,
   savedViewPromotionIsMoving: false,
   sitesEnabled: false,
-  chatGenerationScopes: new Map<string, {
-    epoch: number;
-    conversationId: string | null;
-    closeRequested: boolean;
-  }>(),
-  ChatGenerationCloseSupersededError: class ChatGenerationCloseSupersededError extends Error {
-    constructor() {
-      super("Side Chat close was superseded by a newer generation.");
-      this.name = "ChatGenerationCloseSupersededError";
-    }
-  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -560,7 +549,6 @@ vi.mock("@/plugins/launchers", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
-  ChatGenerationCloseSupersededError: mockState.ChatGenerationCloseSupersededError,
   useChatGenerations: () => ({
     abortChatStream: mockState.abortChatStream,
     sendInFlightByChatId: mockState.sendInFlightByChatId,
@@ -568,45 +556,6 @@ vi.mock("@/context/ChatGenerationContext", () => ({
     setStreamAbortController: vi.fn(),
     setStreamDraftForChat: mockState.setStreamDraftForChat,
     streamDrafts: mockState.streamDrafts,
-  }),
-  useChatGenerationActions: () => ({
-    abortChatStream: mockState.abortChatStream,
-    clearChatGenerationConversation: vi.fn(),
-    destroyChatGenerationConversation: vi.fn(async (_scopeKey: string, _conversationId: string, destroyer: () => Promise<void>) => {
-      await destroyer();
-    }),
-    isChatGenerationClosePending: (scopeKey: string, epoch?: number) => {
-      const scope = mockState.chatGenerationScopes.get(scopeKey);
-      return Boolean(scope?.closeRequested && (epoch === undefined || scope.epoch === epoch));
-    },
-    isChatGenerationCurrent: () => true,
-    rememberChatGenerationConversation: vi.fn(),
-    releaseChatGenerationScope: (scopeKey: string, epoch: number) => {
-      const scope = mockState.chatGenerationScopes.get(scopeKey);
-      if (scope?.epoch === epoch) scope.closeRequested = false;
-    },
-    requestChatGenerationClose: (scopeKey: string, conversationId?: string | null) => {
-      const previous = mockState.chatGenerationScopes.get(scopeKey);
-      const scope = {
-        epoch: (previous?.epoch ?? 0) + 1,
-        conversationId: conversationId ?? previous?.conversationId ?? null,
-        closeRequested: true,
-      };
-      mockState.chatGenerationScopes.set(scopeKey, scope);
-      return { epoch: scope.epoch, conversationId: scope.conversationId };
-    },
-    resetChatGenerationClose: (scopeKey: string, epoch: number) => {
-      const scope = mockState.chatGenerationScopes.get(scopeKey);
-      if (scope?.epoch === epoch) scope.closeRequested = false;
-    },
-    setChatGenerationConversation: () => true,
-    setChatSendInFlight: mockState.setChatSendInFlight,
-    setStreamAbortController: vi.fn(),
-    setStreamDraftForChat: mockState.setStreamDraftForChat,
-    tryBeginChatGeneration: (_scopeKey: string, conversationId: string | null) => ({
-      epoch: 1,
-      conversationId,
-    }),
   }),
 }));
 
@@ -1563,7 +1512,6 @@ async function renderPersistedSideChatPanel(conversationId: string) {
 }
 
 beforeEach(() => {
-  mockState.chatGenerationScopes.clear();
   mockState.sitesEnabled = false;
   installLocalStorageMock();
   Object.defineProperty(URL, "createObjectURL", {
@@ -5125,7 +5073,7 @@ describe("Chat message scroll map", () => {
     expect(preview?.textContent).toContain("operator context");
     expect(preview?.textContent).toContain("assistant progress");
     expect(preview?.className).toContain("w-[40rem]");
-    expect(preview?.className).toContain("bg-[color:var(--surface-overlay)]");
+    expect(preview?.className).toContain("bg-[rgba(42,42,42,0.94)]");
     expect(preview?.className).toContain("rounded-[18px]");
 
     await act(async () => {
@@ -5279,6 +5227,16 @@ describe("Chat streaming controls", () => {
     expect(ackUpdate!(controlled.createdDraft)?.userCreatedAt).toEqual(persistedCreatedAt);
   });
 
+  it("clears composer loading when a final arrives before reconciliation completes", async () => {
+    const stream = await startControlledChatStream();
+    mockState.setChatSendInFlight.mockClear();
+
+    await stream.emitFinal();
+
+    expect(mockState.setChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
+    await stream.finishStream();
+  });
+
   it("freezes immediately, then aborts and clears the matching stream after Stop acknowledgement", async () => {
     let resolveStop!: (value: { stopped: boolean }) => void;
     mockState.stopMessageStream.mockReturnValue(new Promise((resolve) => {
@@ -5367,10 +5325,12 @@ describe("Chat streaming controls", () => {
     await clickEnabledButtonByAriaLabel(stream.container, "Stop streaming");
     const firstRequest = mockState.stopMessageStream.mock.calls[0]?.[1];
     mockState.setQueryData.mockClear();
+    mockState.setChatSendInFlight.mockClear();
     await stream.emitFinal();
 
     expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.setQueryData).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith("chat-1", false);
 
     await act(async () => {
       resolveStop({ stopped: true, disposition: "stopping" });
@@ -8271,6 +8231,132 @@ describe("Atomic new-chat drafts", () => {
         state: "streaming",
       }),
     );
+
+    mockState.setChatSendInFlight.mockClear();
+    await act(async () => {
+      await onEvent({
+        type: "final",
+        messages: [message({
+          id: "atomic-assistant-1",
+          conversationId: acceptedConversation.id,
+          role: "assistant",
+          body: "The accepted chat is complete.",
+        })],
+      });
+    });
+    expect(mockState.setChatSendInFlight).toHaveBeenCalledWith("atomic-chat-1", false);
+
+    await act(async () => {
+      resolveStream();
+      await Promise.resolve();
+    });
+  });
+
+  it("keeps a first-message final behind the Stop cutoff until acknowledgement", async () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+
+    let onEvent!: (event: ChatStreamEvent) => void | Promise<void>;
+    let resolveStream!: () => void;
+    mockState.sendFirstMessageStream.mockImplementationOnce((
+      _orgId: string,
+      _body: string,
+      options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+    ) => {
+      onEvent = options.onEvent;
+      return new Promise<void>((resolve) => {
+        resolveStream = resolve;
+      });
+    });
+
+    let resolveStop!: (value: { stopped: boolean; disposition: string }) => void;
+    mockState.stopMessageStream.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStop = resolve;
+    }));
+
+    const { container, rerender } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Create a chat with a fenced final.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendFirstMessageStream).toHaveBeenCalledTimes(1));
+
+    const acceptedConversation = chat({
+      id: "atomic-stop-chat-1",
+      title: "Create a fenced chat",
+      preferredAgentId: "agent-1",
+      lastMessageAt: new Date("2026-05-12T10:00:00.000Z"),
+    });
+    const acceptedMessage = message({
+      id: "atomic-stop-user-1",
+      conversationId: acceptedConversation.id,
+      body: "Create a chat with a fenced final.",
+      chatTurnId: "atomic-stop-turn-1",
+      createdAt: new Date("2026-05-12T10:00:00.000Z"),
+    });
+    await act(async () => {
+      await onEvent({
+        type: "ack",
+        conversation: acceptedConversation,
+        userMessage: acceptedMessage,
+        generationId: "atomic-stop-generation-1",
+        attemptEpoch: 1,
+        generationSeq: 0,
+      });
+    });
+
+    const ackDraftCall = mockState.setStreamDraftForChat.mock.calls.find((call) => (
+      call[0] === acceptedConversation.id
+      && Boolean(call[1])
+      && typeof call[1] === "object"
+      && "streamKey" in (call[1] as object)
+    ));
+    expect(ackDraftCall).toBeDefined();
+    const streamScopeKey = ackDraftCall![0] as string;
+    const ackDraft = ackDraftCall![1] as ChatStreamDraft;
+    mockState.conversationId = acceptedConversation.id;
+    mockState.conversations = [acceptedConversation];
+    mockState.messagesByChatId = { [acceptedConversation.id]: [acceptedMessage] };
+    mockState.streamDrafts = { [streamScopeKey]: ackDraft };
+    mockState.sendInFlightByChatId = { [streamScopeKey]: true };
+    rerender();
+
+    mockState.setStreamDraftForChat.mockClear();
+    mockState.setChatSendInFlight.mockClear();
+    mockState.setQueryData.mockClear();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith(acceptedConversation.id, expect.any(Object));
+    const draftCallCountBeforeFinal = mockState.setStreamDraftForChat.mock.calls.length;
+
+    await act(async () => {
+      await onEvent({
+        type: "final",
+        messages: [message({
+          id: "atomic-stop-assistant-1",
+          conversationId: acceptedConversation.id,
+          role: "assistant",
+          body: "This final must stay behind Stop.",
+        })],
+      });
+    });
+
+    expect(mockState.setQueryData).not.toHaveBeenCalled();
+    expect(mockState.setStreamDraftForChat).toHaveBeenCalledTimes(draftCallCountBeforeFinal);
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(streamScopeKey, false);
+
+    await act(async () => {
+      resolveStop({ stopped: true, disposition: "stopping" });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(readPendingChatStopRecovery("org-1", acceptedConversation.id)).toBeNull());
+    expect(mockState.abortChatStream).toHaveBeenCalledWith(acceptedConversation.id);
+    expect(mockState.setChatSendInFlight).toHaveBeenCalledWith(streamScopeKey, false);
 
     await act(async () => {
       resolveStream();

@@ -123,7 +123,7 @@ export function createTranscriptSkillTargets(
   const fileTargets = createTranscriptFileTargets(paths, record);
   return fileTargets.flatMap((target) => {
     const name = extractSkillSlugFromEntryPath(target.label);
-    return name ? [{ ...target, displayLabel: name, name }] : [];
+    return name ? [{ ...target, name }] : [];
   });
 }
 
@@ -479,11 +479,10 @@ export function formatTargetAction(
   targets: string[],
   singular: TranscriptToolSemanticInfo["noun"],
   fallback: string,
-  useDisplayLabels = false,
 ): Pick<TranscriptToolSemanticInfo, "summary" | "quantity" | "noun"> {
   if (targets.length === 1) {
     return {
-      summary: `${verb} ${useDisplayLabels ? transcriptArtifactBasename(targets[0]!) : targets[0]}`,
+      summary: `${verb} ${targets[0]}`,
       quantity: 1,
       noun: singular,
     };
@@ -722,7 +721,7 @@ export function describeCommandSemanticInfo(
         skillTargets: createTranscriptSkillTargets(targets, record),
       };
     }
-    const action = formatTargetAction("Read", targets, "file", "Read file", true);
+    const action = formatTargetAction("Read", targets, "file", "Read file");
     return {
       ...action,
       actionKind: "read",
@@ -776,7 +775,7 @@ export function describeCommandSemanticInfo(
       : fallbackTarget
         ? dedupeTargets([fallbackTarget])
         : [];
-    const action = formatTargetAction("Edited", targets, "file", "Edited files", true);
+    const action = formatTargetAction("Edited", targets, "file", "Edited files");
     return {
       ...action,
       category: invocation.category,
@@ -1192,7 +1191,6 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
       ? sourcePath.replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).at(-1) ?? sourcePath
       : "image";
     return {
-      actionKind: "image_view",
       category: "image",
       label: "View image",
       summary: "Viewed an image",
@@ -1339,7 +1337,7 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
         skillTargets: createTranscriptSkillTargets(paths, record),
       };
     }
-    const action = formatTargetAction("Read", paths, "file", "Read file", true);
+    const action = formatTargetAction("Read", paths, "file", "Read file");
     return {
       ...action,
       actionKind: "read",
@@ -1372,7 +1370,7 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
   }
 
   if (invocation.category === "edit") {
-    const action = formatTargetAction("Edited", paths, "file", "Edited files", true);
+    const action = formatTargetAction("Edited", paths, "file", "Edited files");
     return {
       ...action,
       category: invocation.category,

@@ -8,7 +8,6 @@ import path from "node:path";
 import {
   applyPendingMigrations,
   cleanupStaleSysvSharedMemorySegments,
-  createLocalPostgresInstance,
   inspectMigrations,
   validatePostMigrationInvariants,
 } from "../packages/db/src/index.js";
@@ -131,9 +130,10 @@ async function startDatabase(root: string): Promise<{
   restart: () => Promise<void>;
 }> {
   await cleanupStaleSysvSharedMemorySegments().catch(() => undefined);
+  const { default: EmbeddedPostgres } = requireFromDb("embedded-postgres") as { default: new (options: any) => { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> } };
   const port = await availablePort();
   const dataDir = path.join(root, "postgres");
-  const selection = await createLocalPostgresInstance({
+  const instance = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "rudder",
     password: "rudder",
@@ -143,7 +143,6 @@ async function startDatabase(root: string): Promise<{
     onLog: () => {},
     onError: (message: unknown) => process.stderr.write(`[compatibility-postgres:error] ${String(message)}\n`),
   });
-  const instance = selection.instance;
   await instance.initialise();
   await instance.start();
   const admin = postgres(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, { max: 1, onnotice: () => {} });

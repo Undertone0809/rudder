@@ -333,7 +333,6 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const fileChanges = semantic.fileChanges ?? [];
-  const fileTargetDetailsGated = fileTargets.length > 1;
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
   const skillTargets = semantic.skillTargets ?? [];
   const hasInspectableSkillTargets = semantic.category === "skill" && skillTargets.length > 0;
@@ -344,15 +343,6 @@ export function TranscriptChatToolActionRow({
   const fileChangeSucceeded = block.status === "completed"
     && inputStatus !== "failed"
     && inputStatus !== "error";
-  const fileChangeDetailsGated = fileChanges.length > 0 && (
-    fileChanges.length > 1
-    || semantic.quantity > fileChanges.length
-    || !fileChanges.some((change) => {
-      const parsed = change.diff ? parseUnifiedDiff(change.diff) : null;
-      return fileChangeSucceeded
-        && Boolean(change.diff && parsed?.hasHunks && !parsed.binary);
-    })
-  );
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
   const statusLabelId = useId();
@@ -490,22 +480,6 @@ export function TranscriptChatToolActionRow({
           {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
         </div>
       ) : hasOpenableFileTargets ? (
-        fileTargetDetailsGated && !open ? (
-          <button
-            type="button"
-            className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
-            onClick={toggleDetails}
-            aria-expanded={open}
-            data-testid="transcript-action-group-disclosure"
-            data-transcript-action-row-disclosure="true"
-          >
-            <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-            <span className={cn("min-w-0 flex-1 truncate text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-              {displaySummary}
-            </span>
-            <DisclosureChevron open={open} className="h-4 w-4 text-muted-foreground" />
-          </button>
-        ) : (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span
@@ -515,7 +489,7 @@ export function TranscriptChatToolActionRow({
               compact ? "text-xs leading-5" : "text-sm leading-6",
             )}
           >
-            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}{" "}</span>
+            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}</span>
             <span className="min-w-0 flex-1">
               {fileTargets.map((target, index) => {
                 const displayName = transcriptFileDisplayName(target.label);
@@ -568,29 +542,9 @@ export function TranscriptChatToolActionRow({
             </button>
           ) : null}
         </div>
-        )
       ) : fileChanges.length > 0 ? (
         <div>
-          {fileChangeDetailsGated ? (
-            <button
-              type="button"
-              className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
-              onClick={toggleDetails}
-              aria-expanded={open}
-              aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
-              data-testid="transcript-action-group-disclosure"
-              data-transcript-action-row-disclosure="true"
-            >
-              <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-              <span id={summaryLabelId} className={cn("min-w-0 flex-1 truncate text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-                {displaySummary}
-              </span>
-              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
-                <DisclosureChevron open={open} className="h-4 w-4" />
-              </span>
-            </button>
-          ) : null}
-          {(!fileChangeDetailsGated || open) && fileChanges.map((change, index) => {
+          {fileChanges.map((change, index) => {
             const parsed = change.diff ? parseUnifiedDiff(change.diff) : null;
             const hasHistoricalDiff = Boolean(
               fileChangeSucceeded
@@ -698,7 +652,7 @@ export function TranscriptChatToolActionRow({
           </span>
         </button>
       )}
-      {semantic.evidenceWarning && (open || !canExpand) ? (
+      {semantic.evidenceWarning ? (
         <div
           className="ml-5 mt-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200"
           role="status"

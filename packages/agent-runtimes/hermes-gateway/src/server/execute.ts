@@ -230,23 +230,6 @@ function safeEvent(event: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-function boundedLogText(value: unknown): string | undefined {
-  return typeof value === "string" ? value.slice(0, MAX_SAFE_EVENT_TEXT) : undefined;
-}
-
-function transcriptLogEvent(event: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...safeEvent(event),
-    // Keep transcript text available while bounding each field independently.
-    // The result projection above remains hash-only.
-    delta: boundedLogText(event.delta),
-    output: boundedLogText(event.output),
-    content: boundedLogText(event.content),
-    message: boundedLogText(event.message),
-    error: boundedLogText(event.error),
-  };
-}
-
 async function consumeSse(
   response: Response,
   onEvent: (event: RunEvent) => Promise<void>,
@@ -457,7 +440,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const recordEvent = async (event: RunEvent) => {
     if (events.length < MAX_PROJECTED_EVENTS) events.push(event);
     const kind = asString(event.event, "event");
-    await ctx.onLog("stdout", `[hermes-gateway:event] run=${upstreamRunId} type=${kind} data=${JSON.stringify(transcriptLogEvent(event))}\n`);
+    await ctx.onLog("stdout", `[hermes-gateway:event] run=${upstreamRunId} type=${kind} summary=${JSON.stringify(safeEvent(event))}\n`);
     // Preserve leading/trailing whitespace in streaming deltas. `textFrom`
     // intentionally trims ordinary result fields, but trimming each delta
     // corrupts word boundaries when Hermes splits a sentence across events.

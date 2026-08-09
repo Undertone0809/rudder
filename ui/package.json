@@ -36,7 +36,6 @@
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
     "@rudderhq/agent-runtime-cursor-local": "workspace:*",
     "@rudderhq/agent-runtime-gemini-local": "workspace:*",
-    "@rudderhq/agent-runtime-hermes-gateway": "workspace:*",
     "@rudderhq/agent-runtime-openclaw-gateway": "workspace:*",
     "@rudderhq/agent-runtime-opencode-local": "workspace:*",
     "@rudderhq/agent-runtime-pi-local": "workspace:*",

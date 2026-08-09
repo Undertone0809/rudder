@@ -118,7 +118,7 @@ describe("release migration compatibility matrix", () => {
     const fixture = buildMigrationManifest({
       label: "fixture",
       journalRaw: journal(["0000_base"]),
-      listSqlFiles: () => ["0055_legacy_compat.sql", "0000_base.sql"],
+      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
       readSqlFile: (fileName) => ({
         "0000_base.sql": "SELECT 1;",
         "0055_legacy_compat.sql": "SELECT 2;",
@@ -127,17 +127,12 @@ describe("release migration compatibility matrix", () => {
     const candidate = buildMigrationManifest({
       label: "candidate",
       journalRaw: journal(["0000_base"]),
-      listSqlFiles: () => ["0055_legacy_compat.sql", "0000_base.sql"],
+      listSqlFiles: () => ["0000_base.sql", "0055_legacy_compat.sql"],
       readSqlFile: (fileName) => ({
         "0000_base.sql": "SELECT 1;",
         "0055_legacy_compat.sql": "SELECT 3;",
       })[fileName],
     });
-
-    expect(candidate.sqlFiles.map((file) => file.fileName)).toEqual([
-      "0000_base.sql",
-      "0055_legacy_compat.sql",
-    ]);
 
     expect(() => validateCompatibilityMatrix({
       candidateManifest: candidate,
@@ -155,22 +150,6 @@ describe("release migration compatibility matrix", () => {
       },
       loadFixture: () => fixture,
     })).toThrow("rewrites migration file 0055_legacy_compat.sql");
-  });
-
-  it("normalizes SQL line endings before calculating migration fingerprints", () => {
-    const lf = manifest(
-      ["0000_base", "0001_next"],
-      { "0000_base": "CREATE TABLE users (\nid integer;\n);\n", "0001_next": "SELECT 1;\n" },
-      "lf",
-    );
-    const crlf = manifest(
-      ["0000_base", "0001_next"],
-      { "0000_base": "CREATE TABLE users (\r\nid integer;\r\n);\r\n", "0001_next": "SELECT 1;\r\n" },
-      "crlf",
-    );
-
-    expect(crlf.sqlFiles).toEqual(lf.sqlFiles);
-    expect(crlf.fingerprint).toBe(lf.fingerprint);
   });
 
   it("exits nonzero before release work when the CLI matrix declaration is missing", () => {

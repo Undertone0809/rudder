@@ -16,6 +16,7 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
+  - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
 related_tests:
   - packages/shared/src/agent-run.test.ts
   - packages/shared/src/chat-transcript-provenance.test.ts
@@ -29,6 +30,8 @@ related_tests:
   - server/src/__tests__/heartbeat-workspace-preflight.test.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/agent-run-conversation-grouping.spec.ts
+  - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
+  - tests/e2e/run-transcript-detail.spec.ts
 related_plans:
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
   - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
@@ -244,11 +247,16 @@ Flow:
     provider turn. When native Steer is unavailable, Rudder interrupts the old
     attempt and starts one server-owned feedback continuation only after the old
     owner reaches a safe terminal boundary.
-13. If the operator stops an in-flight chat run, Rudder first commits the
-    visible-output cutoff and then interrupts the runtime. The stopped message
-    may contain only the accepted assistant prefix at that cutoff. Provider
-    reasoning, late deltas, final output, and incomplete summaries remain
-    diagnostic evidence and cannot change the visible result.
+13. If the operator stops an in-flight chat run, including a feedback turn
+    started from an Agent Run annotation Side Panel, Rudder first commits the
+    visible-output cutoff and then interrupts the runtime. The feedback panel
+    fences the action to the observed generation, attempt, control version, and
+    rendered-body checkpoint; it stages stream events until the server accepts
+    or rejects that cutoff and reads back terminal state before leaving the
+    stopping state. The stopped message may contain only the accepted assistant
+    prefix at that cutoff. Provider reasoning, late deltas, final output, and
+    incomplete summaries remain diagnostic evidence and cannot change the
+    visible result.
 14. Runtime terminal evidence is projected through a retryable outbox so the
     generation, Agent Run, assistant message, queue item, and control action
     converge. Retry exhaustion must release active ownership and preserve an
@@ -360,6 +368,9 @@ Evidence:
   payload, runtime-unavailable label, and absent Retry action.
 - Chat concurrent-streaming E2E covers native Steer, fallback continuation,
   immediate Stop, Stop-then-Steer, and browser-independent queue delivery.
+- Run annotation feedback UI and Run Transcript Detail E2E cover the Side Panel
+  Stop action, fenced cutoff request, late-event suppression, terminal
+  readback, and continued draft/conversation identity.
 
 Related code:
 
@@ -376,6 +387,7 @@ Related code:
 - `ui/src/pages/AgentDetail.chat-context.tsx`
 - `ui/src/pages/Chat.parts.tsx`
 - `ui/src/pages/Chat.messages.tsx`
+- `ui/src/components/side-panel/RunFeedbackChatPanel.tsx`
 
 Related tests:
 
@@ -395,6 +407,8 @@ Related tests:
 - `tests/e2e/chat-options-menu.spec.ts`
 - `tests/e2e/chat-response-annotations.spec.ts`
 - `tests/e2e/agent-run-conversation-grouping.spec.ts`
+- `ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx`
+- `tests/e2e/run-transcript-detail.spec.ts`
 
 ## RUN.EXECUTION.001
 

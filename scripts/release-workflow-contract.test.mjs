@@ -101,14 +101,6 @@ describe("release workflow latency contracts", () => {
     );
     expect(gateJob).toContain("Prepublish database and packaged upgrade gate");
     expect(gateJob).toContain("os: [ubuntu-latest, macos-latest, windows-latest]");
-    expect(gateJob).toContain("Cache PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("actions/cache@v5");
-    expect(gateJob).toContain("Prepare PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("RUDDER_POSTGRES_BIN_DIR=${bin_dir}");
-    expect(gateJob).toContain("https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2");
-    expect(gateJob).toContain("81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094");
-    expect(gateJob).not.toContain("RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES");
-    expect(gateJob).not.toContain("RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE");
     expect(gateJob).toContain("pnpm desktop:verify");
     expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
     expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");

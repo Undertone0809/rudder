@@ -42,10 +42,6 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizeSqlLineEndings(sql) {
-  return sql.replace(/\r\n?/g, "\n");
-}
-
 function parseJournal(raw, label) {
   let journal;
   try {
@@ -103,7 +99,7 @@ export function buildMigrationManifest({ journalRaw, listSqlFiles, readSqlFile, 
   const journal = parseJournal(journalRaw, label);
   const sqlFileNames = (listSqlFiles?.() ?? journal.entries.map((entry) => `${entry.tag}.sql`))
     .filter((fileName) => fileName.endsWith(".sql"))
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
   if (new Set(sqlFileNames).size !== sqlFileNames.length) {
     fail(`${label} fixture contains duplicate migration SQL file names.`);
   }
@@ -117,7 +113,7 @@ export function buildMigrationManifest({ journalRaw, listSqlFiles, readSqlFile, 
     if (typeof sql !== "string" || sql.trim().length === 0) {
       fail(`${label} fixture has an empty ${fileName}.`);
     }
-    return { fileName, fingerprint: sha256(normalizeSqlLineEndings(sql)) };
+    return { fileName, fingerprint: sha256(sql) };
   });
   const fingerprintByFileName = new Map(
     sqlFiles.map((file) => [file.fileName, file.fingerprint]),

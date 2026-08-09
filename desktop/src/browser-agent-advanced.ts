@@ -1053,9 +1053,7 @@ export async function createBrowserAdvancedDriver(options: {
     const command: Record<string, unknown> = {
       format,
       captureBeyondViewport: args.fullPage === true,
-      // Agent Browser tabs use hidden BrowserWindows; view capture is stable on
-      // Linux CI where surface capture can wait indefinitely for a compositor.
-      fromSurface: false,
+      fromSurface: true,
     };
     if (format === "jpeg") command.quality = Math.max(1, Math.min(Number(args.quality || 80), 100));
     if (clip) command.clip = {

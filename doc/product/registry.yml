@@ -432,6 +432,7 @@ contracts:
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
     related_tests:
       - server/src/__tests__/chat-agent-runs.test.ts
       - server/src/__tests__/chat-assistant.test.ts
@@ -445,6 +446,8 @@ contracts:
       - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-options-menu.spec.ts
       - tests/e2e/agent-run-conversation-grouping.spec.ts
+      - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
+      - tests/e2e/run-transcript-detail.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
@@ -566,9 +569,6 @@ contracts:
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/managed-workspace-preflight.ts
-      - server/src/services/mcp/managed-client.ts
-      - server/src/services/mcp/managed-connections.ts
-      - server/src/services/mcp/managed-runtime.ts
       - desktop/src/main.ts
       - desktop/src/identity-runtime.ts
       - desktop/src/navigation-guard.ts
@@ -581,8 +581,6 @@ contracts:
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - packages/shared/src/validators/mcp.test.ts
       - scripts/managed-mcp-product-contract.test.mjs
-      - server/src/__tests__/managed-mcp-connections-service.test.ts
-      - server/src/__tests__/managed-mcp-runtime-routes.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/cursor-local-execute.test.ts
@@ -603,8 +601,6 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
-      - doc/plans/2026-08-07-github-managed-mcp.md
-      - doc/plans/2026-08-07-github-mcp-pat.md
       - doc/plans/2026-07-29-rudder-account-production-login.md
   ANALYTICS.TELEMETRY.001:
     owner: product
@@ -660,8 +656,6 @@ contracts:
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
       - packages/agent-runtime-utils/src/managed-external-mcp.ts
-      - server/src/services/mcp/managed-client.ts
-      - server/src/services/mcp/managed-runtime.ts
       - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/mcp.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
@@ -684,8 +678,6 @@ contracts:
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
       - tests/e2e/agent-mcp-contract.spec.ts
-      - server/src/__tests__/managed-mcp-runtime-routes.test.ts
-      - tests/e2e/managed-mcp-integrations.spec.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
@@ -701,8 +693,6 @@ contracts:
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
       - doc/plans/2026-07-27-agent-tool-contract-reliability.md
       - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
-      - doc/plans/2026-08-07-github-managed-mcp.md
-      - doc/plans/2026-08-07-github-mcp-pat.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.BROWSER.001:
@@ -896,7 +886,6 @@ contracts:
       - packages/db/src/schema/custom_integrations.ts
       - packages/db/src/schema/agents.ts
       - packages/db/src/schema/mcp_connections.ts
-      - packages/db/src/migrations/0147_github_mcp_provider.sql
       - packages/db/src/migrations/0123_fine_king_bedlam.sql
       - packages/db/src/migrations/0124_petite_cargill.sql
       - packages/shared/src/types/custom-integration.ts
@@ -904,8 +893,6 @@ contracts:
       - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/custom-integration.ts
       - packages/shared/src/validators/mcp.ts
-      - server/src/services/mcp/managed-client.ts
-      - server/src/services/mcp/provider-registry.ts
       - packages/agent-runtime-utils/src/managed-external-mcp.ts
       - packages/agent-runtimes/codex-local/src/server/codex-home.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
@@ -930,7 +917,6 @@ contracts:
       - packages/db/src/mcp-connections-schema.test.ts
       - packages/db/src/migrations/managed-mcp-connections.test.ts
       - packages/db/src/migrations/managed-mcp-canonicalization.test.ts
-      - packages/db/src/migrations/github-mcp-provider.test.ts
       - packages/shared/src/validators/mcp.test.ts
       - packages/agent-runtime-utils/src/managed-external-mcp.test.ts
       - packages/agent-runtimes/codex-local/src/server/managed-external-mcp.test.ts
@@ -942,7 +928,6 @@ contracts:
       - server/src/__tests__/managed-mcp-bindings-service.test.ts
       - server/src/__tests__/managed-mcp-connections-routes.test.ts
       - server/src/__tests__/managed-mcp-connections-service.test.ts
-      - server/src/__tests__/managed-mcp-runtime-routes.test.ts
       - ui/src/pages/AgentDetail.integrations.test.tsx
       - ui/src/pages/OrganizationMcpSettings.test.ts
       - tests/e2e/agent-detail-integrations-tab.spec.ts
@@ -954,8 +939,6 @@ contracts:
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
       - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
       - doc/plans/2026-07-27-managed-mcp-connection-scopes.md
-      - doc/plans/2026-08-07-github-managed-mcp.md
-      - doc/plans/2026-08-07-github-mcp-pat.md
   ORG.GOAL.001:
     owner: product
     domain: organizations-and-goals
@@ -1384,6 +1367,7 @@ contracts:
       - ui/src/components/DevRestartBanner.test.tsx
       - ui/src/components/ToastViewport.test.tsx
       - ui/src/components/side-panel/SideChatPanelView.test.tsx
+      - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
       - ui/src/components/MarkdownBody.test.tsx
       - ui/src/components/transcript/RunTranscriptView.test.tsx
       - ui/src/lib/chat-draft-storage.test.ts
@@ -1393,6 +1377,7 @@ contracts:
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/Chat.messages.test.tsx
       - tests/e2e/chat-side-panel.spec.ts
+      - tests/e2e/run-transcript-detail.spec.ts
     related_plans:
       - doc/plans/2026-07-23-chat-response-annotations.md
       - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md

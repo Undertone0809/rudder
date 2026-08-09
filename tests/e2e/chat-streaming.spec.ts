@@ -5,7 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB, E2E_DATABASE_URL, E2E_ROOT } from "./support/e2e-env";
+import {
+  E2E_BIN_DIR,
+  E2E_CODEX_APP_SERVER_STUB,
+  E2E_CODEX_STUB,
+  E2E_DATABASE_URL,
+  E2E_ROOT,
+} from "./support/e2e-env";
 
 const E2E_CODEX_IGNORE_TERM_STUB = path.resolve(E2E_ROOT, "fixtures", "codex-ignore-term");
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -32,7 +38,11 @@ async function expectTranscriptBetweenUserAndAssistant(page: Page) {
   expect(transcriptBox!.y).toBeLessThan(assistantBox!.y);
 }
 
-async function createStreamingOrg(page: Page, name: string) {
+async function createStreamingOrg(
+  page: Page,
+  name: string,
+  options: { command?: string; agentRuntimeConfig?: Record<string, unknown> } = {},
+) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
@@ -42,7 +52,11 @@ async function createStreamingOrg(page: Page, name: string) {
   const organization = await orgRes.json();
   const chatAgent = await createE2EChatAgent(page.request, organization.id, {
     name: "Chat Agent",
-    command: E2E_CODEX_STUB,
+    agentRuntimeConfig: options.agentRuntimeConfig ?? {
+      model: "gpt-5.4",
+      command: options.command ?? E2E_CODEX_STUB,
+      chatAppServerEnabled: false,
+    },
   });
   return { ...organization, chatAgent };
 }
@@ -130,6 +144,60 @@ process.stdin.on("end", async () => {
     type: "turn.completed",
     result: finalText,
     usage: { input_tokens: 2, cached_input_tokens: 0, output_tokens: 2 },
+  });
+});
+`, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
+async function createStopCodexStub() {
+  await fs.mkdir(E2E_BIN_DIR, { recursive: true });
+  const stubPath = path.join(E2E_BIN_DIR, `codex-stop-${randomUUID()}`);
+  await fs.writeFile(stubPath, `#!/usr/bin/env node
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.on("SIGTERM", () => process.exit(0));
+process.stdin.on("end", async () => {
+  const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const partialBody = "Partial reply preserved before Stop.";
+  const finalBody = "Partial reply preserved before Stop. Final reply after the stop window.";
+  const finalText = finalBody + "\\n" + sentinel + JSON.stringify({
+    kind: "message",
+    body: finalBody,
+    structuredPayload: null,
+  });
+  const send = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+  send({ type: "thread.started", thread_id: "stop-e2e", model: "gpt-5.4" });
+  send({
+    type: "item.completed",
+    item: { id: "reason-1", type: "reasoning", text: "Inspecting current chat state" },
+  });
+  send({
+    type: "item.started",
+    item: { type: "tool_use", id: "tool-1", name: "command_execution", input: { command: "echo chat" } },
+  });
+  send({
+    type: "item.completed",
+    item: { type: "tool_result", tool_use_id: "tool-1", content: "TRANSCRIPT_TOOL_OUTPUT_E2E", status: "completed" },
+  });
+  send({
+    type: "item.completed",
+    item: { id: "partial-message", type: "agent_message", text: partialBody, delta: true },
+  });
+  send({
+    type: "item.completed",
+    item: { id: "partial-barrier", type: "reasoning", text: "Partial output is ready for Stop" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+  send({ type: "item.completed", item: { id: "final-message", type: "agent_message", text: finalText } });
+  send({
+    type: "turn.completed",
+    result: finalText,
+    usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
   });
 });
 `, "utf8");
@@ -461,6 +529,84 @@ test.describe("Chat streaming", () => {
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
   });
 
+  test("clears composer loading before slow message reconciliation completes", async ({ page }) => {
+    const organization = await createStreamingOrg(
+      page,
+      `Load-Chat-${Date.now()}`,
+      {
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_APP_SERVER_STUB,
+          chatAppServerEnabled: true,
+        },
+      },
+    );
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Final before refresh",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: {
+          body: "Seed the chat before testing final reconciliation.",
+        },
+      },
+    });
+    const chatPayload = await chatRes.json() as { id?: string; error?: string };
+    expect(chatRes.ok(), JSON.stringify(chatPayload)).toBe(true);
+    const chat = chatPayload as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    let streamStarted = false;
+    let refreshStarted = false;
+    let refreshCompleted = false;
+    let releaseMessagesRefresh!: () => void;
+    const messagesRefreshGate = new Promise<void>((resolve) => {
+      releaseMessagesRefresh = resolve;
+    });
+    await page.route(`**/api/chats/${chat.id}/messages**`, async (route) => {
+      const shouldHold = route.request().method() === "GET" && streamStarted && !refreshStarted;
+      if (shouldHold) {
+        refreshStarted = true;
+        await messagesRefreshGate;
+      }
+      await route.continue();
+      if (shouldHold) refreshCompleted = true;
+    });
+
+    const streamRequest = page.waitForRequest((request) => (
+      request.method() === "POST"
+      && new URL(request.url()).pathname === `/api/chats/${chat.id}/messages/stream`
+    ));
+    const editor = page.locator(".rudder-mdxeditor-content").first();
+    await expect(editor).toBeVisible({ timeout: 15_000 });
+    await editor.fill("Complete fragmented commentary");
+    await page.getByRole("button", { name: "Send" }).click();
+    await streamRequest;
+    streamStarted = true;
+
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "Fragmented commentary completed.",
+      { timeout: 15_000 },
+    );
+    await expect.poll(() => refreshStarted, { timeout: 15_000 }).toBe(true);
+    expect(refreshCompleted).toBe(false);
+
+    const sendButton = page.getByRole("button", { name: "Send" });
+    const composerSurface = page.locator(".chat-composer").first();
+    await expect(sendButton).toBeVisible({ timeout: 15_000 });
+    await expect(sendButton).not.toHaveAttribute("aria-busy", "true");
+    await expect(composerSurface).not.toHaveClass(/chat-composer--streaming/);
+
+    releaseMessagesRefresh();
+    await expect.poll(() => refreshCompleted, { timeout: 15_000 }).toBe(true);
+  });
+
   test("completes and reloads when tool output contains NUL characters", async ({ page }) => {
     const stubPath = await createNulTranscriptCodexStub();
     const orgRes = await page.request.post("/api/orgs", {
@@ -775,7 +921,8 @@ test.describe("Chat streaming", () => {
   });
 
   test("stops generation and keeps the partial assistant output", async ({ page }) => {
-    const organization = await createStreamingOrg(page, `Stp-Chat-${Date.now()}`);
+    const stopStub = await createStopCodexStub();
+    const organization = await createStreamingOrg(page, `Stp-Chat-${Date.now()}`, { command: stopStub });
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -789,7 +936,11 @@ test.describe("Chat streaming", () => {
     await composer.fill("Stop this reply");
     await page.getByRole("button", { name: "Send" }).click();
 
-    await expect(page.getByText("Streaming reply", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => new URL(page.url()).pathname.split("/").pop() ?? "", { timeout: 15_000 }).not.toBe("chat");
+    const partialBody = "Partial reply preserved before Stop.";
+    const finalBody = "Partial reply preserved before Stop. Final reply after the stop window.";
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Partial output is ready for Stop", { exact: false })).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Stop streaming" }).click();
 
     await expect(page.getByText("Response stopped")).toBeVisible({ timeout: 15_000 });
@@ -797,7 +948,6 @@ test.describe("Chat streaming", () => {
     await page.waitForTimeout(800);
     await page.reload();
 
-    await expect(page.getByText("Streaming reply", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expectTranscriptBetweenUserAndAssistant(page);
     const transcriptToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
@@ -805,6 +955,8 @@ test.describe("Chat streaming", () => {
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText(partialBody, { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(finalBody, { exact: false })).toHaveCount(0);
     await expect(transcriptItem.locator('button[aria-label^="Expand tool activity"]')).toHaveCount(0);
     await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("TRANSCRIPT_TOOL_OUTPUT_E2E", { exact: false })).toHaveCount(0);

@@ -925,14 +925,23 @@ copying context into the composer or losing the relationship to its source.
     acknowledgement. A network, upload, runtime-admission, or server validation
     failure retains body, ordinary attachments, annotations, comments, and
     annotation files for correction or retry.
-13. The assistant prompt receives annotations as an ordered, bounded
+13. An annotated feedback turn opened from an Agent Run Side Panel uses the
+    same runtime stream control as ordinary Chat. While the reply is active,
+    the composer action becomes Stop; the client submits a control action fenced
+    to the observed generation, attempt, control version, and rendered-body
+    checkpoint. It stages events until the server accepts or rejects the
+    cutoff, suppresses later visible bytes after acceptance, and polls the
+    conversation until terminal state or an explicit indeterminate outcome.
+    Refresh or target changes must not move the action to a newer generation or
+    admit late output into the stopped body.
+14. The assistant prompt receives annotations as an ordered, bounded
     user-authored quote section. Selected text is explicitly untrusted quoted
     context, not a system/developer instruction. Operator comments retain their
     user origin, and annotation attachment metadata preserves which files
     belong to which quote. Process text remains Run evidence under
     `RUN.RESULT.001`; prompt projection does not turn it into assistant final
     body.
-14. After Send, the user message renders a read-only count chip above the
+15. After Send, the user message renders a read-only count chip above the
    message. Each card uses the same distinct `Selected excerpt` quote block and
    optional `Your comment` section as the draft list, and shows
    annotation-owned files without edit/delete controls or duplicate generic
@@ -940,14 +949,14 @@ copying context into the composer or losing the relationship to its source.
    variant carrying the annotation semantic snapshots unchanged while
    remapping attachment ids to the new user message; retry, queued delivery,
    and Steer reuse the same evidence.
-15. Expanding historical annotations temporarily restores their numbered source
+16. Expanding historical annotations temporarily restores their numbered source
     markers. Selecting a card item reveals eligible collapsed Process details,
     scrolls to the source, and briefly highlights it. If the immutable snapshot
     remains readable but its source cannot be loaded or verified, the card says
     it cannot be located and does not fabricate a marker. Selecting a
     workspace- or local-file annotation opens or focuses its matching Side
     Panel file target before attempting source location.
-16. Fork copies annotation snapshots with copied user messages, remaps source
+17. Fork copies annotation snapshots with copied user messages, remaps source
     message ids to the child copies, and creates child-owned annotation
     attachment rows. Side Chat validates the owning completed assistant anchor
     and uses the exact selected snapshot in its preview and first user message.
@@ -967,6 +976,7 @@ copying context into the composer or losing the relationship to its source.
 | Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
 | Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
 | Queue or Steer | Active generation; valid annotated follow-up/control message | Preserve annotations/files through materialization and exactly one visible user message | Lose evidence, expose staged ids, or duplicate a Steer message | Queue/Steer service and E2E tests |
+| Run annotation feedback Stop | Annotated feedback turn is streaming from an Agent Run Side Panel | Fence Stop to the observed generation/attempt/control checkpoint, freeze the accepted visible prefix, suppress late events, and wait for terminal readback | Stop a newer target, admit staged/late output after acceptance, or report terminal completion without evidence | Side Panel UI and Run Transcript Detail E2E tests |
 | Historical edit/retry | Sent annotated user message | Carry immutable annotations and remapped attachments into the new turn variant/retry | Mutate the old snapshot or silently drop a file | Service, UI, and E2E tests |
 | Fork | Copied range includes source and owning user message | Remap source-message and attachment ids to child-owned copies | Retain foreign mutable attachment ownership or claim copied Run/output ownership | Fork service and E2E tests |
 | Side Chat | Exact selection belongs to the validated completed assistant anchor | Stage client-only; persist once on first Send with exact quote/files | Mutate the parent draft or create a Side Chat merely by selecting | Side Chat service, UI, and E2E tests |
@@ -1075,6 +1085,16 @@ copying context into the composer or losing the relationship to its source.
      one hidden Side Chat with exact quote, comment/file, and validated lineage.
    - Visible output: selected-answer preview and normal Side Chat response.
    - Evidence: Side Chat service and E2E tests.
+5. Stop an annotated Agent Run feedback turn:
+   - Trigger: annotate a terminal Run transcript, open the Run feedback Side
+     Panel, Send, and Stop while the assistant reply is streaming.
+   - Expected state/action: the Stop request carries the current generation
+     fence and rendered-body checkpoint; the visible prefix freezes only after
+     server acceptance, late events remain hidden, and the panel waits for
+     terminal queue readback without changing the feedback target.
+   - Visible output: the stopped/indeterminate state is explicit, and reload
+     does not append the late reply to the stopped body.
+   - Evidence: RunFeedbackChatPanel UI tests and Run Transcript Detail E2E.
 
 ## Invariants / Non-Goals
 
@@ -1151,6 +1171,7 @@ Related code:
 - `ui/src/components/chat/SelectionAnnotationToolbar.tsx`
 - `ui/src/components/MarkdownBody.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
+- `ui/src/components/side-panel/RunFeedbackChatPanel.tsx`
 - `ui/src/lib/chat-draft-storage.ts`
 - `ui/src/lib/chat-response-annotation-selection.ts`
 - `ui/src/lib/chat-response-annotations.ts`
@@ -1174,7 +1195,9 @@ Related tests:
 - `ui/src/lib/chat-response-annotation-selection.test.ts`
 - `ui/src/lib/chat-response-annotations.test.ts`
 - `ui/src/pages/Chat.messages.test.tsx`
+- `ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx`
 - `tests/e2e/chat-response-annotations.spec.ts`
+- `tests/e2e/run-transcript-detail.spec.ts`
 
 Known gaps:
 
@@ -3393,10 +3416,7 @@ Why:
   grouped row is still the same Messenger item for navigation, unread state,
   pin ordering, and attention semantics.
 - Operators must be able to remove one grouped Chat, Issue, or Saved View
-  without changing any sibling member or the owning object. Removing the
-  final membership deletes the now-empty custom group; a directly created
-  group that has never had a membership remains available until explicitly
-  deleted.
+  without dismantling the group or changing any sibling member.
 
 Product model:
 
@@ -3424,9 +3444,6 @@ Product model:
 - A Messenger member can belong to at most one custom group per operator.
   Moving a member into a group removes its previous custom group membership for
   that operator.
-- Removing the final membership from a custom group deletes that now-empty
-  group in the same placement transaction. A directly created empty group
-  with no removed membership is not implicitly deleted.
 - Group membership is keyed by the stable Messenger directory-item key, not by
   chat-only identity. Existing members use thread keys and Saved Views use
   `saved-view:<id>`. Supported members include chat rows such as `chat:<id>`, aggregate
@@ -3494,8 +3511,7 @@ Flow:
 11. Every grouped Chat, Issue, and Saved View row exposes `Move out of group`
     from its `Move to group` menu. The action removes only that selected
     member's operator-scoped membership, returns it to the loose directory,
-    and leaves all sibling members intact. If that was the final membership,
-    the now-empty custom group is deleted atomically. It does not delete or
+    and leaves the group plus all sibling members intact. It does not delete or
     mutate the owning Chat, Issue, or Saved View. A loose member can then be
     reordered, moved into an existing group, or merged with another eligible
     loose Chat or Issue through the same pointer and keyboard placement model.
@@ -3544,10 +3560,8 @@ Invariants:
   loose Messenger directory. Thread-backed items retain existing read/unread
   and attention state; Saved Views retain their non-thread identity.
 - `Move out of group` is a per-member operation for grouped Chat, Issue, and
-  Saved View rows. It must not remove sibling memberships or delete the
-  selected owning-domain object. Moving out the final membership deletes only
-  the now-empty custom group; moving out a non-final membership leaves that
-  group intact.
+  Saved View rows. It must not delete the custom group, remove sibling
+  memberships, or delete the selected owning-domain object.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
   View rows preserve their Saved View route, target kind, title, and manual
   order, but must not inherit unread badges, attention state, mark-read actions,

@@ -18,16 +18,31 @@ import {
   reconcilePendingMigrationHistory,
   validatePostMigrationInvariants,
 } from "./client.js";
-import { createLocalPostgresInstance } from "./local-postgres-provider.js";
 
-type LocalPostgresInstance = {
+type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 };
 
+type EmbeddedPostgresCtor = new (opts: {
+  databaseDir: string;
+  user: string;
+  password: string;
+  port: number;
+  persistent: boolean;
+  initdbFlags?: string[];
+  onLog?: (message: unknown) => void;
+  onError?: (message: unknown) => void;
+}) => EmbeddedPostgresInstance;
+
 const tempPaths: string[] = [];
-const runningInstances: LocalPostgresInstance[] = [];
+const runningInstances: EmbeddedPostgresInstance[] = [];
+
+async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
+  const mod = await import("embedded-postgres");
+  return mod.default as EmbeddedPostgresCtor;
+}
 const migrationTestTimeout = (timeoutMs: number): number =>
   process.platform === "win32" ? timeoutMs * 4 : timeoutMs;
 
@@ -59,7 +74,8 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-db-client-"));
   tempPaths.push(dataDir);
   const port = await getAvailablePort();
-  const selection = await createLocalPostgresInstance({
+  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const instance = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "rudder",
     password,
@@ -69,7 +85,6 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
     onLog: () => {},
     onError: () => {},
   });
-  const instance = selection.instance;
   await instance.initialise();
   await instance.start();
   runningInstances.push(instance);

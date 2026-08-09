@@ -33,11 +33,6 @@ vi.mock("./InlineEntitySelector", () => ({
     onChange: (id: string) => void;
   }) => <button type="button" aria-label={ariaLabel} onClick={() => onChange(options[0]?.id ?? "")}>{options.find((option) => option.id === value)?.label ?? "No assignee"}</button>,
 }));
-vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
-    <textarea aria-label="Context" value={value} onChange={(event) => onChange(event.target.value)} />
-  ),
-}));
 vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn() } }));
 vi.mock("../api/goals", () => ({ goalsApi: { previewStart: vi.fn(), start: vi.fn(), create: vi.fn(), update: vi.fn() } }));
 

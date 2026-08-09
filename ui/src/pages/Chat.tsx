@@ -1469,9 +1469,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               return;
             }
             if (event.type === "final") {
+              const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, conversation.id);
+              if (stopRecoveryStreamKeysRef.current[conversation.id] === streamKey) {
+                if (pendingStop?.frozenDraft?.streamKey === streamKey) {
+                  stopRecoveryRetrier.retryNow(pendingStop);
+                }
+                return;
+              }
               keepProcessOpenForMessages(event.messages);
               upsertMessages(conversation.id, event.messages);
-              setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
+              if (!pendingStop) {
+                setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
+                setChatSendInFlight(streamScopeKey, false);
+              }
             }
           },
         });
@@ -1621,6 +1631,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             upsertMessages(chatId, event.messages);
             if (!pendingStop) {
               setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
+              setChatSendInFlight(streamScopeKey, false);
             }
           } }, });
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }

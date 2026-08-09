@@ -44,7 +44,6 @@ import {
   execute as hermesGatewayExecute,
   testEnvironment as hermesGatewayTestEnvironment,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
-import { parseHermesGatewayStdoutLine } from "@rudderhq/agent-runtime-hermes-gateway/ui";
 import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
@@ -214,7 +213,6 @@ const hermesGatewayAdapter: ServerAgentRuntimeModule = {
   type: "hermes_gateway",
   execute: hermesGatewayExecute,
   testEnvironment: hermesGatewayTestEnvironment,
-  parseStdoutLine: parseHermesGatewayStdoutLine,
   models: hermesGatewayModels,
   supportsLocalAgentJwt: false,
   agentConfigurationDoc: hermesGatewayAgentConfigurationDoc,
