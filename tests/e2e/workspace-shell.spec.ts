@@ -696,8 +696,8 @@ test.describe("Workspace shell", () => {
     const mainContent = page.locator("#main-content");
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/[^/]+/resources$`));
     await expect(page.getByRole("tab", { name: "Context" })).toBeVisible();
-    await expect(mainContent.getByText("Project Context", { exact: true })).toHaveCount(1);
-    await expect(mainContent.getByRole("button", { name: "Add resources" })).toBeVisible();
+    await expect(mainContent.getByText("Project Sources", { exact: true })).toHaveCount(1);
+    await expect(mainContent.getByRole("button", { name: "Add sources" })).toBeVisible();
     await expect(mainContent.getByText("Rudder repo", { exact: true })).toBeVisible();
     await expect(mainContent.getByText("Attached context", { exact: true })).toHaveCount(0);
     await expect(mainContent.getByText("Shared context visible from this project.", { exact: true })).toHaveCount(0);
@@ -740,7 +740,7 @@ test.describe("Workspace shell", () => {
       && response.url().includes(`/api/projects/${project.id}/resources?orgId=${organization.id}`)
       && response.ok(),
     );
-    const addResourcesButton = mainContent.getByRole("button", { name: "Add resources" });
+    const addResourcesButton = mainContent.getByRole("button", { name: "Add sources" });
     const createExternalResourceAction = page.getByRole("button", { name: /Create external resource/ });
     await expect(async () => {
       await addResourcesButton.click({ force: true });
@@ -872,8 +872,8 @@ test.describe("Workspace shell", () => {
     await resourcesFolder.hover();
     await page.getByTestId(`org-workspaces-project-resources-more-${project.id}`).click();
     treeMenu = page.getByRole("menu");
-    await expect(treeMenu.getByRole("menuitem", { name: "Add resources" })).toBeVisible();
-    await treeMenu.getByRole("menuitem", { name: "Add resources" }).click();
+    await expect(treeMenu.getByRole("menuitem", { name: "Add sources" })).toBeVisible();
+    await treeMenu.getByRole("menuitem", { name: "Add sources" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/projects/${project.urlKey}/resources$`));
 
     await gotoOrganizationPath(page, organization, `/library?resource=${attachment.id}`);

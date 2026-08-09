@@ -16,13 +16,20 @@ const mockState = vi.hoisted(() => ({
   createProject: vi.fn(),
   invalidateQueries: vi.fn(),
   navigate: vi.fn(),
+  pickPath: vi.fn(),
+  organizationResources: [] as Array<Record<string, unknown>>,
+  libraryEntries: [] as Array<Record<string, unknown>>,
 }));
 const markdownEditorState = vi.hoisted(() => ({
   engine: null as string | null,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: [] }),
+  useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
+    if (queryKey[2] === "resources") return { data: mockState.organizationResources };
+    if (queryKey[2] === "workspace-mention-files") return { data: { entries: mockState.libraryEntries } };
+    return { data: [] };
+  },
   useQueryClient: () => ({
     invalidateQueries: mockState.invalidateQueries,
   }),
@@ -71,6 +78,12 @@ vi.mock("../api/goals", () => ({
   },
 }));
 
+vi.mock("../api/instanceSettings", () => ({
+  instanceSettingsApi: {
+    pickPath: (input: Record<string, unknown>) => mockState.pickPath(input),
+  },
+}));
+
 vi.mock("../api/orgs", () => ({
   organizationsApi: {
     listResources: vi.fn(),
@@ -103,10 +116,13 @@ vi.mock("./MarkdownEditor", () => ({
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
-  DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => (
-    <div className={className} data-slot="dialog-content">
+  DialogContent: ({ children, className, showCloseButton: _showCloseButton, ...props }: { children: ReactNode; className?: string; showCloseButton?: boolean; [key: string]: unknown }) => (
+    <div className={className} data-slot="dialog-content" {...props}>
       {children}
     </div>
+  ),
+  DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <h2 className={className}>{children}</h2>
   ),
 }));
 
@@ -175,11 +191,15 @@ beforeEach(() => {
   mockState.createProject.mockReset();
   mockState.invalidateQueries.mockReset();
   mockState.navigate.mockReset();
+  mockState.pickPath.mockReset();
+  mockState.organizationResources = [];
+  mockState.libraryEntries = [];
   mockState.createProject.mockResolvedValue({
     id: "project-created-1",
     name: "New project",
     orgId: "org-1",
   });
+  mockState.pickPath.mockResolvedValue({ path: null, cancelled: true });
 });
 
 afterEach(() => {
@@ -201,33 +221,30 @@ describe("NewProjectDialog", () => {
     expect(projectIcon?.classList.contains("h-9")).toBe(true);
   });
 
-  it("uses one add resources entry point in Project Context", () => {
+  it("uses one Add sources entry point under Project Sources", () => {
     const container = renderDialog();
     const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")].map((button) => button.textContent ?? "");
 
-    expect(buttons.filter((text) => text.includes("Add resources"))).toHaveLength(1);
-    expect(buttons.some((text) => text.includes("Attach resource"))).toBe(false);
-    expect(buttons.some((text) => text.includes("New resource"))).toBe(false);
+    expect(container.textContent).toContain("Project Sources");
+    expect(container.textContent).not.toContain("Project Context");
+    expect(buttons.filter((text) => text.includes("Add sources"))).toHaveLength(1);
+    expect(buttons.some((text) => text.includes("Add resources"))).toBe(false);
   });
 
-  it("keeps the add resources list scrollable without clipping against the project dialog", () => {
+  it("opens a low-density source type dialog before showing source details", () => {
     const container = renderDialog();
-    const scrollRegion = container.querySelector('[data-testid="new-project-add-resources-popover-scroll"]');
-    const popoverContent = scrollRegion?.parentElement;
-    const createExternalResourceButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("Create external resource"));
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
 
-    expect(popoverContent?.getAttribute("data-disable-portal")).toBe("true");
-    expect(popoverContent?.className).toContain("overflow-hidden");
-    expect(popoverContent?.className).toContain("z-[60]");
-    expect(popoverContent?.className).toContain("max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))]");
-    expect(popoverContent?.className).toContain("w-[min(20rem,calc(100vw-2rem))]");
-    expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
-    expect(scrollRegion?.className).toContain("flex-1");
-    expect(scrollRegion?.className).toContain("overflow-y-auto");
-    expect(scrollRegion?.className).toContain("overscroll-contain");
-    expect(popoverContent?.firstElementChild).toBe(createExternalResourceButton);
-    expect(scrollRegion?.contains(createExternalResourceButton ?? null)).toBe(false);
+    act(() => trigger!.click());
+
+    const sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]');
+    expect(sourceDialog).not.toBeNull();
+    expect(sourceDialog?.textContent).toContain("Add from library");
+    expect(sourceDialog?.textContent).toContain("Select from local");
+    expect(sourceDialog?.textContent).toContain("Add from URL");
+    expect(sourceDialog?.textContent).not.toContain("Search Library");
+    expect(sourceDialog?.textContent).not.toContain("Recent sources");
   });
 
   it("keeps the new project footer visible while resource drafts scroll inside the dialog", () => {
@@ -246,20 +263,155 @@ describe("NewProjectDialog", () => {
     expect(createButton?.parentElement?.className).toContain("shrink-0");
   });
 
-  it("keeps resource draft project settings to a single note field", () => {
+  it("keeps Library search inside its own source step", () => {
+    mockState.libraryEntries = [
+      {
+        name: "brief.md",
+        displayLabel: "Project brief",
+        path: "projects/rudder/brief.md",
+        isDirectory: false,
+      },
+    ];
     const container = renderDialog();
-    const createExternalResourceButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("Create external resource"));
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
 
-    expect(createExternalResourceButton).not.toBeUndefined();
+    act(() => trigger!.click());
+    let sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const libraryButton = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add from library"));
+    act(() => libraryButton!.click());
+    sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
 
-    act(() => {
-      createExternalResourceButton!.click();
+    expect(sourceDialog.querySelector("[data-testid='new-project-library-sources-scroll']")).not.toBeNull();
+    expect(sourceDialog.querySelector("input[placeholder='Search Library or paste relative path']")).not.toBeNull();
+    expect(sourceDialog.textContent).toContain("Project brief");
+    expect(sourceDialog.textContent).not.toContain("Recent sources");
+    expect(sourceDialog.querySelector("input[type='url']")).toBeNull();
+  });
+
+  it("reuses recent local sources and keeps direct file selection available", async () => {
+    mockState.organizationResources = [
+      {
+        id: "resource-old",
+        orgId: "org-1",
+        name: "Older local source",
+        kind: "directory",
+        sourceType: "external",
+        locator: "/Users/zeeland/projects/older",
+        description: null,
+        metadata: null,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+      {
+        id: "resource-new",
+        orgId: "org-1",
+        name: "Rudder source repository",
+        kind: "directory",
+        sourceType: "external",
+        locator: "/Users/zeeland/projects/rudder-oss",
+        description: null,
+        metadata: null,
+        createdAt: "2026-08-08T00:00:00.000Z",
+        updatedAt: "2026-08-08T00:00:00.000Z",
+      },
+      {
+        id: "resource-url",
+        orgId: "org-1",
+        name: "Remote docs",
+        kind: "url",
+        sourceType: "external",
+        locator: "https://example.com/docs",
+        description: null,
+        metadata: null,
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      },
+    ];
+    const container = renderDialog();
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
+
+    act(() => trigger!.click());
+    const sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const localButton = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Select from local"));
+    act(() => localButton!.click());
+
+    expect(sourceDialog.textContent).toContain("Recent sources");
+    expect(sourceDialog.textContent).toContain("Choose file");
+    expect(sourceDialog.textContent).toContain("Rudder source repository");
+    expect(sourceDialog.textContent).not.toContain("Remote docs");
+    expect(sourceDialog.textContent?.indexOf("Rudder source repository"))
+      .toBeLessThan(sourceDialog.textContent?.indexOf("Older local source") ?? 0);
+
+    const checkbox = sourceDialog.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    await act(async () => {
+      checkbox!.click();
+    });
+    const addSelected = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Add sources");
+    expect(addSelected?.disabled).toBe(false);
+    act(() => addSelected!.click());
+
+    expect(container.textContent).toContain("Rudder source repository");
+    expect(container.textContent).toContain("1 source queued");
+    expect(container.querySelector<HTMLInputElement>("input[placeholder='Optional guidance specific to this project']")).not.toBeNull();
+  });
+
+  it("adds a local file returned by the native picker", async () => {
+    mockState.pickPath.mockResolvedValue({
+      path: "/Users/zeeland/Documents/source-notes.md",
+      cancelled: false,
+    });
+    const container = renderDialog();
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
+
+    act(() => trigger!.click());
+    let sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const localButton = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Select from local"));
+    act(() => localButton!.click());
+    sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const chooseFile = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Choose file"));
+
+    await act(async () => {
+      chooseFile!.click();
+      await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Project note");
-    expect(container.textContent).not.toContain("Project role");
-    expect(container.querySelector<HTMLInputElement>("input[placeholder='Optional guidance specific to this project']")).not.toBeNull();
+    expect(mockState.pickPath).toHaveBeenCalledWith({ selectionType: "file" });
+    expect(container.textContent).toContain("source-notes.md");
+    expect(container.textContent).toContain("1 source queued");
+  });
+
+  it("adds a valid URL without showing unrelated source choices", async () => {
+    const container = renderDialog();
+    const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add sources"));
+
+    act(() => trigger!.click());
+    let sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const urlButton = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Add from URL"));
+    act(() => urlButton!.click());
+    sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+
+    expect(sourceDialog.textContent).not.toContain("Recent sources");
+    expect(sourceDialog.textContent).not.toContain("Search Library");
+    const urlInput = sourceDialog.querySelector<HTMLInputElement>('input[type="url"]')!;
+    await act(async () => {
+      setInputValue(urlInput, "https://example.com/reference");
+    });
+    const addSource = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Add source");
+    act(() => addSource!.click());
+
+    expect(container.textContent).toContain("reference");
+    expect(container.textContent).toContain("1 source queued");
   });
 
   it("defaults new projects to in progress", () => {
