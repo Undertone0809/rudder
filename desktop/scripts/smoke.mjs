@@ -3801,7 +3801,9 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.ok(sideTabCountBeforeMove > 1, "Browser move smoke requires sibling Side Panel tabs");
       const browserTransferMarker = randomUUID();
       const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        const webview = Array.from(document.querySelectorAll(
+          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+        )).find((candidate) => typeof candidate.getURL === "function" && candidate.getURL() === expectedUrl);
         if (!webview
           || typeof webview.getWebContentsId !== "function"
           || typeof webview.executeJavaScript !== "function") {
