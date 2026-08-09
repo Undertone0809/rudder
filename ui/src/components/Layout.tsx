@@ -818,23 +818,15 @@ function DesktopSidePanelSlot({
         style={{ width: resizerVisible ? SIDE_PANEL_RESIZER_WIDTH : 0 }}
         onPointerDown={startSidePanelResize}
         onMouseDown={startSidePanelResize}
-        role={resizerVisible ? "separator" : undefined}
-        aria-orientation="vertical"
+        role={resizerVisible ? "separator" : undefined} aria-orientation="vertical"
         aria-label={resizerVisible ? "Resize Side Panel" : undefined}
       >
         <span
           data-testid="side-panel-resizer-hit-target"
           className="absolute inset-y-0 right-0"
-          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
-          aria-hidden="true"
-          onPointerDown={(event) => {
-            event.stopPropagation();
-            startSidePanelResize(event);
-          }}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            startSidePanelResize(event);
-          }}
+          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }} aria-hidden="true"
+          onPointerDown={(event) => { event.stopPropagation(); startSidePanelResize(event); }}
+          onMouseDown={(event) => { event.stopPropagation(); startSidePanelResize(event); }}
         />
         <div className="workspace-column-resizer-line" />
       </div>
