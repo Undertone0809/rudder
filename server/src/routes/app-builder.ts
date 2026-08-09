@@ -25,8 +25,10 @@ import {
 const BUILD_ACTIVITY_ACTIONS: Record<AppBuilderBuildStatus, string> = {
   preparing: "app_builder.build_preparing",
   building: "app_builder.build_started",
+  verified_source_ready: "app_builder.source_verified",
   verifying: "app_builder.build_verifying",
   ready: "app_builder.build_ready",
+  launch_failed: "app_builder.launch_failed",
   failed: "app_builder.build_failed",
 };
 
@@ -65,6 +67,27 @@ export function appBuilderRoutes(db: Db) {
     if (!orgId) return null;
     assertCompanyAccess(req, orgId);
     return apps.getById(orgId, appId);
+  }
+
+  function assertAuthenticatedBuildUpdate(req: Request, body: UpdateAppBuilderBuild) {
+    if (body.status === "verified_source_ready" && req.actor.type !== "agent") {
+      throw forbidden("Only the authenticated App Builder run can report verified source");
+    }
+    if (body.status === "building" && req.actor.type !== "agent") {
+      throw forbidden("Only an authenticated App Builder run can start a build");
+    }
+    if (
+      req.actor.type === "agent"
+      && (!body.runId || !req.actor.runId || body.runId !== req.actor.runId)
+    ) {
+      throw forbidden("Agent App Builder updates require the authenticated run ID");
+    }
+    if (
+      req.actor.type === "agent"
+      && !["building", "verified_source_ready", "failed"].includes(body.status)
+    ) {
+      throw forbidden("Agents cannot control the Desktop App Builder lifecycle");
+    }
   }
 
   router.get("/orgs/:orgId/app-builder", async (req, res) => {
@@ -159,14 +182,7 @@ export function appBuilderRoutes(db: Db) {
         return;
       }
       const body = req.body as UpdateAppBuilderBuild;
-      if (
-        req.actor.type === "agent"
-        && (!body.runId || !req.actor.runId || body.runId !== req.actor.runId)
-      ) {
-        throw forbidden(
-          "Agent App Builder updates require the authenticated run ID",
-        );
-      }
+      assertAuthenticatedBuildUpdate(req, body);
       const updated = await apps.updateBuild(app.orgId, app.id, body);
       const actor = getActorInfo(req);
       await logActivity(db, {
@@ -226,14 +242,7 @@ export function appBuilderRoutes(db: Db) {
         return;
       }
       const body = req.body as UpdateAppBuilderBuild;
-      if (
-        req.actor.type === "agent" &&
-        (!body.runId || !req.actor.runId || body.runId !== req.actor.runId)
-      ) {
-        throw forbidden(
-          "Agent App Builder updates require the authenticated run ID",
-        );
-      }
+      assertAuthenticatedBuildUpdate(req, body);
       const existing = await apps.getForProject(project.orgId, project.id);
       if (!existing) {
         res.status(404).json({ error: "App Builder app not found" });

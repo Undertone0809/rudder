@@ -302,7 +302,7 @@ describe("App Builder service", () => {
       scaffoldVersion: "1",
     });
 
-    const [wrongProjectRun, wrongChatRun, validRun] = await db
+    const [wrongProjectRun, wrongChatRun, staleSameScopeRun, validRun] = await db
       .insert(heartbeatRuns)
       .values([
         {
@@ -326,19 +326,47 @@ describe("App Builder service", () => {
           chatConversationId: conversation.id,
           contextSnapshot: { projectId },
         },
+        {
+          orgId,
+          agentId,
+          status: "succeeded",
+          chatConversationId: conversation.id,
+          contextSnapshot: { projectId },
+        },
       ])
       .returning();
 
     await expect(
       service.updateBuild(orgId, app.id, {
-        status: "failed",
-        runId: wrongProjectRun.id,
+        status: "building",
+        expectedStatus: "preparing",
+        runId: validRun.id,
         runKind: "build",
+      }),
+    ).resolves.toMatchObject({
+      buildStatus: "building",
+      latestBuildRunId: validRun.id,
+    });
+    await expect(
+      service.updateBuild(orgId, app.id, {
+        status: "verified_source_ready",
+        expectedStatus: "building",
+        runId: wrongProjectRun.id,
+        runKind: "verification",
       }),
     ).rejects.toMatchObject({ status: 422 });
     await expect(
       service.updateBuild(orgId, app.id, {
-        status: "failed",
+        status: "verified_source_ready",
+        expectedStatus: "building",
+        runId: staleSameScopeRun.id,
+        runKind: "verification",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      service.updateBuild(orgId, app.id, {
+        status: "verified_source_ready",
+        expectedStatus: "building",
         runId: wrongChatRun.id,
         runKind: "verification",
       }),
@@ -346,15 +374,33 @@ describe("App Builder service", () => {
 
     await expect(
       service.updateBuild(orgId, app.id, {
-        status: "ready",
+        status: "verified_source_ready",
+        expectedStatus: "building",
         runId: validRun.id,
         runKind: "verification",
       }),
     ).resolves.toMatchObject({
-      buildStatus: "ready",
-      latestBuildRunId: null,
+      buildStatus: "verified_source_ready",
+      latestBuildRunId: validRun.id,
       latestVerificationRunId: validRun.id,
     });
+
+    await expect(service.updateBuild(orgId, app.id, {
+      status: "verifying",
+      expectedStatus: "verified_source_ready",
+      runKind: "verification",
+    })).resolves.toMatchObject({ buildStatus: "verifying" });
+    await expect(service.updateBuild(orgId, app.id, {
+      status: "ready",
+      expectedStatus: "verifying",
+      runKind: "verification",
+    })).resolves.toMatchObject({ buildStatus: "ready" });
+    await expect(service.updateBuild(orgId, app.id, {
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runId: validRun.id,
+      runKind: "verification",
+    })).rejects.toMatchObject({ status: 409 });
   });
 
   it("keeps local binding identities unique within a Desktop installation", async () => {

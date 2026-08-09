@@ -54,6 +54,9 @@ test.describe("Apps workspace", () => {
     await expect(page.getByRole("heading", {
       name: "Turn ideas into applications",
     })).toBeVisible();
+    await expect(page.getByText(
+      "creates and verifies the source, then starts the finished App locally and opens it here.",
+    )).toBeVisible();
     await expect(page.getByText("Registered on this device")).toHaveCount(0);
     await expect(page.getByText("Your registered Apps will appear in the left sidebar."))
       .toHaveCount(0);
@@ -634,6 +637,230 @@ test.describe("Apps workspace", () => {
     await selectOrganization(page, secondOrganization.id);
     await page.goto(`${E2E_BASE_URL}/${secondOrganization.issuePrefix}/apps`);
     await expect(page.getByText("Private CRM")).toHaveCount(0);
+  });
+
+  test("automatically opens an App after the Agent reports verified source", async ({
+    page,
+  }, testInfo) => {
+    const organization = await createOrganization(page.request, "App-Auto-Open");
+    await setSitesEnabled(page.request, true);
+    const createdResponse = await page.request.post(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
+      {
+        data: {
+          name: "Launch-ready CRM",
+          sourceRoot: "apps/launch-ready-crm",
+          scaffoldVersion: "1",
+        },
+      },
+    );
+    expect(createdResponse.status(), await createdResponse.text()).toBe(201);
+    const created = await createdResponse.json() as Record<string, unknown> & { id: string };
+    let buildStatus = "building";
+    let bound = false;
+    let listRequestCount = 0;
+
+    await page.route(
+      `**/api/orgs/${organization.id}/app-builder`,
+      async (route) => {
+        listRequestCount += 1;
+        const response = await route.fetch();
+        const apps = await response.json() as Array<Record<string, unknown>>;
+        await route.fulfill({
+          response,
+          json: apps.map((app) => app.id === created.id
+            ? {
+                ...app,
+                buildStatus,
+                desktopInstallationId: bound ? "desktop-e2e" : null,
+                appPublicId: bound ? "launch-ready-crm" : null,
+                localBindingId: bound ? "binding-launch-ready" : null,
+              }
+            : app),
+        });
+      },
+    );
+    await page.route(
+      `**/api/app-builder/${created.id}/build?orgId=*`,
+      async (route) => {
+        const body = route.request().postDataJSON() as { status: string };
+        buildStatus = body.status;
+        await route.fulfill({ json: { ...created, buildStatus } });
+      },
+    );
+    await page.route(
+      `**/api/app-builder/${created.id}/local-binding?orgId=*`,
+      async (route) => {
+        bound = true;
+        await route.fulfill({
+          json: {
+            ...created,
+            buildStatus,
+            desktopInstallationId: "desktop-e2e",
+            appPublicId: "launch-ready-crm",
+            localBindingId: "binding-launch-ready",
+          },
+        });
+      },
+    );
+    await page.addInitScript(() => {
+      const definitions: Array<Record<string, unknown>> = [];
+      const definition = {
+        id: "definition-launch-ready",
+        desktopInstallationId: "desktop-e2e",
+        appPublicId: "launch-ready-crm",
+        localBindingId: "binding-launch-ready",
+        title: "Launch-ready CRM",
+        executable: "node",
+        argv: ["runner.mjs"],
+        cwd: "/tmp/launch-ready-crm",
+        inheritedEnvNames: [],
+        readiness: { path: "/health", timeoutMs: 10_000 },
+        openPath: "/",
+        trustFingerprint: "trust-launch-ready",
+        approvedFingerprint: "trust-launch-ready",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          appBuilder: {
+            supported: true,
+            inspect: async () => ({ manifest: {} }),
+            ensurePreview: async () => {
+              definitions.splice(0, definitions.length, definition);
+              (window as typeof window & { __managedLaunchSteps?: string[] })
+                .__managedLaunchSteps = ["inspect", "ensure"];
+              return {
+                desktopInstallationId: "desktop-e2e",
+                definitionId: "definition-launch-ready",
+                appPublicId: "launch-ready-crm",
+                localBindingId: "binding-launch-ready",
+              };
+            },
+            startPreview: async () => {
+              (window as typeof window & { __managedLaunchSteps?: string[] })
+                .__managedLaunchSteps?.push("start");
+              return {
+                runtime: { status: "running", generation: "generation-launch-ready" },
+                target: {
+                  origin: "http://127.0.0.1:41741",
+                  openPath: "/",
+                  partition: "persist:launch-ready-crm",
+                },
+              };
+            },
+            stopPreview: async () => ({ status: "stopped", generation: null }),
+          },
+          localApps: {
+            supported: true,
+            list: async () => definitions,
+            delete: async () => undefined,
+            start: async () => ({ status: "running", generation: "generation-launch-ready" }),
+            status: async () => ({
+              status: "running",
+              generation: "generation-launch-ready",
+              origin: "http://127.0.0.1:41741",
+              openPath: "/",
+              partition: "persist:launch-ready-crm",
+            }),
+            attestedTarget: async () => ({
+              origin: "http://127.0.0.1:41741",
+              openPath: "/",
+              partition: "persist:launch-ready-crm",
+            }),
+          },
+        },
+      });
+    });
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+
+    await expect.poll(() => listRequestCount).toBeGreaterThan(0);
+    buildStatus = "verified_source_ready";
+    await expect.poll(() => buildStatus, { timeout: 15_000 }).toBe("ready");
+    await expect(page).toHaveURL(
+      new RegExp(`/[^/]+/apps/view/managed%3A${created.id}$`, "i"),
+      { timeout: 15_000 },
+    );
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __managedLaunchSteps?: string[] }).__managedLaunchSteps
+    ))).toEqual(["inspect", "ensure", "start"]);
+    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect(page.getByText("The App is open. Continue in Chat whenever you want to improve it."))
+      .toBeVisible();
+    await expect(page.getByTestId("apps-register-preview")).toHaveCount(0);
+    await page.screenshot({
+      path: `/tmp/rudder-app-builder-auto-open-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+  });
+
+  test("preserves recovery when automatic App startup fails", async ({ page }) => {
+    const organization = await createOrganization(page.request, "App-Auto-Failure");
+    await setSitesEnabled(page.request, true);
+    const createdResponse = await page.request.post(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
+      {
+        data: {
+          name: "Broken preview App",
+          sourceRoot: "apps/broken-preview-app",
+          scaffoldVersion: "1",
+        },
+      },
+    );
+    const created = await createdResponse.json() as Record<string, unknown> & { id: string };
+    let buildStatus = "building";
+    await page.route(`**/api/orgs/${organization.id}/app-builder`, async (route) => {
+      const response = await route.fetch();
+      const apps = await response.json() as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: apps.map((app) => app.id === created.id ? { ...app, buildStatus } : app),
+      });
+    });
+    await page.route(`**/api/app-builder/${created.id}/build?orgId=*`, async (route) => {
+      buildStatus = (route.request().postDataJSON() as { status: string }).status;
+      await route.fulfill({ json: { ...created, buildStatus } });
+    });
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          appBuilder: {
+            supported: true,
+            inspect: async () => ({ manifest: {} }),
+            ensurePreview: async () => ({
+              desktopInstallationId: "desktop-e2e",
+              definitionId: "definition-broken",
+              appPublicId: "broken-preview-app",
+              localBindingId: "binding-broken",
+            }),
+            startPreview: async () => {
+              throw new Error("Readiness check failed for /health");
+            },
+            stopPreview: async () => ({ status: "stopped", generation: null }),
+          },
+          localApps: {
+            supported: true,
+            list: async () => [],
+            delete: async () => undefined,
+          },
+        },
+      });
+    });
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+
+    buildStatus = "verified_source_ready";
+    await expect.poll(() => buildStatus, { timeout: 15_000 }).toBe("launch_failed");
+    await expect(page).toHaveURL(/\/[^/]+\/dashboard$/i);
+    await page.goto(
+      `${E2E_BASE_URL}/${organization.issuePrefix}/apps/view/managed%3A${created.id}`,
+    );
+    await expect(page.getByTestId("apps-retry-managed-app")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open source" })).toBeVisible();
   });
 
   test("keeps App Builder records organization-scoped", async ({ request }) => {

@@ -18,6 +18,12 @@ substitute a shell HTTP response for UI acceptance.
 8. Capture current screenshots of the useful final state.
 9. Materialize screenshots in Chat, Run, or Library evidence.
 
+Only after all required checks pass may the Agent report
+`verified_source_ready` for the originating App. That report is not a prose
+claim: it is a run-scoped handoff that causes Desktop to repeat its maintained
+checks, start the attested loopback process, and open the App for the user.
+Questions, partial results, and blockers must never emit the handoff.
+
 Close temporary run-owned tabs after verification. Never use the user's
 persistent app view as an Agent test fixture when that could mutate formal
 data.

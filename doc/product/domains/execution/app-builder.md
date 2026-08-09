@@ -20,6 +20,8 @@ related_code:
   - desktop/src/local-app-icon-discovery.ts
   - desktop/src/local-apps-runtime.ts
   - ui/src/pages/Apps.tsx
+  - ui/src/components/AppBuilderAutoLaunchCoordinator.tsx
+  - ui/src/lib/app-builder-launch.ts
   - ui/src/components/AppsContextSidebar.tsx
   - ui/src/pages/InstanceExperimentalSettings.tsx
   - ui/src/components/PrimaryRail.tsx
@@ -27,6 +29,7 @@ related_tests:
   - packages/shared/src/validators/app-builder.test.ts
   - server/src/__tests__/app-builder-service.test.ts
   - server/src/__tests__/app-builder-routes.test.ts
+  - server/src/__tests__/app-builder-status-script.test.ts
   - desktop/src/app-builder-controller.test.ts
   - desktop/src/app-builder-manifest.test.ts
   - desktop/src/app-builder-data.test.ts
@@ -35,6 +38,7 @@ related_tests:
   - desktop/src/local-app-framework.test.ts
   - desktop/src/local-app-icon-discovery.test.ts
   - ui/src/pages/InstanceExperimentalSettings.test.tsx
+  - ui/src/lib/app-builder-launch.test.ts
   - ui/src/components/PrimaryRail.test.tsx
   - tests/e2e/app-builder.spec.ts
   - desktop/scripts/smoke.mjs
@@ -102,8 +106,10 @@ non-authoritative.
 
 ### Actors / Objects / State
 
-- **Operator**: enables Sites, describes an App, approves its local definition,
-  opens it directly, and uses its More menu for infrequent management actions.
+- **Operator**: enables Sites, describes an App, receives the verified result
+  opened automatically, and uses Chat or the More menu for later improvements
+  and infrequent management actions. Manual Local Apps still require definition
+  review.
 - **App Builder Skill**: creates or improves a web product from the business
   brief and prepares its source for Rudder Apps discovery.
 - **App record**: organization-scoped identity, optional Chat, normalized
@@ -142,7 +148,8 @@ promotion, or production rollback UI.
     review.
 - Natural-language brief, selected organization, and active Agent.
 - Normalized organization-workspace-relative `apps/<slug>` source root.
-- Fixed scaffold revision and explicit local-execution disclosure.
+- Fixed scaffold revision and up-front disclosure that Rudder will build,
+  verify, start locally, and open the managed App when it is ready.
 
 ### Product Logic Flow
 
@@ -165,38 +172,52 @@ promotion, or production rollback UI.
    common local web projects can be loaded and used directly in Rudder.
 5. Sending a brief from Apps Home reserves one organization-scoped App record under a unique
    `apps/<slug>` root, starts an ordinary Chat with `$app-builder` and the
-   assigned source root in its first message, attaches the acknowledged Chat,
-   and navigates to that Chat. This flow neither creates nor requires a Project.
+   assigned App ID and source root in its first message, attaches the
+   acknowledged Chat, and navigates to that Chat. The composer discloses that
+   Rudder will build, verify, start locally, and open the App when ready. This
+   flow neither creates nor requires a Project.
 6. For new source, the Skill uses the maintained scaffold and implements the
    requested business workflow. For an existing local web project, it first
    inspects and preserves the framework, package manager, scripts, data
    boundary, and tests, then adds only the minimal launch/readiness configuration
    needed by Desktop discovery. If Chat cannot be acknowledged, a reserved App
    becomes failed rather than pretending that work started.
-7. **Register & preview** never fabricates missing managed source. Desktop validates
-   the assigned root and manifest, discloses the fixed install/check/start
-   behavior, and performs nothing if the operator cancels.
-8. After confirmation, Desktop installs the locked graph, runs the scaffold's
-   verification commands, starts the owned generation, waits for readiness,
-   and proves the loopback listener belongs to that generation. Only then may
-   the App become ready and receive an opaque local binding.
-9. Registered managed Apps and manually loaded local Apps appear together in
+7. The Skill reports `building` with the authenticated run ID when work begins.
+   It reports `verified_source_ready` only after development, debugging,
+   required review, rendered verification, persistence checks, and durable
+   evidence pass. The signal is tied to the originating App, Chat/source root,
+   organization, and authenticated run. A prose response ending, question,
+   blocker, cancellation, or partial result is never a completion signal.
+8. A globally mounted Desktop coordinator claims `verified_source_ready` with
+   compare-and-set semantics, validates the assigned source and manifest,
+   installs and checks the locked graph, starts the owned generation, waits for
+   readiness, and proves the loopback listener belongs to that generation.
+   Only then may the App become ready and receive an opaque local binding.
+   The coordinator opens that App directly and tells the operator that later
+   improvements can continue in the originating Chat. No second registration
+   button or blocking confirmation is required because the local execution
+   behavior was disclosed when the build request was submitted.
+9. If Desktop verification or startup fails, Rudder stops and removes only
+   newly owned runtime material, preserves source and App data, marks the App
+   `launch_failed`, and offers retry plus **Continue in Chat** recovery. It
+   never claims the App opened.
+10. Registered managed Apps and manually loaded local Apps appear together in
    the Apps navigation. Opening one creates or focuses a closable Apps header
    tab and directly opens its reviewed revision. Rudder reuses a running
    generation or automatically starts one, attests its listener, and renders
    the active webpage full-bleed through its isolated Desktop webview.
    Multiple Apps may remain tabbed and running.
-10. Closing or switching an Apps tab closes or parks only the view. It does not
+11. Closing or switching an Apps tab closes or parks only the view. It does not
    stop the App. The process remains available in the background until Desktop
    shutdown, Sites is disabled, a bounded failure occurs, or the operator uses
    **Stop App** in the sidebar row's More menu. Background route hydration and
    Messenger Saved View navigation remain unable to start it.
-11. The sidebar More menu contains settings and infrequent lifecycle actions.
+12. The sidebar More menu contains settings and infrequent lifecycle actions.
     While an App is running, **Copy App link** copies its current attested
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
     to the system browser. It works only on the same computer while that
     generation remains available.
-12. Disabling Sites immediately blocks new App Builder and Local App admission,
+13. Disabling Sites immediately blocks new App Builder and Local App admission,
     reconciles Desktop into the disabled state, stops running/transitioning
     Desktop-owned Apps, hides Apps, and removes the Skill from later run
     projection. It preserves source, definitions, App records, bindings, and
@@ -206,12 +227,19 @@ promotion, or production rollback UI.
 
 Build state is:
 
-`preparing -> building -> verifying -> ready | failed`.
+`preparing -> building -> verified_source_ready -> verifying -> ready | launch_failed`.
+
+`failed` is reserved for work that stops before verified source is handed to
+Desktop. Only `launch_failed` retains verified-launch provenance and may retry
+directly into `verifying`; a generic `failed` App must continue through Chat and
+a new authenticated build/verification handoff.
 
 Compare-and-set transitions prevent a stale build or UI failure handler from
-overwriting a newer owner. `verifying` means the fixed Desktop path is running
-real checks plus readiness and listener-ownership attestation. `ready` does not
-claim production promotion, public deployment, or Agent Browser acceptance.
+overwriting a newer owner. `verified_source_ready` is a run-scoped Agent
+handoff, not a runtime-ready claim. `verifying` means the fixed Desktop path is
+running real checks plus readiness and listener-ownership attestation. `ready`
+does not claim production promotion, public deployment, or acceptance beyond
+the recorded Agent and Desktop evidence.
 
 Runtime state is installation-local and follows the Local Apps contract,
 including `stopped`, `starting`, `running`, `stopping`, `failed`, and
@@ -243,8 +271,10 @@ ownership-unverified failure handling.
 | Apps Home sends a brief | Reserve an org App, start normal Chat with `$app-builder`, attach Chat | Create or require a Project |
 | Chat acknowledgement fails | Mark the reservation failed and show the cause | Claim the App is being built |
 | App source is missing or invalid | Return to Chat with a causal failure | Generate generic source during Register |
-| Operator confirms Register & preview | Run only the maintained typed lifecycle | Accept Agent-provided shell/cwd/port/env authority |
-| Checks or readiness fail | Fail, clean up owned processes, preserve source/data | Mark ready or open an unattested target |
+| Agent finishes development and verification | Emit `verified_source_ready` with the authenticated originating run | Treat ordinary Chat completion or prose as authority |
+| Desktop observes verified source | Claim it once, run the maintained typed lifecycle, then open the attested App | Require another registration confirmation or accept Agent-provided shell/cwd/port/env authority |
+| Desktop checks or readiness fail | Mark `launch_failed`, clean up owned processes, preserve source/data, allow launch retry | Mark ready or open an unattested target |
+| Agent/Chat stops before verified handoff | Mark `failed` and return to Chat | Offer direct runtime retry for unverified source |
 | Foreign listener owns the port | Fail closed without killing it | Guess ownership |
 | User clicks a registered App in Apps | Reuse or auto-start its reviewed generation and render the attested webpage | Require a separate Start step or open an unattested target |
 | Apps tab closes or switches | Close/park the view and keep the generation resident | Stop or restart the App |
@@ -259,8 +289,8 @@ ownership-unverified failure handling.
 - App name/brief through Apps Home.
 - Sidebar Add menu with Build with Agent and Add local web project.
 - Selected organization and available Agent.
-- Fixed local-execution disclosure.
-- App registration and direct-open actions; settings, Stop, Copy, browser,
+- Up-front local-execution and automatic-open disclosure.
+- App direct-open actions; settings, Stop, Copy, browser,
   Chat, source, and data management through the sidebar More menu.
 - Material data/integration choices raised by the Skill.
 
@@ -273,8 +303,10 @@ ownership-unverified failure handling.
   local web project from the computer.
 - Normal Chat containing the explicit `$app-builder` request.
 - Full-bleed embedded webpage and same-computer browser link.
-- Causal failed/unavailable state with Ask AI for help recovery; source access
-  remains available from the registered row's More menu.
+- Automatic transition from verified Chat work into the opened full-bleed App,
+  with **Continue in Chat** available for iterative improvement.
+- Causal failed/unavailable state with retry and Ask AI/Chat recovery; source
+  access remains available from the registered row's More menu.
 - Honest status when the current Desktop lacks the matching binding or runtime.
 
 ### Persisted Evidence
@@ -300,8 +332,10 @@ URLs, App business rows, or Secret values.
 
 The operator enables Sites and describes contacts, sequences, replies, and
 follow-ups on Apps Home. Rudder opens a normal `$app-builder` Chat, the Skill
-creates the App, and Desktop registers its local webpage. Sending email remains
-application behavior and is not silently enabled by App Builder.
+creates and verifies the App, and Desktop automatically verifies, starts, and
+opens its local webpage. The operator can return to the same Chat to improve
+it. Sending email remains application behavior and is not silently enabled by
+App Builder.
 
 #### Existing CRM data
 
@@ -338,6 +372,9 @@ discovery of the preserved records and definitions; nothing passively restarts.
 - Source is a normalized organization-workspace-relative `apps/<slug>` path.
 - The first managed start is limited to the maintained template revision and
   Rudder-owned runner; it is not arbitrary Agent command authority.
+- Automatic managed start requires an authenticated `verified_source_ready`
+  handoff for the originating App and run; ordinary Chat or navigation state
+  is non-authoritative.
 - Manual Local Apps retain explicit first-review semantics. Once registered,
   opening them from Apps directly starts the reviewed revision.
 - App links stay loopback-only and same-computer.

@@ -16,6 +16,9 @@ import { afterEach, describe, expect, it } from "vitest";
 const sourceRunner = fileURLToPath(
   new URL("./app-builder-runner.mjs", import.meta.url),
 );
+const desktopPackageJson = fileURLToPath(
+  new URL("../package.json", import.meta.url),
+);
 const roots: string[] = [];
 
 async function fixture() {
@@ -118,6 +121,16 @@ afterEach(async () => {
 });
 
 describe("App Builder managed runner", () => {
+  it("stages the managed toolchain before launching the Desktop dev shell", async () => {
+    const packageJson = JSON.parse(await readFile(desktopPackageJson, "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    const devScript = packageJson.scripts?.dev ?? "";
+    expect(devScript).toContain("pnpm run stage:app-builder-toolchain");
+    expect(devScript.indexOf("pnpm run stage:app-builder-toolchain"))
+      .toBeLessThan(devScript.indexOf("electron dist/main.js"));
+  });
+
   it("installs from the lockfile, verifies, and starts a loopback preview", async () => {
     const { appRoot, logPath, runner } = await fixture();
     await run(runner, [appRoot, "preview"], logPath, { PORT: "43123" });

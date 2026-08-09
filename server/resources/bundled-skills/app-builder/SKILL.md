@@ -28,6 +28,9 @@ loopback attestation, and embedded opening.
      manager, development script, data boundary, and tests before editing.
      Preserve its stack and conventions; never replace it with the maintained
      scaffold merely to make it a Rudder App.
+   When the originating prompt includes `Rudder App handoff`, retain its App ID
+   for the completion protocol below. Do not guess an App ID or use one from a
+   different conversation.
 3. Read [references/scaffold-contract.md](references/scaffold-contract.md)
    before changing the runtime, database foundation, manifest, health endpoint,
    import/export contract, or background-job runner.
@@ -40,24 +43,42 @@ loopback attestation, and embedded opening.
    for visible UI work. Prefer coherent workflow screens over a generic
    dashboard assembled from decorative cards.
 7. Run migrations against development or snapshot data, then run typecheck,
-   unit tests, build, and relevant app E2E tests.
+   unit tests, build, and relevant app E2E tests. Review the final source and
+   rendered product for correctness, regressions, usability, data safety, and
+   evidence integrity; resolve every blocking finding before handoff.
 8. Prepare the website for its Rudder Apps handoff:
-   - A new managed App created from Apps Home keeps its typed manifest and
-     returns to that App's **Register & preview** action. Do not load the same
-     source again through the manual Local App path.
+   - A new managed App created from Apps Home keeps its typed manifest. After
+     the completion gate passes, report `verified_source_ready` with the
+     originating App ID so Rudder Desktop can verify, start, and open that App
+     automatically. Do not load the same source through the manual Local App
+     path.
    - An independently authored existing project keeps a direct supported
      development script. Add the `package.json` `rudder` readiness or open-path
      fields only when discovery cannot infer them safely, then direct the
      operator to **Apps + > Add local web project** to select the folder and
      review the launch definition.
-   The Agent writes and verifies source; Desktop alone owns runtime approval and
-   process start. Do not invent a public URL, tunnel, cloud deployment, or
+   The Agent writes and verifies source; Desktop alone owns runtime admission
+   and process start. Do not invent a public URL, tunnel, cloud deployment, or
    unreviewed launch command.
 9. Read [references/verification.md](references/verification.md), then verify
    the rendered app with Rudder Browser. Exercise the main workflow plus at
    least one production-shaped edge case and inspect console errors.
 10. Materialize final screenshots and validation evidence in the originating
     Chat or Run. A localhost URL or tool-only screenshot is not durable output.
+11. For an originating managed App handoff, use the injected run context without
+    printing or requesting credentials:
+    - Run `node scripts/report-build-status.mjs building <app-id>` when
+      implementation begins.
+    - Run `node scripts/report-build-status.mjs verified_source_ready <app-id>`
+      only after every Completion Gate item passes. This is the machine-visible
+      signal that authorizes Desktop to verify, start, and open the exact
+      assigned source root.
+    - Run `node scripts/report-build-status.mjs failed <app-id>` when work ends
+      in a terminal failure. Do not emit `verified_source_ready` for a question,
+      partial implementation, canceled run, missing evidence, or blocker.
+    Finish by telling the user the App is opening and that they can continue
+    improving it in this Chat. If the status command fails, report that failure
+    honestly instead of claiming the App opened.
 
 ## Real Data Decision
 
@@ -86,7 +107,8 @@ controls and least-data workflow choices; explain the boundary honestly.
   screenshots, test fixtures, or logs. V1 does not provide a Rudder Secret
   binding UI, so ask the user how the App should obtain any required
   integration credential.
-- Opening Chat, Apps, an App tab, or a saved view must not passively start an app.
+- Opening Chat, Apps Home, or a saved view must not passively start an app. A
+  run-scoped `verified_source_ready` handoff may start and open its managed App.
 - Cloud builds, hosted runtimes, public preview links, custom domains, managed
   cloud databases, and cross-device synchronization are outside this skill.
 
@@ -96,6 +118,7 @@ Do not call the app complete until:
 
 - source and any required manifest or `package.json` Rudder configuration are durable;
 - typecheck, unit tests, and build pass;
+- blocking code and product review findings are resolved;
 - the reviewed readiness path is ready on an attested loopback process;
 - Browser verification covers the primary workflow and a relevant edge case;
 - persistence behavior is verified against development or snapshot data;

@@ -18,6 +18,19 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 
 type AppBuilderAppRow = typeof appBuilderApps.$inferSelect;
 
+const APP_BUILDER_BUILD_TRANSITIONS: Record<
+  AppBuilderApp["buildStatus"],
+  ReadonlySet<AppBuilderApp["buildStatus"]>
+> = {
+  preparing: new Set(["building", "failed"]),
+  building: new Set(["verified_source_ready", "failed"]),
+  verified_source_ready: new Set(["verifying"]),
+  verifying: new Set(["ready", "launch_failed"]),
+  ready: new Set(["building"]),
+  launch_failed: new Set(["verifying", "building"]),
+  failed: new Set(["building"]),
+};
+
 function toAppBuilderApp(row: AppBuilderAppRow): AppBuilderApp {
   return {
     id: row.id,
@@ -223,8 +236,30 @@ export function appBuilderService(db: Db) {
 
     async updateBuild(orgId: string, appId: string, input: UpdateAppBuilderBuild) {
       const existing = await requireRowById(orgId, appId);
+      const currentStatus = existing.buildStatus as AppBuilderApp["buildStatus"];
+      if (
+        currentStatus !== input.expectedStatus
+        || !APP_BUILDER_BUILD_TRANSITIONS[currentStatus].has(input.status)
+      ) {
+        throw conflict(
+          `Invalid App build transition from ${currentStatus} to ${input.status}`,
+        );
+      }
       if (input.runId) {
         await assertRunScope(existing, input.runId, input.runKind);
+      }
+      if (
+        input.status === "verified_source_ready"
+        && existing.latestBuildRunId !== input.runId
+      ) {
+        throw conflict("Only the Run that started this App build can verify its source");
+      }
+      if (
+        input.status === "failed"
+        && currentStatus === "building"
+        && existing.latestBuildRunId !== input.runId
+      ) {
+        throw conflict("Only the Run that started this App build can fail it");
       }
 
       const runUpdate =
@@ -233,16 +268,11 @@ export function appBuilderService(db: Db) {
             ? { latestVerificationRunId: input.runId ?? null }
             : { latestBuildRunId: input.runId ?? null }
           : {};
-      const updateScope = input.expectedStatus
-        ? and(
-            eq(appBuilderApps.orgId, orgId),
-            eq(appBuilderApps.id, appId),
-            eq(appBuilderApps.buildStatus, input.expectedStatus),
-          )
-        : and(
-            eq(appBuilderApps.orgId, orgId),
-            eq(appBuilderApps.id, appId),
-          );
+      const updateScope = and(
+        eq(appBuilderApps.orgId, orgId),
+        eq(appBuilderApps.id, appId),
+        eq(appBuilderApps.buildStatus, input.expectedStatus),
+      );
       const [updated] = await db
         .update(appBuilderApps)
         .set({

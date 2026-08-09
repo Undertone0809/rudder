@@ -6,8 +6,10 @@ export const APP_BUILDER_SOURCE_ROOT_PATTERN =
 export const appBuilderBuildStatusSchema = z.enum([
   "preparing",
   "building",
+  "verified_source_ready",
   "verifying",
   "ready",
+  "launch_failed",
   "failed",
 ]);
 
@@ -40,16 +42,26 @@ export const createAppBuilderAppSchema = z.object({
 export const updateAppBuilderBuildSchema = z
   .object({
     status: appBuilderBuildStatusSchema,
-    expectedStatus: appBuilderBuildStatusSchema.optional(),
+    expectedStatus: appBuilderBuildStatusSchema,
     runId: z.string().uuid().nullable().optional(),
     runKind: appBuilderRunKindSchema.optional().default("build"),
   })
   .superRefine((value, context) => {
-    if (value.status === "verifying" && value.runKind !== "verification") {
+    if (
+      ["verified_source_ready", "verifying"].includes(value.status)
+      && value.runKind !== "verification"
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["runKind"],
-        message: "verifying status requires a verification run",
+        message: `${value.status} status requires a verification run`,
+      });
+    }
+    if (value.status === "verified_source_ready" && !value.runId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runId"],
+        message: "verified_source_ready status requires the authenticated verification run ID",
       });
     }
   });

@@ -3,14 +3,6 @@ import { appBuilderApi } from "@/api/app-builder";
 import { chatsApi } from "@/api/chats";
 import { healthApi } from "@/api/health";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import { useChatGenerationActions } from "@/context/ChatGenerationContext";
 import { useOrganization } from "@/context/OrganizationContext";
@@ -21,12 +13,14 @@ import {
   appBuilderChatPrefill,
   appBuilderSourceRoot,
 } from "@/lib/app-builder";
+import { launchManagedApp } from "@/lib/app-builder-launch";
 import {
   acknowledgeAppDirectOpen,
   activeKeyFromPath,
   appRoute,
   localBindingKey,
   readAppDirectOpenIntent,
+  shouldPreserveAppDirectOpenDuringOrganizationChange,
   subscribeAppDirectOpen,
   type AppEntry,
   type ManagedAppEntry,
@@ -126,7 +120,7 @@ function AppsHome({
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
               Describe the workflow you need. Rudder opens a Chat with App Builder,
-              creates the source, verifies it, and brings the finished App back here.
+              creates and verifies the source, then starts the finished App locally and opens it here.
             </p>
           </div>
 
@@ -422,88 +416,18 @@ function ManagedSetupPane({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const desktopShell = readDesktopShell();
   const desktopAppBuilder = desktopShell?.appBuilder;
-  const localApps = desktopShell?.localApps;
-  const registerMutation = useMutation({
+  const retryMutation = useMutation({
     mutationFn: async () => {
-      if (!desktopAppBuilder?.supported) {
-        throw new Error("Register & preview is available in Rudder Desktop.");
+      if (!desktopShell || !desktopAppBuilder?.supported) {
+        throw new Error("This App can open in Rudder Desktop.");
       }
-      const { app } = entry;
-      const existingDefinitionIds = new Set(
-        localApps?.supported
-          ? (await localApps.list()).map((definition) => definition.id)
-          : [],
-      );
-      let binding: Awaited<ReturnType<typeof desktopAppBuilder.ensurePreview>> | null = null;
-      let serverBound = false;
-      let ownedBuildStatus: "building" | "verifying" | null = null;
-      await appBuilderApi.updateBuild(app.orgId, app.id, {
-        status: "building",
-        expectedStatus: app.buildStatus,
+      return launchManagedApp({
+        app: entry.app,
+        desktopShell,
+        expectedStatus: "launch_failed",
       });
-      ownedBuildStatus = "building";
-      try {
-        await desktopAppBuilder.inspect({
-          projectId: app.orgId,
-          appDirectory: app.sourceRoot,
-        }).catch(() => {
-          throw new Error(
-            "No App source is ready yet. Continue in Chat and let App Builder finish first.",
-          );
-        });
-        binding = await desktopAppBuilder.ensurePreview({
-          projectId: app.orgId,
-          appDirectory: app.sourceRoot,
-          binding: null,
-          authorizeManagedStart: true,
-        });
-        await appBuilderApi.updateBuild(app.orgId, app.id, {
-          status: "verifying",
-          expectedStatus: "building",
-          runKind: "verification",
-        });
-        ownedBuildStatus = "verifying";
-        await desktopAppBuilder.startPreview({
-          projectId: app.orgId,
-          appDirectory: app.sourceRoot,
-          binding,
-        });
-        await appBuilderApi.bindLocalRuntime(app.orgId, app.id, {
-          desktopInstallationId: binding.desktopInstallationId,
-          appPublicId: binding.appPublicId,
-          localBindingId: binding.localBindingId,
-        });
-        serverBound = true;
-        await appBuilderApi.updateBuild(app.orgId, app.id, {
-          status: "ready",
-          expectedStatus: "verifying",
-        });
-        ownedBuildStatus = null;
-      } catch (error) {
-        if (binding) {
-          await desktopAppBuilder.stopPreview({
-            projectId: app.orgId,
-            appDirectory: app.sourceRoot,
-            binding,
-          }).catch(() => undefined);
-          if (localApps?.supported && !existingDefinitionIds.has(binding.definitionId)) {
-            await localApps.delete(binding.definitionId).catch(() => undefined);
-          }
-        }
-        if (serverBound) {
-          await appBuilderApi.clearLocalRuntime(app.orgId, app.id).catch(() => undefined);
-        }
-        if (ownedBuildStatus) {
-          await appBuilderApi.updateBuild(app.orgId, app.id, {
-            status: "failed",
-            expectedStatus: ownedBuildStatus,
-          }).catch(() => undefined);
-        }
-        throw error;
-      }
     },
     onSuccess: async () => {
       await Promise.all([
@@ -520,7 +444,7 @@ function ManagedSetupPane({
       <main className="flex min-w-0 flex-1 items-center justify-center bg-[color:var(--surface-panel)] px-8 py-12">
         <div className="motion-content-reveal max-w-lg text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-raised)] text-[color:var(--accent-base)]">
-            {registerMutation.isPending
+            {retryMutation.isPending || entry.app.buildStatus === "verified_source_ready" || entry.app.buildStatus === "verifying"
               ? <Loader2 className="h-6 w-6 animate-spin motion-reduce:animate-none" aria-hidden />
               : <AppWindow className="h-6 w-6" aria-hidden />}
           </div>
@@ -528,22 +452,28 @@ function ManagedSetupPane({
             {entry.app.name}
           </h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {registerMutation.isPending
-              ? "Rudder is verifying the source, registering the local runtime, and starting the preview."
-              : "When App Builder has finished creating the source, register it on this device to open it here."}
+            {entry.app.buildStatus === "launch_failed"
+              ? "The source is preserved. Retry opening it or continue in Chat to fix the failure."
+              : entry.app.buildStatus === "failed"
+                ? "App Builder stopped before verification. Continue in Chat to resume the work."
+              : entry.app.buildStatus === "verified_source_ready" || entry.app.buildStatus === "verifying"
+                ? "Rudder is verifying the source, starting the local runtime, and opening the App."
+                : "App Builder is developing and checking the App. It will open automatically when ready."}
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
-            <Button
-              type="button"
-              disabled={registerMutation.isPending || !desktopAppBuilder?.supported}
-              onClick={() => setConfirmOpen(true)}
-              data-testid="apps-register-preview"
-            >
-              {registerMutation.isPending
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-                : <Play className="h-3.5 w-3.5" aria-hidden />}
-              Register & preview
-            </Button>
+            {entry.app.buildStatus === "launch_failed" ? (
+              <Button
+                type="button"
+                disabled={retryMutation.isPending || !desktopAppBuilder?.supported}
+                onClick={() => retryMutation.mutate()}
+                data-testid="apps-retry-managed-app"
+              >
+                {retryMutation.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                  : <Play className="h-3.5 w-3.5" aria-hidden />}
+                Try opening again
+              </Button>
+            ) : null}
             {entry.app.conversationId ? (
               <Button
                 type="button"
@@ -564,41 +494,15 @@ function ManagedSetupPane({
               Open source
             </Button>
           </div>
-          {registerMutation.error ? (
+          {retryMutation.error ? (
             <p className="mt-4 text-sm leading-6 text-destructive" role="alert">
-              {registerMutation.error instanceof Error
-                ? registerMutation.error.message
-                : "The App could not be registered."}
+              {retryMutation.error instanceof Error
+                ? retryMutation.error.message
+                : "The App could not be opened."}
             </p>
           ) : null}
         </div>
       </main>
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent showCloseButton={false} className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Register and preview this App?</DialogTitle>
-            <DialogDescription className="leading-6">
-              Rudder will verify the maintained scaffold, run its checks, then
-              start a loopback-only App process on this device.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              data-testid="apps-confirm-register-preview"
-              onClick={() => {
-                setConfirmOpen(false);
-                registerMutation.mutate();
-              }}
-            >
-              Verify, register & open
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -689,8 +593,13 @@ export function Apps() {
     previousOrganizationId.current = selectedOrganizationId;
     setTabs([{ key: "home", title: "Home" }]);
     setFocusedTabKey("home");
-    navigate("/apps", { replace: true });
-  }, [navigate, selectedOrganizationId]);
+    if (!shouldPreserveAppDirectOpenDuringOrganizationChange(
+      activeKey,
+      openIntentVersion,
+    )) {
+      navigate("/apps", { replace: true });
+    }
+  }, [activeKey, navigate, openIntentVersion, selectedOrganizationId]);
 
   useEffect(() => {
     if (activeKey === "home" || !activeEntry) return;
@@ -731,7 +640,7 @@ export function Apps() {
         scaffoldVersion: APP_BUILDER_SCAFFOLD_VERSION,
       });
       const body = [
-        appBuilderChatPrefill(appName, false, sourceRoot),
+        appBuilderChatPrefill(appName, false, sourceRoot, app.id),
         idea,
       ].join("\n\n");
       const startedAt = new Date();
@@ -897,6 +806,7 @@ export function Apps() {
             if (!isAbort) {
               void appBuilderApi.updateBuild(selectedOrganizationId, app.id, {
                 status: "failed",
+                expectedStatus: "preparing",
               }).catch(() => undefined);
             }
           }
@@ -928,6 +838,7 @@ export function Apps() {
       } catch (error) {
         await appBuilderApi.updateBuild(selectedOrganizationId, app.id, {
           status: "failed",
+          expectedStatus: "preparing",
         }).catch(() => undefined);
         pushToast({
           title: "The App Chat started, but registration needs attention",

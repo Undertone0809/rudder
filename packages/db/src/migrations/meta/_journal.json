@@ -1044,6 +1044,13 @@
       "when": 1786096800000,
       "tag": "0148_chat_message_transcript_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1786262400000,
+      "tag": "0149_app_builder_verified_source_ready",
+      "breakpoints": true
     }
   ]
 }

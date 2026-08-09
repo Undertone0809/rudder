@@ -161,9 +161,11 @@ Saved View identity and group placement.
    Failed start, readiness failure, or an unexpected watchdog exit also triggers
    bounded cleanup of a process tree whose ownership Rudder can prove.
 9. A valid `APP.BUILDER.001` managed session is the narrow exception to the
-   ordinary direct-Start rule. One explicit `Register & preview` action may
-   register and start the exact Rudder-owned template revision after its build
-   succeeds.
+   ordinary direct-Start rule. Submitting an Apps Home build request is explicit
+   operator intent to build, verify, start locally, and open that managed App
+   when ready. After the same authenticated Agent Run reports the guarded
+   verified-source handoff, Desktop may register and start the exact
+   Rudder-owned template revision without a second confirmation.
    The managed action cannot accept Agent-provided executable, shell text,
    absolute cwd, port, or environment values. A changed launch definition
    requires review. After that first review, a direct click on its registered
@@ -346,10 +348,11 @@ unchanged and retains its explicit or `/api/health` readiness contract.
 
 ### Invariants / Non-Goals
 
-- Start is always a direct operator action against a reviewed definition.
-  `Start & open`, an explicit App Builder `Register & preview`, and clicking a
-  registered row in the Apps workspace are direct actions; background
-  hydration and Messenger Saved View navigation are not.
+- Start is always grounded in direct operator intent against a reviewed or
+  fixed managed definition. `Start & open`, submitting a disclosed managed App
+  build request, and clicking a registered row in Apps are direct actions;
+  ordinary Chat completion, background hydration, and Messenger Saved View
+  navigation are not.
 - Review approval is revision-specific. The operator is not required to expand
   Advanced before approval, but the complete structured definition must remain
   available there and any later definition change requires renewed review.
@@ -359,7 +362,8 @@ unchanged and retains its explicit or `/api/health` readiness contract.
   Close, and passive status/log retry do not execute commands. Explicit
   `Start & open`, `Retry & open`, or a registered-App click inside Apps may
   execute the reviewed command; an explicit, valid managed App Builder session
-  may execute only its Rudder-owned template command.
+  may execute only its Rudder-owned template command after the authenticated
+  verified-source handoff.
 - Definitions and process authority are installation-local; the Server stores
   opaque identity only.
 - Local App commands are structured executable invocations, never shell text.

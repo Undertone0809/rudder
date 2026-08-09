@@ -686,6 +686,11 @@ function invalidateActivityQueries(
     }
   }
 
+  if (entityType === "app_builder_app") {
+    queryClient.invalidateQueries({ queryKey: queryKeys.appBuilder.organization(orgId) });
+    return;
+  }
+
   if (entityType === "agent") {
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) });

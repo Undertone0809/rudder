@@ -24,6 +24,7 @@ export function appBuilderChatPrefill(
   appName: string,
   existingApp: boolean,
   sourceRoot?: string,
+  appId?: string,
 ): string {
   if (existingApp) {
     return [
@@ -33,6 +34,9 @@ export function appBuilderChatPrefill(
   }
   return [
     `Use $app-builder to build an App named “${appName}”${sourceRoot ? ` at ${sourceRoot}` : ""}.`,
+    appId
+      ? `Rudder App handoff: appId=${appId}; sourceRoot=${sourceRoot}.`
+      : null,
     "Use Rudder's maintained full-stack scaffold, ask only business/data questions that materially affect the result, then build and verify the App.",
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }

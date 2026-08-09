@@ -60,7 +60,7 @@ export const appBuilderApps = pgTable(
       ),
     buildStatusCheck: check(
       "app_builder_apps_build_status_check",
-      sql`${table.buildStatus} in ('preparing', 'building', 'verifying', 'ready', 'failed')`,
+      sql`${table.buildStatus} in ('preparing', 'building', 'verified_source_ready', 'verifying', 'ready', 'launch_failed', 'failed')`,
     ),
     sourceRootCheck: check(
       "app_builder_apps_source_root_check",

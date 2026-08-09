@@ -1,8 +1,10 @@
 export type AppBuilderBuildStatus =
   | "preparing"
   | "building"
+  | "verified_source_ready"
   | "verifying"
   | "ready"
+  | "launch_failed"
   | "failed";
 
 export interface AppBuilderApp {

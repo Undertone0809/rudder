@@ -19,5 +19,11 @@ describe("App Builder UI helpers", () => {
   it("keeps the App Builder skill explicit in Chat handoff", () => {
     expect(appBuilderChatPrefill("CRM", false)).toContain("$app-builder");
     expect(appBuilderChatPrefill("CRM", true)).toContain("continue building");
+    expect(appBuilderChatPrefill(
+      "CRM",
+      false,
+      "apps/crm",
+      "44444444-4444-4444-8444-444444444444",
+    )).toContain("appId=44444444-4444-4444-8444-444444444444; sourceRoot=apps/crm");
   });
 });

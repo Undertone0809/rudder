@@ -50,8 +50,12 @@ describe("App Builder validators", () => {
   });
 
   it("defaults build updates to the build run kind", () => {
-    expect(updateAppBuilderBuildSchema.parse({ status: "building" })).toEqual({
+    expect(updateAppBuilderBuildSchema.parse({
       status: "building",
+      expectedStatus: "preparing",
+    })).toEqual({
+      status: "building",
+      expectedStatus: "preparing",
       runKind: "build",
     });
   });
@@ -60,10 +64,12 @@ describe("App Builder validators", () => {
     expect(
       updateAppBuilderBuildSchema.parse({
         status: "verifying",
+        expectedStatus: "verified_source_ready",
         runKind: "verification",
       }),
     ).toEqual({
       status: "verifying",
+      expectedStatus: "verified_source_ready",
       runKind: "verification",
     });
   });
@@ -72,8 +78,27 @@ describe("App Builder validators", () => {
     expect(() =>
       updateAppBuilderBuildSchema.parse({
         status: "verifying",
+        expectedStatus: "verified_source_ready",
       }),
     ).toThrow();
+  });
+
+  it("requires a verification run ID for the verified-source handoff", () => {
+    expect(updateAppBuilderBuildSchema.parse({
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runKind: "verification",
+      runId: "55555555-5555-4555-8555-555555555555",
+    })).toMatchObject({
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runKind: "verification",
+    });
+    expect(() => updateAppBuilderBuildSchema.parse({
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runKind: "verification",
+    })).toThrow();
   });
 
   it("accepts only bounded opaque local binding identifiers", () => {

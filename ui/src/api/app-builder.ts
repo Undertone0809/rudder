@@ -56,7 +56,7 @@ export const appBuilderApi = {
     appId: string,
     input: {
       status: AppBuilderBuildStatus;
-      expectedStatus?: AppBuilderBuildStatus;
+      expectedStatus: AppBuilderBuildStatus;
       runId?: string | null;
       runKind?: AppBuilderRunKind;
     },

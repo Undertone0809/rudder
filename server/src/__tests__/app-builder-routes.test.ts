@@ -257,7 +257,7 @@ describe("App Builder routes", () => {
 
     const response = await request(app)
       .patch(`/api/projects/${projectId}/app-builder/build`)
-      .send({ status: "building", runId });
+      .send({ status: "building", expectedStatus: "preparing", runId });
 
     expect(response.status).toBe(200);
     expect(mockAppBuilderService.updateBuild).toHaveBeenCalledWith(
@@ -265,6 +265,7 @@ describe("App Builder routes", () => {
       appId,
       {
         status: "building",
+        expectedStatus: "preparing",
         runId,
         runKind: "build",
       },
@@ -294,18 +295,84 @@ describe("App Builder routes", () => {
 
     const missingRunResponse = await request(app)
       .patch(`/api/projects/${projectId}/app-builder/build`)
-      .send({ status: "ready" });
+      .send({ status: "ready", expectedStatus: "verifying" });
     expect(missingRunResponse.status).toBe(403);
 
     const mismatchedRunResponse = await request(app)
       .patch(`/api/projects/${projectId}/app-builder/build`)
       .send({
         status: "ready",
+        expectedStatus: "verifying",
         runId: "66666666-6666-4666-8666-666666666666",
       });
     expect(mismatchedRunResponse.status).toBe(403);
     expect(mockAppBuilderService.updateBuild).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("accepts verified source only from the matching authenticated run", async () => {
+    const boardApp = createApp({
+      type: "board",
+      userId: "user-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const boardResponse = await request(boardApp)
+      .patch(`/api/app-builder/${appId}/build?orgId=${orgId}`)
+      .send({
+        status: "verified_source_ready",
+        expectedStatus: "building",
+        runKind: "verification",
+        runId,
+      });
+    expect(boardResponse.status).toBe(403);
+
+    const agentApp = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId,
+      runId,
+    });
+    const agentResponse = await request(agentApp)
+      .patch(`/api/app-builder/${appId}/build?orgId=${orgId}`)
+      .send({
+        status: "verified_source_ready",
+        expectedStatus: "building",
+        runKind: "verification",
+        runId,
+      });
+    expect(agentResponse.status).toBe(200);
+    expect(mockAppBuilderService.updateBuild).toHaveBeenCalledWith(orgId, appId, {
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runKind: "verification",
+      runId,
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "app_builder.source_verified" }),
+    );
+  });
+
+  it("prevents Agents from writing Desktop lifecycle states", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId,
+      runId,
+    });
+    const response = await request(app)
+      .patch(`/api/app-builder/${appId}/build?orgId=${orgId}`)
+      .send({
+        status: "ready",
+        expectedStatus: "verifying",
+        runKind: "verification",
+        runId,
+      });
+
+    expect(response.status).toBe(403);
+    expect(mockAppBuilderService.updateBuild).not.toHaveBeenCalled();
   });
 
   it("attaches a reserved App to its Chat as a board mutation", async () => {

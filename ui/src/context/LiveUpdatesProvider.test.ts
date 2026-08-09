@@ -5,6 +5,21 @@ import { queryKeys } from "../lib/queryKeys";
 import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 
 describe("LiveUpdatesProvider issue invalidation", () => {
+  it("refreshes App Builder state for a verified-source activity", () => {
+    const invalidations: unknown[] = [];
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      {
+        invalidateQueries: (input: unknown) => invalidations.push(input),
+      } as never,
+      "organization-1",
+      { entityType: "app_builder_app", entityId: "app-1" },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.appBuilder.organization("organization-1"),
+    });
+  });
+
   it("refreshes touched inbox queries for issue activity", () => {
     const invalidations: unknown[] = [];
     const queryClient = {

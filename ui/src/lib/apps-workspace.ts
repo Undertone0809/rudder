@@ -69,6 +69,13 @@ export function appRoute(key: string) {
   return `/apps/view/${encodeURIComponent(key)}`;
 }
 
+export function shouldPreserveAppDirectOpenDuringOrganizationChange(
+  activeKey: string,
+  openIntentVersion: number,
+) {
+  return activeKey !== "home" && openIntentVersion > 0;
+}
+
 export function localBindingKey(
   desktopInstallationId: string,
   appPublicId: string,
@@ -91,7 +98,9 @@ export function activeKeyFromPath(pathname: string) {
 export function appBuildStatusLabel(status: AppBuilderApp["buildStatus"]) {
   if (status === "preparing") return "Preparing";
   if (status === "building") return "Building";
+  if (status === "verified_source_ready") return "Opening";
   if (status === "verifying") return "Verifying";
   if (status === "ready") return "Ready";
+  if (status === "launch_failed") return "Could not open";
   return "Needs attention";
 }
