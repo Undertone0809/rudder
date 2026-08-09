@@ -723,8 +723,7 @@ function DesktopSidePanelSlot({
     hasRememberedWidthRef.current = true;
     widthInitializedRef.current = true;
     const startX = event.clientX;
-    const resizeHandle = event.currentTarget.closest<HTMLElement>("[data-testid='side-panel-resizer']")
-      ?? event.currentTarget;
+    const resizeHandle = event.currentTarget.closest<HTMLElement>("[data-testid='side-panel-resizer']") ?? event.currentTarget;
     const resizeWorkspace = workspaceAnchorRef.current?.parentElement;
     const layoutPanelWidth = resizeWorkspace
       ?.querySelector<HTMLElement>("[data-testid='chat-side-panel']")
