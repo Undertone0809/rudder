@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Automation runtime model selector", () => {
-  test("selects and persists a model for the current automation agent", async ({ page }, testInfo) => {
+  test("closes runtime menus after model and thinking selections", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(E2E_BASE_URL);
 
@@ -79,11 +79,27 @@ test.describe("Automation runtime model selector", () => {
     await page.getByTestId("issue-runtime-model-trigger").click();
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
 
-    const modelOption = page.locator('[data-testid^="issue-runtime-option-model-"]').first();
+    const modelOption = page.getByTestId("issue-runtime-option-default-model");
     await expect(modelOption).toBeVisible();
-    const selectedModelId = (await modelOption.getAttribute("data-testid"))?.replace("issue-runtime-option-model-", "");
     const selectedModelLabel = (await modelOption.textContent())?.trim();
     await modelOption.click();
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toHaveCount(0);
+    await expect(page.getByTestId("issue-runtime-model-options")).toHaveCount(0);
+    await expect(runtimeSelector).toBeFocused();
+
+    await runtimeSelector.press("ArrowRight");
+    await page.getByTestId("issue-runtime-effort-trigger").click();
+    const effortOption = page.locator(
+      '[data-testid^="issue-runtime-option-effort-"]:not([data-testid="issue-runtime-option-effort-default"])',
+    ).first();
+    await expect(effortOption).toBeVisible();
+    const selectedEffort = (await effortOption.getAttribute("data-testid"))
+      ?.replace("issue-runtime-option-effort-", "");
+    await effortOption.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toHaveCount(0);
+    await expect(page.getByTestId("issue-runtime-effort-options")).toHaveCount(0);
+    await expect(runtimeSelector).toBeFocused();
 
     await expect.poll(async () => {
       const response = await page.request.get(`${E2E_BASE_URL}/api/automations/${automation.id}`);
@@ -91,14 +107,15 @@ test.describe("Automation runtime model selector", () => {
       const detail = await response.json() as {
         assigneeAgentRuntimeOverrides: { agentRuntimeConfig?: Record<string, unknown> } | null;
       };
-      return detail.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.model ?? null;
-    }).not.toBeNull();
+      return detail.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.modelReasoningEffort ?? null;
+    }).toBe(selectedEffort);
 
     const persisted = await (await page.request.get(`${E2E_BASE_URL}/api/automations/${automation.id}`)).json() as {
       assigneeAgentRuntimeOverrides: { agentRuntimeConfig?: Record<string, unknown> } | null;
     };
-    expect(selectedModelId).toBeTruthy();
-    expect(persisted.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.model).toBe(selectedModelId);
+    expect(selectedEffort).toBeTruthy();
+    expect(persisted.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.model).toBeUndefined();
+    expect(persisted.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.modelReasoningEffort).toBe(selectedEffort);
     expect(selectedModelLabel).toBeTruthy();
     await page.reload();
     await expect(page.getByTestId("issue-runtime-selector")).toHaveCount(0);
@@ -157,6 +174,8 @@ test.describe("Automation runtime model selector", () => {
     expect(submenuBox!.x + submenuBox!.width).toBeLessThanOrEqual(1280 - 12);
     expect(submenuBox!.y + submenuBox!.height).toBeLessThanOrEqual(720 - 12);
     await page.locator('[data-testid^="issue-runtime-option-model-"]').first().click();
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toHaveCount(0);
+    await expect(page.getByTestId("issue-runtime-model-options")).toHaveCount(0);
     await page.getByRole("button", { name: /^Create$/ }).click();
 
     await expect(page.getByText("Composer model selection", { exact: true })).toBeVisible();
