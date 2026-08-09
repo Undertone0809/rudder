@@ -2999,6 +2999,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
 
   const beginResizeDrag = async (box) => {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await page.bringToFront();
       const hitTargetBox = await page.getByTestId("side-panel-resizer-hit-target").boundingBox();
       const pointerBox = hitTargetBox ?? box;
       const pointerX = pointerBox.x + pointerBox.width / 2;
@@ -3034,7 +3035,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         window.dispatchEvent(new PointerEvent("pointerup", { button: 0, pointerId: 1 }));
       });
     }
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   };
   const dragResizerWithSyntheticPointer = async (targetX, pointerId) => {
     const resizer = page.getByTestId("side-panel-resizer");
@@ -3063,7 +3064,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         pointerId: detail.pointerId,
       }));
     }, { pointerId, targetX });
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   };
 
   for (const viewportWidth of [994, 1440]) {
@@ -3160,7 +3161,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "visible", timeout: 5_000 });
     await resizer.waitFor({ state: "hidden", timeout: 5_000 });
     await page.mouse.up();
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
     await page.waitForFunction(() => {
       const stack = document.querySelector("[data-testid='workspace-main-panel-stack']");
       const panel = document.querySelector("[data-testid='chat-side-panel']");
@@ -3259,7 +3260,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     }, releasedCapture.pointerId);
   }
   await page.waitForFunction(() => window.__rudderDesktopSmokeLostCaptureCount === 1, null, { timeout: 5_000 });
-  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   assert.deepEqual(
     await page.evaluate(() => ({
       cursor: document.body.style.cursor,
