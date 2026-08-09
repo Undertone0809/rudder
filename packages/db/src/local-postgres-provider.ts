@@ -305,6 +305,22 @@ export function createOfficialPostgresInstance(
       }
     },
     async start() {
+      if (process.platform === "win32") {
+        await run(
+          binaries.pgCtl,
+          [
+            "-D",
+            options.databaseDir,
+            "-o",
+            `-h 127.0.0.1 -p ${options.port}`,
+            "-w",
+            "start",
+          ],
+          "start",
+        );
+        return;
+      }
+
       let child: ReturnType<typeof spawn> | null = null;
       const startPostgres = () => {
         child = spawn(
