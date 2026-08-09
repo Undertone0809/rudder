@@ -403,7 +403,7 @@ export function BrowserLiveSurface({
     const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
-    const ignoreStaleNavigation = (nextUrl: string) => {
+    const ignoreStaleNavigation = (nextUrl: string, acceptUnexpected = false) => {
       if (historyNavigationRef.current) return true;
       const intent = navigationIntentRef.current;
       const settledFence = settledNavigationFenceRef.current;
@@ -413,6 +413,10 @@ export function BrowserLiveSurface({
       if (staleUrls.includes(nextUrl)) {
         return true;
       }
+      // Keep an explicit address-bar request authoritative until its target
+      // arrives. A late intermediate event from the previous load must not
+      // replace the target and make the guest appear to navigate backwards.
+      if ((intent || settledFence) && !acceptUnexpected) return true;
       if (intent) navigationIntentRef.current = null;
       if (settledFence) settledNavigationFenceRef.current = null;
       return false;
@@ -453,7 +457,7 @@ export function BrowserLiveSurface({
       }
       const nextUrl = safeCurrentWebviewUrl("");
       if (nextUrl) settleNavigationIntent(nextUrl);
-      if (nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
+      if (nextUrl && !ignoreStaleNavigation(nextUrl, true) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
       updateNavigationState();

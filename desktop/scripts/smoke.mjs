@@ -3003,6 +3003,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
 
   const beginResizeDrag = async (box) => {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await page.bringToFront();
       const hitTargetBox = await page.getByTestId("side-panel-resizer-hit-target").boundingBox();
       const pointerBox = hitTargetBox ?? box;
       const pointerX = pointerBox.x + pointerBox.width / 2;

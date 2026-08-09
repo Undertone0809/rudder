@@ -448,6 +448,64 @@ describe("BrowserLiveSurface", () => {
     act(() => webview.dispatchEvent(new Event("did-stop-loading")));
   });
 
+  it("keeps an explicit navigation authoritative across unrelated intermediate events", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const requestedUrl = "https://example.com/requested";
+    const intermediateUrl = "https://example.com/intermediate";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-explicit-authority",
+            url: firstUrl,
+            viewInstanceId: "view-explicit-authority",
+          }}
+          targetKey="browser-tab:explicit-authority"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    act(() => {
+      address.value = requestedUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = intermediateUrl;
+    const intermediateNavigation = new Event("did-navigate");
+    Object.defineProperty(intermediateNavigation, "url", { configurable: true, value: intermediateUrl });
+    act(() => webview.dispatchEvent(intermediateNavigation));
+    expect(onReplaceTarget).not.toHaveBeenCalled();
+
+    guestUrl = requestedUrl;
+    const requestedNavigation = new Event("did-navigate");
+    Object.defineProperty(requestedNavigation, "url", { configurable: true, value: requestedUrl });
+    act(() => webview.dispatchEvent(requestedNavigation));
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:explicit-authority",
+      expect.objectContaining({ url: requestedUrl }),
+    );
+  });
+
   it("allows an address-bar request to revisit a URL fenced as stale", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
