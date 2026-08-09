@@ -715,7 +715,7 @@ function DesktopSidePanelSlot({
     sidePanelResizeCleanupRef.current?.();
   }, []);
 
-  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElement>) => {
     if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
     sidePanelResizeActiveRef.current = true;
@@ -827,6 +827,14 @@ function DesktopSidePanelSlot({
           className="absolute inset-y-0 right-0"
           style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
           aria-hidden="true"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            startSidePanelResize(event);
+          }}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            startSidePanelResize(event);
+          }}
         />
         <div className="workspace-column-resizer-line" />
       </div>

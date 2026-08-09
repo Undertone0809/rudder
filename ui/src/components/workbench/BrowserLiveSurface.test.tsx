@@ -26,6 +26,7 @@ describe("BrowserLiveSurface", () => {
   let root: Root | null = null;
 
   afterEach(() => {
+    vi.useRealTimers();
     if (root) act(() => root?.unmount());
     root = null;
     container?.remove();
@@ -509,6 +510,7 @@ describe("BrowserLiveSurface", () => {
   });
 
   it("accepts an in-guest navigation to a historical URL after the current load settles", () => {
+    vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -554,6 +556,9 @@ describe("BrowserLiveSurface", () => {
     act(() => {
       webview.dispatchEvent(secondNavigation);
       webview.dispatchEvent(new Event("did-stop-loading"));
+    });
+    act(() => {
+      vi.advanceTimersByTime(1_501);
     });
     onReplaceTarget.mockClear();
 

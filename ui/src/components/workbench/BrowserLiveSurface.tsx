@@ -45,6 +45,7 @@ const BROWSER_LIVE_SURFACE_ZOOM_FACTORS = [
 const BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY = "rudder.browser.side-panel-onboarding.dismissed.v1";
 const BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY = "rudder.browser.side-panel-onboarding.session-dismissed.v1";
 const BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT = "rudder:browser-side-panel-onboarding-dismissed";
+const SETTLED_BROWSER_NAVIGATION_FENCE_MS = 1_500;
 
 function hasDismissedBrowserSidePanelOnboarding() {
   if (typeof window === "undefined") return true;
@@ -79,6 +80,8 @@ type BrowserNavigationIntent = {
   expectedUrl: string;
   staleUrls: string[];
 };
+
+type BrowserNavigationFence = BrowserNavigationIntent;
 
 type BrowserHistoryNavigation = {
   baselineUrl: string;
@@ -135,6 +138,8 @@ export function BrowserLiveSurface({
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
   const navigationIntentRef = useRef<BrowserNavigationIntent | null>(null);
+  const settledNavigationFenceRef = useRef<BrowserNavigationFence | null>(null);
+  const settledNavigationFenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staleNavigationUrlsRef = useRef<string[]>([]);
   const navigationLoadInFlightRef = useRef<Promise<void> | null>(null);
   const historyNavigationRef = useRef<BrowserHistoryNavigation | null>(null);
@@ -235,6 +240,12 @@ export function BrowserLiveSurface({
 
   const navigateHistory = useCallback((direction: -1 | 1) => {
     if (historyNavigationRef.current) return;
+    navigationIntentRef.current = null;
+    settledNavigationFenceRef.current = null;
+    if (settledNavigationFenceTimerRef.current !== null) {
+      clearTimeout(settledNavigationFenceTimerRef.current);
+      settledNavigationFenceTimerRef.current = null;
+    }
     const baselineUrl = safeCurrentWebviewUrl(currentUrlRef.current);
     const token = historyNavigationTokenRef.current + 1;
     historyNavigationTokenRef.current = token;
@@ -340,7 +351,10 @@ export function BrowserLiveSurface({
       if (nextUrl && nextUrl !== baselineUrl) {
         historyNavigationRef.current = null;
         staleNavigationUrlsRef.current = [
-          ...new Set([...staleNavigationUrlsRef.current, baselineUrl]),
+          ...new Set([
+            ...staleNavigationUrlsRef.current.filter((url) => url !== nextUrl),
+            baselineUrl,
+          ]),
         ].slice(-16);
         navigationIntentRef.current = {
           expectedUrl: nextUrl,
@@ -364,6 +378,9 @@ export function BrowserLiveSurface({
 
   useEffect(() => () => {
     if (historyNavigationTimerRef.current !== null) clearTimeout(historyNavigationTimerRef.current);
+    if (settledNavigationFenceTimerRef.current !== null) {
+      clearTimeout(settledNavigationFenceTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -389,14 +406,30 @@ export function BrowserLiveSurface({
     const ignoreStaleNavigation = (nextUrl: string) => {
       if (historyNavigationRef.current) return true;
       const intent = navigationIntentRef.current;
+      const settledFence = settledNavigationFenceRef.current;
       if (!nextUrl) return false;
-      if (!intent) return false;
-      if (nextUrl === intent.expectedUrl) return false;
-      if (intent.staleUrls.includes(nextUrl)) {
+      if (nextUrl === intent?.expectedUrl || nextUrl === settledFence?.expectedUrl) return false;
+      const staleUrls = intent?.staleUrls ?? settledFence?.staleUrls ?? [];
+      if (staleUrls.includes(nextUrl)) {
         return true;
       }
-      navigationIntentRef.current = null;
+      if (intent) navigationIntentRef.current = null;
+      if (settledFence) settledNavigationFenceRef.current = null;
       return false;
+    };
+
+    const settleNavigationIntent = (nextUrl: string) => {
+      const intent = navigationIntentRef.current;
+      if (!intent || intent.expectedUrl !== nextUrl) return;
+      navigationIntentRef.current = null;
+      settledNavigationFenceRef.current = { ...intent };
+      if (settledNavigationFenceTimerRef.current !== null) {
+        clearTimeout(settledNavigationFenceTimerRef.current);
+      }
+      settledNavigationFenceTimerRef.current = setTimeout(() => {
+        settledNavigationFenceRef.current = null;
+        settledNavigationFenceTimerRef.current = null;
+      }, SETTLED_BROWSER_NAVIGATION_FENCE_MS);
     };
 
     const handleStart = () => {
@@ -408,9 +441,7 @@ export function BrowserLiveSurface({
       const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
       const nextUrl = "url" in event && typeof event.url === "string" ? event.url : "";
       if (!isMainFrame || !nextUrl) return;
-      const intent = navigationIntentRef.current;
-      const stale = intent && nextUrl !== intent.expectedUrl && intent.staleUrls.includes(nextUrl);
-      if (!stale && nextUrl !== currentUrlRef.current) {
+      if (!ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
     };
@@ -421,9 +452,7 @@ export function BrowserLiveSurface({
         return;
       }
       const nextUrl = safeCurrentWebviewUrl("");
-      if (nextUrl && nextUrl === navigationIntentRef.current?.expectedUrl) {
-        navigationIntentRef.current = null;
-      }
+      if (nextUrl) settleNavigationIntent(nextUrl);
       if (nextUrl && !ignoreStaleNavigation(nextUrl) && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, browserSidePanelLabel(nextUrl));
       }
@@ -598,6 +627,11 @@ export function BrowserLiveSurface({
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
+    settledNavigationFenceRef.current = null;
+    if (settledNavigationFenceTimerRef.current !== null) {
+      clearTimeout(settledNavigationFenceTimerRef.current);
+      settledNavigationFenceTimerRef.current = null;
+    }
     historyNavigationTokenRef.current += 1;
     historyNavigationRef.current = null;
     staleNavigationUrlsRef.current = staleNavigationUrlsRef.current.filter((url) => url !== nextUrl);
