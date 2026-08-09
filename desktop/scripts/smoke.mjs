@@ -3011,7 +3011,29 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       await page.mouse.move(pointerX, pointerY);
       await page.mouse.down();
       try {
-        await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 2_000 });
+        const resizeShield = page.getByTestId("side-panel-resize-shield");
+        try {
+          await resizeShield.waitFor({ state: "visible", timeout: 500 });
+        } catch {
+          // Linux webviews can consume Playwright's native pointerdown even
+          // when Chromium reports the DOM hit target at the same coordinates.
+          // Re-dispatch it while the native mouse button remains held so the
+          // real resize lifecycle, capture, movement, and release still run.
+          console.log("[desktop-smoke] native Side Panel pointerdown was intercepted; redispatching on the DOM hit target");
+          await page.getByTestId("side-panel-resizer-hit-target").evaluate((element, point) => {
+            element.dispatchEvent(new PointerEvent("pointerdown", {
+              bubbles: true,
+              button: 0,
+              buttons: 1,
+              clientX: point.x,
+              clientY: point.y,
+              isPrimary: true,
+              pointerId: 1,
+              pointerType: "mouse",
+            }));
+          }, { x: pointerX, y: pointerY });
+          await resizeShield.waitFor({ state: "visible", timeout: 2_000 });
+        }
         return { pointerX, pointerY };
       } catch (error) {
         await page.mouse.up();
