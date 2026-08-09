@@ -288,7 +288,7 @@ function ProjectResourcesVirtualTree({
             >
               <DropdownMenuItem onSelect={() => onAddResources(group.project)}>
                 <Link2 className="h-3.5 w-3.5" />
-                Add resources
+                Add sources
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

@@ -195,11 +195,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     }) => projectsApi.attachResource(project.id, payload, project.orgId),
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      pushToast({ title: "Project context attached", tone: "success" });
+      pushToast({ title: "Project source attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to attach project context",
+        title: error instanceof Error ? error.message : "Failed to attach project source",
         tone: "error",
       });
     },
@@ -223,7 +223,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to update project context",
+        title: error instanceof Error ? error.message : "Failed to update project source",
         tone: "error",
       });
     },
@@ -269,11 +269,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     mutationFn: (attachmentId: string) => projectsApi.removeResourceAttachment(project.id, attachmentId, project.orgId),
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      pushToast({ title: "Project context removed", tone: "success" });
+      pushToast({ title: "Project source removed", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to remove project context",
+        title: error instanceof Error ? error.message : "Failed to remove project source",
         tone: "error",
       });
     },
@@ -374,9 +374,9 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       <section className="rounded-[var(--radius-lg)] border border-border bg-card">
         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-1.5">
-            <div className="text-base font-semibold text-foreground">Project Context</div>
+            <div className="text-base font-semibold text-foreground">Project Sources</div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Choose the resources agents should use for this project. Add a project note only when the resource needs local guidance.
+              Choose the sources agents should use for this project. Add a project note only when a source needs local guidance.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -396,7 +396,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                   disabled={attachResource.isPending || createAndAttachLibraryResource.isPending || createAndAttachLibraryPath.isPending}
                 >
                   <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
-                  Add resources
+                  Add sources
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="max-h-[460px] w-[22rem] overflow-y-auto p-2">
