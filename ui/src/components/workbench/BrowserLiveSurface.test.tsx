@@ -372,6 +372,53 @@ describe("BrowserLiveSurface", () => {
     expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
   });
 
+  it("does not reload a retained guest when the incoming target already matches its physical URL", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const initialTarget = {
+      kind: "browser" as const,
+      label: "Previous",
+      tabId: "browser-retained-target",
+      url: "https://example.com/previous",
+      viewInstanceId: "view-retained-target",
+    };
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="workbench"
+          target={initialTarget}
+          targetKey="browser-tab:browser-retained-target"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => "https://example.com/retained";
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="workbench"
+          target={{ ...initialTarget, url: "https://example.com/retained", label: "Retained" }}
+          targetKey="browser-tab:browser-retained-target"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+    expect(webview.getAttribute("src")).toBe("https://example.com/previous");
+  });
+
   it("keeps the settled navigation fence for late earlier events", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -616,16 +663,19 @@ describe("BrowserLiveSurface", () => {
       webview.dispatchEvent(new Event("did-stop-loading"));
     });
     act(() => {
-      vi.advanceTimersByTime(1_501);
+      vi.advanceTimersByTime(1);
     });
     onReplaceTarget.mockClear();
 
     guestUrl = firstUrl;
+    const firstWillNavigate = new Event("will-navigate");
+    Object.defineProperty(firstWillNavigate, "url", { configurable: true, value: firstUrl });
     const firstStart = new Event("did-start-navigation");
     Object.defineProperty(firstStart, "url", { configurable: true, value: firstUrl });
     const firstNavigation = new Event("did-navigate");
     Object.defineProperty(firstNavigation, "url", { configurable: true, value: firstUrl });
     act(() => {
+      webview.dispatchEvent(firstWillNavigate);
       webview.dispatchEvent(firstStart);
       webview.dispatchEvent(firstNavigation);
     });
