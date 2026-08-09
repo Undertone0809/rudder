@@ -90,6 +90,62 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     expect(html).toContain("text-muted-foreground");
   });
 
+  it("keeps detail durations in one trailing column across row variants", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <div>
+          <TranscriptChatToolActionRow
+            density="compact"
+            quiet={false}
+            block={{
+              ts: "2026-07-23T00:00:01.000Z",
+              endTs: "2026-07-23T00:00:24.000Z",
+              name: "Skill",
+              input: { skill: "ego-browser" },
+              result: "Loaded skill",
+              isError: false,
+              status: "completed",
+            }}
+          />
+          <TranscriptChatToolActionRow
+            density="compact"
+            quiet={false}
+            block={{
+              ts: "2026-07-23T00:00:25.000Z",
+              endTs: "2026-07-23T00:00:25.047Z",
+              name: "command_execution",
+              input: { command: "rg transcript" },
+              result: "match",
+              isError: false,
+              status: "completed",
+            }}
+          />
+          <TranscriptChatToolActionRow
+            density="compact"
+            quiet={false}
+            block={{
+              ts: "2026-07-23T00:00:26.000Z",
+              endTs: "2026-07-23T00:00:28.400Z",
+              name: "command_execution",
+              input: { command: "pnpm test" },
+              result: "Tests failed",
+              isError: true,
+              status: "error",
+            }}
+          />
+        </div>
+      </ThemeProvider>,
+    );
+
+    expect((html.match(/data-transcript-action-trailing="true"/g) ?? [])).toHaveLength(3);
+    expect((html.match(/data-transcript-action-duration="true"/g) ?? [])).toHaveLength(3);
+    expect((html.match(/data-transcript-action-disclosure-slot="true"/g) ?? [])).toHaveLength(3);
+    expect(html).toContain("Failed");
+    expect(html).toContain("23s");
+    expect(html).toContain("47ms");
+    expect(html).toContain("2.4s");
+  });
+
   it("keeps process content in the reading column while Steer stays full width", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

@@ -195,6 +195,51 @@ function TranscriptChatActionIconCell({
   );
 }
 
+function TranscriptChatActionTrailing({
+  duration,
+  statusText,
+  statusTone,
+  statusId,
+  disclosure,
+}: {
+  duration: string | null;
+  statusText: string | null;
+  statusTone?: string;
+  statusId?: string;
+  disclosure?: ReactNode;
+}) {
+  const hasDisclosure = Boolean(disclosure);
+  if (!duration && !statusText && !hasDisclosure) return null;
+
+  return (
+    <span
+      className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+      data-transcript-action-trailing="true"
+    >
+      {statusText ? (
+        <span id={statusId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", statusTone)}>
+          {statusText}
+        </span>
+      ) : null}
+      {duration ? (
+        <span
+          className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground"
+          data-transcript-action-duration="true"
+        >
+          {duration}
+        </span>
+      ) : null}
+      <span
+        className={cn("inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground", !hasDisclosure && "invisible")}
+        data-transcript-action-disclosure-slot="true"
+        aria-hidden={!hasDisclosure}
+      >
+        {disclosure}
+      </span>
+    </span>
+  );
+}
+
 export function TranscriptChatStdoutActionRow({
   block,
   density,
@@ -329,7 +374,6 @@ export function TranscriptChatToolActionRow({
   const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
   const rowGapClass = compact ? "gap-1.5" : "gap-2";
-  const trailingOffsetClass = compact ? "" : "pt-0.5";
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const fileChanges = semantic.fileChanges ?? [];
@@ -444,21 +488,12 @@ export function TranscriptChatToolActionRow({
               </>
             )}
           </span>
-          <span
-            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
-            data-transcript-action-trailing="true"
-          >
-            {duration ? (
-              <span className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground">
-                {duration}
-              </span>
-            ) : null}
-            {statusText ? (
-              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
-                {statusText}
-              </span>
-            ) : null}
-          </span>
+          <TranscriptChatActionTrailing
+            duration={duration}
+            statusText={statusText}
+            statusTone={rowTone}
+            statusId={statusLabelId}
+          />
         </div>
       ) : image ? (
         <div>
@@ -476,16 +511,12 @@ export function TranscriptChatToolActionRow({
             >
               Viewed an image
             </button>
-            {duration ? (
-              <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-                {duration}
-              </span>
-            ) : null}
-            {statusText ? (
-              <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-                {statusText}
-              </span>
-            ) : null}
+            <TranscriptChatActionTrailing
+              duration={duration}
+              statusText={statusText}
+              statusTone={rowTone}
+              statusId={statusLabelId}
+            />
           </div>
           {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
         </div>
@@ -542,31 +573,27 @@ export function TranscriptChatToolActionRow({
               })}
             </span>
           </span>
-          {duration ? (
-            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-              {duration}
-            </span>
-          ) : null}
-          {statusText ? (
-            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-              {statusText}
-            </span>
-          ) : null}
-          {canExpand && !inline ? (
-            <button
-              type="button"
-              className={cn(
-                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-                chevronOffsetClass,
-              )}
-              onClick={toggleDetails}
-              aria-expanded={open}
-              aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
-              data-transcript-action-row-disclosure="true"
-            >
-              <DisclosureChevron open={open} className="h-4 w-4" />
-            </button>
-          ) : null}
+          <TranscriptChatActionTrailing
+            duration={duration}
+            statusText={statusText}
+            statusTone={rowTone}
+            statusId={statusLabelId}
+            disclosure={canExpand && !inline ? (
+              <button
+                type="button"
+                className={cn(
+                  "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+                  chevronOffsetClass,
+                )}
+                onClick={toggleDetails}
+                aria-expanded={open}
+                aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
+                data-transcript-action-row-disclosure="true"
+              >
+                <DisclosureChevron open={open} className="h-4 w-4" />
+              </button>
+            ) : null}
+          />
         </div>
         )
       ) : fileChanges.length > 0 ? (
@@ -623,16 +650,12 @@ export function TranscriptChatToolActionRow({
                       <span>{targetText}</span>
                     )}
                   </span>
-                  {duration ? (
-                    <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-                      {duration}
-                    </span>
-                  ) : null}
-                  {statusText ? (
-                    <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-                      {statusText}
-                    </span>
-                  ) : null}
+                  <TranscriptChatActionTrailing
+                    duration={duration}
+                    statusText={statusText}
+                    statusTone={rowTone}
+                    statusId={statusLabelId}
+                  />
                 </div>
                 {hasHistoricalDiff && openDiffIndexes.has(index) && change.diff ? (
                   <div className="ml-5">
@@ -670,24 +693,12 @@ export function TranscriptChatToolActionRow({
           >
             {displaySummary}
           </span>
-          <span
-            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
-            data-transcript-action-trailing="true"
-          >
-            {duration ? (
-              <span
-                className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground"
-                data-transcript-action-duration="true"
-              >
-                {duration}
-              </span>
-            ) : null}
-            {statusText ? (
-              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
-                {statusText}
-              </span>
-            ) : null}
-            {canExpand && !inline && !inspectAgent ? (
+          <TranscriptChatActionTrailing
+            duration={duration}
+            statusText={statusText}
+            statusTone={rowTone}
+            statusId={statusLabelId}
+            disclosure={canExpand && !inline && !inspectAgent ? (
               <span
                 className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
                 data-transcript-action-row-disclosure="true"
@@ -695,7 +706,7 @@ export function TranscriptChatToolActionRow({
                 <DisclosureChevron open={open} className="block h-4 w-4" />
               </span>
             ) : null}
-          </span>
+          />
         </button>
       )}
       {semantic.evidenceWarning && (open || !canExpand) ? (

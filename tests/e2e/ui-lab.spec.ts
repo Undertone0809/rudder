@@ -20,6 +20,32 @@ async function createUiLabOrganization(page: import("@playwright/test").Page) {
 }
 
 test.describe("UI Lab", () => {
+  test("keeps transcript durations aligned across mixed activity rows", async ({ page }) => {
+    const organization = await createUiLabOrganization(page);
+
+    await page.goto(`/${organization.issuePrefix}/tests/ux/runs`);
+    await expect(page.getByRole("heading", { name: "Run Detail" })).toBeVisible();
+    await page.getByRole("button", { name: "Show settled state" }).click();
+    await expect(page.getByRole("button", { name: "Show streaming state" })).toBeVisible();
+
+    const assertDurationColumn = async (minimumCount: number) => {
+      const durationLabels = page.locator("[data-transcript-action-duration='true']");
+      await expect.poll(() => durationLabels.count()).toBeGreaterThanOrEqual(minimumCount);
+      const durationTexts = await durationLabels.allTextContents();
+      expect(durationTexts).toEqual(expect.arrayContaining(["100ms", "60ms", "5ms", "23s", "16s", "354ms"]));
+      const durationRightEdges = await durationLabels.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().right));
+      expect(Math.max(...durationRightEdges) - Math.min(...durationRightEdges)).toBeLessThanOrEqual(1);
+    };
+
+    await assertDurationColumn(6);
+    await expect(page.getByRole("button", { name: /Expand command details: Ran pnpm test:run Failed/ })).toBeVisible();
+
+    await page.getByRole("button", { name: /Expand tool activity group 6/ }).click();
+    await assertDurationColumn(9);
+
+    await page.screenshot({ path: "/tmp/rudder-run-transcript-duration-aligned.png", fullPage: true });
+  });
+
   test("applies shared motion defaults and honors reduced motion", async ({ page }) => {
     const organization = await createUiLabOrganization(page);
 
