@@ -41,9 +41,11 @@ vi.mock("./MarkdownEditor", async () => {
           mentions,
           onChange,
           placeholder,
+          contentClassName,
           value,
         }: {
           agentMentionIntent?: string;
+          contentClassName?: string;
           mentions?: Array<{ id: string }>;
           onChange?: (value: string) => void;
           placeholder?: string;
@@ -60,6 +62,7 @@ vi.mock("./MarkdownEditor", async () => {
           <textarea
             ref={textareaRef}
             aria-label={placeholder ?? "Markdown editor"}
+            data-content-class-name={contentClassName ?? ""}
             data-agent-mention-intent={agentMentionIntent ?? ""}
             data-mention-option-count={mentions?.length ?? 0}
             onChange={(event) => onChange?.(event.currentTarget.value)}
@@ -868,7 +871,9 @@ describe("CommentThread", () => {
     expect(html).toContain("scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1");
     expect(html).toContain('data-testid="comment-thread-fixed-composer"');
     expect(html).toContain("sticky bottom-0 z-20");
-    expect(html).toContain("bg-[color:var(--desktop-content-surface-light)]");
+    expect(html).not.toContain("bg-[color:var(--desktop-content-surface-light)]");
+    expect(html).not.toContain("bg-[color:var(--desktop-content-surface-dark)]");
+    expect(html).toContain("chat-composer");
     expect(html).not.toContain("xl:overflow-y-auto");
   });
 
@@ -886,9 +891,13 @@ describe("CommentThread", () => {
 
     expect(html).toContain('data-testid="comment-thread-timeline-flow"');
     expect(html).toContain('data-testid="comment-thread-fixed-composer"');
-    expect(html).toContain("sticky bottom-0 z-20");
+    expect(html).toContain("sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20");
+    expect(html).toContain("md:bottom-0");
     expect(html).toContain("pt-1");
     expect(html).not.toContain("-mb-4");
+    expect(html).not.toContain("bg-[color:var(--desktop-content-surface-light)]");
+    expect(html).not.toContain("bg-[color:var(--desktop-content-surface-dark)]");
+    expect(html).toContain("chat-composer");
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
     expect(html).not.toContain("flex-1 overflow-y-auto overscroll-contain");
   });
@@ -1308,7 +1317,7 @@ describe("CommentThread", () => {
     expect(commentBlock?.textContent).toContain("run run-1");
   });
 
-  it("keeps authored comments open by default and bounds the comment composer", () => {
+  it("keeps authored comments open and makes the mobile composer compact and bounded", async () => {
     const container = renderInteractive(
       <MemoryRouter>
         <CommentThread
@@ -1343,14 +1352,28 @@ describe("CommentThread", () => {
     const longComment = container.querySelector("#comment-long-comment");
     const imageComment = container.querySelector("#comment-image-comment");
     const composerScroll = container.querySelector("[data-testid='issue-comment-composer-editor-scroll']");
+    const composer = container.querySelector('[aria-label="Comment composer"]');
+    const editor = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Leave a comment..."]');
 
     expect(longComment?.getAttribute("aria-label")).toBeNull();
     expect(imageComment?.getAttribute("aria-label")).toBeNull();
     expect(longComment?.textContent).toContain("Long comment content.");
     expect(imageComment?.textContent).toContain("Visual evidence");
-    expect(composerScroll?.className).toContain("max-h-[min(38dvh,22rem)]");
+    expect(composer?.getAttribute("data-composer-state")).toBe("empty");
+    expect(composer?.className).toContain("grid-cols-[2.25rem_minmax(0,1fr)_auto]");
+    expect(composerScroll?.className).toContain("h-[var(--comment-composer-editor-height)]");
+    expect(composerScroll?.className).toContain("max-h-[min(24dvh,10rem)]");
+    expect(composerScroll?.className).toContain("md:max-h-[min(38dvh,22rem)]");
     expect(composerScroll?.className).toContain("overflow-y-auto");
     expect(composerScroll?.className).toContain("overscroll-contain");
+    expect(composerScroll?.className).toContain("motion-comment-composer-height");
+    expect(composer?.textContent).toContain("Leave a comment...");
+    expect(editor?.dataset.contentClassName).toContain("min-h-7");
+    expect(editor?.dataset.contentClassName).toContain("md:min-h-16");
+
+    await change(editor, "A comment that should expand the composer");
+    expect(composer?.getAttribute("data-composer-state")).toBe("composing");
+    expect(composer?.textContent).not.toContain("Leave a comment...");
   });
 
   it("keeps collapsed comment headers compact and uses a chevron expander", async () => {

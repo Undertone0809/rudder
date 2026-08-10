@@ -2091,7 +2091,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     );
   };
   return (
-    <div ref={setIssueDetailRootRef} data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"} className="issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain">
+    <div
+      ref={setIssueDetailRootRef}
+      data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"}
+      className={cn(
+        "issue-detail-container min-h-0 w-full scrollbar-auto-hide overscroll-contain",
+        embedded
+          ? "h-full overflow-x-hidden overflow-y-auto"
+          : "h-auto overflow-x-clip overflow-y-visible md:h-full md:overflow-x-hidden md:overflow-y-auto",
+      )}
+    >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div
         className="issue-detail-layout mx-auto min-h-full max-w-6xl"

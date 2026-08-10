@@ -73,6 +73,11 @@
   will-change: width, opacity;
 }
 
+.motion-comment-composer-height {
+  transition: height var(--motion-duration-standard) var(--motion-ease-enter);
+  will-change: height;
+}
+
 .motion-tooltip {
   transform-origin: var(--radix-tooltip-content-transform-origin, center);
   will-change: opacity, transform;
@@ -1099,6 +1104,7 @@
 
   .motion-focus-ring,
   .motion-resize,
+  .motion-comment-composer-height,
   .motion-grid-collapse,
   .motion-new-issue-dialog,
   .motion-kanban-lane,

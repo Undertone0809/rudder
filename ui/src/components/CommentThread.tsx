@@ -15,6 +15,7 @@ import { Check, ChevronDown, Copy, CornerDownRight, Link2, MoreHorizontal, Paper
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
+import { translateLegacyString } from "../i18n/legacyPhrases";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
@@ -36,6 +37,9 @@ const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markd
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
 const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
 const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+const MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX = 28;
+const MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX = 160;
+const MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO = 0.24;
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -1002,6 +1006,7 @@ const TimelineList = memo(function TimelineList({
         return 168;
       }}
       overscan={5}
+      preventScrollBlanking
       scrollElementRef={scrollElementRef}
       targetKey={highlightCommentId ? `comment:${highlightCommentId}` : null}
       onTargetMounted={onVirtualTargetMounted}
@@ -1069,6 +1074,7 @@ export function CommentThread({
   const [reserveHashScrollEndSpace, setReserveHashScrollEndSpace] = useState(false);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const [composerEditorScrollElement, setComposerEditorScrollElement] = useState<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const internalTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTimelineScrollRef = timelineScrollElementRef
@@ -1083,6 +1089,58 @@ export function CommentThread({
   const pendingScrollCancelCleanupRef = useRef<(() => void) | null>(null);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
+  const commentPlaceholder = translateLegacyString(locale, "Leave a comment...");
+
+  useEffect(() => {
+    const scrollElement = composerEditorScrollElement;
+    if (!scrollElement || typeof ResizeObserver === "undefined") return;
+
+    let animationFrame: number | null = null;
+    let observedContent: HTMLElement | null = null;
+
+    const syncHeight = () => {
+      if (!observedContent) return;
+      const maxHeight = Math.min(
+        window.innerHeight * MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO,
+        MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX,
+      );
+      const nextHeight = Math.max(
+        MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX,
+        Math.min(Math.ceil(observedContent.scrollHeight), maxHeight),
+      );
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(() => {
+        scrollElement.style.setProperty("--comment-composer-editor-height", `${nextHeight}px`);
+        animationFrame = null;
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(syncHeight);
+    const observeEditorContent = () => {
+      const nextContent = scrollElement.querySelector<HTMLElement>(
+        ".rudder-milkdown-content, .rudder-mdxeditor-content, .rudder-codemirror-markdown-content",
+      );
+      if (nextContent === observedContent) return;
+      resizeObserver.disconnect();
+      observedContent = nextContent;
+      if (observedContent) {
+        resizeObserver.observe(observedContent);
+        syncHeight();
+      }
+    };
+
+    const mutationObserver = new MutationObserver(observeEditorContent);
+    mutationObserver.observe(scrollElement, { childList: true, subtree: true });
+    window.addEventListener("resize", syncHeight, { passive: true });
+    observeEditorContent();
+
+    return () => {
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", syncHeight);
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+    };
+  }, [composerEditorScrollElement]);
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
@@ -1458,21 +1516,32 @@ export function CommentThread({
     <div
       ref={composerSurfaceRef}
       aria-label="Comment composer"
-      className="chat-composer rounded-[var(--radius-lg)] p-3"
+      className="chat-composer grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-end gap-x-1.5 rounded-[var(--radius-lg)] p-2 md:block md:p-3"
+      data-composer-state={body.trim() ? "composing" : "empty"}
       data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
       onMouseDown={focusComposerEditor}
       tabIndex={-1}
     >
       <div
+        ref={setComposerEditorScrollElement}
         data-testid="issue-comment-composer-editor-scroll"
-        className="scrollbar-auto-hide max-h-[min(38dvh,22rem)] overflow-y-auto overscroll-contain pr-1"
+        className="motion-comment-composer-height scrollbar-auto-hide relative col-start-2 row-start-1 h-[var(--comment-composer-editor-height)] min-w-0 max-h-[min(24dvh,10rem)] overflow-y-auto overscroll-contain pr-1 md:h-auto md:max-h-[min(38dvh,22rem)]"
+        style={{ "--comment-composer-editor-height": "1.75rem" } as CSSProperties}
       >
+        {!body.trim() ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center text-sm text-muted-foreground md:hidden"
+          >
+            {commentPlaceholder}
+          </span>
+        ) : null}
         <MarkdownEditor
           ref={editorRef}
           engine="milkdown"
           value={body}
           onChange={updateBody}
-          placeholder="Leave a comment..."
+          placeholder={commentPlaceholder}
           mentions={mentions}
           agentMentionIntent="wake"
           onMentionQueryChange={onMentionQueryChange}
@@ -1481,13 +1550,13 @@ export function CommentThread({
           onSubmit={() => handleSubmit()}
           imageUploadHandler={imageUploadHandler}
           className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+          contentClassName="min-h-7 bg-transparent text-sm leading-6 text-foreground md:min-h-16"
           bordered={false}
         />
       </div>
-      <div className="mt-3 flex items-center justify-end gap-3">
+      <div className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3">
         {(imageUploadHandler || onAttachImage) && (
-          <div className="mr-auto flex items-center gap-3">
+          <div className="col-start-1 row-start-1 flex items-center self-end md:mr-auto md:gap-3">
             <input
               ref={attachInputRef}
               type="file"
@@ -1508,7 +1577,7 @@ export function CommentThread({
           </div>
         )}
         {canReopen ? (
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+          <label className="col-span-3 row-start-2 mt-2 flex cursor-pointer select-none items-center gap-1.5 justify-self-end text-xs text-muted-foreground md:mt-0">
             <input
               type="checkbox"
               checked={reopen}
@@ -1518,22 +1587,24 @@ export function CommentThread({
             Re-open
           </label>
         ) : null}
-        {steerRunId ? (
-          <Button
-            size="sm"
-            variant="outline"
-            data-testid="issue-comment-steer"
-            disabled={!canSubmit}
-            onClick={() => handleSubmit("steer")}
-            title="Interrupt the active run and continue with this feedback"
-          >
-            <CornerDownRight className="mr-1.5 h-3.5 w-3.5" />
-            Steer
+        <div className="col-start-3 row-start-1 flex items-center gap-1.5 self-end">
+          {steerRunId ? (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="issue-comment-steer"
+              disabled={!canSubmit}
+              onClick={() => handleSubmit("steer")}
+              title="Interrupt the active run and continue with this feedback"
+            >
+              <CornerDownRight className="mr-1.5 h-3.5 w-3.5" />
+              Steer
+            </Button>
+          ) : null}
+          <Button size="sm" disabled={!canSubmit} onClick={() => handleSubmit()}>
+            {submitting ? "Posting..." : "Comment"}
           </Button>
-        ) : null}
-        <Button size="sm" disabled={!canSubmit} onClick={() => handleSubmit()}>
-          {submitting ? "Posting..." : "Comment"}
-        </Button>
+        </div>
       </div>
     </div>
   );
@@ -1554,7 +1625,7 @@ export function CommentThread({
           </div>
 
           <div
-            className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 shrink-0 bg-[color:var(--desktop-content-surface-light)] px-4 pb-4 pt-1 dark:bg-[color:var(--desktop-content-surface-dark)]"
+            className="comment-thread-fixed-composer sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 shrink-0 px-4 pb-4 pt-1 md:bottom-0"
             data-testid="comment-thread-fixed-composer"
           >
             {composerNode}
@@ -1581,7 +1652,7 @@ export function CommentThread({
         </div>
 
         <div
-          className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 bg-[color:var(--desktop-content-surface-light)] px-4 pb-4 pt-3 dark:bg-[color:var(--desktop-content-surface-dark)]"
+          className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 px-4 pb-4 pt-3"
           data-testid="comment-thread-fixed-composer"
         >
           {composerNode}

@@ -1,4 +1,4 @@
-import { useVirtualizer, type Range } from "@tanstack/react-virtual";
+import { useVirtualizer, useWindowVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   useCallback,
   useLayoutEffect,
@@ -14,6 +14,27 @@ const SCROLL_RANGE_CHUNK_ROWS = 4;
 // its first four-row range shift (24 -> about 20) instead of allowing a second
 // asynchronous shift to approach the viewport.
 const SCROLL_PREPAINT_RUNWAY_ROWS = 22;
+
+function resolveTimelineScrollElement(preferred: HTMLElement | null) {
+  if (!preferred || typeof window === "undefined") return preferred;
+
+  let current: HTMLElement | null = preferred;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const style = window.getComputedStyle(current);
+    const hasScrollableOverflow = /(auto|scroll|overlay)/.test(
+      `${style.overflow} ${style.overflowY}`,
+    );
+    const hasScrollableRange = current.scrollHeight > current.clientHeight + 1;
+    const isViewportBound = current.clientHeight <= window.innerHeight + 1;
+    if (hasScrollableOverflow && (hasScrollableRange || isViewportBound)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  const documentScroller = document.scrollingElement;
+  return documentScroller instanceof HTMLElement ? documentScroller : preferred;
+}
 
 export function VirtualizedActivityTimeline<T>({
   children,
@@ -46,6 +67,7 @@ export function VirtualizedActivityTimeline<T>({
     isScrolling: boolean;
     scrollDirection: "backward" | "forward" | null;
   } | null>(null);
+  const [scrollRootRevision, setScrollRootRevision] = useState(0);
   const [scrollMargin, setScrollMargin] = useState(0);
   const itemKeys = useMemo(
     () => items.map((item, index) => getItemKey(item, index)),
@@ -78,12 +100,33 @@ export function VirtualizedActivityTimeline<T>({
     );
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   }, [overscan]);
-  const virtualizer = useVirtualizer({
-    enabled: !baselineMode,
+  useLayoutEffect(() => {
+    let refreshFrame: number | null = null;
+    const refreshScrollElement = () => {
+      if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
+      refreshFrame = requestAnimationFrame(() => {
+        refreshFrame = null;
+        setScrollRootRevision((revision) => revision + 1);
+      });
+    };
+    setScrollRootRevision((revision) => revision + 1);
+    window.addEventListener("resize", refreshScrollElement);
+    return () => {
+      if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
+      window.removeEventListener("resize", refreshScrollElement);
+    };
+  }, []);
+  const resolvedScrollElement = resolveTimelineScrollElement(scrollElementRef.current);
+  const usesWindowScroll = typeof document !== "undefined"
+    && resolvedScrollElement === document.scrollingElement;
+  const getScrollElement = useCallback(
+    () => resolveTimelineScrollElement(scrollElementRef.current),
+    [scrollElementRef, scrollRootRevision],
+  );
+  const sharedVirtualizerOptions = {
     count: items.length,
     estimateSize,
     getItemKey: getVirtualItemKey,
-    getScrollElement: () => scrollElementRef.current,
     ...(preventScrollBlanking
       ? {
         overscan: 0,
@@ -92,12 +135,22 @@ export function VirtualizedActivityTimeline<T>({
       : { overscan }),
     scrollMargin,
     directDomUpdates: preventScrollBlanking && !baselineMode,
-    directDomUpdatesMode: "transform",
+    directDomUpdatesMode: "transform" as const,
     directDomPrepaintRows: preventScrollBlanking && !baselineMode
       ? SCROLL_PREPAINT_RUNWAY_ROWS
       : 0,
     useFlushSync: false,
+  };
+  const elementVirtualizer = useVirtualizer({
+    ...sharedVirtualizerOptions,
+    enabled: !baselineMode && !usesWindowScroll,
+    getScrollElement,
   });
+  const windowVirtualizer = useWindowVirtualizer({
+    ...sharedVirtualizerOptions,
+    enabled: !baselineMode && usesWindowScroll,
+  });
+  const virtualizer = usesWindowScroll ? windowVirtualizer : elementVirtualizer;
   virtualizerRef.current = virtualizer;
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -106,13 +159,17 @@ export function VirtualizedActivityTimeline<T>({
   const virtualItems = virtualizer.getVirtualItems();
   useLayoutEffect(() => {
     const container = containerRef.current;
-    const scrollElement = scrollElementRef.current;
+    const scrollElement = resolvedScrollElement;
     if (!container || !scrollElement) return undefined;
 
     const measureMargin = () => {
       const containerRect = container.getBoundingClientRect();
-      const scrollRect = scrollElement.getBoundingClientRect();
-      const next = Math.max(0, containerRect.top - scrollRect.top + scrollElement.scrollTop);
+      const next = scrollElement === document.scrollingElement
+        ? Math.max(0, containerRect.top + scrollElement.scrollTop)
+        : Math.max(
+          0,
+          containerRect.top - scrollElement.getBoundingClientRect().top + scrollElement.scrollTop,
+        );
       setScrollMargin((current) => Math.abs(current - next) < 1 ? current : next);
     };
     measureMargin();
@@ -162,7 +219,7 @@ export function VirtualizedActivityTimeline<T>({
       mutationObserver?.disconnect();
       resizeObserver?.disconnect();
     };
-  }, [preventScrollBlanking, scrollElementRef]);
+  }, [preventScrollBlanking, resolvedScrollElement]);
 
   useLayoutEffect(() => {
     if (!targetKey) return;
@@ -204,6 +261,7 @@ export function VirtualizedActivityTimeline<T>({
     <div
       ref={setContainerRef}
       data-testid={testId}
+      data-virtualized-scroll-root={usesWindowScroll ? "window" : "element"}
       style={{
         ...(!preventScrollBlanking ? { height: `${virtualizer.getTotalSize()}px` } : {}),
         position: "relative",

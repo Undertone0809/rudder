@@ -199,6 +199,89 @@ async function measureMessengerFastScrollCoverage(page: Page) {
   });
 }
 
+async function measureIssueActivityScrollCoverage(
+  page: Page,
+  scrollRoot: "issue-detail" | "document" = "issue-detail",
+) {
+  return page.getByTestId("issue-detail-main-scroll").evaluate(async (element, rootKind) => {
+    const preferredScrollElement = element as HTMLElement;
+    const scrollElement = rootKind === "document"
+      ? document.scrollingElement as HTMLElement | null
+      : preferredScrollElement;
+    if (!scrollElement) throw new Error("Issue activity scroll root is missing");
+    const timeline = scrollElement.querySelector<HTMLElement>(
+      "[data-testid='comment-thread-virtual-timeline']",
+    );
+    if (!timeline) throw new Error("Issue activity virtual timeline is missing");
+    const composer = scrollElement.querySelector<HTMLElement>(
+      "[data-testid='comment-thread-fixed-composer']",
+    );
+    if (!composer) throw new Error("Issue activity composer is missing");
+    const mobileNavigation = rootKind === "document"
+      ? document.querySelector<HTMLElement>("nav[aria-label='Mobile navigation']")
+      : null;
+    if (rootKind === "document" && !mobileNavigation) {
+      throw new Error("Mobile navigation is missing");
+    }
+
+    const timelineTop = timeline.getBoundingClientRect().top
+      - (rootKind === "document" ? 0 : scrollElement.getBoundingClientRect().top)
+      + scrollElement.scrollTop;
+    const viewportHeight = rootKind === "document" ? window.innerHeight : scrollElement.clientHeight;
+    const timelineScrollSpan = Math.max(0, timeline.offsetHeight - viewportHeight);
+    const targets = [0.04, 0.82, 0.18, 0.94, 0.35, 0.7, 0.1, 0.58];
+    const samples: Array<{
+      composerVisible: boolean;
+      fraction: number;
+      mountedRowCount: number;
+      phase: "sync" | "animation-frame";
+      scrollTop: number;
+      visibleRowCount: number;
+    }> = [];
+
+    const sample = (fraction: number, phase: "sync" | "animation-frame") => {
+      const viewport = rootKind === "document"
+        ? { bottom: window.innerHeight, top: 0 }
+        : scrollElement.getBoundingClientRect();
+      const mountedRows = Array.from(
+        timeline.querySelectorAll<HTMLElement>("[data-virtualized-activity-key]"),
+      );
+      const visibleRowCount = mountedRows.filter((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.bottom > viewport.top && rect.top < viewport.bottom;
+      }).length;
+      const composerRect = composer.getBoundingClientRect();
+      const navigationTop = mobileNavigation?.getBoundingClientRect().top ?? viewport.bottom;
+      samples.push({
+        composerVisible: composerRect.bottom > viewport.top
+          && composerRect.top < viewport.bottom
+          && composerRect.bottom <= navigationTop + 1,
+        fraction,
+        mountedRowCount: mountedRows.length,
+        phase,
+        scrollTop: scrollElement.scrollTop,
+        visibleRowCount,
+      });
+    };
+
+    for (const fraction of targets) {
+      scrollElement.scrollTop = timelineTop + timelineScrollSpan * fraction;
+      (rootKind === "document" ? window : scrollElement).dispatchEvent(new Event("scroll"));
+      sample(fraction, "sync");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      sample(fraction, "animation-frame");
+    }
+
+    return {
+      blankSamples: samples.filter((entry) => entry.visibleRowCount === 0),
+      composerHiddenSamples: samples.filter((entry) => !entry.composerVisible),
+      maxMountedRowCount: Math.max(...samples.map((entry) => entry.mountedRowCount)),
+      sampleCount: samples.length,
+      samples,
+    };
+  }, scrollRoot);
+}
+
 async function measureMessengerPrepaintLead(page: Page) {
   return page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
     const scrollElement = element as HTMLElement;
@@ -940,6 +1023,106 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await expect(issueVirtualTimeline).toBeVisible({ timeout: 30_000 });
   expect(await page.locator("[data-run-id]").count()).toBeLessThan(30);
   expect(await issueVirtualTimeline.locator("[data-virtualized-activity-key]").count()).toBeLessThan(30);
+  const issueActivityScrollCoverage = await measureIssueActivityScrollCoverage(page);
+  console.log(`THREAD_PRESSURE_ISSUE_SCROLL_COVERAGE ${JSON.stringify(issueActivityScrollCoverage)}`);
+  expect(issueActivityScrollCoverage.sampleCount).toBeGreaterThan(0);
+  expect(issueActivityScrollCoverage.blankSamples).toEqual([]);
+  expect(issueActivityScrollCoverage.maxMountedRowCount).toBeLessThan(40);
+
+  const desktopViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "Mobile navigation" })).toBeVisible();
+  const mobileComposer = page.getByLabel("Comment composer");
+  const mobileComposerEditorScroll = page.getByTestId("issue-comment-composer-editor-scroll");
+  const mobileComposerEditor = mobileComposer.locator('[contenteditable="true"]');
+  await expect(mobileComposerEditor).toBeVisible();
+  const compactComposerGeometry = await mobileComposer.evaluate((element) => {
+    const editorScroll = element.querySelector<HTMLElement>(
+      "[data-testid='issue-comment-composer-editor-scroll']",
+    );
+    if (!editorScroll) throw new Error("Mobile comment editor scroll surface is missing");
+    return {
+      composerHeight: element.getBoundingClientRect().height,
+      editorHeight: editorScroll.getBoundingClientRect().height,
+    };
+  });
+  expect(compactComposerGeometry.composerHeight).toBeLessThanOrEqual(60);
+  expect(compactComposerGeometry.editorHeight).toBeLessThanOrEqual(30);
+
+  await mobileComposerEditor.fill(
+    Array.from({ length: 12 }, (_, index) => `Composer growth line ${index + 1}`).join("\n"),
+  );
+  await expect(mobileComposer).toHaveAttribute("data-composer-state", "composing");
+  await expect.poll(
+    () => mobileComposerEditorScroll.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(compactComposerGeometry.editorHeight);
+  const expandedComposerGeometry = await mobileComposer.evaluate((element) => {
+    const editorScroll = element.querySelector<HTMLElement>(
+      "[data-testid='issue-comment-composer-editor-scroll']",
+    );
+    if (!editorScroll) throw new Error("Mobile comment editor scroll surface is missing");
+    return {
+      composerHeight: element.getBoundingClientRect().height,
+      editorClientHeight: editorScroll.clientHeight,
+      editorOverflowY: getComputedStyle(editorScroll).overflowY,
+      editorScrollHeight: editorScroll.scrollHeight,
+    };
+  });
+  expect(expandedComposerGeometry.composerHeight).toBeLessThanOrEqual(178);
+  expect(expandedComposerGeometry.editorClientHeight).toBeLessThanOrEqual(160);
+  expect(expandedComposerGeometry.editorScrollHeight).toBeGreaterThan(expandedComposerGeometry.editorClientHeight);
+  expect(expandedComposerGeometry.editorOverflowY).toBe("auto");
+  await expect(mobileComposer.getByRole("button", { name: "Comment" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-issue-composer-expanded.png" });
+
+  await mobileComposerEditor.press("Meta+A");
+  await mobileComposerEditor.press("Backspace");
+  await mobileComposerEditor.press(" ");
+  await mobileComposerEditor.press("Backspace");
+  await expect(mobileComposer).toHaveAttribute("data-composer-state", "empty");
+  await expect.poll(
+    () => mobileComposer.evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(60);
+  const constrainedScrollRootState = await issueVirtualTimeline.evaluate((timeline) => {
+    const issueRoot = document.querySelector<HTMLElement>("[data-testid='issue-detail-main-scroll']");
+    const main = document.querySelector<HTMLElement>("#main-content");
+    return {
+      issueClientHeight: issueRoot?.clientHeight ?? null,
+      issueOverflowY: issueRoot ? getComputedStyle(issueRoot).overflowY : null,
+      mainClientHeight: main?.clientHeight ?? null,
+      mainOverflowY: main ? getComputedStyle(main).overflowY : null,
+      mode: timeline.getAttribute("data-virtualized-scroll-root"),
+      mountedRows: timeline.querySelectorAll("[data-virtualized-activity-key]").length,
+      windowHeight: window.innerHeight,
+    };
+  });
+  console.log(`THREAD_PRESSURE_ISSUE_CONSTRAINED_ROOT ${JSON.stringify(constrainedScrollRootState)}`);
+  expect(constrainedScrollRootState).toMatchObject({
+    mainOverflowY: "visible",
+    mode: "window",
+  });
+  await expect.poll(
+    () => issueVirtualTimeline.locator("[data-virtualized-activity-key]").count(),
+  ).toBeLessThan(40);
+  const constrainedIssueActivityScrollCoverage = await measureIssueActivityScrollCoverage(
+    page,
+    "document",
+  );
+  console.log(
+    `THREAD_PRESSURE_ISSUE_CONSTRAINED_SCROLL_COVERAGE ${JSON.stringify(constrainedIssueActivityScrollCoverage)}`,
+  );
+  expect(constrainedIssueActivityScrollCoverage.sampleCount).toBeGreaterThan(0);
+  expect(constrainedIssueActivityScrollCoverage.blankSamples).toEqual([]);
+  expect(constrainedIssueActivityScrollCoverage.composerHiddenSamples).toEqual([]);
+  expect(constrainedIssueActivityScrollCoverage.maxMountedRowCount).toBeLessThan(40);
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-issue-constrained.png" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  if (desktopViewport) {
+    await page.setViewportSize(desktopViewport);
+    await expect(page.getByRole("navigation", { name: "Mobile navigation" })).toBeHidden();
+    await expect(issueVirtualTimeline).toHaveAttribute("data-virtualized-scroll-root", "element");
+  }
+
   const issueScroll = page.getByTestId("issue-detail-main-scroll");
   await issueScroll.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -1120,4 +1303,151 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(requestedLogRequests.filter(
     (request) => request.runId === activeRunDetailId,
   )).toHaveLength(terminalRequestCount);
+});
+
+test("keeps the mobile issue comment composer compact, growing, and bounded", async ({ page }) => {
+  const orgResponse = await page.request.post("/api/orgs", {
+    data: { name: `Mobile-Composer-${Date.now()}` },
+  });
+  expect(orgResponse.ok()).toBe(true);
+  const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+
+  const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Mobile comment composer interaction fixture",
+      description: "A focused browser fixture for the Issue Activity composer.",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueResponse.ok()).toBe(true);
+  const issue = await issueResponse.json() as { id: string; identifier: string | null };
+  const pressureCommentResponses = await Promise.all(
+    Array.from({ length: 18 }, (_, index) => page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: {
+        body: `Mobile composer pressure comment ${index + 1}. This keeps Activity tall enough to expose the scroll-to-bottom control.`,
+      },
+    })),
+  );
+  expect(pressureCommentResponses.every((response) => response.ok())).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+  const composer = page.getByLabel("Comment composer");
+  const editorScroll = page.getByTestId("issue-comment-composer-editor-scroll");
+  const editor = composer.locator('[contenteditable="true"]');
+  await expect(editor).toBeVisible();
+  await expect(composer.getByText("Leave a comment...", { exact: true })).toBeVisible();
+
+  const compactGeometry = await composer.evaluate((element) => {
+    const scroll = element.querySelector<HTMLElement>(
+      "[data-testid='issue-comment-composer-editor-scroll']",
+    );
+    if (!scroll) throw new Error("Mobile comment editor scroll surface is missing");
+    const outer = element.closest<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
+    if (!outer) throw new Error("Mobile comment composer outer surface is missing");
+    const activity = element.closest<HTMLElement>("section[aria-label='Activity']");
+    if (!activity) throw new Error("Issue Activity section is missing");
+    const activityRect = activity.getBoundingClientRect();
+    const composerRect = element.getBoundingClientRect();
+    return {
+      activityLeft: activityRect.left,
+      activityRight: activityRect.right,
+      composerHeight: composerRect.height,
+      composerLeft: composerRect.left,
+      composerRight: composerRect.right,
+      editorHeight: scroll.getBoundingClientRect().height,
+      composerBackground: getComputedStyle(element).backgroundColor,
+      outerBackground: getComputedStyle(outer).backgroundColor,
+    };
+  });
+  expect(compactGeometry.composerHeight).toBeLessThanOrEqual(60);
+  expect(compactGeometry.editorHeight).toBeLessThanOrEqual(30);
+  expect(Math.abs(compactGeometry.composerLeft - compactGeometry.activityLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(compactGeometry.composerRight - compactGeometry.activityRight)).toBeLessThanOrEqual(1);
+  expect(compactGeometry.outerBackground).toBe("rgba(0, 0, 0, 0)");
+  expect(compactGeometry.composerBackground).not.toBe("rgba(0, 0, 0, 0)");
+  await page.evaluate(() => window.scrollTo(0, 1));
+  const scrollToBottom = page.getByRole("button", { name: "Scroll to bottom" });
+  await expect(scrollToBottom).toBeVisible();
+  const commentButton = composer.getByRole("button", { name: "Comment" });
+  const controlsOverlap = async () => {
+    const [scrollRect, commentRect] = await Promise.all([
+      scrollToBottom.boundingBox(),
+      commentButton.boundingBox(),
+    ]);
+    if (!scrollRect || !commentRect) throw new Error("Composer controls are missing geometry");
+    return !(
+      scrollRect.x + scrollRect.width <= commentRect.x
+      || commentRect.x + commentRect.width <= scrollRect.x
+      || scrollRect.y + scrollRect.height <= commentRect.y
+      || commentRect.y + commentRect.height <= scrollRect.y
+    );
+  };
+  await expect.poll(controlsOverlap).toBe(false);
+  await page.screenshot({ path: "/tmp/rudder-mobile-comment-composer-empty.png" });
+
+  await editor.fill(
+    Array.from({ length: 12 }, (_, index) => `Composer growth line ${index + 1}`).join("\n"),
+  );
+  await expect(composer).toHaveAttribute("data-composer-state", "composing");
+  await expect(composer.getByText("Leave a comment...", { exact: true })).toHaveCount(0);
+  await expect.poll(() => editorScroll.evaluate((element) => element.clientHeight))
+    .toBeGreaterThan(compactGeometry.editorHeight);
+  const expandedGeometry = await composer.evaluate((element) => {
+    const scroll = element.querySelector<HTMLElement>(
+      "[data-testid='issue-comment-composer-editor-scroll']",
+    );
+    if (!scroll) throw new Error("Mobile comment editor scroll surface is missing");
+    const outer = element.closest<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
+    if (!outer) throw new Error("Mobile comment composer outer surface is missing");
+    const activity = element.closest<HTMLElement>("section[aria-label='Activity']");
+    if (!activity) throw new Error("Issue Activity section is missing");
+    const activityRect = activity.getBoundingClientRect();
+    const composerRect = element.getBoundingClientRect();
+    return {
+      activityLeft: activityRect.left,
+      activityRight: activityRect.right,
+      composerHeight: composerRect.height,
+      composerLeft: composerRect.left,
+      composerRight: composerRect.right,
+      editorClientHeight: scroll.clientHeight,
+      editorScrollHeight: scroll.scrollHeight,
+      editorOverflowY: getComputedStyle(scroll).overflowY,
+      composerBackground: getComputedStyle(element).backgroundColor,
+      outerBackground: getComputedStyle(outer).backgroundColor,
+    };
+  });
+  expect(expandedGeometry.composerHeight).toBeLessThanOrEqual(178);
+  expect(expandedGeometry.editorClientHeight).toBeLessThanOrEqual(160);
+  expect(expandedGeometry.editorScrollHeight).toBeGreaterThan(expandedGeometry.editorClientHeight);
+  expect(expandedGeometry.editorOverflowY).toBe("auto");
+  expect(Math.abs(expandedGeometry.composerLeft - expandedGeometry.activityLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(expandedGeometry.composerRight - expandedGeometry.activityRight)).toBeLessThanOrEqual(1);
+  expect(expandedGeometry.outerBackground).toBe("rgba(0, 0, 0, 0)");
+  expect(expandedGeometry.composerBackground).not.toBe("rgba(0, 0, 0, 0)");
+  await expect(commentButton).toBeVisible();
+  await expect.poll(controlsOverlap).toBe(false);
+  await page.screenshot({ path: "/tmp/rudder-mobile-comment-composer-expanded.png" });
+
+  await editor.press("Meta+A");
+  await editor.press("Backspace");
+  await editor.press(" ");
+  await editor.press("Backspace");
+  await expect(composer).toHaveAttribute("data-composer-state", "empty");
+  await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeLessThanOrEqual(60);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(editorScroll).toHaveCSS("height", "64px");
+  await expect(scrollToBottom).toBeVisible();
+  expect(await scrollToBottom.evaluate((element) => ({
+    computedBottom: getComputedStyle(element).bottom,
+    inlineBottom: element.style.bottom,
+  }))).toEqual({ computedBottom: "24px", inlineBottom: "" });
+  await scrollToBottom.click();
+  const issueScrollRoot = page.getByTestId("issue-detail-main-scroll");
+  await expect.poll(() => issueScrollRoot.evaluate((element) => (
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ))).toBeLessThanOrEqual(1);
 });

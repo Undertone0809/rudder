@@ -101,7 +101,8 @@
     },
     "patchedDependencies": {
       "@tanstack/react-virtual@3.14.8": "patches/@tanstack__react-virtual@3.14.8.patch"
-    }
+    },
+    "allowNonAppliedPatches": true
   },
   "packageManager": "pnpm@9.15.4"
 }

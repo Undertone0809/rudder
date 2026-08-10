@@ -11,6 +11,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-surface-pop");
     expect(motionCss).toContain(".motion-panel-reveal");
     expect(motionCss).toContain(".motion-resize");
+    expect(motionCss).toContain(".motion-comment-composer-height");
     expect(motionCss).toContain(".motion-tooltip");
     expect(motionCss).toContain(".motion-accordion-content");
     expect(motionCss).toContain(".motion-skeleton");
@@ -20,6 +21,7 @@ describe("Motion V1 CSS", () => {
   it("disables reusable structural motion when reduced motion is requested", () => {
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-surface-pop[\s\S]*?animation: none !important/);
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-resize[\s\S]*?transition: none !important/);
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-comment-composer-height[\s\S]*?transition: none !important/);
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-skeleton[\s\S]*?animation: none !important/);
   });
 

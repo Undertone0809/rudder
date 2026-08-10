@@ -709,7 +709,7 @@ describe("IssueDetail", () => {
     const descriptionIndex = html.indexOf("Parent description");
 
     expect(html).toContain('data-testid="issue-detail-main-scroll"');
-    expect(html).toContain("issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain");
+    expect(html).toContain("issue-detail-container min-h-0 w-full scrollbar-auto-hide overscroll-contain h-auto overflow-x-clip overflow-y-visible md:h-full md:overflow-x-hidden md:overflow-y-auto");
     expect(html).toContain('class="issue-detail-layout mx-auto min-h-full max-w-6xl"');
     expect(html).toContain('class="issue-detail-body min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
     expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-2"');
@@ -739,7 +739,7 @@ describe("IssueDetail", () => {
     const html = renderToStaticMarkup(<IssueDetail embedded embeddedIssueId="ORG2-1" />);
 
     expect(html).toContain('data-testid="embedded-issue-detail"');
-    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain");
+    expect(html).toContain("issue-detail-container min-h-0 w-full scrollbar-auto-hide overscroll-contain h-full overflow-x-hidden overflow-y-auto");
     expect(html).not.toContain('data-testid="issue-detail-main-scroll"');
   });
 
