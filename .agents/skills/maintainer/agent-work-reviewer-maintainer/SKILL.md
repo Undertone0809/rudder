@@ -101,8 +101,40 @@ Judge the product as an operational tool, not as isolated CSS:
 - typography hierarchy and control weight
 - whitespace distribution and layout rhythm
 - progressive disclosure and copy restraint
+- cognitive load and decision sequencing
 - interaction feedback, continuity, icons, and keyboard behavior
 - consistency with the nearest shipped Rudder surface
+
+Apply a decision-load gate before visual polish:
+
+- Write the user's immediate job and the common-path decisions in order.
+- Check that each UI state presents one primary decision and one focal action
+  region. A routing state may use a coherent peer choice set without promoting
+  one route; a follow-up submit or continuation state should have one primary
+  action.
+- Distinguish useful information density from simultaneous decision density.
+  A compact comparison surface may show many relevant facts; a creation or
+  configuration flow should not expose controls for future branches early.
+- Count visible choices, controls, persistent explanation, competing emphasis,
+  and active overlays as attention cost.
+- Confirm later-step controls appear only after they become relevant, while
+  risk, consequences, permissions, and current state remain visible when
+  needed.
+- In every cognitive-load review, explicitly name the risk, consequence,
+  permission, or current-state context that must remain visible. If none is
+  identifiable from the packet, say so and name the evidence needed instead of
+  silently treating critical context as absent.
+- Treat Reopen separately from in-flow Back, Cancel, and Close. Restoring work
+  after Reopen is valid only when the acceptance packet defines an intentional
+  draft contract; never infer persisted restoration from safe in-flow Back
+  behavior or from unspecified dismissal semantics.
+- Reject a kitchen-sink first surface even when every individual control is
+  usable and visually polished. The convergence direction should sequence the
+  decisions and remove nonessential elements, not merely restyle them.
+- Require the proposed acceptance packet to include a compact state inventory:
+  current decision, visible choices and controls, deferred controls,
+  safety-critical context, primary affordance or peer choice set, and declared
+  Back, Cancel, Close, Reopen, and draft-restoration semantics.
 
 Use production-shaped content, not placeholder-only fixtures. Check a relevant
 state matrix rather than one polished screenshot:
@@ -112,6 +144,7 @@ state matrix rather than one polished screenshot:
 | Content | empty, normal, long/overflow, dense |
 | Async | loading, success, error/retry |
 | Interaction | default, hover, focus, keyboard, open/close |
+| Decision flow | entry, route choice, focused follow-up, back/cancel |
 | Continuity | refresh, reopen, resize, persisted state |
 | Viewport | desktop and constrained/mobile when supported |
 | Theme | light/dark when tokens, shell, or contrast changed |
@@ -165,7 +198,12 @@ First-principles judgment:
 - Product direction: ...
 
 UI/product-quality judgment:
-- ...
+- Decision sequence and focal action or peer choice set: ...
+- Deferred controls: ...
+- Safety-critical context retained: ...
+- Back, Cancel, Close, Reopen, and draft semantics, including whether an
+  intentional draft contract exists: ...
+- Other product-quality evidence: ...
 
 Evidence integrity:
 - Author-claimed: ...

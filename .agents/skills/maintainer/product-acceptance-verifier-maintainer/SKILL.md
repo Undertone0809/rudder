@@ -83,6 +83,7 @@ to disprove the acceptance claim:
 | Content | empty, normal, long/overflow, dense |
 | Async | loading, success, error/retry |
 | Interaction | default, hover, focus, keyboard, open/close |
+| Decision flow | entry, route choice, focused follow-up, back/cancel |
 | Continuity | refresh, reopen, resize, persisted state |
 | Viewport | desktop and constrained/mobile when supported |
 | Theme | light/dark when tokens, shell, or contrast changed |
@@ -92,6 +93,14 @@ other cells are not material. Use production-shaped data. Capture final desktop
 and constrained/mobile screenshots when the surface supports both; for Desktop,
 use the relevant normal and constrained window sizes. Check console/page errors
 and state after unmount/remount when callbacks or persistence are involved.
+
+When the acceptance packet includes cognitive-load or progressive-disclosure
+criteria, record what decisions and controls are visible at each exercised
+state. Verify that future-route controls stay absent until selected, only one
+modal layer is active, and Back, Cancel, Close, and Reopen match the acceptance
+packet's declared semantics. Do not prescribe persistence when no intentional
+draft contract exists. These are observable workflow facts; the verifier still
+does not invent a visual-taste bar.
 
 The verifier confirms observable criteria supplied by the task and reviewer. It
 does not invent visual taste or approve a design direction. If the acceptance

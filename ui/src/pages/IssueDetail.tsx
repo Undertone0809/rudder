@@ -67,7 +67,6 @@ import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
-import { IssueRuntimeSelector, supportsIssueRuntimeOverrides } from "../components/IssueRuntimeSelector";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -2020,8 +2019,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     onMoreOpenChange: (open: boolean) => void;
     grouped?: boolean;
   }) => {
-    // Keep the nullable lookup local so the guard also narrows the value inside this closure.
-    const assigneeAgent = currentAssigneeAgent;
     return (
       <div
         className={cn(
@@ -2060,7 +2057,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-48 p-1" align="end">
-          {issue && assigneeAgent && supportsIssueRuntimeOverrides(assigneeAgent) && resolvedCompanyId ? <div data-testid="issue-runtime-menu-entry" className="mb-1 border-b border-border pb-1"><IssueRuntimeSelector agent={assigneeAgent} orgId={resolvedCompanyId} overrides={issue.assigneeAgentRuntimeOverrides} variant="menu" onApply={(nextOverrides) => updateIssue.mutate({ assigneeAgentRuntimeOverrides: nextOverrides })} /></div> : null}
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
