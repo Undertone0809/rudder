@@ -576,6 +576,178 @@ test.describe("Apps workspace", () => {
     await expect(composer).toContainText("Alpha CRM");
   });
 
+  test("deletes a stopped Local App from its row menu and keeps running Apps protected", async ({
+    page,
+  }, testInfo) => {
+    const organization = await createOrganization(page.request, "Apps-Delete");
+    await setSitesEnabled(page.request, true);
+    await page.addInitScript(() => {
+      const definitions = [
+        {
+          id: "definition-alpha",
+          desktopInstallationId: "desktop-e2e",
+          appPublicId: "alpha-delete",
+          localBindingId: "binding-alpha-delete",
+          title: "Alpha CRM",
+          executable: "node",
+          argv: ["server.mjs"],
+          cwd: "/tmp/alpha-delete",
+          inheritedEnvNames: [],
+          readiness: { path: "/health", timeoutMs: 10_000 },
+          openPath: "/",
+          trustFingerprint: "trust-alpha-delete",
+          approvedFingerprint: "trust-alpha-delete",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: "definition-beta",
+          desktopInstallationId: "desktop-e2e",
+          appPublicId: "beta-delete",
+          localBindingId: "binding-beta-delete",
+          title: "Beta Dashboard",
+          executable: "node",
+          argv: ["server.mjs"],
+          cwd: "/tmp/beta-delete",
+          inheritedEnvNames: [],
+          readiness: { path: "/health", timeoutMs: 10_000 },
+          openPath: "/",
+          trustFingerprint: "trust-beta-delete",
+          approvedFingerprint: "trust-beta-delete",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ];
+      const runtime = new Map<string, {
+        status: "stopped" | "running";
+        generation: string | null;
+        origin?: string;
+        openPath?: string;
+        partition?: string;
+      }>([
+        ["definition-alpha", { status: "stopped", generation: null }],
+        [
+          "definition-beta",
+          {
+            status: "running",
+            generation: "generation-beta-delete",
+            origin: "http://127.0.0.1:41731",
+            openPath: "/",
+            partition: "persist:beta-delete",
+          },
+        ],
+      ]);
+      const testWindow = window as typeof window & {
+        __deletedApps?: string[];
+        __startedApps?: string[];
+        __stoppedApps?: string[];
+      };
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          localApps: {
+            supported: true,
+            list: async () => definitions,
+            discover: async () => ({ canceled: true }),
+            create: async (definition: unknown) => definition,
+            update: async (_id: string, definition: unknown) => definition,
+            delete: async (id: string) => {
+              testWindow.__deletedApps = [...(testWindow.__deletedApps ?? []), id];
+              const index = definitions.findIndex((definition) => definition.id === id);
+              if (index >= 0) definitions.splice(index, 1);
+              runtime.delete(id);
+            },
+            start: async (id: string) => {
+              testWindow.__startedApps = [...(testWindow.__startedApps ?? []), id];
+              const definition = definitions.find((candidate) => candidate.id === id)!;
+              const next = {
+                status: "running" as const,
+                generation: `generation-${id}`,
+                origin: "http://127.0.0.1:41731",
+                openPath: definition.openPath,
+                partition: `persist:${definition.appPublicId}`,
+              };
+              runtime.set(id, next);
+              return next;
+            },
+            stop: async (id: string) => {
+              testWindow.__stoppedApps = [...(testWindow.__stoppedApps ?? []), id];
+              const next = { status: "stopped" as const, generation: null };
+              runtime.set(id, next);
+              return next;
+            },
+            status: async (id: string) => runtime.get(id)!,
+            logs: async () => [],
+            attestedTarget: async (id: string) => {
+              const definition = definitions.find((candidate) => candidate.id === id)!;
+              return {
+                origin: "http://127.0.0.1:41731",
+                openPath: definition.openPath,
+                partition: `persist:${definition.appPublicId}`,
+              };
+            },
+          },
+        },
+      });
+    });
+    await selectOrganization(page, organization.id);
+    await page.setViewportSize({ width: 1680, height: 1000 });
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
+
+    const alphaEntry = page.getByTestId("apps-entry-local:definition-alpha");
+    const betaEntry = page.getByTestId("apps-entry-local:definition-beta");
+    await expect(alphaEntry).toBeVisible();
+    await expect(betaEntry).toBeVisible();
+
+    await alphaEntry.click();
+    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
+    await betaEntry.click();
+    await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
+    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
+
+    await betaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-beta").click();
+    const betaDelete = page.getByTestId("apps-delete-local:definition-beta");
+    await expect(betaDelete).toBeDisabled();
+    await page.getByRole("menuitem", { name: "Stop App" }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual(["definition-beta"]);
+
+    await alphaEntry.click();
+    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
+    await betaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-beta").click();
+    await expect(page.getByTestId("apps-delete-local:definition-beta")).toBeEnabled();
+    await page.getByTestId("apps-delete-local:definition-beta").click();
+    const deleteDialog = page.getByRole("dialog");
+    await expect(deleteDialog).toContainText('Delete "Beta Dashboard"?');
+    await deleteDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(betaEntry).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __deletedApps?: string[] }).__deletedApps ?? []
+    ))).toEqual([]);
+
+    await betaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-beta").click();
+    await page.getByTestId("apps-delete-local:definition-beta").click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __deletedApps?: string[] }).__deletedApps ?? []
+    ))).toEqual(["definition-beta"]);
+    await expect(betaEntry).toHaveCount(0);
+    await expect(page.getByTestId("apps-tab-local:definition-beta")).toHaveCount(0);
+    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
+    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
+    await page.screenshot({
+      path: `/tmp/rudder-apps-e2e-delete-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+  });
+
   test("does not expose a managed local binding in another organization", async ({
     page,
   }) => {

@@ -602,6 +602,28 @@ export function Apps() {
   }, [activeKey, navigate, openIntentVersion, selectedOrganizationId]);
 
   useEffect(() => {
+    if (!registryReady) return;
+    setTabs((current) => {
+      const next = current.filter((tab) => tab.key === "home" || entryByKey.has(tab.key));
+      if (next.length === current.length) return current;
+      for (const tab of current) {
+        if (!next.some((candidate) => candidate.key === tab.key)) {
+          tabRefs.current.delete(tab.key);
+        }
+      }
+      return next;
+    });
+  }, [entryByKey, registryReady]);
+
+  useEffect(() => {
+    if (!registryReady) return;
+    setFocusedTabKey((current) => {
+      if (current === "home" || entryByKey.has(current)) return current;
+      return activeKey === "home" || entryByKey.has(activeKey) ? activeKey : "home";
+    });
+  }, [activeKey, entryByKey, registryReady]);
+
+  useEffect(() => {
     if (activeKey === "home" || !activeEntry) return;
     const title = activeEntry.kind === "managed"
       ? activeEntry.app.name

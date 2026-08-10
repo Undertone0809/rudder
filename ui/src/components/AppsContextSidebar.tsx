@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
@@ -54,6 +55,7 @@ import {
   Settings,
   Sparkles,
   Square,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { useState } from "react";
@@ -98,7 +100,9 @@ function AppRowActions({
   onSettings: (definition: DesktopLocalAppDefinition, active: boolean) => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const { confirm } = useDialog();
   const { pushToast } = useToast();
   const desktopShell = readDesktopShell();
   const localApps = desktopShell?.localApps;
@@ -214,6 +218,38 @@ function AppRowActions({
     || status === "orphaned_unverified"
     || statusQuery.isPending
     || dataMutation.isPending;
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (entry.kind !== "local" || !definition || !localApps) {
+        throw new Error("Local App deletion is unavailable.");
+      }
+      await localApps.delete(definition.id);
+    },
+    onSuccess: () => {
+      if (!definition) return;
+      queryClient.setQueryData<DesktopLocalAppDefinition[]>(
+        queryKeys.localApps.definitions,
+        (current) => current?.filter((candidate) => candidate.id !== definition.id) ?? [],
+      );
+      queryClient.removeQueries({
+        queryKey: queryKeys.localApps.status(definition.localBindingId),
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.localApps.logs(definition.localBindingId),
+      });
+      pushToast({ title: "Local App deleted", tone: "success" });
+      if (activeKeyFromPath(location.pathname) === entry.key) {
+        navigate("/apps");
+      }
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Could not delete Local App",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
   const openTarget = async (action: "copy" | "external") => {
     if (!definition || !localApps) return;
     const target = await localApps.attestedTarget(definition.id);
@@ -235,6 +271,20 @@ function AppRowActions({
     await open?.(src);
   };
   const title = entry.kind === "managed" ? entry.app.name : entry.definition.title;
+  const canDelete = entry.kind === "local"
+    && Boolean(definition)
+    && (status === "stopped" || status === "failed")
+    && !deleteMutation.isPending;
+  const handleDelete = async () => {
+    if (!canDelete || !definition) return;
+    const confirmed = await confirm({
+      title: `Delete "${title}"?`,
+      description: "This removes the trusted Local App launch definition from this device. Project files are not deleted.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (confirmed) deleteMutation.mutate();
+  };
 
   return (
     <DropdownMenu>
@@ -341,6 +391,20 @@ function AppRowActions({
               <Square aria-hidden />
               Stop App
             </DropdownMenuItem>
+            {entry.kind === "local" ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={!canDelete}
+                  data-testid={`apps-delete-${entry.key}`}
+                  onSelect={() => { void handleDelete(); }}
+                >
+                  <Trash2 aria-hidden />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            ) : null}
           </>
         ) : null}
       </DropdownMenuContent>

@@ -56,6 +56,10 @@ const localAppSmokeScreenshotOverride = process.env.RUDDER_DESKTOP_LOCAL_APP_SMO
 const localAppSmokeScreenshotPath = localAppSmokeScreenshotOverride
   ? path.resolve(localAppSmokeScreenshotOverride)
   : path.join(os.tmpdir(), `rudder-desktop-local-app-smoke-${smokeMode}.png`);
+const localAppDeleteSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-local-app-delete-smoke-${smokeMode}.png`,
+);
 const expectedBrowserToolNames = [
   "rudder_browser_tabs",
   "rudder_browser_user_tabs",
@@ -5027,6 +5031,7 @@ async function hasLocalAppOsResidue(descriptor) {
 async function cleanupLocalAppScenario(input) {
   const {
     definition,
+    definitionDeleted,
     lastKnownDescriptor,
     markerPath,
     registry,
@@ -5044,7 +5049,9 @@ async function cleanupLocalAppScenario(input) {
 
   try {
     if (run.page.isClosed()) throw new Error("Local App renderer closed before the cleanup IPC stop");
-    await run.page.evaluate((definitionId) => window.desktopShell.localApps.stop(definitionId), definition.id);
+    if (!definitionDeleted) {
+      await run.page.evaluate((definitionId) => window.desktopShell.localApps.stop(definitionId), definition.id);
+    }
     if (descriptor) {
       await assertLocalAppRuntimeStopped({ definition, descriptor, markerPath, registryPath });
     }
@@ -5197,6 +5204,12 @@ async function runLocalAppsScenario(mode) {
     registryPath,
   } = await seedApprovedLocalAppDefinition(scenarioRoot, project);
   const failingLocalApp = await seedFailingLocalAppDefinition(registry, scenarioRoot);
+  const preservedProjectSource = project.external
+    ? null
+    : {
+        contents: await readFile(path.join(project.projectRoot, "server.mjs"), "utf8"),
+        path: path.join(project.projectRoot, "server.mjs"),
+      };
   console.log("[desktop-smoke] Local App definition", JSON.stringify({
     appPublicId: definition.appPublicId,
     desktopInstallationId: definition.desktopInstallationId,
@@ -5206,6 +5219,7 @@ async function runLocalAppsScenario(mode) {
   const ports = await allocateSmokePorts();
   const run = await launchDesktop(scenarioRoot, mode, ports, project.launchEnv);
   let runningDescriptor = null;
+  let definitionDeleted = false;
   let scenarioError = null;
   let cleanupError = null;
   try {
@@ -5213,6 +5227,12 @@ async function runLocalAppsScenario(mode) {
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await createCeo(run.baseUrl, company.id);
     await updateExperimentalSites(run.baseUrl, true);
+    const managedApp = await createAppBuilderRecord(
+      run.baseUrl,
+      company.id,
+      "Managed App Delete Guard",
+      "apps/managed-delete-guard",
+    );
     const chat = await createChat(run.baseUrl, company.id);
     const chatPath = `/${companyRouteKey}/messenger/chat/${chat.id}`;
     await run.page.evaluate((nextCompanyId) => {
@@ -5585,7 +5605,101 @@ async function runLocalAppsScenario(mode) {
     });
     if (!project.external) assert.match(logText, /Rudder Local Apps smoke fixture listening/);
 
-    console.log("[desktop-smoke] Local App exact guest moved into Main Workbench, close/remove preserved its runtime, and explicit Stop left no residue");
+    const appsHomeUrl = new URL(`/${companyRouteKey}/apps`, run.baseUrl).href;
+    await run.page.goto(appsHomeUrl);
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/apps$`), { timeout: 30_000 });
+    await run.page.waitForLoadState("networkidle");
+
+    const failedEntryKey = `local:${failingLocalApp.definition.id}`;
+    const failedEntry = run.page.getByTestId(`apps-entry-${failedEntryKey}`);
+    await failedEntry.waitFor({ state: "visible", timeout: 15_000 });
+    await failedEntry.hover();
+    await run.page.getByTestId(`apps-more-${failedEntryKey}`).click();
+    assert.equal(
+      await run.page.getByTestId(`apps-delete-${failedEntryKey}`).isEnabled(),
+      true,
+      "a failed Local App must remain deletable",
+    );
+    await run.page.keyboard.press("Escape");
+
+    const managedEntryKey = `managed:${managedApp.id}`;
+    const managedEntry = run.page.getByTestId(`apps-entry-${managedEntryKey}`);
+    await managedEntry.waitFor({ state: "visible", timeout: 15_000 });
+    await managedEntry.hover();
+    await run.page.getByTestId(`apps-more-${managedEntryKey}`).click();
+    assert.equal(
+      await run.page.getByTestId(`apps-delete-${managedEntryKey}`).count(),
+      0,
+      "managed Apps must not expose Local App deletion",
+    );
+    await run.page.keyboard.press("Escape");
+
+    const entryKey = `local:${definition.id}`;
+    const appEntry = run.page.getByTestId(`apps-entry-${entryKey}`);
+    await appEntry.waitFor({ state: "visible", timeout: 15_000 });
+    await appEntry.click();
+    await waitForSmokeCondition("the Apps workspace Local App to start", async () => {
+      const status = await readDesktopLocalAppStatus(run.page, definition.id);
+      return status.status === "running" ? status : null;
+    }, { timeoutMs: 360_000 });
+
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    assert.equal(
+      await run.page.getByTestId(`apps-delete-${entryKey}`).isDisabled(),
+      true,
+      "a running Local App must not be deletable",
+    );
+    await run.page.getByRole("menuitem", { name: "Stop App" }).click();
+    await waitForSmokeCondition("the Apps workspace Local App to stop", async () => {
+      const status = await readDesktopLocalAppStatus(run.page, definition.id);
+      return status.status === "stopped" ? status : null;
+    }, { timeoutMs: 30_000 });
+
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    const deleteItem = run.page.getByTestId(`apps-delete-${entryKey}`);
+    assert.equal(await deleteItem.isEnabled(), true, "a stopped Local App must be deletable");
+    await deleteItem.click();
+    let deleteDialog = run.page.getByRole("dialog");
+    await deleteDialog.waitFor({ state: "visible", timeout: 15_000 });
+    assert.match(await deleteDialog.innerText(), /Project files are not deleted\./);
+    await run.page.screenshot({ path: localAppDeleteSmokeScreenshotPath, fullPage: true });
+    console.log(`[desktop-smoke] Local App Delete confirmation screenshot: ${localAppDeleteSmokeScreenshotPath}`);
+    await deleteDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(
+      (await run.page.evaluate(() => window.desktopShell.localApps.list()))
+        .some((candidate) => candidate.id === definition.id),
+      true,
+      "canceling Local App deletion must keep the definition",
+    );
+
+    await appEntry.hover();
+    await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    await run.page.getByTestId(`apps-delete-${entryKey}`).click();
+    deleteDialog = run.page.getByRole("dialog");
+    await deleteDialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await appEntry.waitFor({ state: "detached", timeout: 15_000 });
+    await run.page.getByTestId(`apps-tab-${entryKey}`).waitFor({ state: "detached", timeout: 15_000 });
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/apps$`), { timeout: 15_000 });
+    await run.page.getByText("Local App deleted").waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(
+      (await run.page.evaluate(() => window.desktopShell.localApps.list()))
+        .some((candidate) => candidate.id === definition.id),
+      false,
+      "confirming Local App deletion must remove the definition",
+    );
+    assert.equal(await pathExists(definition.cwd), true, "Local App deletion must preserve project files");
+    if (preservedProjectSource) {
+      assert.equal(
+        await readFile(preservedProjectSource.path, "utf8"),
+        preservedProjectSource.contents,
+        "Local App deletion must leave generated project source unchanged",
+      );
+    }
+    definitionDeleted = true;
+
+    console.log("[desktop-smoke] Local App exact guest moved into Main Workbench, close/remove preserved its runtime, and Apps Delete removed only the stopped definition");
   } catch (error) {
     scenarioError = sanitizeLocalAppSmokeError(error, inheritedEnvValues);
     console.error(`[desktop-smoke] Local Apps scenario failed: ${scenarioError.message}`);
@@ -5593,6 +5707,7 @@ async function runLocalAppsScenario(mode) {
     try {
       cleanupError = await cleanupLocalAppScenario({
         definition,
+        definitionDeleted,
         lastKnownDescriptor: runningDescriptor,
         markerPath: project.markerPath,
         registry,
@@ -5906,6 +6021,11 @@ async function runAppBuilderScenario(mode) {
     const appEntry = run.page.getByTestId(`apps-entry-${entryKey}`);
     await appEntry.hover();
     await run.page.getByTestId(`apps-more-${entryKey}`).click();
+    assert.equal(
+      await run.page.getByTestId(`apps-delete-${entryKey}`).count(),
+      0,
+      "managed Apps must not expose Local App deletion",
+    );
     await run.page.getByRole("menuitem", { name: "Stop App" }).click();
     await waitForSmokeCondition(
       "stopped App to clear its attested target",
