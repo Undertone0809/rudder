@@ -26,7 +26,7 @@ import { cn, formatDate, formatDateTime, issueUrl, projectUrl } from "../lib/uti
 import { AgentIdentity } from "./AgentAvatar";
 import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./AssigneeLabel";
 import { IssueLabelChip } from "./IssueLabelChip";
-import { IssueRuntimeSelector } from "./IssueRuntimeSelector";
+import { IssueRuntimeSelector, supportsIssueRuntimeOverrides } from "./IssueRuntimeSelector";
 import { PriorityIcon } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
@@ -68,7 +68,7 @@ function PropertyRow({
     <div
       data-slot="issue-property-row"
       data-align={align}
-      className={cn("flex gap-3 py-1.5", align === "start" ? "items-start" : "items-center")}
+      className={cn("group/issue-property flex gap-3 py-1.5", align === "start" ? "items-start" : "items-center")}
     >
       <span className="text-xs text-muted-foreground shrink-0 w-20">{label}</span>
       <div className="flex items-center gap-1.5 min-w-0 flex-1">{children}</div>
@@ -582,14 +582,6 @@ export function IssueProperties({
             >
               <AgentMenuLabel agent={a} />
             </button>
-            {a.id === issue.assigneeAgentId ? (
-              <IssueRuntimeSelector
-                agent={a}
-                orgId={orgId!}
-                overrides={issue.assigneeAgentRuntimeOverrides}
-                onApply={(nextOverrides) => onUpdate({ assigneeAgentRuntimeOverrides: nextOverrides })}
-              />
-            ) : null}
           </div>
         ))}
       </div>
@@ -975,6 +967,15 @@ export function IssueProperties({
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"
+          extra={assignee && orgId && supportsIssueRuntimeOverrides(assignee) ? (
+            <IssueRuntimeSelector
+              agent={assignee}
+              orgId={orgId}
+              overrides={issue.assigneeAgentRuntimeOverrides}
+              variant="icon"
+              onApply={(nextOverrides) => onUpdate({ assigneeAgentRuntimeOverrides: nextOverrides })}
+            />
+          ) : null}
         >
           {assigneeContent}
         </PropertyPicker>
