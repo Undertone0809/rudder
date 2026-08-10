@@ -138,7 +138,10 @@ async function materializeMigrations(ref: string, root: string): Promise<string>
       ["archive", "--format=tar", "-o", archivePath, ref, "--", MIGRATION_PATH],
       { cwd: REPO_ROOT },
     );
-    execFileSync("tar", ["-xf", archivePath, "-C", archiveRoot]);
+    const tarArgs = process.platform === "win32"
+      ? ["--force-local", "-xf", archivePath, "-C", archiveRoot]
+      : ["-xf", archivePath, "-C", archiveRoot];
+    execFileSync("tar", tarArgs);
     const archivedMigrations = path.join(archiveRoot, MIGRATION_PATH);
     const migrationFiles = (await readdir(archivedMigrations))
       .filter((fileName) => fileName.endsWith(".sql"))
