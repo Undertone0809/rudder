@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -200,6 +200,17 @@ export function buildOfficialPostgresStartArgs(options: LocalPostgresInstanceOpt
   ];
 }
 
+export function buildOfficialPostgresStartSpawnOptions(
+  binDir: string,
+  password: string,
+): SpawnOptions {
+  return {
+    env: buildOfficialPostgresCommandEnv(binDir, password),
+    stdio: "ignore",
+    windowsHide: true,
+  };
+}
+
 function buildOfficialPostgresInitdbArgsForBinDir(
   binDir: string,
   options: LocalPostgresInstanceOptions,
@@ -302,6 +313,27 @@ export function createOfficialPostgresInstance(
       await run(command, args, phase);
     }
   };
+  const runWindowsStart = async (): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        binaries.pgCtl,
+        buildOfficialPostgresStartArgs(options),
+        buildOfficialPostgresStartSpawnOptions(binDir, options.password),
+      );
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(
+          `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start failed `
+            + `(exit ${code ?? "none"}, signal ${signal ?? "none"}); `
+            + `see ${path.join(options.databaseDir, "postgres.log")}`,
+        ));
+      });
+    });
+  };
   return {
     async initialise() {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pg-init-"));
@@ -319,7 +351,7 @@ export function createOfficialPostgresInstance(
     },
     async start() {
       if (process.platform === "win32") {
-        await run(binaries.pgCtl, buildOfficialPostgresStartArgs(options), "start");
+        await runWindowsStart();
         return;
       }
 

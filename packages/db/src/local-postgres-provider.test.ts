@@ -6,6 +6,7 @@ import {
   assertOfficialPostgresVersion,
   buildOfficialPostgresInitdbArgs,
   buildOfficialPostgresStartArgs,
+  buildOfficialPostgresStartSpawnOptions,
   createLocalPostgresInstance,
   resolveOfficialPostgresBinaries,
   resolveOfficialPostgresBinDir,
@@ -193,5 +194,10 @@ describe("local postgres provider", () => {
       "-w",
       "start",
     ]);
+
+    expect(buildOfficialPostgresStartSpawnOptions("C:\\PostgreSQL\\18\\bin", "rudder")).toMatchObject({
+      stdio: "ignore",
+      windowsHide: true,
+    });
   });
 });
