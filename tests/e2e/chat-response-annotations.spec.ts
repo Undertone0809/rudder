@@ -424,9 +424,13 @@ async function gateAnnotationSourceDigests(page: Page) {
 }
 
 async function waitForAnnotationSourceDigest(page: Page, count: number) {
-  await expect.poll(() => page.evaluate(() => (
+  await expect.poll(() => annotationSourceDigestCount(page)).toBe(count);
+}
+
+async function annotationSourceDigestCount(page: Page) {
+  return page.evaluate(() => (
     window as typeof window & { __annotationDigestCount?: () => number }
-  ).__annotationDigestCount?.() ?? 0)).toBe(count);
+  ).__annotationDigestCount?.() ?? 0);
 }
 
 async function releaseAnnotationSourceDigest(page: Page, index: number) {
@@ -658,6 +662,123 @@ test.afterAll(async () => {
 });
 
 test.describe("Chat response annotations", () => {
+  test("keeps a real pointer selection visibly active after async anchor recovery", async ({ page }, testInfo) => {
+    const seeded = await seedAnnotationChat(page, `Response-Selection-Stability-${Date.now()}`);
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    const paragraph = finalSource.getByText(
+      "Second paragraph keeps the selection stable across Markdown blocks.",
+      { exact: true },
+    );
+    await expect(finalSource).toBeVisible({ timeout: 15_000 });
+    await expect(paragraph).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", {
+      name: "Jump to source message for Rudder docs",
+    })).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => {
+      try {
+        await paragraph.evaluate((element) => element.scrollIntoView({
+          behavior: "instant",
+          block: "center",
+        }));
+        return true;
+      } catch {
+        return false;
+      }
+    }).toBe(true);
+    await gateAnnotationSourceDigests(page);
+    await expect.poll(() => paragraph.evaluate(async (element) => {
+      const before = element.getBoundingClientRect();
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      const after = element.getBoundingClientRect();
+      return Math.max(
+        Math.abs(after.x - before.x),
+        Math.abs(after.y - before.y),
+        Math.abs(after.width - before.width),
+        Math.abs(after.height - before.height),
+      );
+    })).toBeLessThan(0.5);
+    let pointerSelection = { collapsed: true, text: "" };
+    let recoveryDigestIndex = -1;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const paragraphBox = await paragraph.boundingBox();
+      expect(paragraphBox).toBeTruthy();
+      const y = paragraphBox!.y + Math.min(12, paragraphBox!.height / 4);
+      const startX = paragraphBox!.x + 8;
+      const endX = paragraphBox!.x + Math.min(paragraphBox!.width - 8, 320);
+      const pointerTargets = await page.evaluate(({ startX, endX, y }) => {
+        const targetText = (x: number) => document.elementFromPoint(x, y)?.textContent?.trim() ?? "";
+        return { start: targetText(startX), end: targetText(endX) };
+      }, { startX, endX, y });
+      expect(pointerTargets.start).toContain("Second paragraph keeps the selection stable");
+      expect(pointerTargets.end).toContain("Second paragraph keeps the selection stable");
+      const digestCountBefore = await annotationSourceDigestCount(page);
+      await page.mouse.move(startX, y);
+      await page.mouse.down();
+      await page.mouse.move(startX + 40, y, { steps: 4 });
+      await page.waitForTimeout(16);
+      await page.mouse.move(startX + 160, y, { steps: 8 });
+      await page.waitForTimeout(16);
+      await page.mouse.move(endX, y, { steps: 12 });
+      await page.waitForTimeout(16);
+      await page.mouse.up();
+      pointerSelection = await page.evaluate(() => ({
+        collapsed: window.getSelection()?.isCollapsed ?? true,
+        text: window.getSelection()?.toString() ?? "",
+      }));
+      if (
+        !pointerSelection.collapsed
+        && pointerSelection.text.includes("paragraph keeps the selection stable")
+        && !pointerSelection.text.includes("第一段包含")
+      ) {
+        await expect.poll(() => annotationSourceDigestCount(page)).toBeGreaterThan(digestCountBefore);
+        recoveryDigestIndex = await annotationSourceDigestCount(page) - 1;
+        break;
+      }
+      await page.evaluate(() => window.getSelection()?.removeAllRanges());
+      await page.waitForTimeout(50);
+    }
+    expect(pointerSelection.collapsed).toBe(false);
+    expect(pointerSelection.text).toContain("paragraph keeps the selection stable");
+    expect(pointerSelection.text).not.toContain("第一段包含");
+    expect(recoveryDigestIndex).toBeGreaterThanOrEqual(0);
+
+    const beforeRecovery = await page.evaluate(() => ({
+      activeTestId: (document.activeElement as HTMLElement | null)?.dataset.testid ?? null,
+      collapsed: window.getSelection()?.isCollapsed ?? true,
+      text: window.getSelection()?.toString() ?? "",
+    }));
+    expect(beforeRecovery.collapsed).toBe(false);
+    expect(beforeRecovery.text).toContain("paragraph keeps the selection stable");
+    expect(beforeRecovery.text).not.toContain("第一段包含");
+
+    await releaseAnnotationSourceDigest(page, recoveryDigestIndex);
+    await expect(annotationToolbar(page)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const selection = window.getSelection();
+      return {
+        activeTestId: (document.activeElement as HTMLElement | null)?.dataset.testid ?? null,
+        collapsed: selection?.isCollapsed ?? true,
+        highlightCount: CSS.highlights.get("rudder-chat-pending-selection")?.size ?? 0,
+        rangeCount: selection?.rangeCount ?? 0,
+        text: selection?.toString() ?? "",
+      };
+    })).toEqual({
+      activeTestId: beforeRecovery.activeTestId,
+      collapsed: false,
+      highlightCount: 1,
+      rangeCount: 1,
+      text: beforeRecovery.text,
+    });
+    await page.screenshot({
+      path: testInfo.outputPath("chat-pointer-selection-stays-highlighted.png"),
+      fullPage: false,
+      animations: "disabled",
+    });
+  });
+
   test("annotates rich final text, owns files, sends annotation-only, and restores immutable evidence", async ({ page }, testInfo) => {
     const seeded = await seedAnnotationChat(page, `Response-Annotations-${Date.now()}`);
     const finalSource = annotationSource(page, {

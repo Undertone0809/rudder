@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ChatConversationHeader } from "./ChatConversationHeader";
@@ -35,5 +36,28 @@ describe("ChatConversationHeader", () => {
     expect(markup).toContain("Unknown agent");
     expect(markup).toContain('data-testid="chat-header-agent-fallback"');
     expect(markup).not.toContain("<img");
+  });
+
+  it("places an always-visible sidebar opener immediately before the agent avatar", () => {
+    const markup = renderToStaticMarkup(
+      <TooltipProvider>
+        <ChatConversationHeader
+          agent={{
+            id: "agent-1",
+            name: "Noah",
+            icon: null,
+            role: "general",
+          }}
+          title="Sidebar placement"
+          onOpenSidebar={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const openerIndex = markup.indexOf('data-testid="workspace-sidebar-reopen-button"');
+    const avatarIndex = markup.indexOf('data-testid="chat-header-agent-icon"');
+    expect(openerIndex).toBeGreaterThan(-1);
+    expect(avatarIndex).toBeGreaterThan(openerIndex);
+    expect(markup).not.toContain("opacity-0");
   });
 });

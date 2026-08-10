@@ -896,7 +896,13 @@ function SidePanelRouteContextBinder({
   return null;
 }
 
-function CollapsedWorkspaceSidebarReveal({ onOpen }: { onOpen: () => void }) {
+function CollapsedWorkspaceSidebarReveal({
+  onOpen,
+  alwaysVisible = false,
+}: {
+  onOpen: () => void;
+  alwaysVisible?: boolean;
+}) {
   return (
     <div
       data-testid="workspace-sidebar-reopen-zone"
@@ -909,7 +915,12 @@ function CollapsedWorkspaceSidebarReveal({ onOpen }: { onOpen: () => void }) {
             variant="outline"
             size="icon"
             data-testid="workspace-sidebar-reopen-button"
-            className="desktop-window-no-drag pointer-events-none h-10 w-7 shrink-0 -translate-x-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
+            className={cn(
+              "desktop-window-no-drag h-10 w-7 shrink-0 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+              alwaysVisible
+                ? "pointer-events-auto translate-x-0 opacity-100"
+                : "pointer-events-none -translate-x-1/2 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+            )}
             onClick={onOpen}
             aria-label="Open workspace sidebar"
             title="Open workspace sidebar"
@@ -1700,8 +1711,14 @@ export function Layout() {
                         </div>
                       </>
                     ) : null}
-                    {showIntegratedShellSidebar && !sidebarOpen && useFramelessWorkspaceMain ? (
-                      <CollapsedWorkspaceSidebarReveal onOpen={() => setSidebarOpen(true)} />
+                    {showIntegratedShellSidebar
+                      && !sidebarOpen
+                      && useFramelessWorkspaceMain
+                      && !hasActiveChatConversation ? (
+                      <CollapsedWorkspaceSidebarReveal
+                        onOpen={() => setSidebarOpen(true)}
+                        alwaysVisible={isChatRoute || isMessengerRoute}
+                      />
                     ) : null}
                     <div className="workspace-main-panel-stack relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
                       <div

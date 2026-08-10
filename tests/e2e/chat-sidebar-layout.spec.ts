@@ -366,7 +366,7 @@ test.describe("Chat sidebar layout", () => {
     await expect(page.getByTestId("chat-desktop-toolbar-actions")).toHaveCSS("position", "relative");
   });
 
-  test("keeps the collapsed workspace sidebar trigger at the chat top-left", async ({ page }, testInfo) => {
+  test("keeps the collapsed workspace sidebar trigger visible left of the chat avatar", async ({ page }, testInfo) => {
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "userAgent", {
         configurable: true,
@@ -409,32 +409,40 @@ test.describe("Chat sidebar layout", () => {
 
     const mainCard = page.getByTestId("chat-main-workspace-card");
     const collapseButton = page.getByRole("button", { name: "Collapse workspace sidebar" });
-    const reopenZone = page.getByTestId("workspace-sidebar-reopen-zone");
     const reopenButton = page.getByTestId("workspace-sidebar-reopen-button");
+    const header = page.getByTestId("chat-conversation-header");
+    const avatar = page.getByTestId("chat-header-agent-icon");
     await expect(mainCard).toBeVisible();
     await expect(collapseButton).toBeVisible();
     await collapseButton.click();
     await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
     await expect(reopenButton).toHaveCount(1);
-
-    await expect(reopenButton).toHaveCSS("opacity", "0");
-    await expect(reopenButton).toHaveCSS("pointer-events", "none");
-
-    const mainCardBox = await mainCard.boundingBox();
-    const reopenZoneBox = await reopenZone.boundingBox();
-    expect(mainCardBox).not.toBeNull();
-    expect(reopenZoneBox).not.toBeNull();
-    expect(Math.abs(reopenZoneBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(2);
-    expect(reopenZoneBox!.height).toBeLessThanOrEqual(48);
-
-    await reopenZone.hover();
+    await expect(header).toBeVisible();
+    await expect(avatar).toBeVisible();
     await expect(reopenButton).toHaveCSS("opacity", "1");
     await expect(reopenButton).toHaveCSS("pointer-events", "auto");
-    const reopenButtonBox = await reopenButton.boundingBox();
-    expect(reopenButtonBox).not.toBeNull();
-    expect(Math.abs(reopenButtonBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(4);
+
+    await expect.poll(async () => {
+      const reopenButtonBox = await reopenButton.boundingBox();
+      const avatarBox = await avatar.boundingBox();
+      if (!reopenButtonBox || !avatarBox) return null;
+      const reopenRight = reopenButtonBox.x + reopenButtonBox.width;
+      return {
+        centerAligned: Math.abs(
+          reopenButtonBox.y + reopenButtonBox.height / 2
+          - (avatarBox.y + avatarBox.height / 2),
+        ) <= 2,
+        gapWithinEightPixels: avatarBox.x - reopenRight <= 8,
+        leftOfAvatar: reopenRight <= avatarBox.x + 1,
+      };
+    }).toEqual({
+      centerAligned: true,
+      gapWithinEightPixels: true,
+      leftOfAvatar: true,
+    });
+    await expect(page.getByTestId("workspace-sidebar-reopen-zone")).toHaveCount(0);
     await page.screenshot({
-      path: testInfo.outputPath("chat-sidebar-reopen-top-left.png"),
+      path: testInfo.outputPath("chat-sidebar-reopen-left-of-avatar.png"),
       fullPage: true,
     });
 

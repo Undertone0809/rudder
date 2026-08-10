@@ -1073,6 +1073,10 @@
     background: color-mix(in oklab, var(--accent-base) 32%, transparent);
     color: var(--foreground);
   }
+  ::highlight(rudder-chat-pending-selection) {
+    background-color: color-mix(in oklab, var(--accent-base) 38%, transparent);
+    color: var(--foreground);
+  }
   /* Prevent double-tap-to-zoom on interactive elements for mobile */
   a,
   button,

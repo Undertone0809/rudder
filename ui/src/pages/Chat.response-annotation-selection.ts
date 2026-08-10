@@ -10,7 +10,7 @@ import {
   type ChatAnnotationSelectionAnchor,
 } from "@/lib/chat-response-annotation-selection";
 import type { ChatMessage } from "@rudderhq/shared";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 export type PendingChatResponseAnnotationSelection = {
   source: string;
@@ -22,6 +22,8 @@ export type PendingChatResponseAnnotationSelection = {
   sideChatEligible: boolean;
   autoFocusToolbar: boolean;
 };
+
+const CHAT_PENDING_SELECTION_HIGHLIGHT = "rudder-chat-pending-selection";
 
 export function usePendingChatResponseAnnotationSelection(input: {
   rawMessages: ChatMessage[];
@@ -229,6 +231,40 @@ export function usePendingChatResponseAnnotationSelection(input: {
     input.loadedTranscriptsByMessageId,
     input.rawMessages,
     input.selectedConversationId,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!pendingSelection) return;
+    if (
+      input.activeDraftScopeRef.current !== input.draftStorageScopeKey
+      || pendingSelection.sourceConversationId !== input.selectedConversationId
+    ) {
+      return;
+    }
+    const liveSelection = restoreLiveChatAnnotationRange({
+      anchor: pendingSelection.anchor,
+      source: pendingSelection.source,
+      searchRoot: input.chatMainWorkspaceRef.current ?? document,
+    });
+    if (!liveSelection) return;
+    const selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(liveSelection.range);
+    if (typeof Highlight === "undefined" || !CSS.highlights) return;
+    const highlight = new Highlight(liveSelection.range);
+    CSS.highlights.set(CHAT_PENDING_SELECTION_HIGHLIGHT, highlight);
+    return () => {
+      if (CSS.highlights.get(CHAT_PENDING_SELECTION_HIGHLIGHT) === highlight) {
+        CSS.highlights.delete(CHAT_PENDING_SELECTION_HIGHLIGHT);
+      }
+    };
+  }, [
+    input.activeDraftScopeRef,
+    input.chatMainWorkspaceRef,
+    input.draftStorageScopeKey,
+    input.selectedConversationId,
+    pendingSelection,
   ]);
 
   const clearPendingSelection = () => {
