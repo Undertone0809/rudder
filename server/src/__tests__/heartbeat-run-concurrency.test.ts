@@ -2252,6 +2252,159 @@ describe("heartbeat run concurrency", () => {
     expect(persistedIssue?.executionRunId).toBeNull();
   });
 
+  it("reserves fenced Issue Steer feedback behind the exact running issue run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const runningRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runningRunId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { issueId, taskId: issueId, taskKey: `issue:${issueId}` },
+      startedAt: new Date(),
+    });
+    await db.update(issues).set({
+      executionRunId: runningRunId,
+      executionAgentNameKey: "builder",
+      executionLockedAt: new Date(),
+    }).where(eq(issues.id, issueId));
+
+    const commentId = randomUUID();
+    const heartbeat = heartbeatService(db);
+    const receipt = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_steer",
+      expectedIssueExecutionRunId: runningRunId,
+      startImmediately: false,
+      payload: { issueId, commentId, steerRunId: runningRunId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        taskKey: `issue:${issueId}`,
+        wakeCommentId: commentId,
+        wakeReason: "issue_comment_steer",
+        wakeSource: "issue.comment.steer",
+        steerRunId: runningRunId,
+      },
+    });
+
+    expect(receipt?.id).toBe(runningRunId);
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]).toMatchObject({
+      status: "deferred_issue_execution",
+      reason: "issue_execution_deferred",
+      runId: null,
+    });
+    expect(wakeups[0]?.payload).toMatchObject({
+      issueId,
+      commentId,
+      steerRunId: runningRunId,
+    });
+  });
+
+  it("rejects fenced Issue Steer after the run or relationship changes under the issue lock", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const runningRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runningRunId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { issueId },
+      startedAt: new Date(),
+    });
+    await db.update(issues).set({
+      executionRunId: runningRunId,
+      executionAgentNameKey: "builder",
+      executionLockedAt: new Date(),
+      assigneeAgentId: null,
+    }).where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.wakeup(agentId, {
+      source: "automation",
+      reason: "issue_comment_steer",
+      expectedIssueExecutionRunId: runningRunId,
+      startImmediately: false,
+      payload: { issueId, commentId: randomUUID() },
+      contextSnapshot: {
+        issueId,
+        wakeCommentId: randomUUID(),
+        wakeReason: "issue_comment_steer",
+        wakeSource: "issue.comment.steer",
+      },
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await listWakeupRequestsForAgent(agentId)).toHaveLength(0);
+
+    await db.update(issues).set({ assigneeAgentId: agentId, executionRunId: null })
+      .where(eq(issues.id, issueId));
+    await expect(heartbeat.wakeup(agentId, {
+      source: "automation",
+      reason: "issue_comment_steer",
+      expectedIssueExecutionRunId: runningRunId,
+      startImmediately: false,
+      payload: { issueId, commentId: randomUUID() },
+      contextSnapshot: {
+        issueId,
+        wakeCommentId: randomUUID(),
+        wakeReason: "issue_comment_steer",
+        wakeSource: "issue.comment.steer",
+      },
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await listWakeupRequestsForAgent(agentId)).toHaveLength(0);
+  });
+
+  it("does not reserve fenced Issue Steer when on-demand wakeups are disabled", async () => {
+    const { orgId, agentId } = await seedAgentFixture({
+      runtimeConfig: { heartbeat: { wakeOnDemand: false } },
+    });
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const runningRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runningRunId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { issueId },
+      startedAt: new Date(),
+    });
+    await db.update(issues).set({
+      executionRunId: runningRunId,
+      executionAgentNameKey: "builder",
+      executionLockedAt: new Date(),
+    }).where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+    const receipt = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      reason: "issue_comment_steer",
+      expectedIssueExecutionRunId: runningRunId,
+      startImmediately: false,
+      payload: { issueId, commentId: randomUUID() },
+      contextSnapshot: {
+        issueId,
+        wakeCommentId: randomUUID(),
+        wakeReason: "issue_comment_steer",
+        wakeSource: "issue.comment.steer",
+      },
+    });
+
+    expect(receipt).toBeNull();
+    expect(await listWakeupRequestsForAgent(agentId)).toEqual([
+      expect.objectContaining({ status: "skipped", reason: "heartbeat.wakeOnDemand.disabled" }),
+    ]);
+  });
+
   it("revalidates mention relationship under the issue lock before granting the execution lease", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });

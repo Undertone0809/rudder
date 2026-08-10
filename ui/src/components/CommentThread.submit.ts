@@ -39,7 +39,7 @@ interface UseCommentSubmitOptions {
   draftKey?: string;
   editorRef: RefObject<MarkdownEditorRef | null>;
   locale: InstanceLocale;
-  onAdd: (body: string, reopen?: boolean) => Promise<void>;
+  onAdd: (body: string, reopen?: boolean, intent?: "comment" | "steer") => Promise<void>;
   reopen: boolean;
   reopenWillWakeAgent: boolean;
   setReopen: Dispatch<SetStateAction<boolean>>;
@@ -115,7 +115,7 @@ export function useCommentSubmit({
     }
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(intent: "comment" | "steer" = "comment") {
     if (submissionInFlightRef.current) return;
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
     const trimmed = currentMarkdown.trim();
@@ -127,7 +127,7 @@ export function useCommentSubmit({
       if (shouldConfirmUnmentionedComment(
         trimmed,
         validAgentIds,
-        Boolean(reopenRequested && reopenWillWakeAgent),
+        intent === "steer" || Boolean(reopenRequested && reopenWillWakeAgent),
       )) {
         setConfirmingUnmentioned(true);
         const confirmed = await confirm({
@@ -148,7 +148,11 @@ export function useCommentSubmit({
       }
 
       setSubmitting(true);
-      await onAdd(trimmed, reopenRequested);
+      if (intent === "steer") {
+        await onAdd(trimmed, reopenRequested, "steer");
+      } else {
+        await onAdd(trimmed, reopenRequested);
+      }
       updateBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);

@@ -11,7 +11,7 @@ import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizat
 import { PluginSlotOutlet } from "@/plugins/slots";
 import type { Agent, InstanceLocale, IssueComment } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
-import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Copy, CornerDownRight, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
@@ -54,13 +54,14 @@ interface CommentThreadProps {
   activityItems?: CommentThreadActivityItem[];
   orgId?: string | null;
   projectId?: string | null;
-  onAdd: (body: string, reopen?: boolean) => Promise<void>;
+  onAdd: (body: string, reopen?: boolean, intent?: "comment" | "steer") => Promise<void>;
   onUpdate?: (commentId: string, body: string) => Promise<void>;
   onDelete?: (commentId: string) => Promise<void>;
   currentUserId?: string | null;
   issueStatus?: string;
   locale?: InstanceLocale;
   reopenWillWakeAgent?: boolean;
+  steerRunId?: string | null;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
   /** Fallback callback for consumers that upload files without inserting a markdown link. */
@@ -675,13 +676,13 @@ const TimelineList = memo(function TimelineList({
               ) : (
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-xs">
                   <div className="flex h-7 min-w-0 items-center gap-2">
-                    <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink hover:underline">
+                    <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink overflow-hidden hover:underline">
                       <AgentIdentity
                         name={agentName}
                         icon={agent?.icon}
                         role={agent?.role}
                         size="sm"
-                        className="h-7 max-w-[12rem] items-center"
+                        className="h-7 w-full min-w-0 max-w-[12rem] items-center"
                       />
                     </Link>
                     <span
@@ -1042,6 +1043,7 @@ export function CommentThread({
   issueStatus,
   locale = "en",
   reopenWillWakeAgent = false,
+  steerRunId = null,
   agentMap,
   imageUploadHandler,
   onAttachImage,
@@ -1476,7 +1478,7 @@ export function CommentThread({
           onMentionQueryChange={onMentionQueryChange}
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"
-          onSubmit={handleSubmit}
+          onSubmit={() => handleSubmit()}
           imageUploadHandler={imageUploadHandler}
           className="rounded-[var(--radius-md)] bg-transparent"
           contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
@@ -1516,7 +1518,20 @@ export function CommentThread({
             Re-open
           </label>
         ) : null}
-        <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
+        {steerRunId ? (
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="issue-comment-steer"
+            disabled={!canSubmit}
+            onClick={() => handleSubmit("steer")}
+            title="Interrupt the active run and continue with this feedback"
+          >
+            <CornerDownRight className="mr-1.5 h-3.5 w-3.5" />
+            Steer
+          </Button>
+        ) : null}
+        <Button size="sm" disabled={!canSubmit} onClick={() => handleSubmit()}>
           {submitting ? "Posting..." : "Comment"}
         </Button>
       </div>

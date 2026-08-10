@@ -1704,8 +1704,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   });
 
   const addComment = useMutation({
-    mutationFn: ({ body, reopen }: { body: string; reopen?: boolean }) =>
-      issuesApi.addComment(issueId!, body, reopen),
+    mutationFn: ({ body, reopen, steerExpectedRunId }: { body: string; reopen?: boolean; steerExpectedRunId?: string }) =>
+      issuesApi.addComment(issueId!, body, reopen, { steerExpectedRunId }),
     onSuccess: () => {
       invalidateIssue();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
@@ -2628,6 +2628,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           issueStatus={issue.status}
           locale={locale}
           reopenWillWakeAgent={Boolean(currentAssigneeAgent && isAgentWakeEligible(currentAssigneeAgent.status))}
+          steerRunId={activeRun?.status === "running" ? activeRun.id : null}
           agentMap={agentMap}
           draftKey={`rudder:issue-comment-draft:${issue.id}`}
           mentions={mentionOptions}
@@ -2640,8 +2641,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           fixedComposer
           fixedComposerTimelineScroll={false}
           timelineScrollElementRef={issueFindRootRef}
-          onAdd={async (body, reopen) => {
-            await addComment.mutateAsync({ body, reopen });
+          onAdd={async (body, reopen, intent) => {
+            await addComment.mutateAsync({
+              body,
+              reopen,
+              ...(intent === "steer" && activeRun?.status === "running"
+                ? { steerExpectedRunId: activeRun.id }
+                : {}),
+            });
           }}
           onUpdate={async (commentId, body) => {
             await updateComment.mutateAsync({ commentId, body });

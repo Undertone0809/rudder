@@ -127,7 +127,7 @@ export function isIssueCommentMentionWake(input: {
     readNonEmptyString(deferredContext.wakeReason),
     readNonEmptyString(payload.wakeReason),
   ];
-  if (wakeReasons.includes(ISSUE_COMMENT_MENTION_REASON)) return true;
+  if (wakeReasons.includes(ISSUE_COMMENT_MENTION_REASON) || wakeReasons.includes("issue_comment_steer")) return true;
 
   const wakeSource =
     readNonEmptyString(context.wakeSource) ??
@@ -209,6 +209,7 @@ export interface WakeupOptions {
   originTerminalRunId?: string | null;
   terminalIssueAudit?: TerminalIssueSemanticAudit;
   startImmediately?: boolean;
+  expectedIssueExecutionRunId?: string | null;
 }
 
 export type UsageTotals = {

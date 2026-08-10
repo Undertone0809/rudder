@@ -36,6 +36,8 @@ const mockAccessService = vi.hoisted(() => ({
 }));
 
 const mockHeartbeatService = vi.hoisted(() => ({
+  cancelRun: vi.fn(),
+  getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
   reportRunActivity: vi.fn(async () => undefined),
   wakeup: vi.fn(async () => undefined),
@@ -211,6 +213,13 @@ describe("issue lifecycle routes", () => {
     vi.resetAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
     mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
+    mockHeartbeatService.cancelRun.mockImplementation(async (runId: string) => ({
+      id: runId,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "cancelled",
+    }));
+    mockHeartbeatService.getActiveRunForAgent.mockResolvedValue(null);
     mockHeartbeatService.getRun.mockImplementation(async (runId: string) =>
       runId === RUN_ID
         ? {
@@ -2564,6 +2573,149 @@ describe("issue lifecycle routes", () => {
       ASSIGNEE_AGENT_ID,
       expect.anything(),
     );
+  });
+
+  it("fences Issue Steer to the observed run and queues feedback before interruption", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockHeartbeatService.wakeup.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+    });
+
+    const res = await request(await createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "Use the smaller migration and keep compatibility.",
+        steer: { expectedRunId: RUN_ID },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_comment_steer",
+        payload: expect.objectContaining({
+          commentId: "comment-1",
+          steerRunId: RUN_ID,
+          mutation: "steer",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          wakeCommentId: "comment-1",
+          wakeReason: "issue_comment_steer",
+          wakeSource: "issue.comment.steer",
+          steerRunId: RUN_ID,
+          steerDisposition: "interrupt_continue",
+        }),
+        expectedIssueExecutionRunId: RUN_ID,
+      }),
+    );
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith(RUN_ID);
+    expect(mockHeartbeatService.wakeup.mock.invocationCallOrder[0])
+      .toBeLessThan(mockHeartbeatService.cancelRun.mock.invocationCallOrder[0]!);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "heartbeat.cancelled",
+        entityId: RUN_ID,
+        details: expect.objectContaining({
+          source: "issue_comment_steer",
+          commentId: "comment-1",
+        }),
+      }),
+    );
+  });
+
+  it("does not interrupt when Issue Steer admission is skipped", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockHeartbeatService.wakeup.mockResolvedValue(null);
+
+    const res = await request(await createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Preserve this feedback.", steer: { expectedRunId: RUN_ID } });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      error: "Steer could not reserve a continuation; feedback was saved as a comment",
+      comment: { id: "comment-1" },
+    });
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("does not interrupt when Issue Steer admission fails", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockHeartbeatService.wakeup.mockRejectedValue(new Error("budget admission failed"));
+
+    const res = await request(await createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Preserve this feedback.", steer: { expectedRunId: RUN_ID } });
+
+    expect(res.status).toBe(500);
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("preserves legacy interrupt without requiring Steer admission", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        executionRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(await createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Stop this run.", interrupt: true });
+
+    expect(res.status).toBe(201);
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith(RUN_ID);
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({ expectedIssueExecutionRunId: expect.anything() }),
+    );
+  });
+
+  it("rejects stale Issue Steer without persisting feedback or interrupting another run", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        executionRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(await createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "This must not retarget a newer run.",
+        steer: { expectedRunId: PEER_RUN_ID },
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "The active issue run changed before Steer was accepted" });
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
   });
 
   it("includes issue and comment context when assignee is mentioned from comment endpoint", async () => {

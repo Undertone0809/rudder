@@ -28,6 +28,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const payload = opts.payload ?? null;
     const existingWakeupRequestId = readNonEmptyString(opts.existingWakeupRequestId);
     const originTerminalRunId = readNonEmptyString(opts.originTerminalRunId);
+    const expectedIssueExecutionRunId = readNonEmptyString(opts.expectedIssueExecutionRunId);
     const {
       contextSnapshot: enrichedContextSnapshot,
       issueIdFromPayload,
@@ -366,6 +367,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
           return { kind: "skipped" as const };
         }
 
+        if (expectedIssueExecutionRunId && issue.executionRunId !== expectedIssueExecutionRunId) {
+          throw conflict("The active issue run changed before Steer was accepted");
+        }
+
         if (commentMentionWake) {
           enrichedContextSnapshot.relationship =
             issue.assigneeAgentId === agentId
@@ -374,6 +379,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
                 ? "reviewer"
                 : "collaborator";
           if (enrichedContextSnapshot.relationship === "collaborator") {
+            if (expectedIssueExecutionRunId) {
+              throw conflict("The active issue relationship changed before Steer was accepted");
+            }
             return { kind: "bypass" as const };
           }
         }
@@ -393,6 +401,16 @@ export function createHeartbeatWakeupHandlers(context: any) {
           && !activeExecutionRun.terminalEffectsPending
         ) {
           activeExecutionRun = null;
+        }
+
+        if (
+          expectedIssueExecutionRunId
+          && (!activeExecutionRun
+            || activeExecutionRun.id !== expectedIssueExecutionRunId
+            || activeExecutionRun.status !== "running"
+            || activeExecutionRun.agentId !== agentId)
+        ) {
+          throw conflict("The active issue run changed before Steer was accepted");
         }
 
         if (
@@ -567,7 +585,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               });
             }
 
-            return { kind: "deferred" as const };
+            return { kind: "deferred" as const, run: activeExecutionRun };
           }
 
           if (existingWakeupRequestId) {
@@ -595,7 +613,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             });
           }
 
-          return { kind: "deferred" as const };
+          return { kind: "deferred" as const, run: activeExecutionRun };
         }
 
         const wakeupRequest = existingWakeupRequestId
@@ -661,7 +679,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
         return { kind: "queued" as const, run: newRun };
       });
 
-      if (outcome.kind === "deferred" || outcome.kind === "skipped") return null;
+      if (outcome.kind === "deferred") {
+        return expectedIssueExecutionRunId ? outcome.run : null;
+      }
+      if (outcome.kind === "skipped") return null;
       if (outcome.kind === "coalesced") return outcome.run;
       if (outcome.kind !== "bypass") {
         const newRun = outcome.run;

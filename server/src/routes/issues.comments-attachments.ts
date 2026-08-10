@@ -192,7 +192,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
 
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
-    const interruptRequested = req.body.interrupt === true;
+    const steerRequest = req.body.steer as { expectedRunId: string } | undefined;
+    const interruptRequested = req.body.interrupt === true || Boolean(steerRequest);
     const actorIsCurrentRelationship =
       actor.actorType !== "agent"
       || actor.agentId === issue.assigneeAgentId
@@ -205,6 +206,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
+    let runToInterrupt: Awaited<ReturnType<typeof heartbeat.getRun>> | null = null;
     let currentIssue = issue;
 
     if (reopenRequested && isClosed) {
@@ -253,7 +255,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         return;
       }
 
-      let runToInterrupt = currentIssue.executionRunId
+      runToInterrupt = currentIssue.executionRunId
         ? await heartbeat.getRun(currentIssue.executionRunId)
         : null;
 
@@ -274,7 +276,17 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         }
       }
 
-      if (runToInterrupt && runToInterrupt.status === "running") {
+      if (
+        steerRequest
+        && (!runToInterrupt
+          || runToInterrupt.status !== "running"
+          || runToInterrupt.id !== steerRequest.expectedRunId)
+      ) {
+        res.status(409).json({ error: "The active issue run changed before Steer was accepted" });
+        return;
+      }
+
+      if (!steerRequest && runToInterrupt?.status === "running") {
         const cancelled = await heartbeat.cancelRun(runToInterrupt.id);
         if (cancelled) {
           interruptedRunId = cancelled.id;
@@ -347,12 +359,17 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         issueTitle: currentIssue.title,
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
+        ...(steerRequest ? {
+          steerRunId: steerRequest.expectedRunId,
+          steerDisposition: "interrupt_continue",
+        } : {}),
       },
     });
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
-    void (async () => {
+    const deliverCommentWakeups = async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
+      let steerAdmissionRun: Awaited<ReturnType<typeof heartbeat.wakeup>> | null = null;
       const assigneeId = currentIssue.assigneeAgentId;
       const backlogComment = currentIssue.status === "backlog";
       let mentionedIds: string[] = mentionedIdsForCommentBody;
@@ -402,6 +419,33 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         });
       }
 
+      if (steerRequest && runToInterrupt) {
+        const baseWakeup = buildCommentMentionWakeup({
+          issue: currentIssue,
+          comment,
+          actor,
+          targetAgentId: runToInterrupt.agentId,
+        });
+        wakeups.set(runToInterrupt.agentId, {
+          ...baseWakeup,
+          reason: "issue_comment_steer",
+          payload: {
+            ...baseWakeup.payload,
+            steerRunId: runToInterrupt.id,
+            mutation: "steer",
+          },
+          contextSnapshot: {
+            ...baseWakeup.contextSnapshot,
+            wakeReason: "issue_comment_steer",
+            wakeSource: "issue.comment.steer",
+            source: "issue.comment.steer",
+            steerRunId: runToInterrupt.id,
+            steerDisposition: "interrupt_continue",
+          },
+          expectedIssueExecutionRunId: runToInterrupt.id,
+        });
+      }
+
       for (const mentionedId of mentionedIds) {
         if (wakeups.has(mentionedId)) continue;
         if (actorIsAgent && actor.actorId === mentionedId) continue;
@@ -414,11 +458,54 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       }
 
       for (const [agentId, wakeup] of wakeups.entries()) {
-        heartbeat
-          .wakeup(agentId, wakeup)
-          .catch((err: unknown) => logger.warn({ err, issueId: currentIssue.id, agentId }, "failed to wake agent on issue comment"));
+        if (steerRequest && runToInterrupt?.agentId === agentId) {
+          steerAdmissionRun = await heartbeat.wakeup(agentId, wakeup);
+        } else {
+          void heartbeat
+            .wakeup(agentId, wakeup)
+            .catch((err: unknown) => logger.warn({ err, issueId: currentIssue.id, agentId }, "failed to wake agent on issue comment"));
+        }
       }
-    })();
+      return steerAdmissionRun;
+    };
+
+    let steerAdmissionRun: Awaited<ReturnType<typeof heartbeat.wakeup>> | null = null;
+    if (steerRequest) {
+      steerAdmissionRun = await deliverCommentWakeups();
+      if (!steerAdmissionRun || steerAdmissionRun.id !== steerRequest.expectedRunId) {
+        res.status(409).json({
+          error: "Steer could not reserve a continuation; feedback was saved as a comment",
+          comment,
+        });
+        return;
+      }
+    } else {
+      void deliverCommentWakeups().catch((err: unknown) =>
+        logger.warn({ err, issueId: currentIssue.id }, "failed to wake agent on issue comment"));
+    }
+
+    if (steerRequest && runToInterrupt?.status === "running") {
+      const cancelled = await heartbeat.cancelRun(runToInterrupt.id);
+      if (cancelled?.status === "cancelled") {
+        interruptedRunId = cancelled.id;
+        await logActivity(db, {
+          orgId: cancelled.orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "heartbeat.cancelled",
+          entityType: "heartbeat_run",
+          entityId: cancelled.id,
+          details: {
+            agentId: cancelled.agentId,
+            source: steerRequest ? "issue_comment_steer" : "issue_comment_interrupt",
+            issueId: currentIssue.id,
+            commentId: comment.id,
+          },
+        });
+      }
+    }
 
     res.status(201).json(comment);
   });

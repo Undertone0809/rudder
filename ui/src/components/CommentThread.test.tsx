@@ -812,6 +812,26 @@ describe("CommentThread", () => {
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 
+  it("steers an active Issue Run without requiring an Agent mention", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread comments={[]} steerRunId="run-active" onAdd={onAdd} />
+      </MemoryRouter>,
+    );
+    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
+    change(editor, "Use the compatibility-preserving approach");
+
+    await click(container.querySelector("[data-testid='issue-comment-steer']"));
+
+    await vi.waitFor(() => expect(onAdd).toHaveBeenCalledWith(
+      "Use the compatibility-preserving approach",
+      undefined,
+      "steer",
+    ));
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
   it("skips confirmation for a reopen only when an Agent assignee will be woken", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const container = renderInteractive(

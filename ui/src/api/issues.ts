@@ -90,13 +90,19 @@ export const issuesApi = {
   listComments: (id: string) => api.get<IssueComment[]>(`/issues/${id}/comments`),
   getComment: (id: string, commentId: string) =>
     api.get<IssueComment>(`/issues/${id}/comments/${commentId}`),
-  addComment: (id: string, body: string, reopen?: boolean, interrupt?: boolean) =>
+  addComment: (
+    id: string,
+    body: string,
+    reopen?: boolean,
+    options?: { interrupt?: boolean; steerExpectedRunId?: string },
+  ) =>
     api.post<IssueComment>(
       `/issues/${id}/comments`,
       {
         body,
         ...(reopen === undefined ? {} : { reopen }),
-        ...(interrupt === undefined ? {} : { interrupt }),
+        ...(options?.interrupt === undefined ? {} : { interrupt: options.interrupt }),
+        ...(options?.steerExpectedRunId ? { steer: { expectedRunId: options.steerExpectedRunId } } : {}),
       },
     ),
   updateComment: (id: string, commentId: string, body: string) =>
