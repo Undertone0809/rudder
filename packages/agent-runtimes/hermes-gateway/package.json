@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/agent-runtime-hermes-gateway",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "exports": {

@@ -297,6 +297,7 @@ When adding endpoints:
 - Use organization selection context for organization-scoped pages
 - Surface failures clearly; do not silently ignore API errors
 - Follow `doc/engineering/DESIGN.md` for visible UI defaults, especially density, hierarchy, dialog structure, copy style, and progressive disclosure
+- Before implementing a multi-step UI, add a compact state inventory to the acceptance packet: current decision, visible and deferred controls, safety-critical context, focal action or peer choice set, and Back/Cancel/Close/Reopen/draft-restoration semantics. Each state should present one primary decision and defer later-step controls until relevant.
 - For desktop-shell UI changes, preserve the `Desktop Shell` contract and review checklist in `doc/engineering/DESIGN.md`; do not revert the shell to raw-wallpaper transparency or push glass treatment into the work cards.
 - For visible UI changes, verify the rendered result before hand-off using a browser, screenshot, or equivalent visual inspection. Do not rely on code review, typecheck, or tests alone for layout-sensitive changes.
 - If a change affects user-visible functionality, include the relevant final screenshots in the hand-off response so the reviewer can see the shipped result, not just read about it.
@@ -332,9 +333,10 @@ not proof that either gate completed; the parent must read and reconcile each
 terminal verdict.
 
 For visible UI changes, the reviewer must inspect current rendered evidence
-against `doc/engineering/DESIGN.md`, and the verifier must black-box the primary
-journey plus the highest-risk content, async, interaction, continuity, viewport,
-and theme states. Include current final screenshots in the handoff.
+against `doc/engineering/DESIGN.md`, including cognitive load and decision
+sequencing. The verifier must black-box the primary journey plus the highest-risk
+decision-flow, content, async, interaction, continuity, viewport, and theme
+states. Include current final screenshots in the handoff.
 
 Simple mechanical changes such as correcting one README typo may omit spawned
 agents when no product behavior, runtime, release, or layout claim is involved.

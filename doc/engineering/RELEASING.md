@@ -5,7 +5,7 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 The release model is now commit-driven:
 
 1. Every successful `CI` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
-2. Stable releases are manually promoted from a chosen tested commit or canary tag.
+2. Stable releases are manually promoted from a chosen tested commit SHA.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
 
@@ -107,11 +107,23 @@ Use this model for an explicit stable release:
    read-only preflight. The primary agent reviews and integrates the drafts.
 3. Require successful exact-source CI, stable preflight, immutable npm/tag
    checks, and package validation before publication.
-4. Run one production stable execution. Do not make a separate dry-run workflow
+4. Use `[skip release]` on release-only candidate repair commits after the
+   stable campaign starts, unless a canary is explicitly required. This keeps
+   exact-source CI while suppressing a duplicate automatic canary release.
+5. Run one production stable execution with the full 40-character source SHA.
+   Do not make a separate dry-run workflow
    a human or agent hand-off and then repeat checkout, dependency installation,
    and validation in a second run.
-5. Preserve every public-surface verification gate, especially the real
+6. Preserve every public-surface verification gate, especially the real
    Windows/macOS/Linux install smoke.
+
+The historical migration runtime emits its current fixture and phase every ten
+seconds. It has a five-minute ceiling for all three historical fixtures on one
+platform; the complete per-platform prepublish gate has a 25-minute ceiling.
+Treat either timeout as a defect in the named stage, not as a reason to extend
+the budget. After two failures at the same stage on unchanged inputs, stop
+dispatching, record both run IDs and the last phase, fix the cause, and rerun one
+new immutable candidate from exact-source CI.
 
 The workflow still exposes `dry_run` for read-only preview requests and
 troubleshooting. For an already-authorized release whose equivalent machine
@@ -152,7 +164,7 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 ## Core Invariants
 
 - canaries publish from `main`
-- stables publish from an explicitly chosen source ref
+- stables publish from an explicitly chosen full commit SHA
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
 - stable public changelog entries are always present in both `docs/releases.mdx`
@@ -215,14 +227,14 @@ Use [`.github/workflows/release.yml`](../.github/workflows/release.yml) from the
 Inputs:
 
 - `source_ref`
-  - commit SHA, branch, or tag
+  - full 40-character commit SHA; moving branches and tags are rejected
 - `dry_run`
   - optional read-only preview when true; an authorized stable release normally
     uses `false` after equivalent exact-source gates pass
 
 Before running stable:
 
-1. freeze the tested canary commit or immutable SHA immediately
+1. freeze the tested canary commit as a full immutable SHA immediately
 2. confirm the committed public package version is the stable version you want
    to ship
 3. if narratives are missing, start a bounded release-notes subagent in
@@ -234,7 +246,7 @@ Before running stable:
    rollback point as a progress update
 6. if a same-base canary is only waiting for Desktop assets, record its npm/tag
    state and stop the remaining wait; do not unpublish it
-7. run one production workflow with `dry_run: false`; the existing release
+7. run one production workflow with `dry_run: false` and the full SHA; the existing release
    request remains the npm, GitHub, Desktop, and production-docs authorization
 8. continue without another confirmation unless the user excluded
    `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
@@ -244,7 +256,7 @@ Before running stable:
 
 Example:
 
-- `source_ref`: `main`
+- `source_ref`: `0123456789abcdef0123456789abcdef01234567`
 - resulting stable version: `0.1.0`
 - follow-up version bump before the next canary line: `0.1.0 -> 0.1.1`
 

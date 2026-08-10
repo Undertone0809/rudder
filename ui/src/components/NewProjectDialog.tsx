@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -48,6 +49,7 @@ import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { libraryCopy } from "../lib/library-copy";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
@@ -177,6 +179,8 @@ export function NewProjectDialog() {
   const [localPathPicking, setLocalPathPicking] = useState(false);
   const [sourceDialogError, setSourceDialogError] = useState<string | null>(null);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  const librarySourcesScrollRef = useScrollbarActivityRef();
+  const localSourcesScrollRef = useScrollbarActivityRef();
   const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
 
   const { data: goals } = useQuery({
@@ -515,6 +519,10 @@ export function NewProjectDialog() {
         )}
         onKeyDown={handleKeyDown}
       >
+        <DialogTitle className="sr-only">New project</DialogTitle>
+        <DialogDescription className="sr-only">
+          Create a project and choose the sources agents should use.
+        </DialogDescription>
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {selectedOrganization && (
@@ -904,6 +912,9 @@ export function NewProjectDialog() {
         className="isolate flex max-h-[min(680px,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 before:absolute before:inset-0 before:-z-10 before:bg-card sm:max-w-lg"
         data-testid="new-project-add-sources-dialog"
       >
+        <DialogDescription className="sr-only">
+          Choose one source type, then provide only the details for that source.
+        </DialogDescription>
         <div className="flex min-h-14 shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             {addSourcesView && addSourcesView !== "choose" ? (
@@ -993,6 +1004,7 @@ export function NewProjectDialog() {
               />
             </div>
             <div
+              ref={librarySourcesScrollRef}
               data-testid="new-project-library-sources-scroll"
               className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
             >
@@ -1054,6 +1066,7 @@ export function NewProjectDialog() {
               </Button>
             </div>
             <div
+              ref={localSourcesScrollRef}
               data-testid="new-project-local-sources-scroll"
               className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >

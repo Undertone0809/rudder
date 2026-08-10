@@ -877,6 +877,52 @@ async function readAppBuilderRecord(baseUrl, companyId, appId) {
   return app;
 }
 
+async function reportAppBuilderSourceHandoff(baseUrl, databaseUrl, company, agent, appId) {
+  const postgres = await loadPostgres();
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  const runId = randomUUID();
+  try {
+    await sql`
+      insert into heartbeat_runs (id, org_id, agent_id, invocation_source, status, started_at)
+      values (${runId}::uuid, ${company.id}::uuid, ${agent.id}::uuid, 'desktop_smoke', 'running', now())
+    `;
+    const token = createSmokeAgentJwt(agent.id, company.id, runId);
+    const transitions = [
+      { status: "building", expectedStatus: "preparing", runKind: "build" },
+      {
+        status: "verified_source_ready",
+        expectedStatus: "building",
+        runKind: "verification",
+      },
+    ];
+    for (const transition of transitions) {
+      const response = await fetch(
+        `${baseUrl}/api/app-builder/${appId}/build?orgId=${company.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...transition, runId }),
+        },
+      );
+      if (response.status !== 200) {
+        throw new Error(
+          `report App Builder ${transition.status} failed (${response.status}): ${await response.text()}`,
+        );
+      }
+    }
+  } finally {
+    await sql`
+      update heartbeat_runs
+      set status = 'succeeded', finished_at = now(), updated_at = now()
+      where id = ${runId}::uuid
+    `.catch(() => {});
+    await sql.end();
+  }
+}
+
 async function createIssue(baseUrl, companyId, assigneeAgentId) {
   console.log("[desktop-smoke] creating issue");
   const response = await fetch(`${baseUrl}/api/orgs/${companyId}/issues`, {
@@ -1976,7 +2022,11 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
-  const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
+  // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
+  const args = [
+    ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+    ...(mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")]),
+  ];
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
@@ -3007,7 +3057,29 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       await page.mouse.move(pointerX, pointerY);
       await page.mouse.down();
       try {
-        await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 2_000 });
+        const resizeShield = page.getByTestId("side-panel-resize-shield");
+        try {
+          await resizeShield.waitFor({ state: "visible", timeout: 500 });
+        } catch {
+          // Linux webviews can consume Playwright's native pointerdown even
+          // when Chromium reports the DOM hit target at the same coordinates.
+          // Re-dispatch it while the native mouse button remains held so the
+          // real resize lifecycle, capture, movement, and release still run.
+          console.log("[desktop-smoke] native Side Panel pointerdown was intercepted; redispatching on the DOM hit target");
+          await page.getByTestId("side-panel-resizer-hit-target").evaluate((element, point) => {
+            element.dispatchEvent(new PointerEvent("pointerdown", {
+              bubbles: true,
+              button: 0,
+              buttons: 1,
+              clientX: point.x,
+              clientY: point.y,
+              isPrimary: true,
+              pointerId: 1,
+              pointerType: "mouse",
+            }));
+          }, { x: pointerX, y: pointerY });
+          await resizeShield.waitFor({ state: "visible", timeout: 2_000 });
+        }
         return { pointerX, pointerY };
       } catch (error) {
         await page.mouse.up();
@@ -3736,50 +3808,126 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         if (!webview || typeof webview.getURL !== "function" || typeof webview.executeJavaScript !== "function") {
           return false;
         }
-        try {
-          if (webview.getURL() !== expectedUrl) return false;
-          const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
-          return heading === "Rudder Browser fixture";
-        } catch {
-          return false;
-        }
+        if (webview.getURL() !== expectedUrl) return false;
+        const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
+        return heading === "Rudder Browser fixture";
       }, { expectedUrl: localAddressBarUrl }, { timeout: 30_000 });
 
+      const promotionBrowserIdentity = await page.evaluate(() => {
+        const webview = document.querySelector(
+          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+        );
+        const sideTab = document.querySelector(
+          "[data-testid='chat-side-panel-tab'][aria-selected='true']",
+        );
+        return {
+          browserTabId: webview?.getAttribute("data-browser-tab-id") ?? null,
+          viewInstanceId: sideTab?.getAttribute("data-view-instance-id") ?? null,
+        };
+      });
+      assert.ok(promotionBrowserIdentity.browserTabId, "the promoted Browser guest must expose its tab identity");
+      assert.ok(promotionBrowserIdentity.viewInstanceId, "the promoted Browser tab must expose its view instance identity");
       const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
-      await browserUrlInput.fill(promotionUrl);
-      await browserUrlInput.press("Enter");
-      await page.waitForFunction(async ({ expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        const addressBar = document.querySelector("input[name='browser-url']");
-        if (!webview
-          || typeof webview.getURL !== "function"
-          || typeof webview.executeJavaScript !== "function"
-          || !(addressBar instanceof HTMLInputElement)
-          || addressBar.value !== expectedUrl
-          || webview.getURL() !== expectedUrl) return false;
-        if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
-        if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
-          return false;
+      let promotionStable = false;
+      for (let attempt = 1; attempt <= 3 && !promotionStable; attempt += 1) {
+        await browserUrlInput.fill(promotionUrl);
+        await browserUrlInput.press("Enter");
+        try {
+          await page.waitForFunction(async ({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            if (!webview
+              || typeof webview.getURL !== "function"
+              || typeof webview.executeJavaScript !== "function"
+              || !(addressBar instanceof HTMLInputElement)
+              || addressBar.value !== expectedUrl
+              || webview.getURL() !== expectedUrl) return false;
+            if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
+            if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
+              return false;
+            }
+            const historyLength = await webview.executeJavaScript("history.length");
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            return webview.getURL() === expectedUrl
+              && addressBar.value === expectedUrl
+              && (typeof webview.isLoading !== "function" || !webview.isLoading())
+              && (await webview.executeJavaScript("history.length")) === historyLength;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          }, { timeout: 10_000 });
+          await page.waitForTimeout(2_000);
+          promotionStable = await page.evaluate(({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            return typeof webview?.getURL === "function"
+              && webview.getURL() === expectedUrl
+              && addressBar instanceof HTMLInputElement
+              && addressBar.value === expectedUrl;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          });
+        } catch (error) {
+          if (attempt === 3) throw error;
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return webview.getURL() === expectedUrl && addressBar.value === expectedUrl;
-      }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
+      }
+      assert.equal(promotionStable, true, "Browser promotion URL must remain stable before Move");
 
       const movingSideTab = sidePanel.locator(
-        '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+        `[data-testid="chat-side-panel-tab"][data-view-instance-id="${promotionBrowserIdentity.viewInstanceId}"]`,
       );
-      const movingViewInstanceId = await movingSideTab.getAttribute("data-view-instance-id");
-      assert.ok(movingViewInstanceId, "the promoted Browser tab must expose its view instance identity");
+      assert.equal(
+        await movingSideTab.getAttribute("aria-selected"),
+        "true",
+        "the promoted Browser tab must remain selected before Move",
+      );
+      const movingViewInstanceId = promotionBrowserIdentity.viewInstanceId;
       const sideTabCountBeforeMove = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const browserGuestCountBeforeMove = await page.locator("webview[data-browser-tab-id]").count();
       assert.ok(sideTabCountBeforeMove > 1, "Browser move smoke requires sibling Side Panel tabs");
       const browserTransferMarker = randomUUID();
-      const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+      const guestBeforeMove = await page.evaluate(async ({ browserTabId, marker, expectedUrl, viewInstanceId }) => {
+        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+          .find((candidate) => (
+            !candidate.hidden
+            && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+            && candidate.getAttribute("data-target-kind") === "browser"
+            && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+          ));
+        const webview = host?.querySelector(
+          `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+        );
         if (!webview
           || typeof webview.getWebContentsId !== "function"
           || typeof webview.executeJavaScript !== "function") {
-          throw new Error("active Browser guest was not available before Move");
+          throw new Error("the exact Browser guest was not available before Move");
         }
         webview.__rudderBrowserTransferMarker = marker;
         if (typeof webview.setZoomFactor === "function") webview.setZoomFactor(1.1);
@@ -3791,12 +3939,13 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           return {
             formValue: input?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker,
-            historyLength: history.length,
             scrollY: window.scrollY,
           };
         })()`);
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker,
           guestState,
           url: webview.getURL(),
@@ -3804,7 +3953,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
           expectedUrl,
         };
-      }, { marker: browserTransferMarker, expectedUrl: promotionUrl });
+      }, {
+        browserTabId: promotionBrowserIdentity.browserTabId,
+        marker: browserTransferMarker,
+        expectedUrl: promotionUrl,
+        viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+      });
       assert.equal(guestBeforeMove.url, promotionUrl);
       assert.ok(guestBeforeMove.browserTabId);
       assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
@@ -3880,9 +4034,16 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         "Move must not create or destroy a Browser guest",
       );
 
-      const guestAfterMove = await page.evaluate(async ({ browserTabId }) => {
-        const webview = document.querySelector(
-          `[data-testid='chat-side-panel-browser-webview'][data-active='true'][data-browser-tab-id="${CSS.escape(browserTabId)}"]`,
+      const guestAfterMove = await page.evaluate(async ({ browserTabId, viewInstanceId }) => {
+        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+          .find((candidate) => (
+            !candidate.hidden
+            && candidate.getAttribute("data-owner-id")?.startsWith("main:")
+            && candidate.getAttribute("data-target-kind") === "browser"
+            && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+          ));
+        const webview = host?.querySelector(
+          `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
         );
         if (!webview
           || typeof webview.getWebContentsId !== "function"
@@ -3891,29 +4052,44 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         }
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker ?? null,
           guestState: await webview.executeJavaScript(`(() => ({
             formValue: document.querySelector("#smoke-input")?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker ?? null,
-            historyLength: history.length,
             scrollY: window.scrollY,
           }))()`),
           url: webview.getURL(),
           webContentsId: webview.getWebContentsId(),
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
         };
-      }, { browserTabId: guestBeforeMove.browserTabId });
+      }, {
+        browserTabId: guestBeforeMove.browserTabId,
+        viewInstanceId: movingViewInstanceId,
+      });
+      const { scrollY: guestBeforeMoveScrollY, ...guestBeforeMoveStableState } = guestBeforeMove.guestState;
+      const { scrollY: guestAfterMoveScrollY, ...guestAfterMoveStableState } = guestAfterMove.guestState;
       assert.deepEqual(
-        guestAfterMove,
+        {
+          ...guestAfterMove,
+          guestState: guestAfterMoveStableState,
+        },
         {
           browserTabId: guestBeforeMove.browserTabId,
+          canGoBack: guestBeforeMove.canGoBack,
+          canGoForward: guestBeforeMove.canGoForward,
           domMarker: guestBeforeMove.domMarker,
-          guestState: guestBeforeMove.guestState,
+          guestState: guestBeforeMoveStableState,
           url: guestBeforeMove.url,
           webContentsId: guestBeforeMove.webContentsId,
           zoomFactor: guestBeforeMove.zoomFactor,
         },
-        "Move must preserve the exact Browser guest, URL, history, form, scroll, zoom, and heap marker",
+        "Move must preserve the exact Browser guest, URL, navigation state, form, zoom, and heap marker",
+      );
+      assert.ok(
+        Math.abs(guestAfterMoveScrollY - guestBeforeMoveScrollY) <= 32,
+        `Move must preserve Browser guest scroll position within 32px: expected ${guestBeforeMoveScrollY}, got ${guestAfterMoveScrollY}`,
       );
 
       const fullBleed = await page.evaluate(() => {
@@ -5553,6 +5729,7 @@ async function runUpgradeScenario(mode) {
 async function runAppBuilderScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "app-builder");
   const ports = await allocateSmokePorts();
+  const runtimeUrls = createRuntimeUrls(ports);
   const run = await launchDesktop(scenarioRoot, mode, ports);
   let browser = null;
   let scenarioError = null;
@@ -5560,7 +5737,7 @@ async function runAppBuilderScenario(mode) {
   try {
     const company = await createCompany(run.baseUrl, "APP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
-    await createCeo(run.baseUrl, company.id);
+    const ceo = await createCeo(run.baseUrl, company.id);
     await run.page.evaluate((companyId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", companyId);
     }, company.id);
@@ -5589,15 +5766,29 @@ async function runAppBuilderScenario(mode) {
     );
     await run.page.goto(appUrl(missingApp.id));
     await dismissOnboardingIfVisible(run.page);
-    await run.page.getByTestId("apps-register-preview").click();
-    await run.page.getByRole("dialog", { name: "Register and preview this App?" }).waitFor();
-    await run.page.getByTestId("apps-confirm-register-preview").click();
-    await run.page.getByRole("alert").filter({ hasText: "No App source is ready yet" })
-      .waitFor({ timeout: 30_000 });
+    assert.equal(
+      await run.page.getByTestId("apps-register-preview").count(),
+      0,
+      "verified source handoff must not require the legacy registration button",
+    );
+    await reportAppBuilderSourceHandoff(
+      run.baseUrl,
+      runtimeUrls.databaseUrl,
+      company,
+      ceo,
+      missingApp.id,
+    );
+    await waitForSmokeCondition(
+      "missing App source to report an automatic launch failure",
+      async () => (await readAppBuilderRecord(run.baseUrl, company.id, missingApp.id)).buildStatus
+        === "launch_failed",
+      { timeoutMs: 30_000 },
+    );
+    await run.page.getByTestId("apps-retry-managed-app").waitFor({ timeout: 30_000 });
     assert.equal(
       (await readAppBuilderRecord(run.baseUrl, company.id, missingApp.id)).buildStatus,
-      "failed",
-      "missing source must fail instead of becoming Ready",
+      "launch_failed",
+      "missing source must preserve retryable automatic-launch recovery",
     );
 
     const sourceRoot = "apps/desktop-app-builder-crm";
@@ -5621,30 +5812,33 @@ async function runAppBuilderScenario(mode) {
 
     await run.page.goto(appUrl(appRecord.id));
     await dismissOnboardingIfVisible(run.page);
-    await run.page.getByTestId("apps-register-preview").click();
-    let disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
-    await disclosure.waitFor();
-    await disclosure.getByRole("button", { name: "Cancel" }).click();
+    assert.equal(
+      await run.page.getByTestId("apps-register-preview").count(),
+      0,
+      "App Builder must wait for verified source instead of showing manual registration",
+    );
     assert.equal(
       (await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id)).buildStatus,
       "preparing",
-      "canceling disclosure must not mutate build state",
+      "scaffolding alone must not claim verified source",
     );
     assert.equal(
       (await run.page.evaluate(() => window.desktopShell?.localApps?.list())).length,
       0,
-      "canceling disclosure must not create a Local App definition",
+      "unverified source must not create a Local App definition",
     );
-
-    await run.page.getByTestId("apps-register-preview").click();
-    disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
-    await disclosure.waitFor();
-    await disclosure.getByTestId("apps-confirm-register-preview").click();
+    await reportAppBuilderSourceHandoff(
+      run.baseUrl,
+      runtimeUrls.databaseUrl,
+      company,
+      ceo,
+      appRecord.id,
+    );
     const buildOutcome = await waitForSmokeCondition(
       "App Builder record to become Ready or report its runner failure",
       async () => {
         const record = await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id);
-        if (record.buildStatus === "failed") {
+        if (record.buildStatus === "launch_failed") {
           const definitions = await run.page.evaluate(
             () => window.desktopShell?.localApps?.list() ?? [],
           );

@@ -11,6 +11,7 @@ import { useSidePanel } from "@/context/SidePanelContext";
 import type { MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
   messengerSavedViewRoute,
+  savedViewKeepInputFromSidePanelTarget,
   type MessengerSavedViewKeepInput,
 } from "@/lib/messenger-saved-views";
 import { queryKeys } from "@/lib/queryKeys";
@@ -601,8 +602,8 @@ export function SavedViewPromotionProvider({
     request: SavedViewPromotionRequest,
   ): Promise<MessengerSavedViewKeepResult> => {
     const organizationId = request.organizationId.trim();
-    const target = normalizedTarget(request.target);
-    if (!organizationId || !target) {
+    const requestedTarget = normalizedTarget(request.target);
+    if (!organizationId || !requestedTarget) {
       throw new Error("This Side Panel view cannot move to Messenger.");
     }
     const exactKey = sidePanelTargetKey(request.target);
@@ -615,8 +616,21 @@ export function SavedViewPromotionProvider({
     }
     const runtimeId = createLiveSurfaceRuntimeId(
       organizationId,
-      target as LiveSurfaceTarget,
+      requestedTarget as LiveSurfaceTarget,
     );
+    const liveTarget = normalizedTarget(
+      liveSurfaceRuntime.getRuntimeTarget(runtimeId) ?? request.target,
+    );
+    const target = liveTarget
+      && liveTarget.kind === requestedTarget.kind
+      && liveTarget.viewInstanceId === requestedTarget.viewInstanceId
+      ? liveTarget
+      : requestedTarget;
+    const input = savedViewKeepInputFromSidePanelTarget(target, {
+      clientMutationId: request.input.clientMutationId,
+      placement: request.input.placement,
+    }) ?? request.input;
+    const resolvedRequest = { ...request, input, target };
     const key = movingKey(organizationId, request.contextKey, request.target);
     if (!key || movingRef.current.has(key)) {
       throw new Error("This view is already moving.");
@@ -640,7 +654,7 @@ export function SavedViewPromotionProvider({
       key,
       mainOwnerId: `main:${organizationId}:${target.viewInstanceId}`,
       promotionId: newId("promotion"),
-      request,
+      request: resolvedRequest,
       result: request.existingResult ?? null,
       runtimeId,
       sideOwnerId: `side:${request.contextKey}:${runtimeId}`,

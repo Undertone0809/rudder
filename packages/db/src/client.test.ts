@@ -720,6 +720,7 @@ describe("applyPendingMigrations", () => {
           "0146_medical_roulette.sql",
           "0147_github_mcp_provider.sql",
           "0148_chat_message_transcript_entries.sql",
+          "0149_app_builder_verified_source_ready.sql",
         ],
         reason: "pending-migrations",
       });
@@ -889,6 +890,7 @@ describe("applyPendingMigrations", () => {
           "0146_medical_roulette.sql",
           "0147_github_mcp_provider.sql",
           "0148_chat_message_transcript_entries.sql",
+          "0149_app_builder_verified_source_ready.sql",
         ],
         reason: "pending-migrations",
       });

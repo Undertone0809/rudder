@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   applyPendingMigrations,
   cleanupStaleSysvSharedMemorySegments,
@@ -12,7 +13,7 @@ import {
   validatePostMigrationInvariants,
 } from "../packages/db/src/index.js";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requireFromDb = createRequire(path.join(REPO_ROOT, "packages/db/package.json"));
 const postgresModule = requireFromDb("postgres") as { default?: (...args: any[]) => any } | ((...args: any[]) => any);
 const postgres = ("default" in postgresModule ? postgresModule.default : postgresModule) as (...args: any[]) => any;
@@ -20,6 +21,7 @@ const { drizzle: drizzlePg } = requireFromDb("drizzle-orm/postgres-js") as { dri
 const { migrate: migratePg } = requireFromDb("drizzle-orm/postgres-js/migrator") as { migrate: (...args: any[]) => Promise<void> };
 const MIGRATION_PATH = "packages/db/src/migrations";
 const FIXTURES = ["v0.7.1", "v0.7.0", "v0.6.5"] as const;
+const DEFAULT_HEARTBEAT_MS = 10_000;
 const IDS = {
   organization: "00000000-0000-4000-8000-000000000001",
   agent: "00000000-0000-4000-8000-000000000002",
@@ -33,8 +35,59 @@ const IDS = {
   grant: "00000000-0000-4000-8000-000000000008",
 };
 
-function gitShow(ref: string, file: string): string {
-  return execFileSync("git", ["-C", REPO_ROOT, "show", `${ref}:${file}`], { encoding: "utf8" });
+type SqlClient = ReturnType<typeof postgres>;
+
+function elapsedSeconds(startedAt: number): string {
+  return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+}
+
+function heartbeatIntervalMs(rawValue = process.env.RUDDER_RELEASE_COMPATIBILITY_HEARTBEAT_MS): number {
+  if (!rawValue) return DEFAULT_HEARTBEAT_MS;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : DEFAULT_HEARTBEAT_MS;
+}
+
+function createFixtureProgress(ref: string): {
+  current: () => string;
+  phase: (name: string) => void;
+  stop: () => void;
+} {
+  const startedAt = Date.now();
+  let currentPhase = "initialize fixture";
+  const write = (event: "phase" | "waiting") => {
+    process.stdout.write(`[compatibility:${ref}] ${event}: ${currentPhase} (${elapsedSeconds(startedAt)})\n`);
+  };
+  write("phase");
+  const heartbeat = setInterval(() => write("waiting"), heartbeatIntervalMs());
+  heartbeat.unref();
+  return {
+    current: () => currentPhase,
+    phase: (name) => {
+      currentPhase = name;
+      write("phase");
+    },
+    stop: () => clearInterval(heartbeat),
+  };
+}
+
+function openSqlClient(connectionString: string): SqlClient {
+  return postgres(connectionString, {
+    max: 1,
+    connect_timeout: 5,
+    onnotice: () => {},
+  });
+}
+
+async function withSqlClient<T>(
+  connectionString: string,
+  operation: (sql: SqlClient) => Promise<T>,
+): Promise<T> {
+  const sql = openSqlClient(connectionString);
+  try {
+    return await operation(sql);
+  } finally {
+    await sql.end({ timeout: 1 }).catch(() => undefined);
+  }
 }
 
 function sqlLiteral(value: unknown): string {
@@ -74,23 +127,35 @@ async function availablePort(): Promise<number> {
 async function materializeMigrations(ref: string, root: string): Promise<string> {
   const folder = path.join(root, ref.replaceAll("/", "-"));
   const meta = path.join(folder, "meta");
+  const archiveRoot = path.join(root, `${ref.replaceAll("/", "-")}-archive`);
+  const archivePath = `${archiveRoot}.tar`;
   await mkdir(meta, { recursive: true });
-  const journalPath = `${MIGRATION_PATH}/meta/_journal.json`;
-  const journal = JSON.parse(gitShow(ref, journalPath)) as { entries?: Array<{ tag?: string }> };
-  const migrationFiles = execFileSync(
-    "git",
-    ["-C", REPO_ROOT, "ls-tree", "-r", "--name-only", ref, "--", MIGRATION_PATH],
-    { encoding: "utf8" },
-  )
-    .split("\n")
-    .filter((file) => file.startsWith(`${MIGRATION_PATH}/`) && file.endsWith(".sql"))
-    .map((file) => file.slice(MIGRATION_PATH.length + 1))
-    .filter((file) => !file.includes("/"));
-  if (migrationFiles.length === 0) throw new Error(`${ref} has no migration SQL files`);
-  for (const fileName of migrationFiles) {
-    await writeFile(path.join(folder, fileName), gitShow(ref, `${MIGRATION_PATH}/${fileName}`));
+  await mkdir(archiveRoot, { recursive: true });
+  try {
+    execFileSync(
+      "git",
+      ["archive", "--format=tar", "-o", archivePath, ref, "--", MIGRATION_PATH],
+      { cwd: REPO_ROOT },
+    );
+    const tarArgs = process.platform === "win32"
+      ? ["--force-local", "-xf", archivePath]
+      : ["-xf", archivePath];
+    execFileSync("tar", tarArgs, { cwd: archiveRoot });
+    const archivedMigrations = path.join(archiveRoot, MIGRATION_PATH);
+    const migrationFiles = (await readdir(archivedMigrations))
+      .filter((fileName) => fileName.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    if (migrationFiles.length === 0) throw new Error(`${ref} has no migration SQL files`);
+    await Promise.all(
+      migrationFiles.map((fileName) => (
+        copyFile(path.join(archivedMigrations, fileName), path.join(folder, fileName))
+      )),
+    );
+    await copyFile(path.join(archivedMigrations, "meta", "_journal.json"), path.join(meta, "_journal.json"));
+  } finally {
+    await rm(archiveRoot, { recursive: true, force: true });
+    await rm(archivePath, { force: true });
   }
-  await writeFile(path.join(meta, "_journal.json"), JSON.stringify(journal));
   return folder;
 }
 
@@ -144,10 +209,18 @@ async function startDatabase(root: string): Promise<{
     onError: (message: unknown) => process.stderr.write(`[compatibility-postgres:error] ${String(message)}\n`),
   });
   await instance.initialise();
-  await instance.start();
-  const admin = postgres(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, { max: 1, onnotice: () => {} });
-  await admin`CREATE DATABASE rudder`;
-  await admin.end();
+  try {
+    await instance.start();
+    await withSqlClient(
+      `postgres://rudder:rudder@127.0.0.1:${port}/postgres`,
+      async (admin) => {
+        await admin`CREATE DATABASE rudder`;
+      },
+    );
+  } catch (error) {
+    await instance.stop().catch(() => undefined);
+    throw error;
+  }
   return {
     connectionString: `postgres://rudder:rudder@127.0.0.1:${port}/rudder`,
     stop: () => instance.stop(),
@@ -348,44 +421,69 @@ async function countShape(sql: ReturnType<typeof postgres>): Promise<Record<stri
 }
 
 async function runFixture(ref: string, root: string): Promise<void> {
-  const fixtureRoot = path.join(root, ref.replaceAll("/", "-"));
-  await mkdir(fixtureRoot, { recursive: true });
-  const oldFolder = await materializeMigrations(ref, fixtureRoot);
-  const oldJournal = JSON.parse(await readFile(path.join(oldFolder, "meta", "_journal.json"), "utf8")) as {
-    entries?: Array<{ tag?: string }>;
-  };
-  const db = await startDatabase(fixtureRoot);
-  const sql = postgres(db.connectionString, { max: 1, onnotice: () => {} });
+  const progress = createFixtureProgress(ref);
+  let db: Awaited<ReturnType<typeof startDatabase>> | null = null;
   try {
-    await migratePg(drizzlePg(sql), { migrationsFolder: oldFolder });
-    await applyHistoricalUnjournaledMigrations(sql, oldFolder, oldJournal);
-    const seeded = await seedProductionShape(sql);
-    const before = await countShape(sql);
-    await sql.end();
+    const fixtureRoot = path.join(root, ref.replaceAll("/", "-"));
+    await mkdir(fixtureRoot, { recursive: true });
+    progress.phase("materialize historical migrations");
+    const oldFolder = await materializeMigrations(ref, fixtureRoot);
+    const oldJournal = JSON.parse(await readFile(path.join(oldFolder, "meta", "_journal.json"), "utf8")) as {
+      entries?: Array<{ tag?: string }>;
+    };
+
+    progress.phase("start PostgreSQL");
+    db = await startDatabase(fixtureRoot);
+
+    progress.phase("load historical schema and shaped data");
+    const { seeded, before } = await withSqlClient(db.connectionString, async (sql) => {
+      await migratePg(drizzlePg(sql), { migrationsFolder: oldFolder });
+      await applyHistoricalUnjournaledMigrations(sql, oldFolder, oldJournal);
+      const seeded = await seedProductionShape(sql);
+      const before = await countShape(sql);
+      return { seeded, before };
+    });
+
+    progress.phase("apply candidate migrations");
     await applyPendingMigrations(db.connectionString);
-    const upgradedSql = postgres(db.connectionString, { max: 1, onnotice: () => {} });
-    const state = await inspectMigrations(db.connectionString);
-    if (state.status !== "upToDate") throw new Error(`${ref} remains pending after candidate migration`);
-    const report = await validatePostMigrationInvariants(db.connectionString);
-    if (!report.valid) throw new Error(`${ref} invariant failure: ${report.issues.map((issue) => issue.message).join("; ")}`);
-    const after = await countShape(upgradedSql);
-    await assertProductionShapeSentinels(upgradedSql, seeded);
-    await upgradedSql.end();
+
+    progress.phase("validate upgraded schema and shaped data");
+    const after = await withSqlClient(db.connectionString, async (upgradedSql) => {
+      const state = await inspectMigrations(db.connectionString);
+      if (state.status !== "upToDate") throw new Error(`${ref} remains pending after candidate migration`);
+      const report = await validatePostMigrationInvariants(db.connectionString);
+      if (!report.valid) throw new Error(`${ref} invariant failure: ${report.issues.map((issue) => issue.message).join("; ")}`);
+      const counts = await countShape(upgradedSql);
+      await assertProductionShapeSentinels(upgradedSql, seeded);
+      return counts;
+    });
     for (const [table, count] of Object.entries(before)) {
       const upgradedTable = table === "companies" ? "organizations" : table === "company_memberships" ? "organization_memberships" : table;
       if (after[upgradedTable] !== count) throw new Error(`${ref} changed ${table} row count (${count} -> ${after[upgradedTable] ?? 0})`);
     }
+
+    progress.phase("restart PostgreSQL");
     await db.restart();
-    const restartedSql = postgres(db.connectionString, { max: 1, onnotice: () => {} });
-    const restarted = await countShape(restartedSql);
-    await restartedSql.end();
+
+    progress.phase("verify restart persistence");
+    const restarted = await withSqlClient(db.connectionString, countShape);
     for (const [table, count] of Object.entries(after)) {
       if (restarted[table] !== count) throw new Error(`${ref} lost ${table} rows across restart`);
     }
+    progress.phase("complete");
     process.stdout.write(`verified ${ref}: ${Object.values(after).reduce((sum, count) => sum + count, 0)} shaped rows\n`);
+  } catch (error) {
+    throw new Error(
+      `${ref} failed during ${progress.current()}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   } finally {
-    await sql.end().catch(() => undefined);
-    await db.stop().catch(() => undefined);
+    if (db) {
+      progress.phase("stop PostgreSQL");
+      await db.stop().catch((error) => {
+        process.stderr.write(`[compatibility:${ref}] PostgreSQL cleanup failed: ${String(error)}\n`);
+      });
+    }
+    progress.stop();
   }
 }
 

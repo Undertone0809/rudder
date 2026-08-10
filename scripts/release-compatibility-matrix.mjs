@@ -12,6 +12,31 @@ const journalPath = "packages/db/src/migrations/meta/_journal.json";
 const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
+  "0.7.3": {
+    candidateFingerprint: "2aacca78ac3e2e91818f19facd06689be0ee78ba6be0c82bebb7fda242349797",
+    fixtures: [
+      {
+        version: "0.7.2",
+        ref: "v0.7.2",
+        fingerprint: "3981cf5823990285da190cc2ad8172e85683d79e1790c2b582c3a0d614ec84e8",
+      },
+      {
+        version: "0.7.1",
+        ref: "v0.7.1",
+        fingerprint: "a30e16cfafac9884e9239af03f0c9c4200b958f0ae0c14f31a5b5198f65a9444",
+      },
+      {
+        version: "0.7.0",
+        ref: "v0.7.0",
+        fingerprint: "2efffbc9abd94c1a29818e11086119978c9385cf250e44c42eb4901083307fc6",
+      },
+      {
+        version: "0.6.5",
+        ref: "v0.6.5",
+        fingerprint: "0328b4ffb5dcc557b50072e449ee2d5ab8b8770b24010e664f9ae86ecd86366b",
+      },
+    ],
+  },
   "0.7.2": {
     candidateFingerprint: "2aacca78ac3e2e91818f19facd06689be0ee78ba6be0c82bebb7fda242349797",
     fixtures: [

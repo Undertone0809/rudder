@@ -134,8 +134,12 @@ describe("App Builder managed runner", () => {
   it("installs from the lockfile, verifies, and starts a loopback preview", async () => {
     const { appRoot, logPath, runner } = await fixture();
     await run(runner, [appRoot, "preview"], logPath, { PORT: "43123" });
+    const install = ["install", "--frozen-lockfile", "--prefer-offline"];
+    if (process.platform === "win32") {
+      install.push("--virtual-store-dir", expect.stringContaining("app-builder-pnpm") as string);
+    }
     expect((await calls(logPath)).map((call) => call.argv)).toEqual([
-      ["install", "--frozen-lockfile", "--prefer-offline"],
+      install,
       ["run", "verify"],
       ["run", "dev"],
     ]);
@@ -145,8 +149,12 @@ describe("App Builder managed runner", () => {
     const { appRoot, dataRoot, logPath, runner } = await fixture();
     await run(runner, [appRoot, "migrate", dataRoot], logPath);
     const recorded = await calls(logPath);
+    const install = ["install", "--frozen-lockfile", "--prefer-offline"];
+    if (process.platform === "win32") {
+      install.push("--virtual-store-dir", expect.stringContaining("app-builder-pnpm") as string);
+    }
     expect(recorded.map((call) => call.argv)).toEqual([
-      ["install", "--frozen-lockfile", "--prefer-offline"],
+      install,
       ["run", "typecheck"],
       ["run", "test"],
       ["run", "build"],

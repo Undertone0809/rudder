@@ -11,6 +11,7 @@ import { stopOwnedE2EServer } from "../tests/e2e/support/e2e-postgres-cleanup.ts
 const repositoryRoot = process.cwd();
 let testRoot = null;
 let serverProcess = null;
+let postgresPid = null;
 
 async function freePort() {
   const probe = net.createServer();
@@ -60,7 +61,30 @@ async function waitForExit(child) {
   });
 }
 
+function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPidExit(pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidRunning(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (isPidRunning(pid)) throw new Error(`Timed out waiting for process ${pid} exit`);
+}
+
 afterEach(async () => {
+  if (postgresPid !== null && isPidRunning(postgresPid)) {
+    process.kill(postgresPid, "SIGKILL");
+    await waitForPidExit(postgresPid).catch(() => undefined);
+  }
+  postgresPid = null;
   if (serverProcess && serverProcess.exitCode === null && serverProcess.signalCode === null) {
     serverProcess.kill("SIGKILL");
     await waitForExit(serverProcess).catch(() => undefined);
@@ -96,6 +120,50 @@ describe("stopOwnedE2EServer", () => {
     const stopped = await stopOwnedE2EServer({ instanceRoot, repositoryRoot });
 
     expect(stopped).toContain(String(serverProcess.pid));
+    await waitForExit(serverProcess);
+  });
+
+  it.skipIf(process.platform === "win32")("reclaims a server discovered through its owned PostgreSQL child", async () => {
+    testRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-e2e-cleanup-"));
+    const instanceRoot = path.join(testRoot, "instances", "test");
+    const dataDirectory = path.join(instanceRoot, "db");
+    const readyPath = path.join(testRoot, "server-ready");
+    await fs.mkdir(dataDirectory, { recursive: true });
+    await fs.writeFile(path.join(instanceRoot, "config.json"), JSON.stringify({ server: {} }), "utf8");
+
+    const serverScript = [
+      "const fs = require('node:fs');",
+      "const { spawn } = require('node:child_process');",
+      "const dataDirectory = process.argv[1];",
+      "const readyPath = process.argv[2];",
+      "const postgresProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'postgres', '-D', dataDirectory], { stdio: 'ignore' });",
+      "if (!postgresProcess.pid) throw new Error('PostgreSQL process did not expose a PID');",
+      "fs.writeFileSync(readyPath, String(postgresProcess.pid));",
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    serverProcess = spawn(
+      process.execPath,
+      ["-e", serverScript, dataDirectory, readyPath, "--dir", path.join(repositoryRoot, "server")],
+      { cwd: repositoryRoot, stdio: "ignore" },
+    );
+    if (!serverProcess.pid) throw new Error("Test server did not expose a PID");
+    const readyDeadline = Date.now() + 5_000;
+    while (Date.now() < readyDeadline) {
+      try {
+        await fs.access(readyPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    await fs.access(readyPath);
+    postgresPid = Number(await fs.readFile(readyPath, "utf8"));
+    if (!Number.isInteger(postgresPid) || postgresPid <= 0) throw new Error("Test PostgreSQL process did not expose a valid PID");
+
+    const stopped = await stopOwnedE2EServer({ instanceRoot, repositoryRoot });
+
+    expect(stopped).toContain(String(serverProcess.pid));
+    await waitForPidExit(postgresPid);
     await waitForExit(serverProcess);
   });
 });

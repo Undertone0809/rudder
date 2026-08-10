@@ -3,7 +3,7 @@
 This document covers the GitHub and npm setup required for the current Rudder release model:
 
 - automatic canaries from `main`
-- manual stable promotion from a chosen source ref
+- manual stable promotion from a full locked commit SHA
 - npm trusted publishing via GitHub OIDC
 - direct-main release execution with exact-source CI
 
@@ -258,7 +258,7 @@ After at least one good canary exists:
 
 1. freeze the tested immutable source SHA immediately; do not chase later
    unrelated `main` commits
-2. confirm the committed public package version on the source ref is the stable
+2. confirm the committed public package version on the source SHA is the stable
    version you want to ship
 3. when notes are missing, have a bounded release-notes subagent draft
    `releases/v0.1.0.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx` in

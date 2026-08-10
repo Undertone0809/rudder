@@ -182,16 +182,18 @@ describe("DesktopBrowserLinkBridge", () => {
     const closeTarget = vi.fn();
     const shortcutController = vi.fn();
     const setBrowserSurfaceShortcutActive = vi.fn(async () => undefined);
+    const unsubscribeOpenWebLink = vi.fn();
+    const onOpenWebLink = vi.fn((nextListener: (request: DesktopWebLinkRequest) => void) => {
+      linkListener = nextListener;
+      return unsubscribeOpenWebLink;
+    });
     (window as typeof window & { desktopShell?: Partial<DesktopShellApi> }).desktopShell = {
       onBrowserShortcut: (nextListener) => {
         shortcutListener = nextListener;
         return () => undefined;
       },
       setBrowserSurfaceShortcutActive,
-      onOpenWebLink: (nextListener) => {
-        linkListener = nextListener;
-        return () => undefined;
-      },
+      onOpenWebLink,
       openExternal: vi.fn(async () => undefined),
       forceOpenExternal: vi.fn(async () => undefined),
     };
@@ -260,6 +262,8 @@ describe("DesktopBrowserLinkBridge", () => {
     expect(shortcutController).toHaveBeenCalledWith("new_tab");
     expect(shortcutController).toHaveBeenCalledWith("reload");
     expect(closeTarget).toHaveBeenCalledWith(ownerBrowser);
+    expect(onOpenWebLink).toHaveBeenCalledOnce();
+    expect(unsubscribeOpenWebLink).not.toHaveBeenCalled();
 
     const shortcutCountBeforeHide = shortcutController.mock.calls.length;
     const closeCountBeforeHide = closeTarget.mock.calls.length;
@@ -283,6 +287,7 @@ describe("DesktopBrowserLinkBridge", () => {
     expect(closeTarget).toHaveBeenCalledTimes(closeCountBeforeHide);
 
     await act(async () => root.unmount());
+    expect(unsubscribeOpenWebLink).toHaveBeenCalledOnce();
     container.remove();
     HTMLElement.prototype.getBoundingClientRect = originalRect;
   });
