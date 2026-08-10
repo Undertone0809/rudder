@@ -144,6 +144,8 @@ describe("release workflow latency contracts", () => {
     expect(releaseCompatibilityRuntimeScript).toContain("await sql.end({ timeout: 1 })");
     expect(releaseCompatibilityRuntimeScript).toContain('["archive", "--format=tar"');
     expect(releaseCompatibilityRuntimeScript).toContain('["--force-local", "-xf", archivePath');
+    expect(releaseCompatibilityRuntimeScript).toContain('execFileSync("tar", tarArgs, { cwd: archiveRoot })');
+    expect(releaseCompatibilityRuntimeScript).not.toContain('"-C", archiveRoot');
     expect(releaseCompatibilityRuntimeScript).not.toContain("gitShow(");
 
     const gateIndex = releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n");
