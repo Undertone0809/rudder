@@ -6,6 +6,7 @@ import type { BrowserDataImportResult } from "./browser-cookie-import.js";
 import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { isDesktopBrowserShortcutAction, type DesktopBrowserShortcutAction } from "./browser-shortcuts.js";
+import type { DesktopComputerReadiness } from "./computer-broker-registration.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
 import {
   DESKTOP_IDENTITY_IPC_CHANNELS,
@@ -482,6 +483,15 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:clear-browser-data") as Promise<void>,
   setBrowserEnabled: (enabled: boolean) =>
     ipcRenderer.invoke("desktop:set-browser-enabled", enabled) as Promise<void>,
+  computerUse: {
+    supported: process.platform === "darwin",
+    readiness: () =>
+      ipcRenderer.invoke("desktop:computer-use-readiness") as Promise<DesktopComputerReadiness>,
+    requestPermissions: () =>
+      ipcRenderer.invoke("desktop:computer-use-request-permissions") as Promise<DesktopComputerReadiness>,
+    openScreenRecordingSettings: () =>
+      ipcRenderer.invoke("desktop:computer-use-open-screen-recording") as Promise<{ opened: boolean }>,
+  },
   onBrowserReset: (listener: (event: DesktopBrowserResetEvent) => void) => {
     const wrapped = (_event: IpcRendererEvent, payload: DesktopBrowserResetEvent) => {
       listener(payload);
@@ -646,6 +656,12 @@ declare global {
       getBrowserPartition(): Promise<string>;
       clearBrowserData(): Promise<void>;
       setBrowserEnabled(enabled: boolean): Promise<void>;
+      computerUse: {
+        supported: boolean;
+        readiness(): Promise<DesktopComputerReadiness>;
+        requestPermissions(): Promise<DesktopComputerReadiness>;
+        openScreenRecordingSettings(): Promise<{ opened: boolean }>;
+      };
       onBrowserReset(listener: (event: DesktopBrowserResetEvent) => void): () => void;
       localApps: {
         supported: boolean;

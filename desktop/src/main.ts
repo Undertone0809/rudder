@@ -50,6 +50,22 @@ import {
 } from "./browser-webview-policy.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
+import {
+  allocateComputerBrokerGeneration,
+  isDesktopComputerRunActive,
+  readDesktopComputerSettings,
+  registerDesktopComputerBroker,
+  unregisterDesktopComputerBroker,
+} from "./computer-broker-registration.js";
+import { startComputerBrokerServer } from "./computer-broker-server.js";
+import {
+  openComputerUseScreenRecordingSettings,
+  readComputerUseReadiness,
+  requestComputerUsePermissions,
+} from "./computer-permissions.js";
+import { createDesktopComputerRuntimeLifecycle } from "./computer-runtime-lifecycle.js";
+import { createComputerRuntime } from "./computer-runtime.js";
+import { createCuaComputerDriver } from "./cua-computer-driver.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
 import { resolveDesktopLocalEnvProfile, resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
@@ -502,6 +518,7 @@ const acceptBrowserPopup = createBrowserPopupRateLimiter();
 let browserProfileController: BrowserProfileController | null = null;
 let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController> | null = null;
 let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
+let computerRuntimeLifecycle: ReturnType<typeof createDesktopComputerRuntimeLifecycle> | null = null;
 let localAppsController: ReturnType<typeof createDesktopLocalAppsRuntime>["controller"] | null = null;
 let localAppsRuntime: ReturnType<typeof createDesktopLocalAppsRuntime>["runtime"] | null = null;
 let localAppsFeatureGateTimer: NodeJS.Timeout | null = null;
@@ -775,6 +792,11 @@ function requireBrowserRuntimeLifecycle() {
     throw new Error("Rudder Browser runtime has not been initialized.");
   }
   return browserRuntimeLifecycle;
+}
+
+function requireComputerRuntimeLifecycle() {
+  if (!computerRuntimeLifecycle) throw new Error("Computer Use runtime has not been initialized.");
+  return computerRuntimeLifecycle;
 }
 
 function requireLocalAppsController(): ReturnType<typeof createDesktopLocalAppsRuntime>["controller"] {
@@ -1128,6 +1150,23 @@ function replaceBrowserRuntimeLifecycle(): void {
     readSettings: browserApi.readSettings,
     isRunActive: browserApi.isRunActive,
     sweepIntervalMs: 5_000,
+    onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
+  });
+}
+
+function replaceComputerRuntimeLifecycle(): void {
+  const runtime = createComputerRuntime({ createDriver: createCuaComputerDriver });
+  computerRuntimeLifecycle = createDesktopComputerRuntimeLifecycle({
+    runtime,
+    readSettings: (apiUrl) => readDesktopComputerSettings(apiUrl),
+    readReadiness: () => readComputerUseReadiness(),
+    isRunActive: (apiUrl, identity) => isDesktopComputerRunActive(apiUrl, identity),
+    startBroker: startComputerBrokerServer,
+    allocateGeneration: allocateComputerBrokerGeneration,
+    registerBroker: (apiUrl, broker, generation, refresh) =>
+      registerDesktopComputerBroker(apiUrl, broker, generation, refresh),
+    unregisterBroker: unregisterDesktopComputerBroker,
+    pollIntervalMs: 5_000,
     onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
   });
 }
@@ -2016,6 +2055,11 @@ async function startLocalRudder(): Promise<void> {
       } catch (error) {
         console.warn("[rudder-desktop] Browser Broker unavailable; continuing without Agent Browser control", error);
       }
+      try {
+        await requireComputerRuntimeLifecycle().connect(serverHandle.apiUrl);
+      } catch (error) {
+        console.warn("[rudder-desktop] Computer Broker unavailable; continuing without Computer Use", error);
+      }
       const baseUrl = serverHandle.apiUrl.replace(/\/api$/, "");
       const runtimeLabel = serverHandle.runtime.mode === "attached"
         ? `Attached to ${serverHandle.runtime.ownerKind ?? "local"} runtime`
@@ -2140,6 +2184,7 @@ async function importCliModule(): Promise<CliModule> {
 
 async function stopLocalRudder(): Promise<void> {
   const browserLifecycle = browserRuntimeLifecycle;
+  const computerLifecycle = computerRuntimeLifecycle;
   const handle = serverHandle;
   productAnalyticsScheduler?.stop();
   productAnalyticsScheduler = null;
@@ -2148,6 +2193,9 @@ async function stopLocalRudder(): Promise<void> {
     console.warn("[rudder-desktop] failed to stop Local Apps while the runtime was stopping", error);
   });
   serverHandle = null;
+  await computerLifecycle?.disconnect().catch((error) => {
+    console.warn("[rudder-desktop] failed to stop Computer Use while the runtime was stopping", error);
+  });
   await stopDesktopRuntime({
     browserDisconnect: browserLifecycle
       ? () => browserLifecycle.disconnect()
@@ -2306,6 +2354,22 @@ function registerIpc(): void {
     if (openError) throw new Error(openError);
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
+  ipcMain.handle("desktop:computer-use-readiness", async (event) => {
+    assertCurrentMainFrame(event, "Computer Use readiness");
+    return readComputerUseReadiness();
+  });
+  ipcMain.handle("desktop:computer-use-request-permissions", async (event) => {
+    assertCurrentMainFrame(event, "Computer Use permission request");
+    const readiness = await requestComputerUsePermissions();
+    await computerRuntimeLifecycle?.refresh().catch((error) => {
+      console.warn("[rudder-desktop] failed to refresh Computer Use after permission request", error);
+    });
+    return readiness;
+  });
+  ipcMain.handle("desktop:computer-use-open-screen-recording", async (event) => {
+    assertCurrentMainFrame(event, "Computer Use Screen Recording settings");
+    return openComputerUseScreenRecordingSettings();
+  });
   ipcMain.handle("desktop:open-system-permission-settings", async (event, permission: unknown) => {
     assertCurrentMainFrame(event, "System permission settings");
     if (!isDesktopSystemPermissionId(permission)) {
@@ -2606,6 +2670,7 @@ async function bootstrap(): Promise<void> {
     console.warn("[rudder-desktop] failed to clean stale Browser import data", error);
   }
   initializeBrowserProfile(instanceRoot);
+  replaceComputerRuntimeLifecycle();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start", {
       profile: profile.name,

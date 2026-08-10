@@ -96,6 +96,7 @@ export function healthRoutes(
         companyDeletionEnabled: opts.companyDeletionEnabled,
         experimentalSitesEnabled: generalSettings.experimentalSitesEnabled,
         experimentalGoalsEnabled: generalSettings.experimentalGoalsEnabled,
+        experimentalComputerUseEnabled: generalSettings.experimentalComputerUseEnabled,
       },
       ...(devServer ? { devServer } : {}),
     });

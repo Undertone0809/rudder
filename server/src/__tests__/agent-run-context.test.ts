@@ -38,6 +38,7 @@ const mockListRuntimeToolsForAgent = vi.fn();
 const mockListManagedRuntimeBindings = vi.fn();
 const mockGetBrowserSettings = vi.fn();
 const mockGetGeneralSettings = vi.fn();
+const mockComputerBrokerAvailable = vi.fn();
 
 vi.mock("../services/secrets.js", () => ({
   secretService: () => ({
@@ -57,6 +58,12 @@ vi.mock("../services/instance-settings.js", () => ({
     getBrowser: mockGetBrowserSettings,
     getGeneral: mockGetGeneralSettings,
   }),
+}));
+
+vi.mock("../services/computer-broker.js", () => ({
+  computerBrokerRegistry: {
+    isAvailable: mockComputerBrokerAvailable,
+  },
 }));
 
 vi.mock("../services/integrations/custom-integrations.js", () => ({
@@ -131,7 +138,11 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
 
   beforeEach(() => {
     mockGetBrowserSettings.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
-    mockGetGeneralSettings.mockResolvedValue({ experimentalSitesEnabled: false });
+    mockGetGeneralSettings.mockResolvedValue({
+      experimentalSitesEnabled: false,
+      experimentalComputerUseEnabled: false,
+    });
+    mockComputerBrokerAvailable.mockReturnValue(false);
     mockListManagedRuntimeBindings.mockResolvedValue([]);
   });
 
@@ -143,6 +154,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     mockListManagedRuntimeBindings.mockReset();
     mockGetBrowserSettings.mockReset();
     mockGetGeneralSettings.mockReset();
+    mockComputerBrokerAvailable.mockReset();
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
@@ -202,6 +214,45 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     expect(disabled.runtimeSkillEntries.map((entry) => entry.key)).toEqual([
       rudderSkillEntry.key,
     ]);
+  });
+
+  it("projects Computer Use only for an enabled Desktop-backed codex_local Run", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { rudderComputerEnabled: false },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue([]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    mockGetGeneralSettings.mockResolvedValue({
+      experimentalSitesEnabled: false,
+      experimentalComputerUseEnabled: true,
+    });
+    mockComputerBrokerAvailable.mockReturnValue(true);
+
+    const svc = agentRunContextService({} as any, { deploymentMode: "local_trusted" });
+    const eligible = await svc.prepareRuntimeConfig({
+      scene: "chat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Desktop Agent",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { rudderComputerEnabled: false },
+      },
+    });
+    expect(eligible.runtimeConfig.rudderComputerEnabled).toBe(true);
+
+    const unsupported = await svc.prepareRuntimeConfig({
+      scene: "chat",
+      agent: {
+        id: "agent-2",
+        orgId: "organization-1",
+        name: "Other Agent",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: { rudderComputerEnabled: true },
+      },
+    });
+    expect(unsupported.runtimeConfig.rudderComputerEnabled).toBe(false);
   });
 
   it("injects only live provider-neutral managed MCP bindings into runtime config", async () => {

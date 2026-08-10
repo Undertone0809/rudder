@@ -18,6 +18,7 @@ import {
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
 import {
   resolveRudderBrowserMcpCliCommand,
+  resolveRudderComputerMcpCliCommand,
   resolveRudderMcpCliCommand,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
@@ -43,6 +44,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { COMPUTER_USE_AGENT_INSTRUCTION } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +73,7 @@ const CODEX_PROTECTED_ENV_KEYS = new Set([
   "HOME",
   ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_DESKTOP_CLI_ENTRY",
+  "RUDDER_COMPUTER_ENABLED",
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -438,6 +441,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
   }
   let browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
+  let computerEnabled = asBoolean(config.rudderComputerEnabled, false);
+  env.RUDDER_COMPUTER_ENABLED = computerEnabled ? "true" : "false";
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
   env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
@@ -500,6 +505,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
     await onLog("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
+  const computerMcpCommand = computerEnabled
+    ? await resolveRudderComputerMcpCliCommand(__moduleDir).catch(() => null)
+    : null;
+  if (computerEnabled && (!computerMcpCommand || !rudderMcpPreflight.available)) {
+    computerEnabled = false;
+    env.RUDDER_COMPUTER_ENABLED = "false";
+    runtimeEnv.RUDDER_COMPUTER_ENABLED = "false";
+    await onLog("stderr", "[rudder] Rudder Computer MCP is unavailable; continuing without Computer Use.\n");
+  }
   const effectiveDesiredCodexSkillNames = filterRudderDesiredSkillsForBrowserCapability(
     codexSkillEntries,
     desiredCodexSkillNames,
@@ -529,6 +543,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     browserMcpCommand ?? undefined,
     config,
     rudderMcpPreflight.available,
+    computerMcpCommand ?? undefined,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
@@ -655,6 +670,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const prompt = joinPromptSections([
     instructionsPrefix,
     skillBoundaryPrompt,
+    computerEnabled ? COMPUTER_USE_AGENT_INSTRUCTION : "",
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,

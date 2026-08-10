@@ -44,6 +44,16 @@ vi.mock("@/context/I18nContext", () => ({
       "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",
       "experimental.goals.disabledDescription": "Turn this on to try the Goal workspace.",
       "experimental.goals.toggle": "Enable Goals",
+      "experimental.computerUse.section": "Computer Use",
+      "experimental.computerUse.title": "Enable Computer Use",
+      "experimental.computerUse.disabledDescription": "Adds native app interaction.",
+      "experimental.computerUse.readyDescription": "Computer Use is ready.",
+      "experimental.computerUse.permissionDescription": "Permissions are required.",
+      "experimental.computerUse.desktopRequired": "Rudder Desktop on macOS is required.",
+      "experimental.computerUse.toggle": "Enable Computer Use",
+      "experimental.computerUse.requestPermissions": "Grant access",
+      "experimental.computerUse.openScreenRecording": "Open Screen Recording settings",
+      "experimental.computerUse.permissionFailed": "Permission failed.",
       "experimental.updateFailed": "Update failed.",
       "experimental.loadFailed": "Load failed.",
     })[key] ?? key,
@@ -82,6 +92,7 @@ beforeEach(() => {
     showDeveloperDiagnostics: false,
     experimentalSitesEnabled: false,
     experimentalGoalsEnabled: false,
+    experimentalComputerUseEnabled: false,
     locale: "en",
   });
   mocks.updateGeneral.mockResolvedValue({
@@ -89,6 +100,7 @@ beforeEach(() => {
     showDeveloperDiagnostics: false,
     experimentalSitesEnabled: true,
     experimentalGoalsEnabled: false,
+    experimentalComputerUseEnabled: false,
     locale: "en",
   });
 });
@@ -129,6 +141,7 @@ describe("InstanceExperimentalSettings", () => {
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: true,
       experimentalGoalsEnabled: false,
+      experimentalComputerUseEnabled: false,
       locale: "en",
     });
     const stop = vi.fn().mockResolvedValue({ status: "stopped" });
@@ -181,5 +194,58 @@ describe("InstanceExperimentalSettings", () => {
     });
 
     expect(container.textContent).toContain("Enable Goals");
+  });
+
+  it("enables Computer Use as one Agent capability and requests macOS permissions", async () => {
+    const requestPermissions = vi.fn().mockResolvedValue({
+      supported: true,
+      accessibility: true,
+      screenRecording: true,
+      actionReady: true,
+      driverVersion: "0.19.2",
+      reason: null,
+    });
+    const readiness = vi.fn().mockResolvedValue({
+      supported: true,
+      accessibility: false,
+      screenRecording: false,
+      actionReady: false,
+      driverVersion: "0.19.2",
+      reason: "Permissions are required.",
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        computerUse: {
+          supported: true,
+          readiness,
+          requestPermissions,
+          openScreenRecordingSettings: vi.fn(),
+        },
+      },
+    });
+    mocks.updateGeneral.mockResolvedValue({
+      censorUsernameInLogs: false,
+      showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
+      experimentalGoalsEnabled: false,
+      experimentalComputerUseEnabled: true,
+      locale: "en",
+    });
+    const container = await renderPage();
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('[data-testid="experimental-computer-use-toggle"]'))
+          .not.toBeNull();
+      });
+      container.querySelector<HTMLButtonElement>('[data-testid="experimental-computer-use-toggle"]')?.click();
+      await vi.waitFor(() => expect(requestPermissions).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(mocks.updateGeneral).toHaveBeenCalledWith({
+        experimentalComputerUseEnabled: true,
+      }));
+    });
+
+    expect(container.textContent).toContain("Enable Computer Use");
   });
 });

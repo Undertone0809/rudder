@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@rudderhq/identity-core": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
+    "@trycua/cua-driver": "0.19.2",
     "pnpm": "9.15.4"
   },
   "devDependencies": {

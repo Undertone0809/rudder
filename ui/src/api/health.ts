@@ -28,6 +28,7 @@ export type HealthStatus = {
     companyDeletionEnabled?: boolean;
     experimentalSitesEnabled?: boolean;
     experimentalGoalsEnabled?: boolean;
+    experimentalComputerUseEnabled?: boolean;
   };
   devServer?: DevServerHealthStatus;
 };

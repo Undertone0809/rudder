@@ -18,6 +18,7 @@ export {
 
 export const RUDDER_MCP_SERVER_NAME = "rudder-tools";
 export const RUDDER_BROWSER_MCP_SERVER_NAME = "rudder-browser";
+export const RUDDER_COMPUTER_MCP_SERVER_NAME = "rudder-computer";
 export const RUDDER_MCP_LEGACY_SERVER_NAMES = [
   ["rudder", "control", "plane"].join("-"),
   ["rudder", "operating", "layer"].join("-"),
@@ -31,6 +32,7 @@ export const RUDDER_MCP_MANAGED_ENV_KEYS = [
   "RUDDER_AGENT_ID",
   "RUDDER_RUN_ID",
   "RUDDER_BROWSER_ENABLED",
+  "RUDDER_COMPUTER_ENABLED",
   "RUDDER_PROJECT_LIBRARY_PATH",
 ] as const;
 
@@ -179,6 +181,14 @@ export function rudderBrowserMcpCliCommand(): RudderMcpCliCommand {
   return {
     command: "rudder",
     args: ["mcp-server", "--server", "browser"],
+    provenance: "path",
+  };
+}
+
+export function rudderComputerMcpCliCommand(): RudderMcpCliCommand {
+  return {
+    command: "rudder",
+    args: ["mcp-server", "--server", "computer"],
     provenance: "path",
   };
 }

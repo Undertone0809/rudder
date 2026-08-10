@@ -132,9 +132,9 @@ export function createProgram(): Command {
   program
     .command("mcp-server")
     .description("Run the first-party Rudder Agent V1 MCP server over stdio")
-    .option("--server <surface>", "MCP surface to expose (core or browser)", "core")
+    .option("--server <surface>", "MCP surface to expose (core, browser, or computer)", "core")
     .action(async (opts: { server: string }) => {
-      if (opts.server !== "core" && opts.server !== "browser") {
+      if (opts.server !== "core" && opts.server !== "browser" && opts.server !== "computer") {
         throw new Error(`Unsupported Rudder MCP server surface: ${opts.server}`);
       }
       await runMcpStdioServer(undefined, opts.server as RudderMcpServerSurface);

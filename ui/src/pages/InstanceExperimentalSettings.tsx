@@ -8,12 +8,13 @@ import {
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
+import { Button } from "@/components/ui/button";
 import { useI18n } from "@/context/I18nContext";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Beaker, FlaskConical, Target } from "lucide-react";
+import { Beaker, FlaskConical, MonitorUp, Target } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 
@@ -22,6 +23,7 @@ export function InstanceExperimentalSettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
+  const desktopComputerUse = readDesktopShell()?.computerUse;
 
   useEffect(() => {
     setBreadcrumbs([
@@ -86,6 +88,32 @@ export function InstanceExperimentalSettings() {
       );
     },
   });
+  const computerReadinessQuery = useQuery({
+    queryKey: ["desktop", "computer-use", "readiness"],
+    queryFn: () => desktopComputerUse!.readiness(),
+    enabled: desktopComputerUse?.supported === true,
+    refetchInterval: 2_000,
+  });
+  const computerUseUpdateMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      if (enabled && desktopComputerUse?.supported) {
+        await desktopComputerUse.requestPermissions();
+      }
+      return instanceSettingsApi.updateGeneral({ experimentalComputerUseEnabled: enabled });
+    },
+    onSuccess: async (nextSettings) => {
+      setActionError(null);
+      queryClient.setQueryData(queryKeys.instance.generalSettings, nextSettings);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.health }),
+        computerReadinessQuery.refetch(),
+      ]);
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : t("experimental.updateFailed"));
+    },
+  });
 
   if (settingsQuery.isLoading) return <SettingsPageSkeleton />;
   if (settingsQuery.error) {
@@ -100,6 +128,16 @@ export function InstanceExperimentalSettings() {
 
   const enabled = settingsQuery.data?.experimentalSitesEnabled === true;
   const goalsEnabled = settingsQuery.data?.experimentalGoalsEnabled === true;
+  const computerUseEnabled = settingsQuery.data?.experimentalComputerUseEnabled === true;
+  const computerReadiness = computerReadinessQuery.data;
+  const computerUseSupported = desktopComputerUse?.supported === true;
+  const computerUseDescription = !computerUseSupported
+    ? t("experimental.computerUse.desktopRequired")
+    : computerReadiness?.actionReady
+      ? t("experimental.computerUse.readyDescription")
+      : computerUseEnabled
+        ? computerReadiness?.reason ?? t("experimental.computerUse.permissionDescription")
+        : t("experimental.computerUse.disabledDescription");
 
   return (
     <SettingsPage>
@@ -160,6 +198,52 @@ export function InstanceExperimentalSettings() {
               />
             }
           />
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("experimental.computerUse.section")}>
+        <SettingsGroup>
+          <SettingsItem
+            title={t("experimental.computerUse.title")}
+            description={computerUseDescription}
+            icon={MonitorUp}
+            action={
+              <SettingsToggle
+                checked={computerUseEnabled}
+                disabled={!computerUseSupported || computerUseUpdateMutation.isPending}
+                aria-label={t("experimental.computerUse.toggle")}
+                data-testid="experimental-computer-use-toggle"
+                onClick={() => computerUseUpdateMutation.mutate(!computerUseEnabled)}
+              />
+            }
+          />
+          {computerUseEnabled && computerUseSupported && computerReadiness && !computerReadiness.actionReady ? (
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/70 px-4 py-3">
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="experimental-computer-use-request-permissions"
+                onClick={() => void desktopComputerUse.requestPermissions().then(
+                  () => computerReadinessQuery.refetch(),
+                  (error) => setActionError(error instanceof Error ? error.message : t("experimental.computerUse.permissionFailed")),
+                )}
+              >
+                {t("experimental.computerUse.requestPermissions")}
+              </Button>
+              {!computerReadiness.screenRecording ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="experimental-computer-use-open-screen-recording"
+                  onClick={() => void desktopComputerUse.openScreenRecordingSettings().catch(
+                    (error) => setActionError(error instanceof Error ? error.message : t("experimental.computerUse.permissionFailed")),
+                  )}
+                >
+                  {t("experimental.computerUse.openScreenRecording")}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </SettingsGroup>
       </SettingsSection>
     </SettingsPage>

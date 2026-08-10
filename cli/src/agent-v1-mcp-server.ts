@@ -5,7 +5,14 @@ import {
   rudderMcpSemanticToolContract,
 } from "@rudderhq/agent-runtime-utils";
 import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
-import { addIssueCommentSchema, checkoutIssueSchema } from "@rudderhq/shared";
+import {
+  COMPUTER_USE_MCP_SERVER_NAME,
+  COMPUTER_USE_MCP_TOOLS,
+  addIssueCommentSchema,
+  checkoutIssueSchema,
+  computerUseActionForToolName,
+  computerUseActionSchemas,
+} from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -42,13 +49,14 @@ interface McpServerEnv {
   RUDDER_AGENT_ID?: string;
   RUDDER_RUN_ID?: string;
   RUDDER_BROWSER_ENABLED?: string;
+  RUDDER_COMPUTER_ENABLED?: string;
   RUDDER_PROJECT_LIBRARY_PATH?: string;
   RUDDER_MCP_RUDDER_BIN?: string;
   [key: string]: string | undefined;
 }
 
 type McpStdioMode = "framed" | "newline";
-export type RudderMcpServerSurface = "core" | "browser";
+export type RudderMcpServerSurface = "core" | "browser" | "computer";
 type McpStdioInput = NodeJS.ReadableStream
   & AsyncIterable<string | Buffer>
   & { destroy(error?: Error): void };
@@ -148,6 +156,7 @@ export function buildMcpServerEnv(env: NodeJS.ProcessEnv = process.env): McpServ
     RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
     RUDDER_RUN_ID: env.RUDDER_RUN_ID,
     RUDDER_BROWSER_ENABLED: env.RUDDER_BROWSER_ENABLED,
+    RUDDER_COMPUTER_ENABLED: env.RUDDER_COMPUTER_ENABLED,
     RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     RUDDER_MCP_RUDDER_BIN: env.RUDDER_MCP_RUDDER_BIN,
   };
@@ -189,6 +198,7 @@ export function buildAgentV1ToolCallPlan(
       RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
       RUDDER_RUN_ID: env.RUDDER_RUN_ID,
       RUDDER_BROWSER_ENABLED: env.RUDDER_BROWSER_ENABLED,
+      RUDDER_COMPUTER_ENABLED: env.RUDDER_COMPUTER_ENABLED,
       RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     },
     tempFiles,
@@ -229,15 +239,19 @@ export async function runAgentV1McpJsonRpcMessage(
             },
           },
           serverInfo: {
-            name: surface === "browser" ? RUDDER_BROWSER_MCP_SERVER_NAME : RUDDER_MCP_SERVER_NAME,
+            name: surface === "browser"
+              ? RUDDER_BROWSER_MCP_SERVER_NAME
+              : surface === "computer" ? COMPUTER_USE_MCP_SERVER_NAME : RUDDER_MCP_SERVER_NAME,
             version: resolveCliVersion(),
           },
         });
       case "tools/list":
         return rpcResult(id, {
-          tools: surface === "browser" && !browserCapabilityEnabled(env)
-            ? []
-            : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry),
+          tools: surface === "computer"
+            ? computerCapabilityEnabled(env) ? COMPUTER_USE_MCP_TOOLS : []
+            : surface === "browser" && !browserCapabilityEnabled(env)
+              ? []
+              : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry),
         });
       case "tools/call":
         return boundedToolCallRpcResponse(
@@ -432,6 +446,31 @@ async function callTool(
 
   const record = isRecord(params) ? params : {};
   const toolName = typeof record.name === "string" ? record.name : "";
+  if (surface === "computer") {
+    if (!computerCapabilityEnabled(env)) {
+      const error = new Error("Rudder Computer Use is not enabled for this Run.");
+      (error as Error & { code?: string }).code = "computer_disabled";
+      throw error;
+    }
+    const action = computerUseActionForToolName(toolName);
+    const exposed = action !== null && COMPUTER_USE_MCP_TOOLS.some((entry) => entry.name === toolName);
+    if (!exposed) {
+      const error = new Error(`Rudder Computer MCP tool is not available: ${toolName || "(missing)"}`);
+      (error as Error & { code?: string }).code = "rudder_mcp_tool_not_available";
+      throw error;
+    }
+    const rawArgs = isRecord(record.arguments) ? record.arguments : {};
+    rejectModelProvidedRuntimeIdentity(rawArgs);
+    const parsed = computerUseActionSchemas[action].safeParse(rawArgs);
+    if (!parsed.success) {
+      const error = new Error(`Invalid arguments for ${toolName}.`);
+      (error as Error & { code?: string; details?: unknown }).code = "computer_invalid_argument";
+      (error as Error & { details?: unknown }).details = parsed.error.flatten();
+      throw error;
+    }
+    const result = await mcpApiClient(env, signal).post(`/api/computer/${action}`, parsed.data);
+    return mcpSuccessWithImages(result, RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES);
+  }
   const exposed = buildAgentV1McpToolsManifest("agent-v1", { surface }).tools
     .some((tool) => tool.name === toolName);
   if (!exposed) {
@@ -761,6 +800,36 @@ function mcpSuccess(
     };
   }
   return mcpSuccessFromJsonText(JSON.stringify(data ?? {}), maxResultBytes);
+}
+
+function mcpSuccessWithImages(
+  data: unknown,
+  maxResultBytes: number,
+): Record<string, unknown> {
+  if (!isRecord(data) || !Array.isArray(data.images)) return mcpSuccess(data, maxResultBytes);
+  const images = data.images.filter((entry): entry is { mimeType: "image/png" | "image/jpeg"; base64: string } =>
+    isRecord(entry)
+    && (entry.mimeType === "image/png" || entry.mimeType === "image/jpeg")
+    && typeof entry.base64 === "string"
+    && entry.base64.length > 0
+  );
+  if (images.length === 0) return mcpSuccess(data, maxResultBytes);
+
+  const metadata = { ...data };
+  delete metadata.images;
+  const result = mcpSuccessFromJsonText(JSON.stringify(metadata), maxResultBytes);
+  if (result.isError === true || !Array.isArray(result.content)) return result;
+  const withImages = {
+    ...result,
+    content: [
+      ...result.content,
+      ...images.map((image) => ({ type: "image", data: image.base64, mimeType: image.mimeType })),
+    ],
+  };
+  const resultBytes = Buffer.byteLength(JSON.stringify(withImages), "utf8");
+  return resultBytes <= maxResultBytes
+    ? withImages
+    : mcpResponseTooLarge(resultBytes, maxResultBytes);
 }
 
 function mcpSuccessFromJsonText(
@@ -1636,6 +1705,10 @@ function assertRuntimeMcpContext(
 
 function browserCapabilityEnabled(env: McpServerEnv): boolean {
   return optionalString(env.RUDDER_BROWSER_ENABLED)?.toLowerCase() === "true";
+}
+
+function computerCapabilityEnabled(env: McpServerEnv): boolean {
+  return env.RUDDER_COMPUTER_ENABLED === "true";
 }
 
 function assertBrowserCapabilityEnabled(capabilityId: string, env: McpServerEnv): void {

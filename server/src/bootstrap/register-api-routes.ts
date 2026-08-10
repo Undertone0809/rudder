@@ -13,6 +13,7 @@ import { browserRoutes } from "../routes/browser.js";
 import { calendarRoutes } from "../routes/calendar.js";
 import type { ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { chatRoutes } from "../routes/chats.js";
+import { computerRoutes } from "../routes/computer.js";
 import { costRoutes } from "../routes/costs.js";
 import { dashboardRoutes } from "../routes/dashboard.js";
 import { runWorkspaceRoutes } from "../routes/execution-workspaces.js";
@@ -108,6 +109,7 @@ export function registerApiRoutes(
   api.use(websiteMetadataRoutes());
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId }));
   api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
+  api.use(computerRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(
     pluginRoutes(
       db,

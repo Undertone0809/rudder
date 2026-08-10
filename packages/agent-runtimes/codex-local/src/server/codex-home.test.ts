@@ -68,6 +68,27 @@ describe("managed Codex home config sync", () => {
     }
   });
 
+  it("injects a separate Computer MCP server only for an eligible Run", async () => {
+    const disabled = await prepareWithSharedConfig('model = "gpt-5.5"\n', {
+      RUDDER_COMPUTER_ENABLED: "false",
+    });
+    expect(disabled.config).not.toContain("[mcp_servers.rudder-computer]");
+
+    const enabled = await prepareWithSharedConfig('model = "gpt-5.5"\n', {
+      RUDDER_COMPUTER_ENABLED: "true",
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "org-1",
+      RUDDER_AGENT_ID: "agent-1",
+      RUDDER_RUN_ID: "run-1",
+    });
+    expect(enabled.config).toContain("[mcp_servers.rudder-computer]");
+    expect(enabled.config).toMatch(/args = \[[^\n]*"mcp-server","--server","computer"\]/);
+    expect(enabled.config).toContain("[mcp_servers.rudder-computer.env]");
+    expect(enabled.config).toContain('RUDDER_COMPUTER_ENABLED = "true"');
+    expect(enabled.config).not.toContain("[mcp_servers.rudder-tools.env]\nRUDDER_COMPUTER_ENABLED");
+  });
+
   it("strips inherited Codex service_tier default values unsupported by current Codex", async () => {
     const { config, logs } = await prepareWithSharedConfig([
       'model = "gpt-5.5"',

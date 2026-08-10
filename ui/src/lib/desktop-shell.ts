@@ -15,6 +15,15 @@ export type DesktopSystemPermissions = {
 
 export type DesktopSystemPermissionId = keyof DesktopSystemPermissions;
 
+export type DesktopComputerUseReadiness = {
+  supported: boolean;
+  accessibility: boolean;
+  screenRecording: boolean;
+  actionReady: boolean;
+  driverVersion: string | null;
+  reason: string | null;
+};
+
 export type DesktopBootState = {
   capabilities?: {
     badgeCount?: boolean;
@@ -395,6 +404,12 @@ export type DesktopShellApi = {
   getBrowserPartition?(): Promise<string>;
   clearBrowserData?(): Promise<void>;
   setBrowserEnabled?(enabled: boolean): Promise<void>;
+  computerUse?: {
+    supported: boolean;
+    readiness(): Promise<DesktopComputerUseReadiness>;
+    requestPermissions(): Promise<DesktopComputerUseReadiness>;
+    openScreenRecordingSettings(): Promise<{ opened: boolean }>;
+  };
   onBrowserReset?(listener: (event: DesktopBrowserResetEvent) => void): () => void;
   localApps?: {
     supported: boolean;
