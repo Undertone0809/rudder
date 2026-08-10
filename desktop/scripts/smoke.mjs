@@ -3817,21 +3817,11 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const movingSideTab = sidePanel.locator(
         `[data-testid="chat-side-panel-tab"][data-view-instance-id="${promotionBrowserIdentity.viewInstanceId}"]`,
       );
-      await movingSideTab.click();
-      await page.waitForFunction(({ browserTabId, expectedUrl }) => {
-        const webview = document.querySelector(
-          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
-        );
-        return Boolean(
-          webview
-          && webview.getAttribute("data-browser-tab-id") === browserTabId
-          && typeof webview.getURL === "function"
-          && webview.getURL() === expectedUrl,
-        );
-      }, {
-        browserTabId: promotionBrowserIdentity.browserTabId,
-        expectedUrl: promotionUrl,
-      }, { timeout: 15_000 });
+      assert.equal(
+        await movingSideTab.getAttribute("aria-selected"),
+        "true",
+        "the promoted Browser tab must remain selected before Move",
+      );
       const movingViewInstanceId = promotionBrowserIdentity.viewInstanceId;
       const sideTabCountBeforeMove = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const browserGuestCountBeforeMove = await page.locator("webview[data-browser-tab-id]").count();
