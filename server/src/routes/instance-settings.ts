@@ -12,6 +12,7 @@ import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { browserBrokerRegistry } from "../services/browser-broker.js";
+import { computerBrokerRegistry } from "../services/computer-broker.js";
 import {
   boardAuthService,
   instanceSettingsService,
@@ -165,6 +166,7 @@ export function instanceSettingsRoutes(
     async (req, res) => {
       assertCanManageInstanceSettings(req);
       const updated = await svc.updateGeneral(req.body);
+      if (req.body.experimentalComputerUseEnabled === false) computerBrokerRegistry.revoke();
       const actor = getActorInfo(req);
       const orgIds = await svc.listCompanyIds();
       await Promise.all(

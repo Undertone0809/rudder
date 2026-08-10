@@ -10,6 +10,7 @@ export interface InstanceGeneralSettings {
   showDeveloperDiagnostics: boolean;
   experimentalSitesEnabled: boolean;
   experimentalGoalsEnabled: boolean;
+  experimentalComputerUseEnabled: boolean;
   locale: InstanceLocale;
   productAnalyticsMode: "off" | "anonymous" | "account_linked";
   productAnalyticsConsentEpoch: number;

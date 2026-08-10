@@ -1,5 +1,6 @@
 import {
   rudderBrowserMcpCliCommand,
+  rudderComputerMcpCliCommand,
   rudderMcpCliCommand,
   type RudderMcpCliCommand,
 } from "./rudder-mcp.js";
@@ -13,6 +14,23 @@ export async function resolveRudderMcpCliCommand(moduleDir: string): Promise<Rud
   return {
     command: target.command,
     args: [...target.args, "mcp-server"],
+    env: {
+      ...(target.env ?? {}),
+      RUDDER_MCP_RUDDER_BIN: cliShim,
+    },
+    provenance: target.provenance,
+    expectedVersion: target.version,
+  };
+}
+
+export async function resolveRudderComputerMcpCliCommand(moduleDir: string): Promise<RudderMcpCliCommand> {
+  const target = await resolveRudderCliShimTarget(moduleDir);
+  if (!target) return rudderComputerMcpCliCommand();
+  const cliShim = await materializeRudderCliShim(target);
+
+  return {
+    command: target.command,
+    args: [...target.args, "mcp-server", "--server", "computer"],
     env: {
       ...(target.env ?? {}),
       RUDDER_MCP_RUDDER_BIN: cliShim,

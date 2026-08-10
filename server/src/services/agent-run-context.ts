@@ -22,6 +22,8 @@ import {
   resolveBrowserCapability,
   resolveBrowserCapabilityDeployment,
 } from "./browser-capability.js";
+import { computerBrokerRegistry } from "./computer-broker.js";
+import { resolveComputerUseCapability } from "./computer-capability.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { customIntegrationService } from "./integrations/custom-integrations.js";
 import { managedMcpBindingService } from "./mcp/managed-bindings.js";
@@ -508,6 +510,12 @@ export function agentRunContextService(
       browserEnabled: browserSettings.enabled,
       agentRuntimeType: input.agent.agentRuntimeType,
     });
+    const computerUseCapability = resolveComputerUseCapability({
+      deploymentMode,
+      enabled: generalSettings.experimentalComputerUseEnabled,
+      desktopReady: computerBrokerRegistry.isAvailable(),
+      agentRuntimeType: input.agent.agentRuntimeType,
+    });
     const resolvedDesiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(
       input.agent.orgId,
       {
@@ -547,6 +555,7 @@ export function agentRunContextService(
       runtimeConfig: {
         ...resolvedConfig,
         rudderBrowserEnabled: browserCapability.runEligible,
+        rudderComputerEnabled: computerUseCapability.runEligible,
         rudderBrowserCapability: {
           instanceEligible: browserCapability.instanceEligible,
           runtimeSkillEntries: browserRuntimeSkillEntries,

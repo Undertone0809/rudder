@@ -1,5 +1,6 @@
 import {
   RUDDER_BROWSER_MCP_SERVER_NAME,
+  RUDDER_COMPUTER_MCP_SERVER_NAME,
   RUDDER_MCP_SERVER_NAME,
   resolveManagedExternalMcpBindings,
   resolveOrganizationStorageKey,
@@ -9,6 +10,7 @@ import {
 } from "@rudderhq/agent-runtime-utils";
 import {
   resolveRudderBrowserMcpCliCommand,
+  resolveRudderComputerMcpCliCommand,
   resolveRudderMcpCliCommand,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -239,6 +241,7 @@ async function renderRudderMcpCodexConfig(
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
+  verifiedComputerCommand?: RudderMcpCliCommand,
   includeCore = true,
 ): Promise<string> {
   const renderServer = (
@@ -266,12 +269,20 @@ async function renderRudderMcpCodexConfig(
       ...managedEnv,
     };
     delete coreEnv.RUDDER_BROWSER_ENABLED;
+    delete coreEnv.RUDDER_COMPUTER_ENABLED;
     servers.push(renderServer(RUDDER_MCP_SERVER_NAME, coreServer, coreEnv));
   }
   if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
     const browserServer = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(moduleDir);
     servers.push(renderServer(RUDDER_BROWSER_MCP_SERVER_NAME, browserServer, {
       ...(browserServer.env ?? {}),
+      ...managedEnv,
+    }));
+  }
+  if (managedEnv.RUDDER_COMPUTER_ENABLED === "true") {
+    const computerServer = verifiedComputerCommand ?? await resolveRudderComputerMcpCliCommand(moduleDir);
+    servers.push(renderServer(RUDDER_COMPUTER_MCP_SERVER_NAME, computerServer, {
+      ...(computerServer.env ?? {}),
       ...managedEnv,
     }));
   }
@@ -586,6 +597,7 @@ async function syncManagedCodexConfigToml(
   verifiedBrowserMcpCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
   includeCoreMcp = true,
+  verifiedComputerMcpCommand?: RudderMcpCliCommand,
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
@@ -612,6 +624,7 @@ async function syncManagedCodexConfigToml(
       mcpEnv,
       verifiedMcpCommand,
       verifiedBrowserMcpCommand,
+      verifiedComputerMcpCommand,
       includeCoreMcp,
     ),
     renderManagedExternalMcpCodexConfig(runtimeConfig, mcpEnv, (serverName, error) => {
@@ -825,6 +838,7 @@ export async function realizeManagedCodexSkillEntries(
   verifiedBrowserMcpCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
   includeCoreMcp = true,
+  verifiedComputerMcpCommand?: RudderMcpCliCommand,
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
@@ -841,6 +855,7 @@ export async function realizeManagedCodexSkillEntries(
       verifiedBrowserMcpCommand,
       runtimeConfig,
       includeCoreMcp,
+      verifiedComputerMcpCommand,
     );
     await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
   });

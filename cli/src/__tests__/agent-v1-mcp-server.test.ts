@@ -3,6 +3,7 @@ import {
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
+import { COMPUTER_USE_MCP_TOOLS } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -130,6 +131,102 @@ describe("agent-v1 MCP server", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("exposes Computer Use only on the enabled dedicated MCP surface", async () => {
+    const disabled = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    }, buildMcpServerEnv({ RUDDER_COMPUTER_ENABLED: "false" }), "computer");
+    expect((disabled?.result as { tools: unknown[] }).tools).toEqual([]);
+
+    const enabled = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    }, buildMcpServerEnv({ RUDDER_COMPUTER_ENABLED: "true" }), "computer");
+    expect((enabled?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name))
+      .toEqual(COMPUTER_USE_MCP_TOOLS.map((tool) => tool.name));
+  });
+
+  it("forwards Computer Use through the run-scoped Rudder API instead of Cua Driver", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({
+        authorization: "Bearer runtime-key",
+        "x-rudder-agent-id": "agent-1",
+        "x-rudder-run-id": "run-1",
+      });
+      return new Response(JSON.stringify({ apps: [{ name: "TextEdit", pid: 42 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "rudder_computer_list_apps", arguments: {} },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "org-1",
+      RUDDER_AGENT_ID: "agent-1",
+      RUDDER_RUN_ID: "run-1",
+      RUDDER_COMPUTER_ENABLED: "true",
+    }), "computer");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api/computer/list_apps",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { apps: [{ name: "TextEdit", pid: 42 }] },
+    });
+  });
+
+  it("returns Computer Use screenshots as MCP image content instead of base64 text", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      observationId: "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08",
+      text: "AX state",
+      images: [{ mimeType: "image/png", base64: "c2NyZWVuc2hvdA==" }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "rudder_computer_get_app_state", arguments: { app: "TextEdit" } },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "org-1",
+      RUDDER_AGENT_ID: "agent-1",
+      RUDDER_RUN_ID: "run-1",
+      RUDDER_COMPUTER_ENABLED: "true",
+    }), "computer");
+
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        observationId: "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08",
+        text: "AX state",
+      },
+      content: [
+        { type: "text" },
+        { type: "image", mimeType: "image/png", data: "c2NyZWVuc2hvdA==" },
+      ],
+    });
+    expect(JSON.stringify((response?.result as { structuredContent?: unknown }).structuredContent))
+      .not.toContain("c2NyZWVuc2hvdA==");
+    expect(((response?.result as { content: Array<{ type: string; text?: string }> }).content[0]?.text))
+      .not.toContain("c2NyZWVuc2hvdA==");
   });
 
   it("rejects model-provided runtime identity fields", async () => {
