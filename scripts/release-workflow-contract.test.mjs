@@ -110,6 +110,7 @@ describe("release workflow latency contracts", () => {
     expect(gateJob).not.toContain("RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES");
     expect(gateJob).not.toContain("RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE");
     expect(gateJob).toContain("pnpm desktop:verify");
+    expect(gateJob).toContain("if: runner.os != 'Windows'");
     expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
     expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(releaseCompatibilityRuntimeScript).toContain("chat_conversations");

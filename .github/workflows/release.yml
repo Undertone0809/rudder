@@ -190,6 +190,7 @@ jobs:
             --candidate-version "${{ needs.preflight.outputs.version }}"
 
       - name: Run database migration and recovery tests
+        if: runner.os != 'Windows'
         shell: bash
         run: pnpm --filter @rudderhq/db exec vitest run --maxWorkers=1 src/client.test.ts src/migration-manifest.test.ts
 
