@@ -129,7 +129,6 @@ export function InstanceProfileSettings() {
       <SettingsPageHeader
         icon={UserRound}
         title={t("profile.title")}
-        description={t("profile.description")}
       />
 
       {actionError ? (
@@ -143,7 +142,6 @@ export function InstanceProfileSettings() {
           data-testid="settings-page-skeleton"
           aria-hidden="true"
           title={t("profile.about.title")}
-          description={t("profile.about.description")}
         >
           <SettingsGroup className="flex flex-col gap-3 p-4">
             <Skeleton className="h-10 w-full" />
@@ -153,7 +151,6 @@ export function InstanceProfileSettings() {
       ) : profileQuery.error ? (
         <SettingsSection
           title={t("profile.about.title")}
-          description={t("profile.about.description")}
         >
           <div role="alert" className="text-sm text-destructive">
             {profileQuery.error instanceof Error
@@ -164,14 +161,12 @@ export function InstanceProfileSettings() {
       ) : (
         <SettingsSection
           title={t("profile.about.title")}
-          description={t("profile.about.description")}
         >
           <SettingsGroup>
           <SettingsField
             htmlFor="profile-nickname"
             icon={IdCard}
             label={t("profile.nickname.label")}
-            description={t("profile.nickname.help")}
           >
             <Input
               id="profile-nickname"

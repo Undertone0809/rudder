@@ -41,19 +41,16 @@ vi.mock("../context/BreadcrumbContext", () => ({
 const translate = vi.hoisted(() => {
   const messages: Record<string, string> = {
     "common.systemSettings": "System settings",
-    "common.profile": "Profile & account",
-    "profile.title": "Profile & account",
-    "profile.description": "Profile and account description",
+    "common.profile": "Profile",
+    "profile.title": "Profile",
     "profile.loadFailed": "Failed to load profile settings.",
     "profile.updateFailed": "Failed to update profile settings.",
     "profile.toastSaved.title": "Profile saved",
     "profile.toastSaved.body": "Your operator profile has been updated.",
     "profile.toastSaveFailed.title": "Failed to save profile",
     "profile.about.title": "About you",
-    "profile.about.description": "About section",
     "profile.nickname.label": "Your nickname",
     "profile.nickname.placeholder": "What should Rudder call you?",
-    "profile.nickname.help": "Nickname help",
     "profile.moreAboutYou.label": "More about you",
     "profile.moreAboutYou.placeholder": "Share standing context.",
     "profile.moreAboutYou.help": "More about you help",
@@ -140,6 +137,9 @@ describe("InstanceProfileSettings", () => {
     expect(container.textContent).toContain("paste the exported memory below");
     expect(container.textContent).toContain("Rudder Account");
     expect(container.textContent).toContain("Desktop app only");
+    expect(container.textContent).not.toContain("Profile and account description");
+    expect(container.textContent).not.toContain("About section");
+    expect(container.textContent).not.toContain("Nickname help");
 
     const copyButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Copy memory import prompt"));

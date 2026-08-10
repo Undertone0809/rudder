@@ -10,17 +10,17 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground shadow-[var(--shadow-sm)] hover:bg-[color-mix(in_oklab,var(--primary)_86%,white)]",
+          "border-transparent bg-primary text-primary-foreground shadow-[var(--shadow-sm)]",
         destructive:
-          "border-transparent bg-destructive text-white shadow-[var(--shadow-sm)] hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/80",
+          "border-transparent bg-destructive text-white shadow-[var(--shadow-sm)] focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/80",
         outline:
-          "border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] text-foreground shadow-none hover:bg-[color:var(--surface-active)] hover:text-foreground",
+          "border-[color:var(--border-base)] bg-[color:var(--surface-active)] text-foreground shadow-none dark:bg-[color:var(--surface-elevated)]",
         secondary:
-          "border-[color:color-mix(in_oklab,var(--border-soft)_94%,transparent)] bg-secondary text-secondary-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+          "border-[color:color-mix(in_oklab,var(--border-soft)_94%,transparent)] bg-secondary text-secondary-foreground",
         quiet:
-          "border-[color:transparent] bg-[color:var(--surface-inset)] text-muted-foreground shadow-none hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
+          "border-[color:transparent] bg-[color:var(--surface-inset)] text-muted-foreground shadow-none",
         ghost:
-          "border-[color:transparent] bg-transparent text-muted-foreground shadow-none hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
+          "border-[color:transparent] bg-transparent text-muted-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

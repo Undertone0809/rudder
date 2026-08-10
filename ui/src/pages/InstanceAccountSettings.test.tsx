@@ -19,9 +19,8 @@ vi.mock("../context/BreadcrumbContext", () => ({
 const translate = vi.hoisted(() => {
   const messages: Record<string, string> = {
         "common.systemSettings": "System settings",
-        "common.profile": "Profile & account",
-        "profile.title": "Profile & account",
-        "profile.description": "Manage your profile and Rudder Account.",
+        "common.profile": "Profile",
+        "profile.title": "Profile",
         "account.title": "Account & security",
         "account.description": "Manage your Rudder Account.",
         "account.desktopOnly.title": "Rudder Account",

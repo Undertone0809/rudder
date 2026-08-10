@@ -99,6 +99,11 @@ describe("listSettingsPrefetchQueryKeys", () => {
       ["organizations"],
     ]);
 
+    expect(listSettingsPrefetchQueryKeys("/instance/settings/privacy", "org_123")).toEqual([
+      ["access", "current-board-access"],
+      ["organizations"],
+    ]);
+
     expect(listSettingsPrefetchQueryKeys("/instance/settings/browser", "org_123")).toEqual([
       ["access", "current-board-access"],
       ["organizations"],

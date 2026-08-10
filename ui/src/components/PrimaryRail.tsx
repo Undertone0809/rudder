@@ -90,11 +90,7 @@ function resolveDesktopRailPlatform(isDesktopShell: boolean): "macos" | "windows
 }
 
 const railUtilityButtonClass = [
-  "h-9 w-9 translate-x-[var(--primary-rail-item-shift,0.25rem)] rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
-  "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
-  "bg-[color:color-mix(in_oklab,var(--sidebar)_72%,white)]",
-  "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_88%,var(--sidebar))]",
-  "dark:border-white/20 dark:bg-white/10 dark:text-white/78",
+  "rail-utility-button h-9 w-9 translate-x-[var(--primary-rail-item-shift,0.25rem)] overflow-hidden rounded-full border backdrop-blur-[22px]",
 ].join(" ");
 
 function RailNavItem({

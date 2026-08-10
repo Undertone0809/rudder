@@ -6017,36 +6017,131 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
 }
 
 .control-hover {
+  --control-hover-inset: 4px;
+  --control-hover-core: color-mix(in oklab, var(--surface-elevated) 92%, transparent);
+  --control-hover-core-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 14%, transparent),
+    0 2px 7px color-mix(in oklab, var(--ink-strong) 12%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--border-soft) 52%, transparent);
+  position: relative;
+  isolation: isolate;
   transition-property: color, background-color, border-color, box-shadow, opacity, transform, scale;
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
-  scale: 1.02;
+.control-hover:is([data-size="xs"], [data-size="icon-xs"]) {
+  --control-hover-inset: 3px;
 }
 
-.control-hover:hover:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
-  transform: translateY(-1px);
-  border-color: color-mix(in oklab, var(--border-strong) 74%, var(--accent-base) 26%);
-  box-shadow:
-    0 0 0 3px color-mix(in oklab, var(--surface-active) 58%, transparent),
-    inset 0 1px 0 color-mix(in oklab, white 12%, transparent),
-    0 10px 20px -16px rgb(0 0 0 / 0.46);
+.control-hover[data-variant="default"] {
+  --control-hover-core: color-mix(in oklab, var(--primary) 86%, white);
 }
 
-.control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
-  scale: 0.985;
+.control-hover[data-variant="destructive"] {
+  --control-hover-core: var(--destructive);
 }
 
-.control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
-  transform: translateY(0);
-  box-shadow:
-    0 0 0 2px color-mix(in oklab, var(--surface-active) 46%, transparent),
-    inset 0 1px 2px color-mix(in oklab, black 14%, transparent);
+.control-hover[data-variant="secondary"] {
+  --control-hover-core: var(--surface-elevated);
 }
 
-.control-hover:focus-visible:not([aria-disabled="true"]):not([data-variant="link"]) {
-  transform: translateY(-1px);
+.control-hover[data-variant="outline"] {
+  --control-hover-core: var(--surface-elevated);
+}
+
+.control-hover[data-variant="quiet"] {
+  --control-hover-core: color-mix(in oklab, var(--surface-inset) 84%, white);
+}
+
+.control-hover[data-variant="ghost"] {
+  --control-hover-core: color-mix(in oklab, var(--surface-elevated) 90%, transparent);
+}
+
+.control-hover:not([data-variant="link"])::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: var(--control-hover-inset);
+  border-radius: inherit;
+  background: var(--control-hover-core);
+  box-shadow: var(--control-hover-core-shadow);
+  backdrop-filter: blur(16px) saturate(118%);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.82);
+  transition:
+    opacity 160ms ease,
+    transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.control-hover:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])::before {
+  transform: scale(0.95);
+}
+
+/* Dark controls keep their original outer shell and illuminate the inset surface. */
+.dark .control-hover {
+  --control-hover-core-shadow: inset 0 1px 0 color-mix(in oklab, white 9%, transparent);
+}
+
+.dark .control-hover[data-variant="default"] {
+  --control-hover-core: color-mix(in oklab, var(--primary) 84%, white);
+}
+
+.dark .control-hover[data-variant="destructive"] {
+  --control-hover-core: var(--destructive);
+}
+
+.dark .control-hover[data-variant="secondary"] {
+  --control-hover-core: color-mix(in oklab, var(--secondary) 82%, white);
+}
+
+.dark .control-hover[data-variant="outline"] {
+  --control-hover-core: color-mix(in oklab, var(--surface-elevated) 84%, white);
+}
+
+.dark .control-hover[data-variant="quiet"] {
+  --control-hover-core: color-mix(in oklab, var(--surface-inset) 84%, white);
+}
+
+.dark .control-hover[data-variant="ghost"] {
+  --control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white);
+}
+
+/* Primary rail utilities keep their cradle fixed while the inset surface appears. */
+.control-hover.rail-utility-button {
+  --rail-utility-shell: color-mix(in oklab, var(--sidebar-foreground) 8%, var(--sidebar));
+  --control-hover-inset: 4px;
+  --control-hover-core: color-mix(in oklab, white 88%, transparent);
+  --control-hover-core-shadow:
+    0 2px 6px color-mix(in oklab, var(--sidebar-foreground) 12%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--sidebar-foreground) 4%, transparent);
+  --rail-utility-border: color-mix(in oklab, var(--sidebar-border) 76%, white);
+  --rail-utility-focus-ring: color-mix(in oklab, var(--sidebar-foreground) 18%, transparent);
+  --rail-utility-ink: color-mix(in oklab, var(--sidebar-foreground) 88%, var(--sidebar));
+  --rail-utility-shadow: 0 6px 18px -16px rgb(15 23 42 / 0.55);
+  border-color: var(--rail-utility-border);
+  background: var(--rail-utility-shell);
+  color: var(--rail-utility-ink);
+  box-shadow: var(--rail-utility-shadow);
+}
+
+.control-hover.rail-utility-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--rail-utility-focus-ring);
+}
+
+.dark .control-hover.rail-utility-button {
+  --rail-utility-shell: color-mix(in oklab, var(--sidebar) 90%, white 10%);
+  --control-hover-core: color-mix(in oklab, var(--sidebar-foreground) 20%, var(--sidebar));
+  --control-hover-core-shadow: inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+  --rail-utility-border: color-mix(in oklab, var(--sidebar-border) 78%, white 22%);
+  --rail-utility-focus-ring: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
+  --rail-utility-ink: color-mix(in oklab, var(--sidebar-foreground) 88%, white 12%);
+  --rail-utility-shadow: 0 7px 18px -16px rgb(0 0 0 / 0.72);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6054,15 +6149,16 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
     transition: none !important;
   }
 
-  .control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])),
-  .control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])) {
-    scale: none !important;
+  .control-hover:not([data-variant="link"])::before {
+    transform: scale(1) !important;
+    transition: none !important;
   }
 
   .control-hover:hover:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]),
   .control-hover:focus-visible:not([aria-disabled="true"]):not([data-variant="link"]),
   .control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
     transform: none !important;
+    scale: 1 !important;
   }
 }
 

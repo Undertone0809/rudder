@@ -806,7 +806,7 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: "Save" })).toBeVisible();
   });
 
-  test("combines profile and account settings under one Personal destination", async ({ page }) => {
+  test("keeps profile and account controls under one concise Personal destination", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Combined Profile Account ${Date.now()}`,
@@ -823,13 +823,17 @@ test.describe("Settings sidebar", () => {
     const sidebar = modal.getByTestId("workspace-sidebar");
     const profileLink = sidebar.locator('a[href$="/instance/settings/profile"]');
 
-    await expect(profileLink).toHaveText("Profile & account");
+    await expect(profileLink).toHaveText("Profile");
     await expect(sidebar.locator('a[href$="/instance/settings/account"]')).toHaveCount(0);
+    await expect(sidebar.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
     await profileLink.click();
 
-    await expect(modal.getByRole("heading", { name: "Profile & account", level: 1 })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible();
     await expect(modal.getByText("About you", { exact: true })).toBeVisible();
     await expect(modal.getByText("Rudder Account", { exact: true })).toBeVisible();
+    await expect(modal.getByText("Manage your operator profile, Rudder Account, and signed-in devices.")).toHaveCount(0);
+    await expect(modal.getByText(/Use the same lightweight profile structure/)).toHaveCount(0);
+    await expect(modal.getByText(/preferred form of address in chat/)).toHaveCount(0);
 
     await page.evaluate(() => {
       const currentState = window.history.state as {
@@ -847,7 +851,7 @@ test.describe("Settings sidebar", () => {
 
     await expect(page).toHaveURL(/\/instance\/settings\/profile\?source=legacy#devices$/);
     await expect(modal).toBeVisible();
-    await expect(modal.getByRole("heading", { name: "Profile & account", level: 1 })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible();
 
     await modal.getByRole("button", { name: "Close settings" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`, "i"));

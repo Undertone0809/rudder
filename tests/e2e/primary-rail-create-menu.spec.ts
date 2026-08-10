@@ -41,6 +41,28 @@ function perceptualLightness(value: string): number {
   throw new Error(`Unsupported color format: ${value}`);
 }
 
+async function layeredButtonState(button: Locator) {
+  return button.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    const coreStyles = getComputedStyle(element, "::before");
+    const rect = element.getBoundingClientRect();
+    return {
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      background: styles.backgroundColor,
+      borderColor: styles.borderColor,
+      boxShadow: styles.boxShadow,
+      transform: styles.transform,
+      scale: styles.scale,
+      backdropFilter: styles.backdropFilter,
+      coreBackground: coreStyles.backgroundColor,
+      coreBackdropFilter: coreStyles.backdropFilter,
+      coreOpacity: coreStyles.opacity,
+      coreInset: coreStyles.inset,
+      coreTransform: coreStyles.transform,
+    };
+  });
+}
+
 test.describe("Primary rail create menu", () => {
   test("shows icons for chat, issue, agent, and project creation actions", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
@@ -438,6 +460,92 @@ test.describe("Primary rail create menu", () => {
         }),
       }),
     ]);
+  });
+
+  test("uses stable inset glass hover states across rail utilities", async ({ page }) => {
+    test.setTimeout(60_000);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `PrimaryRail-Hover-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+
+    await page.goto("/");
+    await page.evaluate(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "light");
+      document.documentElement.classList.remove("dark");
+    }, { orgId: organization.id });
+    await page.goto(`/${organization.urlKey}/messenger`);
+
+    const rail = page.getByTestId("primary-rail");
+    const searchButton = rail.getByRole("button", { name: "Search" });
+    const createButton = rail.locator('button[aria-label="Create"]');
+    const settingsButton = rail.getByRole("button", { name: "System settings" });
+    await expect(searchButton).toBeVisible();
+
+    await page.mouse.move(600, 600);
+    await expect.poll(() => layeredButtonState(searchButton)).toMatchObject({ coreOpacity: "0" });
+    const lightRest = await layeredButtonState(searchButton);
+    await searchButton.hover();
+    await expect.poll(() => layeredButtonState(searchButton)).toMatchObject({ coreOpacity: "1" });
+    const lightHover = await layeredButtonState(searchButton);
+
+    expect(lightHover.rect).toEqual(lightRest.rect);
+    expect(lightHover.background).toBe(lightRest.background);
+    expect(lightHover.borderColor).toBe(lightRest.borderColor);
+    expect(lightHover.boxShadow).toBe(lightRest.boxShadow);
+    expect(lightHover.backdropFilter).toBe(lightRest.backdropFilter);
+    expect(perceptualLightness(lightHover.coreBackground)).toBeGreaterThan(perceptualLightness(lightHover.background));
+    expect(lightHover.coreInset).toBe("4px");
+    expect(lightHover.transform).toBe(lightRest.transform);
+    expect(lightHover.scale).toBe(lightRest.scale);
+    expect(lightHover.coreBackdropFilter).toContain("blur(16px)");
+
+    await createButton.click();
+    await expect(page.getByRole("menuitem", { name: "Create new chat" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Create new chat" }).hover();
+    await expect(createButton).toHaveAttribute("data-state", "open");
+    await expect.poll(() => createButton.evaluate(
+      (element) => getComputedStyle(element, "::before").opacity,
+    )).toBe("1");
+    await page.keyboard.press("Escape");
+
+    await page.mouse.move(600, 600);
+    await expect(createButton).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(searchButton).toBeFocused();
+    await expect.poll(() => layeredButtonState(searchButton)).toMatchObject({ coreOpacity: "1" });
+    expect((await layeredButtonState(searchButton)).boxShadow).not.toBe(lightRest.boxShadow);
+
+    await settingsButton.hover();
+    await expect.poll(() => layeredButtonState(settingsButton)).toMatchObject({ coreOpacity: "1" });
+
+    await page.mouse.move(600, 600);
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      window.localStorage.setItem("rudder.theme", "dark");
+      document.documentElement.classList.add("dark");
+    });
+    await expect.poll(() => layeredButtonState(searchButton)).toMatchObject({ coreOpacity: "0" });
+    const darkRest = await layeredButtonState(searchButton);
+    await searchButton.hover();
+    await expect.poll(() => layeredButtonState(searchButton)).toMatchObject({ coreOpacity: "1" });
+    const darkHover = await layeredButtonState(searchButton);
+    expect(darkHover.background).toBe(darkRest.background);
+    expect(darkHover.borderColor).toBe(darkRest.borderColor);
+    expect(darkHover.boxShadow).toBe(darkRest.boxShadow);
+    expect(darkHover.backdropFilter).toBe(darkRest.backdropFilter);
+    expect(perceptualLightness(darkHover.coreBackground)).toBeGreaterThan(perceptualLightness(darkHover.background));
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.mouse.move(600, 600);
+    const reducedMotionRest = await layeredButtonState(searchButton);
+    await searchButton.hover();
+    const reducedMotionHover = await layeredButtonState(searchButton);
+    expect(reducedMotionRest.coreOpacity).toBe("0");
+    expect(reducedMotionHover.coreOpacity).toBe("1");
+    expect(reducedMotionHover.coreTransform).toBe(reducedMotionRest.coreTransform);
   });
 
   test("keeps light-mode rail items readable and visually centered against the context card", async ({ page }) => {

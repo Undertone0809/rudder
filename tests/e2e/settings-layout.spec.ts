@@ -175,9 +175,8 @@ test.describe("Settings layout", () => {
     await expectCompactChoiceCards(modal, 3);
 
     const destinations = [
-      { href: "/instance/settings/profile", heading: "Profile & account" },
+      { href: "/instance/settings/profile", heading: "Profile" },
       { href: "/instance/settings/notifications", heading: "System permissions" },
-      { href: "/instance/settings/privacy", heading: "Privacy & Telemetry" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
       { href: "/instance/settings/plugins", heading: "Plugin Manager" },
     ];
@@ -282,25 +281,89 @@ test.describe("Settings layout", () => {
     });
   });
 
-  test("uses the shared raised hover treatment on settings actions", async ({ page }) => {
+  test("uses the shared layered glass hover treatment on settings actions", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     const organization = await createOrganization(page, "SLH");
     const modal = await openSettings(page, organization);
     const aboutLink = modal.locator('a[href$="/instance/settings/about"]');
     await aboutLink.click();
     await expect(modal.getByRole("heading", { name: "About", level: 1 })).toBeVisible();
+    await expect.poll(() => modal.evaluate(
+      (element) => element.getAnimations().every((animation) => animation.playState === "finished"),
+    )).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
 
     for (const label of ["Check for updates", "Send Feedback"]) {
       const button = modal.getByRole("button", { name: label, exact: true });
       await expect(button).toHaveClass(/control-hover/);
+      const restState = await button.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          background: getComputedStyle(element).backgroundColor,
+          border: getComputedStyle(element).borderColor,
+          boxShadow: getComputedStyle(element).boxShadow,
+          scale: getComputedStyle(element).scale,
+          transform: getComputedStyle(element).transform,
+          coreOpacity: getComputedStyle(element, "::before").opacity,
+        };
+      });
       await button.hover();
+      await expect.poll(() => button.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
       const hoverStyle = await button.evaluate((element) => {
         const style = getComputedStyle(element);
-        return { boxShadow: style.boxShadow, scale: style.scale, transform: style.transform };
+        const coreStyle = getComputedStyle(element, "::before");
+        const rect = element.getBoundingClientRect();
+        return {
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          background: style.backgroundColor,
+          border: style.borderColor,
+          boxShadow: style.boxShadow,
+          scale: style.scale,
+          transform: style.transform,
+          coreBackground: coreStyle.backgroundColor,
+          coreBackdropFilter: coreStyle.backdropFilter,
+          coreOpacity: coreStyle.opacity,
+        };
       });
-      expect(hoverStyle.boxShadow).not.toBe("none");
-      expect(hoverStyle.scale).not.toBe("none");
-      expect(hoverStyle.transform).not.toBe("none");
+      expect(restState.coreOpacity).toBe("0");
+      expect(hoverStyle.coreOpacity).toBe("1");
+      expect(hoverStyle.coreBackground).not.toBe(hoverStyle.background);
+      expect(hoverStyle.background).toBe(restState.background);
+      expect(hoverStyle.border).toBe(restState.border);
+      expect(hoverStyle.boxShadow).toBe(restState.boxShadow);
+      expect(hoverStyle.coreBackdropFilter).toContain("blur(16px)");
+      expect(hoverStyle.rect).toEqual(restState.rect);
+      expect(hoverStyle.scale).toBe(restState.scale);
+      expect(hoverStyle.transform).toBe(restState.transform);
     }
+
+    await page.mouse.move(0, 0);
+    const darkButton = modal.getByRole("button", { name: "Check for updates", exact: true });
+    await expect.poll(() => darkButton.evaluate(
+      (element) => getComputedStyle(element, "::before").opacity,
+    )).toBe("0");
+    const lightRestBackground = await darkButton.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+      document.documentElement.classList.add("dark");
+    });
+    await expect.poll(() => darkButton.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe(lightRestBackground);
+    await expect.poll(() => darkButton.evaluate(
+      (element) => element.getAnimations({ subtree: true }).every((animation) => animation.playState === "finished"),
+    )).toBe(true);
+    await expect.poll(() => darkButton.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("0");
+    const darkRestBackground = await darkButton.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await darkButton.hover();
+    await expect.poll(() => darkButton.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
+    const darkHoverStyle = await darkButton.evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      coreBackground: getComputedStyle(element, "::before").backgroundColor,
+      coreOpacity: getComputedStyle(element, "::before").opacity,
+    }));
+    expect(darkHoverStyle.background).toBe(darkRestBackground);
+    expect(darkHoverStyle.coreBackground).not.toBe(darkHoverStyle.background);
+    expect(darkHoverStyle.coreOpacity).toBe("1");
   });
 });

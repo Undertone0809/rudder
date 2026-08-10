@@ -569,7 +569,6 @@ export function InstanceAccountSettings() {
       <SettingsPageHeader
         icon={UserRoundCheck}
         title={t("profile.title")}
-        description={t("profile.description")}
       />
       <AccountSettingsSections />
     </SettingsPage>

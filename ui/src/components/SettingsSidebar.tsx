@@ -251,14 +251,6 @@ export function SettingsSidebar({
                 variant={modalVariant ? "compact" : "default"}
               />
               <SidebarNavItem
-                to="/instance/settings/privacy"
-                state={overlayState}
-                label={t("common.privacyTelemetry")}
-                icon={ShieldCheck}
-                end
-                variant={modalVariant ? "compact" : "default"}
-              />
-              <SidebarNavItem
                 to="/instance/settings/about"
                 state={overlayState}
                 label={t("common.about")}

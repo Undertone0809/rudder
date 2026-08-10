@@ -29,17 +29,72 @@ function cssBlock(selector: string) {
 }
 
 describe("index.css motion rules", () => {
-  it("keeps raised control hover compatible with semantic disabled states and custom scale utilities", () => {
+  it("uses a stable layered glass hover for shared controls", () => {
+    const controlHoverRegion = indexCss.slice(
+      indexCss.indexOf(".control-hover {"),
+      indexCss.indexOf("/* Agent detail adapts to the workspace left after a docked Side Panel opens. */"),
+    );
+
     expect(indexCss).toContain(
-      '.control-hover:hover:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
+      '.control-hover:not([data-variant="link"])::before',
     );
     expect(indexCss).toContain(
-      '.control-hover:active:where(:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]))',
+      '.control-hover:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])::before',
     );
-    expect(indexCss).toContain("transform: translateY(-1px);");
-    expect(indexCss).toContain("scale: 1.02;");
+    expect(indexCss).toContain("--control-hover-core-shadow:");
+    expect(cssBlock('.control-hover:not([data-variant="link"])::before')).toContain(
+      "backdrop-filter: blur(16px) saturate(118%)",
+    );
+    expect(indexCss).toContain("transform: scale(0.82);");
+    expect(indexCss).toContain("opacity 160ms ease");
+    expect(indexCss).toContain("transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1)");
+    expect(cssBlock(".control-hover")).toContain("--control-hover-inset: 4px");
+    expect(cssBlock('.control-hover:is([data-size="xs"], [data-size="icon-xs"])')).toContain(
+      "--control-hover-inset: 3px",
+    );
+    expect(controlHoverRegion).not.toContain("transform: translateY(-1px);");
+    expect(controlHoverRegion).not.toContain("scale: 1.02;");
     expect(indexCss).toContain("transition: none !important;");
-    expect(indexCss).toContain("scale: none !important;");
+    expect(controlHoverRegion).not.toContain(".control-hover:hover:not(:focus-visible)");
+    expect(controlHoverRegion).not.toContain(".control-hover:focus-visible:not(:disabled)");
+  });
+
+  it("keeps default button shells stable while illuminating their inset surfaces", () => {
+    const sharedControl = cssBlock(".control-hover");
+    const darkOutline = cssBlock('.dark .control-hover[data-variant="outline"]');
+    const darkGhost = cssBlock('.dark .control-hover[data-variant="ghost"]');
+    const destructive = cssBlock('.control-hover[data-variant="destructive"]');
+    const darkDestructive = cssBlock('.dark .control-hover[data-variant="destructive"]');
+
+    expect(sharedControl).not.toContain("transform:");
+    expect(sharedControl).not.toContain("scale:");
+    expect(darkOutline).toContain("--control-hover-core: color-mix(in oklab, var(--surface-elevated) 84%, white)");
+    expect(darkGhost).toContain("--control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white)");
+    expect(destructive).toContain("--control-hover-core: var(--destructive)");
+    expect(darkDestructive).toContain("--control-hover-core: var(--destructive)");
+    expect(cssBlock(".dark .control-hover")).toContain("inset 0 1px 0");
+  });
+
+  it("uses a stable two-layer hover treatment for primary rail utility buttons", () => {
+    const utilityButton = cssBlock(".control-hover.rail-utility-button");
+    const darkUtilityButton = cssBlock(".dark .control-hover.rail-utility-button");
+    const utilityCore = cssBlock('.control-hover:not([data-variant="link"])::before');
+    const utilityHover = cssBlock('.control-hover:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]):not([data-variant="link"])::before');
+
+    expect(utilityButton).toContain("--control-hover-inset: 4px");
+    expect(utilityButton).toContain("--control-hover-core: color-mix(in oklab, white 88%, transparent)");
+    expect(utilityButton).toContain("background: var(--rail-utility-shell)");
+    expect(utilityButton).toContain("box-shadow: var(--rail-utility-shadow)");
+    expect(darkUtilityButton).toContain("--rail-utility-shell:");
+    expect(utilityCore).toContain("inset: var(--control-hover-inset)");
+    expect(utilityCore).toContain("opacity: 0");
+    expect(utilityCore).toContain("transform: scale(0.82)");
+    expect(utilityHover).toContain("opacity: 1");
+    expect(utilityHover).toContain("transform: scale(1)");
+    expect(cssBlock(".control-hover.rail-utility-button:focus-visible")).toContain(
+      "box-shadow: 0 0 0 3px var(--rail-utility-focus-ring)",
+    );
+    expect(indexCss).toContain("transform: scale(1) !important;");
   });
 
   it("keeps editor issue done mentions as a two-layer status icon", () => {
