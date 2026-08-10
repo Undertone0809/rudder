@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { APP_BUILDER_INHERITED_ENV_NAMES } from "./app-builder-package-store.mjs";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 
@@ -70,6 +71,7 @@ async function fixture() {
     localApps,
     runnerExecutable: process.execPath,
     buildRunnerArgv: ({ appRoot: managedRoot }) => ["runner.mjs", "--app-root", managedRoot],
+    inheritedEnvNames: APP_BUILDER_INHERITED_ENV_NAMES,
   });
   return { root, appRoot, registry, localApps, controller };
 }
@@ -95,6 +97,7 @@ describe("App Builder managed preview", () => {
     expect(definition.cwd).toBe(canonicalAppRoot);
     expect(definition.executable).toBe(process.execPath);
     expect(definition.argv).toEqual(["runner.mjs", "--app-root", canonicalAppRoot]);
+    expect(definition.inheritedEnvNames).toEqual(APP_BUILDER_INHERITED_ENV_NAMES);
     expect(definition.approvedFingerprint).toBe(definition.trustFingerprint);
     expect(binding.localBindingId).toBe(binding.definitionId);
   });

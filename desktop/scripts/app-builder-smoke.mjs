@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,7 +10,13 @@ const desktopRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repositoryRoot = path.resolve(desktopRoot, "..");
 const packaged = process.argv.includes("--packaged");
 const testRoot = await mkdtemp(path.join(tmpdir(), "rudder-app-builder-smoke-"));
-const projectRoot = path.join(testRoot, "project");
+const projectRoot = path.join(
+  testRoot,
+  "organization-workspaces",
+  "windows-long-path-contract",
+  "nested-operator-project",
+  "project",
+);
 const registryPath = path.join(testRoot, "desktop", "local-apps.json");
 const appStateRoot = path.join(testRoot, "desktop", "app-builder");
 const runnerPath = packaged
@@ -40,7 +46,29 @@ const templateRoot = packaged
       "scaffold",
     );
 
-await Promise.all([access(runnerPath), access(templateRoot), mkdir(projectRoot)]);
+await Promise.all([
+  access(runnerPath),
+  access(templateRoot),
+  mkdir(projectRoot, { recursive: true }),
+]);
+if (process.platform === "win32") {
+  const legacyNativeBinaryPath = path.join(
+    projectRoot,
+    "apps",
+    "smoke-crm",
+    "node_modules",
+    ".pnpm",
+    "@esbuild+win32-x64@0.25.12",
+    "node_modules",
+    "@esbuild",
+    "win32-x64",
+    "esbuild.exe",
+  );
+  assert.ok(
+    legacyNativeBinaryPath.length > 260,
+    "Windows App Builder smoke must retain a production-shaped long workspace path",
+  );
+}
 if (packaged) {
   assert.match(
     await readFile(path.join(templateRoot, ".npmrc"), "utf8"),
@@ -51,6 +79,11 @@ if (packaged) {
 const [
   { AppBuilderController },
   { AppBuilderDataManager },
+  {
+    APP_BUILDER_INHERITED_ENV_NAMES,
+    createAppBuilderInstallPlan,
+    WINDOWS_APP_BUILDER_EXECUTABLE_PATH_LIMIT,
+  },
   { AppBuilderPreviewController },
   { LocalAppsController },
   { LocalAppRegistry },
@@ -58,6 +91,7 @@ const [
 ] = await Promise.all([
   import(pathToFileURL(path.join(controllerModuleRoot, "app-builder-ipc.js")).href),
   import(pathToFileURL(path.join(controllerModuleRoot, "app-builder-data.js")).href),
+  import(pathToFileURL(path.join(controllerModuleRoot, "app-builder-package-store.mjs")).href),
   import(pathToFileURL(path.join(controllerModuleRoot, "app-builder-preview.js")).href),
   import(pathToFileURL(path.join(controllerModuleRoot, "local-apps-controller.js")).href),
   import(pathToFileURL(path.join(controllerModuleRoot, "local-apps-registry.js")).href),
@@ -80,6 +114,7 @@ const preview = new AppBuilderPreviewController({
   localApps,
   runnerExecutable: process.execPath,
   buildRunnerArgv: ({ appRoot }) => [runnerPath, appRoot, "preview"],
+  inheritedEnvNames: APP_BUILDER_INHERITED_ENV_NAMES,
 });
 const data = new AppBuilderDataManager(appStateRoot);
 const appBuilder = new AppBuilderController({
@@ -114,6 +149,47 @@ try {
   );
   assert.equal(started.runtime.status, "running");
   assert.match(started.target.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+
+  if (process.platform === "win32") {
+    const appRoot = path.join(projectRoot, "apps", "smoke-crm");
+    const installPlan = createAppBuilderInstallPlan({
+      appRoot,
+      environment: process.env,
+      platform: process.platform,
+      temporaryDirectory: tmpdir(),
+    });
+    const nativePackageDirectories = (await readdir(installPlan.virtualStoreDir, {
+      withFileTypes: true,
+    })).filter((entry) => (
+      entry.isDirectory()
+      && /^@esbuild\+win32-(?:arm64|ia32|x64)@/.test(entry.name)
+    ));
+    assert.ok(
+      nativePackageDirectories.length > 0,
+      "Windows App Builder smoke must install at least one native esbuild package",
+    );
+    for (const entry of nativePackageDirectories) {
+      const architecture = entry.name.match(/^@esbuild\+win32-([^@]+)@/)?.[1];
+      assert.ok(architecture, `Could not parse native package directory ${entry.name}`);
+      const executablePath = path.join(
+        installPlan.virtualStoreDir,
+        entry.name,
+        "node_modules",
+        "@esbuild",
+        `win32-${architecture}`,
+        "esbuild.exe",
+      );
+      await access(executablePath);
+      assert.ok(
+        executablePath.length <= WINDOWS_APP_BUILDER_EXECUTABLE_PATH_LIMIT,
+        `Windows native executable exceeds the App Builder path budget: ${executablePath}`,
+      );
+      assert.ok(
+        !executablePath.toLowerCase().startsWith(appRoot.toLowerCase()),
+        "Windows native executables must be installed outside the App Builder workspace",
+      );
+    }
+  }
 
   const health = await fetch(new URL("/api/__rudder/health", started.target.origin));
   assert.equal(health.status, 200);

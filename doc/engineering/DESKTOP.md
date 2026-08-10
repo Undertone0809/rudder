@@ -199,6 +199,19 @@ target path, and permission-oriented recovery guidance. On Windows, that
 guidance includes choosing a writable workspace home or running Rudder as
 administrator when local folder policy requires elevated access.
 
+On Windows, managed App Builder installs keep pnpm's virtual store and shared
+content store in a short cache root, preferring `%LOCALAPPDATA%\\Rudder\\ab` and
+falling back to `%TEMP%\\Rudder\\ab`, instead of nesting native package
+executables under the organization workspace. Rudder budgets that root against
+the dependency-directory limit of its pinned pnpm runtime and versions the
+cache layout; an existing App is migrated once with pnpm's supported forced
+relink when it still points at an older layout. This preserves ordinary source
+and `node_modules` discovery while avoiding legacy Windows process path limits.
+`RUDDER_APP_BUILDER_CACHE_DIR` may select another short writable directory on a
+Windows drive-letter path when enterprise profile paths exceed that budget.
+Relative and UNC paths are rejected; a mapped drive has drive-letter semantics
+and is therefore accepted.
+
 Electron `userData` stores desktop-shell preferences such as window state and
 the local Rudder Browser profile. Browser data uses a dedicated persistent
 partition named from a SHA-256 hash of the canonical absolute instance root.

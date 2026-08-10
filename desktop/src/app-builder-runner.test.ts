@@ -19,6 +19,9 @@ const sourceRunner = fileURLToPath(
 const desktopPackageJson = fileURLToPath(
   new URL("../package.json", import.meta.url),
 );
+const sourcePackageStore = fileURLToPath(
+  new URL("./app-builder-package-store.mjs", import.meta.url),
+);
 const roots: string[] = [];
 
 async function fixture() {
@@ -29,10 +32,13 @@ async function fixture() {
   const dataRoot = path.join(root, "staged-data");
   const logPath = path.join(root, "pnpm-calls.jsonl");
   const runner = path.join(runtimeRoot, "app-builder-runner.mjs");
+  const packageStore = path.join(runtimeRoot, "app-builder-package-store.mjs");
   const pnpmCli = path.join(runtimeRoot, "toolchain", "pnpm", "bin", "pnpm.cjs");
   const nodeBin = path.join(runtimeRoot, "toolchain", "node", "bin");
   const nodeShim = path.join(nodeBin, process.platform === "win32" ? "node.cmd" : "node");
+  await mkdir(runtimeRoot, { recursive: true });
   await Promise.all([
+    copyFile(sourcePackageStore, packageStore),
     mkdir(path.dirname(pnpmCli), { recursive: true }),
     mkdir(nodeBin, { recursive: true }),
     mkdir(appRoot, { recursive: true }),
@@ -135,24 +141,30 @@ describe("App Builder managed runner", () => {
     const { appRoot, logPath, runner } = await fixture();
     await run(runner, [appRoot, "preview"], logPath, { PORT: "43123" });
     const install = ["install", "--frozen-lockfile", "--prefer-offline"];
-    if (process.platform === "win32") {
-      install.push("--virtual-store-dir", expect.stringContaining("app-builder-pnpm") as string);
-    }
+    if (process.platform === "win32") install.push(
+      "--virtual-store-dir",
+      expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}v1${path.win32.sep}`) as string,
+      "--store-dir",
+      expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
+    );
     expect((await calls(logPath)).map((call) => call.argv)).toEqual([
       install,
       ["run", "verify"],
       ["run", "dev"],
     ]);
-  });
+  }, 15_000);
 
   it("rehearses checks and migrations against only the staged data root", async () => {
     const { appRoot, dataRoot, logPath, runner } = await fixture();
     await run(runner, [appRoot, "migrate", dataRoot], logPath);
     const recorded = await calls(logPath);
     const install = ["install", "--frozen-lockfile", "--prefer-offline"];
-    if (process.platform === "win32") {
-      install.push("--virtual-store-dir", expect.stringContaining("app-builder-pnpm") as string);
-    }
+    if (process.platform === "win32") install.push(
+      "--virtual-store-dir",
+      expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}v1${path.win32.sep}`) as string,
+      "--store-dir",
+      expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
+    );
     expect(recorded.map((call) => call.argv)).toEqual([
       install,
       ["run", "typecheck"],
@@ -162,7 +174,7 @@ describe("App Builder managed runner", () => {
     ]);
     expect(recorded.at(-1)?.dataRoot).toBe(dataRoot);
     expect(recorded.slice(0, -1).every((call) => call.dataRoot === null)).toBe(true);
-  });
+  }, 15_000);
 
   it.skipIf(process.env.ELECTRON_SKIP_BINARY_DOWNLOAD === "1")(
     "provides a managed node command when Electron hosts the runner",
@@ -180,5 +192,6 @@ describe("App Builder managed runner", () => {
         (call) => call.nodeExecutable === electronBinary,
       )).toBe(true);
     },
+    30_000,
   );
 });

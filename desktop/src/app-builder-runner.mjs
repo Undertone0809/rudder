@@ -1,9 +1,14 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  appBuilderInstallArgsForState,
+  appBuilderNodeShimName,
+  createAppBuilderInstallPlan,
+} from "./app-builder-package-store.mjs";
 
 const MANIFEST_FILENAME = "rudder.app.json";
 const LOOPBACK_HOST = "127.0.0.1";
@@ -37,10 +42,7 @@ async function resolveManagedNodeBin() {
   const staged = fileURLToPath(
     new URL("./toolchain/node/bin", import.meta.url),
   );
-  const stagedShim = path.join(
-    staged,
-    process.platform === "win32" ? "node.cmd" : "node",
-  );
+  const stagedShim = path.join(staged, appBuilderNodeShimName());
   if (await exists(stagedShim)) return staged;
 
   if (/^node(?:\.exe)?$/i.test(path.basename(process.execPath))) {
@@ -87,19 +89,6 @@ function runPnpm(pnpmCli, args, appRoot, environment) {
   });
 }
 
-function installArgs(appRoot) {
-  const args = ["install", "--frozen-lockfile", "--prefer-offline"];
-  if (process.platform !== "win32") return args;
-
-  const appKey = createHash("sha256").update(appRoot).digest("hex").slice(0, 16);
-  const localDataRoot = process.env.LOCALAPPDATA || os.tmpdir();
-  return [
-    ...args,
-    "--virtual-store-dir",
-    path.join(localDataRoot, "Rudder", "app-builder-pnpm", appKey),
-  ];
-}
-
 async function main() {
   const [appRootInput, command = "preview", dataRootInput] = process.argv.slice(2);
   if (!appRootInput || !path.isAbsolute(appRootInput)) {
@@ -121,6 +110,12 @@ async function main() {
   await readManifest(appRoot);
   const pnpmCli = await resolvePnpmCli();
   const managedNodeBin = await resolveManagedNodeBin();
+  const installPlan = createAppBuilderInstallPlan({
+    appRoot,
+    environment: process.env,
+    platform: process.platform,
+    temporaryDirectory: os.tmpdir(),
+  });
   const environment = {
     ...process.env,
     CI: "1",
@@ -132,13 +127,23 @@ async function main() {
     RUDDER_APP_BUILDER_NODE_EXECUTABLE: process.execPath,
     RUDDER_APP_DATA_MODE: "development",
   };
+  const installArgs = appBuilderInstallArgsForState(installPlan, {
+    nodeModulesPresent: await exists(path.join(appRoot, "node_modules")),
+    layoutReady: installPlan.layoutMarkerPath
+      ? await exists(installPlan.layoutMarkerPath)
+      : false,
+  });
 
   await runPnpm(
     pnpmCli,
-    installArgs(appRoot),
+    installArgs,
     appRoot,
     environment,
   );
+  if (installPlan.layoutMarkerPath) {
+    await mkdir(path.dirname(installPlan.layoutMarkerPath), { recursive: true });
+    await writeFile(installPlan.layoutMarkerPath, "ready\n", "utf8");
+  }
   if (command === "migrate") {
     if (!dataRootInput || !path.isAbsolute(dataRootInput)) {
       throw new Error("App Builder migration requires an absolute staged data root");

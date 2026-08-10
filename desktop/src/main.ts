@@ -10,6 +10,10 @@ import {
   AppBuilderController,
   registerAppBuilderIpcHandlers,
 } from "./app-builder-ipc.js";
+import {
+  APP_BUILDER_INHERITED_ENV_NAMES,
+  createAppBuilderInheritedEnvironment,
+} from "./app-builder-package-store.mjs";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
 import { resolveAppBuilderWorkspaceRoot } from "./app-builder-workspace.js";
 import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
@@ -889,7 +893,7 @@ function initializeLocalApps(desktopInstallationId: string): void {
     localApps: localAppsController,
     runnerExecutable: process.execPath,
     buildRunnerArgv: ({ appRoot }) => [APP_BUILDER_RUNNER_PATH, appRoot, "preview"],
-    inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
+    inheritedEnvNames: APP_BUILDER_INHERITED_ENV_NAMES,
   });
   appBuilderController = new AppBuilderController({
     templateRoot,
@@ -932,7 +936,7 @@ function initializeLocalApps(desktopInstallationId: string): void {
     migrateRelease: ({ releaseRoot, stagedDataRoot }) => new Promise((resolve, reject) => {
       const migrationEnvironment: NodeJS.ProcessEnv = {
         PATH: process.env.PATH,
-        ELECTRON_RUN_AS_NODE: "1",
+        ...createAppBuilderInheritedEnvironment(process.env),
       };
       if (process.platform === "win32") {
         const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
