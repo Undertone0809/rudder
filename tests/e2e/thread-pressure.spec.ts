@@ -1337,7 +1337,31 @@ test("keeps the mobile issue comment composer compact, growing, and bounded", as
   const editorScroll = page.getByTestId("issue-comment-composer-editor-scroll");
   const editor = composer.locator('[contenteditable="true"]');
   await expect(editor).toBeVisible();
-  await expect(composer.getByText("Leave a comment...", { exact: true })).toBeVisible();
+  const placeholder = composer.getByText("Leave a comment...", { exact: true });
+  await expect(placeholder).toBeVisible();
+
+  const readTextRange = async (locator: ReturnType<typeof composer.locator>) => locator.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const textNode = walker.nextNode();
+    if (!textNode) throw new Error("Expected editable text node");
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  const placeholderTextRange = await placeholder.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  await editor.fill("Composer alignment probe");
+  const editorTextRange = await readTextRange(editor);
+  expect(Math.abs(placeholderTextRange.x - editorTextRange.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(placeholderTextRange.y - editorTextRange.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(placeholderTextRange.height - editorTextRange.height)).toBeLessThanOrEqual(1);
+  await editor.fill("");
+  await expect(placeholder).toBeVisible();
 
   const compactGeometry = await composer.evaluate((element) => {
     const scroll = element.querySelector<HTMLElement>(

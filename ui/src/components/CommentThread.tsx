@@ -1496,7 +1496,7 @@ export function CommentThread({
         {!body.trim() ? (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center text-sm text-muted-foreground md:hidden"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-start pt-px text-sm text-muted-foreground md:hidden"
           >
             {commentPlaceholder}
           </span>
