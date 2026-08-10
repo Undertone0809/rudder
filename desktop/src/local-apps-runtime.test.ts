@@ -635,6 +635,7 @@ describe("Desktop Local App runtime", () => {
       registry: unowned.registry,
       platform: "darwin",
       verifyListenerOwnership: async () => false,
+      listenerOwnershipRetryTimeoutMs: 750,
     });
     await expect(ownershipManager.start(unowned.definition.id)).rejects.toThrow("ownership");
     expect((await ownershipManager.status(unowned.definition.id)).status).toBe("failed");
@@ -734,11 +735,12 @@ describe("Desktop Local App runtime", () => {
   });
 
   it("bounds a listener ownership probe that never returns", async () => {
-    const owned = await approvedFixture({ readinessTimeoutMs: 250 });
+    const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
       platform: "darwin",
       verifyListenerOwnership: () => new Promise(() => undefined),
+      listenerOwnershipRetryTimeoutMs: 250,
     });
     const startedAt = Date.now();
     await expect(manager.start(owned.definition.id)).rejects.toThrow(

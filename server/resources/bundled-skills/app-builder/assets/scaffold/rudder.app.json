@@ -13,7 +13,7 @@
     "packageManager": "managed-pnpm",
     "openPath": "/",
     "readinessPath": "/api/__rudder/health",
-    "readinessTimeoutMs": 300000
+    "readinessTimeoutMs": 600000
   },
   "data": {
     "provider": "sqlite",

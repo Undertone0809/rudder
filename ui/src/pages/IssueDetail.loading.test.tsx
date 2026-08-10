@@ -107,16 +107,6 @@ vi.mock("../components/ScrollToBottom", () => ({
   ScrollToBottom: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: [], isLoading: false }),
-}));
-
-vi.mock("@/plugins/launchers", () => ({
-  PluginLauncherOutlet: () => null,
-}));
-
 describe("IssueDetail loading state", () => {
   let root: Root | null = null;
   let container: HTMLDivElement | null = null;

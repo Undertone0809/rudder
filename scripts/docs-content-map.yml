@@ -300,7 +300,7 @@
       "pairing_exception": null,
       "aliases": [],
       "example_ids": ["crm-sync-plugin"],
-      "contracts": {"primary": ["PLUGIN.LIFECYCLE.001", "PLUGIN.CAPABILITY.001", "PLUGIN.JOBS.WEBHOOKS.001"], "supporting": []},
+      "contracts": {"primary": ["PLUGIN.PACKAGE.001", "PLUGIN.IMPORT.001", "PLUGIN.INSTALLATION.001"], "supporting": []},
       "metadata_enforcement": "strict"
     },
     {
@@ -419,7 +419,7 @@
       "pairing_exception": null,
       "aliases": [],
       "example_ids": ["crm-sync-plugin"],
-      "contracts": {"primary": [], "supporting": ["PLUGIN.LIFECYCLE.001", "PLUGIN.CAPABILITY.001", "PLUGIN.JOBS.WEBHOOKS.001"]},
+      "contracts": {"primary": [], "supporting": ["PLUGIN.PACKAGE.001", "PLUGIN.IMPORT.001", "PLUGIN.INSTALLATION.001"]},
       "metadata_enforcement": "strict"
     },
     {
@@ -646,9 +646,9 @@
     {"id": "AUTOMATION.TRIGGER.001", "visibility": "public", "primary_page": "automations", "supporting_pages": ["create-automation"]},
     {"id": "AUTOMATION.RUN.001", "visibility": "public", "primary_page": "automations", "supporting_pages": ["automation-output-routing", "create-automation"]},
     {"id": "LEARNING.PROMOTION.001", "visibility": "public", "primary_page": "reviews-feedback-learning", "supporting_pages": []},
-    {"id": "PLUGIN.LIFECYCLE.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
-    {"id": "PLUGIN.CAPABILITY.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
-    {"id": "PLUGIN.JOBS.WEBHOOKS.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
+    {"id": "PLUGIN.PACKAGE.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
+    {"id": "PLUGIN.IMPORT.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
+    {"id": "PLUGIN.INSTALLATION.001", "visibility": "public", "primary_page": "plugins", "supporting_pages": ["manage-plugins"]},
     {"id": "SERVER.LIFECYCLE.001", "visibility": "internal_only", "reason": "Server process lifecycle is an internal operator and contributor contract, not a public user concept."}
   ],
   "redirects": [

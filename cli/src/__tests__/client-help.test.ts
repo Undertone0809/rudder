@@ -117,16 +117,11 @@ describe("client command help examples and cautions", () => {
     ]);
   });
 
-  it("documents approval decision and comment flag differences", () => {
+  it("documents approval decisions and decision-note flags", () => {
     expectHelpNotes(["approval", "approve"], [
       "Read the approval payload before deciding",
       "--decision-note",
       "approval approve/reject use --decision-note",
-    ]);
-    expectHelpNotes(["approval", "comment"], [
-      "Add a longer Markdown discussion note without deciding",
-      "--body-file",
-      "Comments do not approve or reject",
     ]);
   });
 });

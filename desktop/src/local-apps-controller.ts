@@ -125,7 +125,7 @@ export class LocalAppsController {
 
   private ensureFeatureEnabled(): void {
     if (!this.featureEnabled) {
-      throw new Error("Sites is disabled in Experimental settings");
+      throw new Error("Plugins is disabled in Experimental settings");
     }
   }
 

@@ -1,67 +1,95 @@
 ---
 title: "Install and Manage a Plugin"
-description: "Review a trusted Plugin, install it, test one action, and recover from a failed update."
+description: "Inspect a Codex Plugin package, install its supported capabilities, and configure Skills or MCP access."
 icon: "plug"
 keywords:
   - "install Rudder Plugin"
-  - "Plugin Manager"
-  - "Rudder Plugin logs"
+  - "Codex Plugin"
+  - "Rudder Plugins"
 canonical: "https://docs.rudderhq.dev/how-to/manage-plugins"
 "og:url": "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_en: "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 ---
 
-Plugins run installed code. Use packages you trust and read what they request
-before activation.
-
-<a id="completed-state" />
+Rudder Plugins are capability packages composed from Skills, MCP servers, Apps,
+or a combination. Rudder accepts the Codex Plugin folder format and shows a
+compatibility report before installation.
 
 ## What you will do
 
-Install one Plugin, review its capabilities and settings, confirm its worker is
-healthy, and test one real action.
-
-<a id="prerequisites" />
+Enable Plugins, import a local Codex Plugin folder or ZIP, or add a local or
+pinned-GitHub Codex marketplace. Review what Rudder can use, install it into an
+Organization, and finish any Agent or MCP setup.
 
 ## Before you start
 
-Prepare the Plugin source, its setup instructions, any external service account,
-and a known previous version or uninstall path. Do not put credentials inside
-the package or logs.
+Prepare a folder containing `.codex-plugin/plugin.json` and at least one Skill
+or supported MCP definition. Do not place credentials in the manifest or MCP
+configuration; use environment references and finish authentication through
+Rudder's Managed MCP settings.
 
-<a id="case-backed-steps" />
+## Install and set up
 
-## Install and test
+1. Open **Settings > Experimental** and turn on **Enable Plugins**.
+2. Select **Plugins** in the Primary Rail and open **Discover** or **Yours**.
+3. Choose **Folder** or **ZIP** to inspect one Plugin. In **Discover**, choose
+   **Add local marketplace** or **Add pinned GitHub** to load ordered
+   `marketplace.json` entries. GitHub sources require the full commit SHA.
+4. Review package identity, digest, Skills, MCP definitions, App references,
+   executable Skill files, and unsupported surfaces such as browser extensions,
+   scheduled-task templates, and hooks. Inspection executes nothing.
+5. Resolve any Skill collision explicitly: keep the existing Skill, replace it,
+   or install both by renaming the Plugin copy. Then install the package into
+   the current Organization.
+6. For Skills, choose **Add to Agent** and select the Agents that should use
+   them.
+7. For MCP definitions, choose **Set up**, then continue authentication,
+   activation, and Agent access in Managed MCP settings.
+8. Open Local Apps directly from **Plugins > Yours**. Codex `.app.json` aliases
+   are preserved but are not executable Rudder Local Apps.
+9. If an active Managed MCP connection exposes an HTML UI resource, open it
+   from the MCP component. Rudder renders it in a network-disabled sandbox.
 
-1. Open **Plugin Manager** and choose the supported package or source.
-2. Review the publisher, version, worker and interface code, external services,
-   requested capabilities, tools, jobs, and webhooks.
-3. Enter required settings. Store credentials only in the provided secret
-   fields.
-4. Install and activate the Plugin.
-5. Check worker health and startup logs before using its interface.
-6. Trigger one small test action.
-7. Open the Plugin's job record, logs, and state to confirm what happened.
-8. Before updating, review version changes, new capabilities, configuration
-   changes, and migration notes.
-
-<a id="success-signal" />
+Marketplace policy is provenance, not Rudder installation authority. An entry
+declared `INSTALLED_BY_DEFAULT` still appears in Discover and requires review.
 
 ## Check the result
 
-Plugin Manager should show the expected version and a healthy worker. The test
-action should appear under that Plugin with readable status and logs.
+The Plugin detail should show Ready or Setup required with its exact version,
+source, digest, and component state. A package Skill should appear as a
+read-only package-managed Organization Skill and only reach the Agents you
+selected. An MCP connection remains a disabled draft until its normal setup is
+complete.
 
-<a id="recovery" />
+Use **Try in Chat** after at least one installed capability is available to the
+current Organization. For a Skill you want to edit independently, choose
+**Customize**. Rudder creates a managed-local Organization Skill copy with
+provenance; Plugin lifecycle actions no longer change or remove that copy.
 
-## If activation or an update fails
+## Update or roll back
 
-- Leave a failed Plugin inactive while you fix its settings or package.
-- Read the named manifest, capability, worker, or connection error.
-- Stop dependent jobs and webhooks before uninstalling.
-- Return to the last reviewed package when your install source supports it, or
-  uninstall through Plugin Manager.
+Import and review the newer package before choosing **Apply update**. Rudder
+shows old and new execution surfaces. When the update adds or changes executable
+Skills or MCP access, confirm the access expansion explicitly. Rudder then
+prepares its component projections before switching the active installation. If
+preparation fails, the current version remains active and the review can be
+retried.
 
-Uninstalling a Plugin should remove its workers and own state, not core Rudder
-Issues, Runs, reviews, approvals, or budgets.
+After a successful update, choose **Roll back** to reactivate the retained
+previous immutable package. Rollback does not rewrite either package snapshot.
+
+When App Builder produces a new Local App revision, **Yours** shows **Update
+review**. The current revision stays active until you open the Plugin detail and
+choose **Apply update**.
+
+## Disable or uninstall
+
+Disabling a Plugin removes package capability from new work without deleting
+the package, external connections, App source, or App data. Re-enabling restores
+the previous package Skill assignments.
+
+Uninstall removes package-owned Skill projections and the active installation.
+It does not delete user Goals, Automations, Documents, external MCP
+connections, Local App source, or App business data. You can review and install
+the package again later.

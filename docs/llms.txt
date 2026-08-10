@@ -26,7 +26,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Skills](https://docs.rudderhq.dev/concepts/skills): Turn a proven, repeatable way of working into instructions an Agent can reuse.
 - [Automations](https://docs.rudderhq.dev/concepts/automations): Run a stable Agent task on a schedule, from a webhook, or when you trigger it yourself.
 - [Review, Feedback, and Improvement](https://docs.rudderhq.dev/concepts/reviews-feedback-learning): Judge a result, explain what should change, and reuse proven lessons in future Agent work.
-- [Plugins](https://docs.rudderhq.dev/concepts/plugins): Add optional integrations, tools, background jobs, and interface panels to Rudder.
+- [Plugins](https://docs.rudderhq.dev/concepts/plugins): Install Codex-compatible packages that combine Skills, MCP servers, and Apps.
 
 ### How-to guides
 - [Use an Issue from Start to Finish](https://docs.rudderhq.dev/how-to/issue-lifecycle): Create a clear task, assign one owner, review the result, and close it with the important context intact.

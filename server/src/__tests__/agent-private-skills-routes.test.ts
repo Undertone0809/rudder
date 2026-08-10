@@ -151,7 +151,14 @@ describe("agent private skill routes", () => {
     })).get(`/api/agents/${agentId}/skills`);
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockOrganizationSkillService.buildAgentSkillSnapshot).toHaveBeenCalled();
+    expect(res.body).toEqual({
+      agentRuntimeType: "codex_local",
+      supported: true,
+      mode: "persistent",
+      desiredSkills: [],
+      entries: [],
+      warnings: [],
+    });
   });
 
   it("allows an agent to create a private skill for itself", async () => {

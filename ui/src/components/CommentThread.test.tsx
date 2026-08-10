@@ -96,10 +96,6 @@ vi.mock("./MarkdownBody", () => ({
   ),
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotOutlet: () => null,
-}));
-
 vi.mock("@/components/ui/button", () => ({
   Button: ({ children, title, ...props }: { children: ReactNode; title?: string }) => (
     <button title={title} {...props}>{children}</button>

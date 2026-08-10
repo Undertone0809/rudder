@@ -24,7 +24,6 @@ import { floorDateToMinuteIso, resolvePresetDateRange } from "../lib/date-range-
 import { queryKeys } from "../lib/queryKeys";
 import { skillAnalyticsQueryOptions } from "../lib/skill-analytics-cache";
 
-import { PluginSlotOutlet } from "@/plugins/slots";
 import { summarizeTokenUsage, type Agent, type AgentSkillAnalytics, type Issue } from "@rudderhq/shared";
 import { Bot, CircleDot, Coins, DollarSign, LayoutDashboard, PauseCircle } from "lucide-react";
 import type { TranscriptEntry } from "../agent-runtimes";
@@ -611,13 +610,6 @@ export function Dashboard() {
               <SkillsUsageChart key={`skills:${dashboardMotionKey}`} analytics={visibleSkillAnalytics} />
             </div>
           ) : null}
-
-          <PluginSlotOutlet
-            slotTypes={["dashboardWidget"]}
-            context={{ orgId: selectedOrganizationId }}
-            className="grid gap-4 md:grid-cols-2"
-            itemClassName="surface-panel rounded-[var(--radius-lg)] p-4"
-          />
 
           <div className="grid md:grid-cols-2 gap-4">
             {/* Recent Activity */}

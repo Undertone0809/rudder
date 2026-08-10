@@ -58,9 +58,11 @@ App Builder turns a natural-language request into a new or improved local web
 product that can be used as a Rudder App. New Apps use one maintained full-stack
 scaffold by default; existing web projects keep their framework and conventions.
 It is an experimental, instance-level capability enabled through **Settings >
-Experimental > Enable Apps**. Enabling Apps makes the capability-bundled
+Experimental > Enable Plugins**. Enabling Plugins makes the capability-bundled
 `app-builder` Skill available, permits Desktop Local App loading, and adds the
-top-level **Apps** workspace to the Primary Rail.
+top-level **Plugins** destination to the Primary Rail. Local Apps appear as
+app-only Plugins under **Plugins > Yours** and remain directly openable through
+their existing `/apps/...` workspace routes.
 
 To the operator, these websites are **Rudder Apps**. Underneath, they remain
 ordinary local webpages rather than a new executable or packaging format.
@@ -85,6 +87,9 @@ cross-device synchronization.
 - Any operator can load a frequently used local web project into Rudder Apps;
   an Agent may inspect and minimally prepare that project for safe discovery
   while preserving its existing framework and development workflow.
+- App Builder and Desktop remain the execution and data owners. The Plugins
+  domain supplies discovery and lifecycle context but does not start an App,
+  reinterpret Codex `.app.json`, or delete App source or business data.
 - Existing data is normal. The generated App owns its database, records,
   services, integrations, and background behavior. The Skill asks about
   synthetic, copied, redacted, snapshot, or direct data use only when the
@@ -99,14 +104,14 @@ direct application access without forcing users to create a Project.
 
 The Server cannot safely own machine commands, absolute paths, ports, PIDs,
 live URLs, or App business rows. Desktop therefore owns local execution and
-attestation. A click on a registered App inside the Apps workspace is direct
-operator intent to open its reviewed revision; a Server record, Skill
-availability, background route hydration, or Messenger Saved View remains
-non-authoritative.
+attestation. A click on an App entry in **Plugins > Yours** or its Apps
+workspace is direct operator intent to open its reviewed revision; a Server
+record, Skill availability, background route hydration, or Messenger Saved
+View remains non-authoritative.
 
 ### Actors / Objects / State
 
-- **Operator**: enables Sites, describes an App, receives the verified result
+- **Operator**: enables Plugins, describes an App, receives the verified result
   opened automatically, and uses Chat or the More menu for later improvements
   and infrequent management actions. Manual Local Apps still require definition
   review.
@@ -139,9 +144,11 @@ promotion, or production rollback UI.
 
 ### Entry Points / Inputs
 
-- Instance **Settings > Experimental > Enable Apps**.
-- Top-level **Apps** Primary Rail destination.
-- Apps Home request composer: **Turn ideas into applications**.
+- Instance **Settings > Experimental > Enable Plugins**.
+- Top-level **Plugins** Primary Rail destination with **Discover**, **Yours**,
+  and **Build** views.
+- **Plugins > Build** opens the Apps workspace request composer: **Turn ideas
+  into applications**.
 - Registered App list and sidebar **Add an App** menu:
   - **Build with Agent** opens a new Chat with an editable `$app-builder` brief.
   - **Add local web project** opens Desktop folder selection and definition
@@ -153,13 +160,15 @@ promotion, or production rollback UI.
 
 ### Product Logic Flow
 
-1. Sites is off by default. While it is off, Apps is absent from the Primary
-   Rail, App Builder Server mutations are rejected, the `app-builder` Skill is
-   excluded from run projection, and Desktop rejects Local App/App Builder
-   operations.
-2. Enabling Sites exposes Apps and the capability-bundled Skill for all
-   organizations on the instance. It does not start a process or create an App.
-3. Apps uses Rudder's established workspace shell: Home/search/registered Apps
+1. Plugins is off by default. While it is off, Plugins is absent from the
+   Primary Rail, App Builder Server mutations are rejected, the `app-builder`
+   Skill is excluded from run projection, and Desktop rejects Local App/App
+   Builder operations.
+2. Enabling Plugins exposes the Plugins destination and the capability-bundled
+   Skill for all organizations on the instance. It does not start a process or
+   create an App.
+3. The Apps execution workspace uses Rudder's established workspace shell:
+   Home/search/registered Apps
    in the context sidebar, established Rudder tabs in the header, and Home or
    the active full-bleed webpage in the main content. App management is
    progressively disclosed through a hover/focus More menu on each sidebar
@@ -209,7 +218,7 @@ promotion, or production rollback UI.
    Multiple Apps may remain tabbed and running.
 11. Closing or switching an Apps tab closes or parks only the view. It does not
    stop the App. The process remains available in the background until Desktop
-   shutdown, Sites is disabled, a bounded failure occurs, or the operator uses
+   shutdown, Plugins is disabled, a bounded failure occurs, or the operator uses
    **Stop App** in the sidebar row's More menu. Background route hydration and
    Messenger Saved View navigation remain unable to start it.
 12. The sidebar More menu contains settings and infrequent lifecycle actions.
@@ -217,9 +226,9 @@ promotion, or production rollback UI.
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
     to the system browser. It works only on the same computer while that
     generation remains available.
-13. Disabling Sites immediately blocks new App Builder and Local App admission,
+13. Disabling Plugins immediately blocks new App Builder and Local App admission,
     reconciles Desktop into the disabled state, stops running/transitioning
-    Desktop-owned Apps, hides Apps, and removes the Skill from later run
+    Desktop-owned Apps, hides Plugins from the Primary Rail, and removes the Skill from later run
     projection. It preserves source, definitions, App records, bindings, and
     App-owned data so re-enabling can recover them.
 
@@ -263,7 +272,7 @@ ownership-unverified failure handling.
 
 | Situation | Required behavior | Forbidden behavior |
 | --- | --- | --- |
-| Sites is disabled | Hide Apps, exclude Skill, reject admission, stop owned Apps | Leave a runnable hidden capability |
+| Plugins is disabled | Hide Plugins, exclude Skill, reject admission, stop owned Apps | Leave a runnable hidden capability |
 | User requests a CRM | Use maintained defaults and ask only material business/risk questions | Ask them to choose framework or process topology |
 | User selects Build with Agent | Open a normal new Chat with an editable, unsent `$app-builder` brief | Send automatically, create a run, or start local code |
 | User selects Add local web project | Open folder selection, discover the project, and show the existing launch-definition review | Run the project on folder selection or require the maintained scaffold |
@@ -280,12 +289,12 @@ ownership-unverified failure handling.
 | Apps tab closes or switches | Close/park the view and keep the generation resident | Stop or restart the App |
 | Background hydration or Messenger Saved View opens | Restore navigation state only | Start the App |
 | User copies or externally opens the link | Use current attested loopback URL | Describe it as public, stable, or cross-device |
-| Sites is disabled with Apps running | Stop owned Apps and preserve durable material | Delete App source or business data |
+| Plugins is disabled with Apps running | Stop owned Apps and preserve durable material | Delete App source or business data |
 | User requests a public URL | Explain that V1 has no publication path | Create a tunnel or cloud deployment |
 
 ### Actor-Visible Input
 
-- Experimental Sites toggle.
+- Experimental **Enable Plugins** toggle.
 - App name/brief through Apps Home.
 - Sidebar Add menu with Build with Agent and Add local web project.
 - Selected organization and available Agent.
@@ -296,8 +305,8 @@ ownership-unverified failure handling.
 
 ### Operator-Visible Output
 
-- Conditional Apps Primary Rail entry and Rudder workspace layout without a
-  persistent right runtime-control column.
+- Conditional Plugins Primary Rail entry and an Apps execution workspace
+  without a persistent right runtime-control column.
 - Searchable registered App list, Home composer, and multiple closable tabs.
 - A clear choice between starting an App Builder Chat and loading an existing
   local web project from the computer.
@@ -330,8 +339,9 @@ URLs, App business rows, or Secret values.
 
 #### Cold-email manager
 
-The operator enables Sites and describes contacts, sequences, replies, and
-follow-ups on Apps Home. Rudder opens a normal `$app-builder` Chat, the Skill
+The operator enables Plugins, opens **Plugins > Build**, and describes contacts,
+sequences, replies, and follow-ups in Apps Home. Rudder opens a normal
+`$app-builder` Chat, the Skill
 creates and verifies the App, and Desktop automatically verifies, starts, and
 opens its local webpage. The operator can return to the same Chat to improve
 it. Sending email remains application behavior and is not silently enabled by
@@ -360,10 +370,11 @@ More menu to copy the attested link and open the same page in a regular browser
 on that computer. Stopping or restarting the App may invalidate the copied
 address.
 
-#### Disable Sites
+#### Disable Plugins
 
-Running Apps are stopped and Apps disappears. Re-enabling Sites restores
-discovery of the preserved records and definitions; nothing passively restarts.
+Running Apps are stopped and Plugins disappears from the Primary Rail.
+Re-enabling Plugins restores discovery of the preserved records and definitions;
+nothing passively restarts.
 
 ### Invariants / Non-Goals
 
@@ -384,8 +395,8 @@ discovery of the preserved records and definitions; nothing passively restarts.
 
 ### Drift Boundaries
 
-- The Sites gate controls all three surfaces together: Skill availability,
-  Apps navigation, and Desktop Local App/App Builder admission.
+- The Plugins gate controls all three surfaces together: Skill availability,
+  Plugins navigation, and Desktop Local App/App Builder admission.
 - The managed exception remains fixed-template and fixed-runner scoped.
 - Adding arbitrary stack or launch-command selection to the non-technical path
   requires a new product decision.

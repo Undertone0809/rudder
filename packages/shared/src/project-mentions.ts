@@ -7,6 +7,7 @@ export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
 export const LIBRARY_ENTRY_MENTION_SCHEME = "library-entry://";
 export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
 export const LIBRARY_DIRECTORY_MENTION_SCHEME = "library-directory://";
+export const PLUGIN_MENTION_SCHEME = "plugin://";
 
 const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
@@ -17,6 +18,7 @@ const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const LIBRARY_ENTRY_MENTION_LINK_RE = /\[[^\]]*]\((library-entry:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DIRECTORY_MENTION_LINK_RE = /\[[^\]]*]\((library-directory:\/\/[^)\s]+)\)/gi;
+const PLUGIN_MENTION_LINK_RE = /\[[^\]]*]\((plugin:\/\/[^)\s]+)\)/gi;
 
 export interface ParsedProjectMention {
   projectId: string;
@@ -68,6 +70,10 @@ export interface ParsedLibraryDirectoryMention {
   title: string | null;
 }
 
+export interface ParsedPluginMention {
+  pluginId: string;
+}
+
 function stripMarkdownCode(markdown: string): string {
   return markdown
     .replace(/```[\s\S]*?```/g, "")
@@ -112,6 +118,23 @@ export function buildAgentMentionHref(agentId: string, icon?: string | null, int
     return `${AGENT_MENTION_SCHEME}${trimmedAgentId}`;
   }
   return `${AGENT_MENTION_SCHEME}${trimmedAgentId}?${search}`;
+}
+
+export function buildPluginMentionHref(pluginId: string): string {
+  return `${PLUGIN_MENTION_SCHEME}${pluginId.trim()}`;
+}
+
+export function parsePluginMentionHref(href: string): ParsedPluginMention | null {
+  if (!href.startsWith(PLUGIN_MENTION_SCHEME)) return null;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "plugin:") return null;
+  const pluginId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  return pluginId ? { pluginId } : null;
 }
 
 export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
@@ -366,6 +389,19 @@ export function extractProjectMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseProjectMentionHref(match[1]);
     if (parsed) ids.add(parsed.projectId);
+  }
+  return [...ids];
+}
+
+export function extractPluginMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(PLUGIN_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parsePluginMentionHref(match[1]);
+    if (parsed) ids.add(parsed.pluginId);
   }
   return [...ids];
 }

@@ -8,6 +8,7 @@ export interface InstanceBrowserSettings {
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   showDeveloperDiagnostics: boolean;
+  experimentalPluginsEnabled: boolean;
   experimentalSitesEnabled: boolean;
   experimentalGoalsEnabled: boolean;
   experimentalComputerUseEnabled: boolean;

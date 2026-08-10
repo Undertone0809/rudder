@@ -8,11 +8,14 @@ export type PrimaryRailSection =
   | "goals"
   | "agents"
   | "library"
-  | "apps"
+  | "plugins"
   | "organization"
   | "automations";
 
-type StoredPrimaryRailPaths = Record<string, Partial<Record<PrimaryRailSection, string>>>;
+type StoredPrimaryRailPaths = Record<
+  string,
+  Partial<Record<PrimaryRailSection | "apps", string>>
+>;
 
 function splitPath(path: string): { pathname: string; search: string; hash: string } {
   const match = path.match(/^([^?#]*)(\?[^#]*)?(#.*)?$/);
@@ -53,7 +56,8 @@ export function resolvePrimaryRailSection(path: string): PrimaryRailSection | nu
   if (/^\/agents(?:\/|$)/.test(pathname)) return "agents";
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(pathname)) return "library";
   if (/^\/apps\/saved\/[^/]+(?:\/|$)/.test(pathname)) return null;
-  if (/^\/apps(?:\/|$)/.test(pathname)) return "apps";
+  if (/^\/plugins(?:\/|$)/.test(pathname)) return "plugins";
+  if (/^\/apps(?:\/|$)/.test(pathname)) return "plugins";
   if (/^\/(?:dashboard|calendar|org|projects|heartbeats|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
   if (/^\/automations(?:\/|$)/.test(pathname)) return "automations";
 
@@ -93,6 +97,10 @@ export function readRememberedPrimaryRailPath(
   fallbackPath: string,
 ): string {
   if (!orgId) return fallbackPath;
-  const rememberedPath = sanitizePrimaryRailPath(section, readStoredPrimaryRailPaths()[orgId]?.[section]);
+  const stored = readStoredPrimaryRailPaths()[orgId];
+  const candidate = section === "plugins"
+    ? stored?.plugins ?? stored?.apps
+    : stored?.[section];
+  const rememberedPath = sanitizePrimaryRailPath(section, candidate);
   return rememberedPath ?? fallbackPath;
 }

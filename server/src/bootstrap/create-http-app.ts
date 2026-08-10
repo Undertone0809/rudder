@@ -15,11 +15,9 @@ import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
-import { pluginUiStaticRoutes } from "../routes/plugin-ui-static.js";
-import { DEFAULT_LOCAL_PLUGIN_DIR } from "../services/plugin-loader.js";
+import { rudderPluginService } from "../services/rudder-plugins.js";
 import { workspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import { applyUiBranding } from "../ui-branding.js";
-import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import { registerApiRoutes } from "./register-api-routes.js";
 import type { RudderAppOptions } from "./types.js";
 
@@ -38,7 +36,6 @@ export function resolveViteHmrPort(serverPort: number): number {
 export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
-  pluginRuntime: PluginHostRuntime,
 ): Promise<HttpAppHandle> {
   const app = express();
   const previewOrigin = opts.workspacePreviewOrigin ?? `http://preview.localhost:${opts.serverPort}`;
@@ -139,9 +136,19 @@ export async function createHttpApp(
   }
   app.use(llmRoutes(db));
   try {
+    await rudderPluginService(db, {
+      deploymentMode: opts.deploymentMode,
+      allowlists: opts.mcpDeploymentAllowlists ?? {
+        httpOrigins: [],
+        stdioCommands: [],
+        stdioWorkingDirectories: [],
+        stdioEnvironmentNames: [],
+      },
+      hostEnv: opts.mcpHostEnv ?? process.env,
+    }).syncAllLocalApps();
     app.use(
       "/api",
-      registerApiRoutes(db, opts, pluginRuntime, workspacePreview, chatBackgroundRuntime),
+      registerApiRoutes(db, opts, workspacePreview, chatBackgroundRuntime),
     );
   } catch (error) {
     return rollbackStartup(error);
@@ -149,14 +156,6 @@ export async function createHttpApp(
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });
   });
-  try {
-    app.use(pluginUiStaticRoutes(db, {
-      localPluginDir: opts.localPluginDir ?? DEFAULT_LOCAL_PLUGIN_DIR,
-    }));
-  } catch (error) {
-    return rollbackStartup(error);
-  }
-
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   if (opts.uiMode === "static") {
     try {

@@ -1,57 +1,63 @@
 ---
 title: "插件"
-description: "为 Rudder 添加可选集成、工具、后台任务和界面面板。"
+description: "安装由 Skill、MCP Server 和 App 组成的 Codex 兼容能力包。"
 icon: "plug"
 keywords:
   - "Rudder 插件"
-  - "Rudder 集成"
-  - "插件工具"
+  - "Codex 插件"
+  - "Plugin Skills MCP Apps"
 canonical: "https://docs.rudderhq.dev/zh/concepts/plugins"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/plugins"
 hreflang_en: "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 ---
 
-<a id="definition" />
+## 用一个软件包分发相关能力
 
-## 插件可以增加什么
+Rudder 插件是一个分发单元，里面可以包含一个或多个技能、MCP 服务器定义或应用。
+它兼容 Codex 插件目录格式，并以 `.codex-plugin/plugin.json` 作为必需的清单。
 
-插件是由 Rudder 主机安装的可选软件包。根据具体插件，它可以增加：
+插件负责把相关能力组织在一起，不提供另一套 Rudder 运行时。技能仍由 Agent 使用；
+MCP 服务器仍通过托管 MCP 完成认证和访问控制；本地应用仍由原来的应用运行时启动。
 
-- Agent 可以使用的工具
-- 与其他服务的连接
-- 后台任务和 Webhook
-- 项目面板或其他界面区域
-- 插件自己的设置和状态
+## 安装会发生什么
 
-Rudder 会显示插件版本、配置、运行状态、日志、任务、Webhook 和它申请的主机
-能力。
+Rudder 会先检查软件包，不执行其中内容，并显示身份、来源、内容摘要、支持的组件、
+警告和错误。安装后会为当前组织创建不可变快照。随后可以把软件包中的技能分配给
+Agent，并完成 MCP 的认证或访问设置。
 
-<a id="case" />
+输入可以是目录、受大小限制的 ZIP、本地 Codex Marketplace，或使用完整 commit SHA
+固定的 HTTPS GitHub Marketplace。Marketplace 策略会作为来源信息保留，但不会绕过
+Rudder 的检查或触发静默安装。
 
-## 例子：连接 CRM
+如果软件包中的 Skill 与组织 Skill 冲突，安装会暂停，直到操作者明确选择保留现有
+Skill、替换，或使用不同名称同时安装。
 
-一个 CRM 插件在项目中增加客户面板，并按日程同步账号。同步失败时，可以在这个
-插件下找到任务和日志。插件可以把客户连接到 Rudder 工作，但不能自己创造新的
-Issue 状态，也不能绕过正常审批。
+本地应用也会作为只包含应用的插件出现在 **Plugins > Yours**。直接启动方式
+和原有 `/apps/...` 路由保持不变。App Builder 生成的新 revision 会成为待检查的不可变
+更新；当前 revision 会保持生效，直到用户检查并应用。
 
-![插件管理器](../../images/plugin-manager.png)
+对软件包技能选择 **Customize** 会创建一个带软件包来源信息、但可独立编辑的
+组织技能。这个副本不再受插件更新、禁用或卸载控制。
 
-<a id="when-useful" />
+在输入框的 `@` 搜索中，已安装的插件只显示为一个能力入口。Rudder 不会把插件
+内部的每个技能拆成独立结果；独立创建或通过 **Customize** 生成的技能仍可单独搜索。
 
-## 用插件扩展可选能力
+## 生命周期和信任边界
 
-并非每位 Rudder 用户都需要的集成和专用工具，适合做成插件。目标、Chat、Issue、
-运行、评审、预算和工作区负责组织核心工作，因此仍然属于内置功能。
+禁用插件会阻止其能力进入新的工作，但不会删除外部连接、应用源码或应用数据。
+重新启用会恢复之前的技能分配。卸载只移除软件包拥有的投影，不删除用户
+工作和独立管理的资源。
 
-<a id="operating-boundaries" />
+更新也必须先经过检查。Rudder 会对比新旧执行面；如果技能执行或 MCP 访问扩大，必须
+显式确认。Rudder 会先准备新版本的组件投影，再切换当前软件包；如果准备失败，现有
+版本继续生效。成功更新后，上一份不可变软件包仍可用于显式回滚。
 
-## 只安装你信任的代码
+已启用的托管 MCP 连接可以提供网页界面资源。Rudder 会列出这些资源，并在禁止网络
+访问的沙箱中打开；`.app.json` 中的应用别名不会启用这条路径。
 
-插件包含会随安装运行的后台或界面代码。能力检查可以限制插件怎样连接 Rudder，
-但不会把不可信软件包变成安全沙箱。
+导入的软件包都应当按不可信输入处理。安装前检查发布者、版本、文件、凭据引用、
+不支持的字段和兼容性报告。Rudder 首版不运行插件工作进程、作业、Webhook、界面
+插槽、钩子、浏览器扩展、定时任务模板或任意软件包代码。
 
-启用前，检查来源、发布者、版本、申请的能力、外部服务、配置和更新说明。卸载
-插件会停止它的后台进程并处理自身状态，不应该删除核心 Issue、运行、审批或预算。
-
-安装和测试步骤见[管理插件](/zh/how-to/manage-plugins)。
+完整步骤见[安装和管理插件](/zh/how-to/manage-plugins)。

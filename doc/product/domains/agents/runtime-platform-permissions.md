@@ -137,6 +137,12 @@ The runtime authorization boundary also includes a persisted run-start policy
 snapshot. Current binding and provider policy can immediately reduce that
 snapshot, while permission increases wait for the next run.
 
+A Codex Plugin manifest is package metadata, not runtime permission authority.
+Plugin inspection starts no process and contacts no endpoint. A Plugin-provided
+Skill reaches a Run only through normal Agent selection and current Plugin
+enablement; a Plugin-provided MCP definition reaches a Run only after managed
+connection policy, credentials, activation, and Agent access have succeeded.
+
 Rudder Account authentication is an independent admission predicate. A valid
 user or Local Server session identifies who may access data; it does not grant
 Desktop Bridge, Browser, filesystem, IDE, Local App, or runtime capability.

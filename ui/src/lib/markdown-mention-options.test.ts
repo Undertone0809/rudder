@@ -3,6 +3,20 @@ import { describe, expect, it } from "vitest";
 import { buildMarkdownMentionOptions } from "./markdown-mention-options";
 
 describe("buildMarkdownMentionOptions", () => {
+  it("keeps one Plugin capability entry alongside independent Skills", () => {
+    const options = buildMarkdownMentionOptions({
+      pluginMentionOptions: [{ id: "plugin:research", name: "Research Kit", kind: "plugin", pluginId: "research" }],
+      skillMentionOptions: [{
+        id: "skill:standalone",
+        name: "standalone",
+        kind: "skill",
+        skillRefLabel: "standalone",
+        skillMarkdownTarget: "/skills/standalone/SKILL.md",
+      }],
+    });
+    expect(options.map((option) => option.id)).toEqual(["skill:standalone", "plugin:research"]);
+  });
+
   it("orders @ mention categories as agents, skills, projects, issues, automations, then chats", () => {
     const skillOption: MentionOption = {
       id: "skill:build-advisor",

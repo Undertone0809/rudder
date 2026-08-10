@@ -29,25 +29,35 @@ import { messengerRoutes } from "../routes/messenger.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
 import { organizationSkillRoutes } from "../routes/organization-skills.js";
 import { organizationRoutes } from "../routes/orgs.js";
-import { pluginRoutes } from "../routes/plugins.js";
 import { productAnalyticsRoutes } from "../routes/product-analytics.js";
 import { projectRoutes } from "../routes/projects.js";
+import { rudderPluginRoutes } from "../routes/rudder-plugins.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { websiteMetadataRoutes } from "../routes/website-metadata.js";
+import { rudderPluginService } from "../services/rudder-plugins.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
-import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import type { RudderAppOptions } from "./types.js";
 
 export function registerApiRoutes(
   db: Db,
   opts: RudderAppOptions,
-  pluginRuntime: PluginHostRuntime,
   workspacePreview?: WorkspaceWebPreviewRuntime,
   chatBackgroundRuntime?: ChatBackgroundRuntime,
 ) {
   const api = Router();
+  const pluginMcpOptions = {
+    deploymentMode: opts.deploymentMode,
+    allowlists: opts.mcpDeploymentAllowlists ?? {
+      httpOrigins: [],
+      stdioCommands: [],
+      stdioWorkingDirectories: [],
+      stdioEnvironmentNames: [],
+    },
+    hostEnv: opts.mcpHostEnv ?? process.env,
+  };
+  const pluginProjectionService = rudderPluginService(db, pluginMcpOptions);
 
   api.use(boardMutationGuard());
   if (opts.localAccountExchangePolicy && opts.instanceId) {
@@ -76,7 +86,9 @@ export function registerApiRoutes(
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
-  api.use(appBuilderRoutes(db));
+  api.use(appBuilderRoutes(db, {
+    onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
+  }));
   api.use(onboardingRoutes(db));
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
@@ -110,16 +122,7 @@ export function registerApiRoutes(
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId }));
   api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(computerRoutes(db, { deploymentMode: opts.deploymentMode }));
-  api.use(
-    pluginRoutes(
-      db,
-      pluginRuntime.loader,
-      { scheduler: pluginRuntime.scheduler, jobStore: pluginRuntime.jobStore },
-      { workerManager: pluginRuntime.workerManager },
-      { toolDispatcher: pluginRuntime.toolDispatcher },
-      { workerManager: pluginRuntime.workerManager },
-    ),
-  );
+  api.use(rudderPluginRoutes(db, pluginMcpOptions));
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,

@@ -87,6 +87,10 @@ target: one Organization connection plus one independent connection for each
 Agent. Custom MCP remains multi-instance within either scope. When both
 official scopes exist, the Agent connection takes precedence. Operators assign
 coarse-grained Agent access instead of managing individual tool checkboxes.
+Plugin import may prepare a disabled custom MCP draft through this same service,
+but package metadata never supplies runtime admission, credentials, or Agent
+access. The operator continues setup and activation through the managed MCP
+boundary.
 
 ### Intent / User Job
 
@@ -451,5 +455,5 @@ semantics remain governed by their provider contracts, not this page.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.
   - `AGENT.RUNTIME.PERMISSIONS.001` for runtime credential boundaries.
   - `AGENT.CONTROL.TOOLS.001` for built-in Rudder MCP tools.
-  - `PLUGIN.CAPABILITY.001` for namespaced tool capability principles.
+  - `PLUGIN.INSTALLATION.001` for Plugin-provided MCP draft setup and lifecycle.
   - `IM.FEISHU.001` for the existing fixed-provider, agent-bound precedent.

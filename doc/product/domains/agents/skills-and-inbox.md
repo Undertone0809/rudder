@@ -89,7 +89,7 @@ Product model:
   runtime skill package rather than depending on another bundled skill.
 - `app-builder` is a capability-bundled, intent-triggered workflow for creating
   and iterating on organization-scoped Apps. It is projected only while the
-  instance-level Experimental Sites capability is enabled. Enabling it lets a
+  instance-level Experimental Plugins capability is enabled. Enabling it lets a
   runtime recognize App-building intent; native build, data, and process
   authority remains separately operator-gated under `APP.BUILDER.001` and is
   not granted merely because the Skill is loaded.
@@ -107,6 +107,13 @@ Product model:
 - Rudder-bundled and capability-bundled skills remain read-only projections of
   their Rudder-owned source. They are the only organization-library skills that
   the server may reject as non-editable.
+- Skills installed from a Plugin are read-only package projections. They retain
+  Plugin id, version, digest, and source provenance, require explicit Agent
+  selection, and are omitted from new Runs while either the installation or the
+  instance-level Plugins capability is disabled. Uninstall removes only the
+  package-owned projection; an editable customization must first become an
+  independent Organization Skill and is not controlled by later Plugin
+  lifecycle changes.
 - `visualize` uses `CHAT.INLINE.VISUAL.001` for custom declarative Chat visuals.
   Its authoring contract is a provider-neutral Rudder message envelope, never a
   provider filesystem directory, iframe, attachment id, or provider-named
@@ -138,8 +145,8 @@ Product model:
   ineligible, without writing a durable organization or agent assignment per
   capability change.
 - `app-builder` follows the same capability-bundled distinction but is
-  controlled by Experimental Sites rather than Browser settings. Disabling
-  Sites removes it from later run projection without creating or mutating
+  controlled by Experimental Plugins rather than Browser settings. Disabling
+  Plugins removes it from later run projection without creating or mutating
   durable per-agent skill assignments.
 - Skill state distinguishes discovered, installed, desired, enabled,
   materialized, native, prompt-injected, and unavailable entries.

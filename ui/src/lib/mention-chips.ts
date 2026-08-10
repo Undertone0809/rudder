@@ -1,5 +1,5 @@
-import { parseAgentMentionHref, parseAutomationMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
-import { FileText, Folder, Globe2 } from "lucide-react";
+import { parseAgentMentionHref, parseAutomationMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parsePluginMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { FileText, Folder, Globe2, Plug } from "lucide-react";
 import type { CSSProperties } from "react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
@@ -55,6 +55,10 @@ export type ParsedMentionChip =
       kind: "library_directory";
       directoryPath: string;
       title: string | null;
+    }
+  | {
+      kind: "plugin";
+      pluginId: string;
     };
 
 const iconMaskCache = new Map<string, string>();
@@ -75,6 +79,9 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       icon: agent.icon,
     };
   }
+
+  const plugin = parsePluginMentionHref(href);
+  if (plugin) return { kind: "plugin", pluginId: plugin.pluginId };
 
   const project = parseProjectMentionHref(href);
   if (project) {
@@ -207,6 +214,7 @@ function parseInternalMentionRouteHref(href: string): ParsedMentionChip | null {
 }
 
 export function mentionChipNavigationPath(mention: ParsedMentionChip): string {
+  if (mention.kind === "plugin") return `/plugins?tab=yours&plugin=${encodeURIComponent(mention.pluginId)}`;
   if (mention.kind === "project") return `/projects/${mention.projectId}`;
   if (mention.kind === "automation") return `/automations/${mention.automationId}`;
   if (mention.kind === "issue") {
@@ -238,6 +246,11 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
     if (iconMask) {
       style["--rudder-mention-icon-mask"] = iconMask;
     }
+  }
+
+  if (mention.kind === "plugin") {
+    const iconMask = buildLucideIconMask(Plug, "lucide:plug");
+    if (iconMask) style["--rudder-mention-icon-mask"] = iconMask;
   }
 
   if (mention.kind === "agent") {
@@ -335,6 +348,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip--library_entry",
     "rudder-mention-chip--library_file",
     "rudder-mention-chip--library_directory",
+    "rudder-mention-chip--plugin",
     "rudder-mention-chip--project",
     "rudder-mention-chip--with-status-icon",
     "rudder-project-mention-chip",

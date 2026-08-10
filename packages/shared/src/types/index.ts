@@ -184,10 +184,11 @@ export type {
   WorkspaceWebPreviewNetworkMode
 } from "./organization.js";
 export type {
-  JsonSchema, PaperclipPluginManifestV1, PluginConfig, PluginEntityQuery, PluginEntityRecord, PluginJobDeclaration, PluginJobRecord,
-  PluginJobRunRecord, PluginLauncherActionDeclaration, PluginLauncherDeclaration, PluginLauncherRenderContextSnapshot, PluginLauncherRenderDeclaration, PluginMinimumHostVersion, PluginRecord,
-  PluginStateRecord, PluginToolDeclaration, PluginUiDeclaration, PluginUiSlotDeclaration, PluginWebhookDeclaration, PluginWebhookDeliveryRecord
-} from "./plugin.js";
+  RudderInstalledPlugin, RudderLocalAppPlugin, RudderMcpUiResource, RudderMcpUiResourceContent, RudderPluginArchiveInput, RudderPluginCapabilityChange, RudderPluginCapabilityDiff, RudderPluginCapabilitySnapshot, RudderPluginCompatibilityComponent,
+  RudderPluginComponentLink, RudderPluginComponentStatus, RudderPluginComponentType,
+  RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
+  RudderPluginSkillConflictStrategy, RudderPluginSourceType
+} from "./plugin-v1.js";
 export type {
   Project,
   ProjectCodebase,

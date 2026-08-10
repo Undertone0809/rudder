@@ -1,8 +1,8 @@
 ---
 title: Codex-Compatible Rudder Plugins V1
 date: 2026-08-09
-kind: proposal
-status: proposed
+kind: implementation
+status: implemented
 area: skills
 entities:
   - rudder_plugins
@@ -27,21 +27,22 @@ related_code:
   - ui/src/pages/InstanceExperimentalSettings.tsx
   - ui/src/components/PrimaryRail.tsx
 commit_refs: []
-updated_at: 2026-08-09
+updated_at: 2026-08-10
 ---
 
 # Codex-Compatible Rudder Plugins V1
 
-## Proposal Status
+## Implementation Status
 
-This document proposes a new Plugin product and package model. It does not
-authorize implementation or edits to the guarded Product Logic Registry in
-`doc/product/**`.
+This PRD is implemented as the Codex-compatible Rudder Plugins V1 candidate.
+The approved Product Logic Registry delta is synchronized in
+`doc/product/domains/plugins/lifecycle-capabilities.md` and the related Agent,
+MCP, App Builder, Desktop, and Organization contracts.
 
-The existing Rudder Plugin worker, jobs, webhooks, UI slots, host SDK, and tool
-RPC design are explicitly outside this proposal. Their removal is a separate
-workstream. No legacy Plugin behavior, package format, database state, or
-compatibility promise carries into this design.
+The legacy Rudder Plugin worker, jobs, webhooks, UI slots, host SDK, and tool
+RPC implementation has been removed from active source and product surfaces.
+Historical migrations remain only for upgrade safety. No legacy Plugin runtime
+or package compatibility promise carries into V1.
 
 ## Executive Decision
 
@@ -545,6 +546,9 @@ and the operator knows exactly which capabilities are usable in Rudder.
 5. Rudder returns to the same Chat after setup.
 6. A new Agent Run receives only the explicitly enabled Skills and MCP
    bindings.
+7. In composer `@` search, Rudder presents the Plugin as one capability entry.
+   It does not flatten the Plugin's internal Skills into separate results;
+   independently owned or customized Skills remain individually mentionable.
 
 Terminal result: capability acquisition feels like resolving a current work
 blocker, not navigating to a separate runtime.
@@ -1049,6 +1053,9 @@ them as acceptance fixtures.
    and recover the previous setup.
 10. Uninstall and prove user Goals, Automations, Documents, shared connections,
     App source, and App business data are not silently deleted.
+11. Install a Plugin with multiple Skills and prove composer `@` search shows
+    one Plugin result, hides its component Skills, and still shows an enabled
+    independent Skill.
 
 Desktop-affecting implementation must run packaged Desktop verification in
 addition to browser E2E. Final acceptance requires independent reviewer and
@@ -1138,26 +1145,21 @@ filters, detail, and Settings.
 Rejected because it hides Agent, schedule, output, approval, and side-effect
 decisions. The Plugin may prefill the normal Goal or Automation flow instead.
 
-## Open Issues
+## Resolved V1 Decisions And Deferred Work
 
-1. Decide the final visual direction for Discover, Yours, Build, detail, and
-   embedded App continuity after this object model is accepted.
-2. Confirm which Codex marketplace source types are required in the first
-   implementation slice: local only, local + Git, or local + Git + npm.
-3. Determine whether an official universal Plugin Directory API is available
-   for third-party hosts before planning public catalog synchronization.
-4. Define the publisher trust levels Rudder can prove: local, marketplace
-   owner, verified source digest, signed package, or OpenAI-directory listing.
+1. Option A is the implemented product direction: Plugins in the Primary Rail
+   with Discover, Yours, Build, detail review, and direct App continuity.
+2. V1 marketplace sources are local folders and HTTPS GitHub repositories
+   pinned to a full commit SHA. npm and moving Git refs are not V1 sources.
+3. Public catalog synchronization remains deferred until OpenAI documents a
+   permitted directory API for third-party hosts.
+4. V1 displays factual provenance only: local source, marketplace identity,
+   immutable digest, repository, and commit. It does not invent verified
+   publisher or signed-package trust levels.
 
 ## Official Upstream References
 
-These sources were refreshed on 2026-08-09 and should be rechecked when
-implementation begins because the Plugin format is evolving:
+This source was refreshed during implementation and remains the compatibility
+baseline because the Plugin format is evolving:
 
-- [Plugin architecture](https://developers.openai.com/plugins/concepts/plugins)
-- [Package your plugin](https://developers.openai.com/plugins/build/plugins)
-- [Build skills](https://developers.openai.com/plugins/build/skills)
-- [Build an MCP server](https://developers.openai.com/plugins/build/mcp-server)
-- [Add optional MCP UI](https://developers.openai.com/plugins/build/chatgpt-ui)
-- [Use Plugins in ChatGPT and Codex](https://learn.chatgpt.com/docs/plugins)
-- [Skills and Plugins](https://learn.chatgpt.com/docs/skills-and-plugins)
+- [Plugins in Codex](https://developers.openai.com/codex/plugins)

@@ -55,12 +55,6 @@ vi.mock("@/api/orgs", () => ({
   },
 }));
 
-vi.mock("@/api/plugins", () => ({
-  pluginsApi: {
-    list: vi.fn(async () => []),
-  },
-}));
-
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -116,7 +110,6 @@ describe("listSettingsPrefetchQueryKeys", () => {
     expect(listSettingsPrefetchQueryKeys("/instance/settings/plugins/example", null)).toEqual([
       ["access", "current-board-access"],
       ["organizations"],
-      ["plugins"],
     ]);
   });
 });

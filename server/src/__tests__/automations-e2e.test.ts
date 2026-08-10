@@ -23,7 +23,9 @@ import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { asc, eq } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -130,6 +132,8 @@ type EmbeddedPostgresCtor = new (opts: {
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
 
+const activeServers = new Set<Server>();
+
 async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
   const mod = await import("embedded-postgres");
   return mod.default as EmbeddedPostgresCtor;
@@ -216,6 +220,10 @@ describe("automation routes end-to-end", { timeout: 20_000 }, () => {
   }, 20_000);
 
   afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
     vi.doUnmock("../services/index.js");
     vi.resetModules();
     await db.delete(activityLog);
@@ -257,7 +265,10 @@ describe("automation routes end-to-end", { timeout: 20_000 }, () => {
     app.use("/api", automationRoutes(db));
     app.use("/api", chatRoutes(db, {} as any));
     app.use(errorHandler);
-    return app;
+    const server = app.listen(0, "127.0.0.1");
+    activeServers.add(server);
+    await once(server, "listening");
+    return server;
   }
 
   async function seedFixture() {

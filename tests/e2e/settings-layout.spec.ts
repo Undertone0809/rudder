@@ -179,7 +179,6 @@ test.describe("Settings layout", () => {
       { href: "/instance/settings/notifications", heading: "System permissions" },
       { href: "/instance/settings/privacy", heading: "Privacy & Telemetry" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
-      { href: "/instance/settings/plugins", heading: "Plugin Manager" },
     ];
 
     const browserLink = modal.locator('a[href$="/instance/settings/browser"]');
@@ -195,7 +194,6 @@ test.describe("Settings layout", () => {
     await organizationButton.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey ?? organization.issuePrefix}/organization/settings$`));
     await expect(organizationButton).toHaveAttribute("aria-pressed", "true");
-    await expect(modal.locator('a[href$="/instance/settings/plugins"]')).not.toHaveAttribute("aria-current", "page");
     await expect(modal.getByRole("heading", { name: "Organization Settings", level: 1 })).toBeVisible();
     await expectStableSettingsLayout(modal, reference);
 

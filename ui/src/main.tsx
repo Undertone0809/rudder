@@ -4,9 +4,7 @@ import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
 import { BrowserRouter } from "@/lib/router";
 import "@mdxeditor/editor/style.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import * as React from "react";
 import { StrictMode } from "react";
-import * as ReactDOM from "react-dom";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ActivityCoordinatorProvider } from "./context/ActivityCoordinatorContext";
@@ -24,8 +22,6 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
 import "./index.css";
 import "./motion.css";
-import { initPluginBridge } from "./plugins/bridge-init";
-import { PluginLauncherProvider } from "./plugins/launchers";
 
 const E2E_CHILDREN_ONLY_ERROR_MESSAGE = "React.Children.only expected to receive a single React element child.";
 
@@ -43,8 +39,6 @@ declare global {
 }
 
 ConsoleRingBuffer.install();
-
-initPluginBridge(React, ReactDOM);
 
 function isDesktopShellWindow() {
   return typeof window !== "undefined"
@@ -133,15 +127,13 @@ createRoot(document.getElementById("root")!).render(
                         <BreadcrumbProvider>
                           <SidebarProvider>
                             <PanelProvider>
-                              <PluginLauncherProvider>
-                                <DialogProvider>
-                                  <ImagePreviewProvider>
-                                    <ChatGenerationProvider>
-                                      <AppRoot />
-                                    </ChatGenerationProvider>
-                                  </ImagePreviewProvider>
-                                </DialogProvider>
-                              </PluginLauncherProvider>
+                              <DialogProvider>
+                                <ImagePreviewProvider>
+                                  <ChatGenerationProvider>
+                                    <AppRoot />
+                                  </ChatGenerationProvider>
+                                </ImagePreviewProvider>
+                              </DialogProvider>
                             </PanelProvider>
                           </SidebarProvider>
                         </BreadcrumbProvider>

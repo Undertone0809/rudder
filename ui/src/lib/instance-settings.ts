@@ -55,14 +55,9 @@ export function normalizeRememberedInstanceSettingsPath(
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_PRIVACY_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
-      pathname === "/instance/settings/heartbeats" ||
-      pathname === "/instance/settings/plugins"
+      pathname === "/instance/settings/heartbeats"
     )
   ) {
-    return `${pathname}${search}${hash}`;
-  }
-
-  if (canManageAdminSettings && /^\/instance\/settings\/plugins\/[^/?#]+$/.test(pathname)) {
     return `${pathname}${search}${hash}`;
   }
 
@@ -112,9 +107,7 @@ export function normalizeRememberedSettingsPath(
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_PRIVACY_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
-      pathname === "/instance/settings/heartbeats" ||
-      pathname === "/instance/settings/plugins" ||
-      /^\/instance\/settings\/plugins\/[^/?#]+$/.test(pathname)
+      pathname === "/instance/settings/heartbeats"
     )
   ) {
     return `${pathname}${search}${hash}`;

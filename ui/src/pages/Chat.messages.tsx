@@ -1579,7 +1579,7 @@ export function ChatUserPlainTextBody({
             <span className="rudder-inline-token-label">{mentionLabel}</span>
           </Link>
         );
-        if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
+        if (mention.kind === "automation" || mention.kind === "chat" || mention.kind === "plugin") return mentionLink;
         return (
           <RudderEntityPreview key={`${part.href}-${index}`} mention={mention} label={mentionLabel}>
             {mentionLink}

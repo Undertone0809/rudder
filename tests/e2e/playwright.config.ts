@@ -220,7 +220,7 @@ printf '"'"'{"pid":%s,"configPath":"%s","instanceRoot":"%s","port":%s}\\n'"'"' "
 exec env ${SERVER_ENV_PREFIX} pnpm --dir "${SERVER_DIR}" dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
-    timeout: 120_000,
+    timeout: 300_000,
     stdout: "pipe",
     stderr: "pipe",
   },

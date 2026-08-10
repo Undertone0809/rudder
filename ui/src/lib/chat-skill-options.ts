@@ -14,6 +14,7 @@ export function buildChatSkillOptions(params: {
   orgUrlKey: string | null | undefined;
   organizationSkills: OrganizationSkillListItem[] | null | undefined;
   skillSnapshot: AgentSkillSnapshot | null | undefined;
+  pluginManagedSkillIds?: ReadonlySet<string>;
 }) {
   return buildAgentSkillMentionOptions(params);
 }
@@ -23,11 +24,13 @@ export function buildChatSkillReferenceOptions(params: {
   orgUrlKey: string | null | undefined;
   organizationSkills: OrganizationSkillListItem[] | null | undefined;
   skillSnapshot: AgentSkillSnapshot | null | undefined;
+  pluginManagedSkillIds?: ReadonlySet<string>;
 }) {
   const optionsByTarget = new Map<string, SkillMentionOption>();
   for (const option of buildOrganizationSkillMentionOptions({
     orgUrlKey: params.orgUrlKey,
     organizationSkills: params.organizationSkills,
+    pluginManagedSkillIds: params.pluginManagedSkillIds,
   })) {
     optionsByTarget.set(option.skillMarkdownTarget, option);
   }

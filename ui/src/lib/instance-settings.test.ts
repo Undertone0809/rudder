@@ -43,7 +43,7 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
       INSTANCE_SETTINGS_ABOUT_PATH,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/plugins/example?tab=config#logs")).toBe(
-      "/instance/settings/plugins/example?tab=config#logs",
+      DEFAULT_INSTANCE_SETTINGS_PATH,
     );
   });
 
@@ -109,7 +109,7 @@ describe("normalizeRememberedSettingsPath", () => {
       INSTANCE_SETTINGS_SHORTCUTS_PATH,
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/plugins/example?tab=config#logs")).toBe(
-      "/instance/settings/plugins/example?tab=config#logs",
+      DEFAULT_SETTINGS_PATH,
     );
   });
 

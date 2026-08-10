@@ -32,6 +32,50 @@ function makeSkill(
 }
 
 describe("buildAgentSkillMentionOptions", () => {
+  it("does not flatten Plugin-managed Skills into @ mention options", () => {
+    const pluginSkill = makeSkill({
+      id: "plugin-skill-1",
+      key: "organization/org-1/plugin-research",
+      slug: "plugin-research",
+      name: "Plugin Research",
+      sourceType: "local_path",
+      installedPluginId: "plugin-1",
+    });
+    const standaloneSkill = makeSkill({
+      id: "standalone-skill-1",
+      key: "organization/org-1/standalone",
+      slug: "standalone",
+      name: "Standalone",
+      sourceType: "local_path",
+    });
+    const entry = (key: string) => ({
+      key,
+      selectionKey: `org:organization/org-1/${key}`,
+      runtimeName: key,
+      desired: true,
+      configurable: true,
+      alwaysEnabled: false,
+      managed: true,
+      state: "configured" as const,
+      sourceClass: "organization" as const,
+      sourcePath: `/workspace/skills/${key}`,
+    });
+    const options = buildAgentSkillMentionOptions({
+      agent: { id: "agent-1", urlKey: "ella" },
+      orgUrlKey: "acme",
+      organizationSkills: [pluginSkill, standaloneSkill],
+      skillSnapshot: {
+        agentRuntimeType: "codex_local",
+        supported: true,
+        mode: "persistent",
+        desiredSkills: [],
+        entries: [entry("plugin-research"), entry("standalone")],
+        warnings: [],
+      },
+    });
+    expect(options.map((option) => option.name)).toEqual(["standalone"]);
+  });
+
   it("builds agent-scoped skill mention options for enabled organization and external skills", () => {
     const organizationSkills = [
       makeSkill({

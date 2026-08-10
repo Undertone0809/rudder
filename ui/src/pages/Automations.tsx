@@ -71,6 +71,7 @@ import {
 import { getAutomationRunDisplay } from "../lib/automation-run-display";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
+import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds } from "../lib/utils";
@@ -510,6 +511,7 @@ export function Automations() {
     queryFn: () => agentsApi.skills(draft.assigneeAgentId, selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId) && composerOpen && Boolean(draft.assigneeAgentId),
   });
+  const pluginMentions = usePluginMentionCatalog(selectedOrganizationId);
 
   useEffect(() => {
     autoResizeTextarea(titleInputRef.current);
@@ -669,9 +671,10 @@ export function Automations() {
       agents,
       projects,
       issues,
+      pluginMentionOptions: pluginMentions.options,
       skillMentionOptions,
     }),
-    [agents, issues, projects, skillMentionOptions],
+    [agents, issues, pluginMentions.options, projects, skillMentionOptions],
   );
   const isDraftReady = Boolean(draft.title.trim() && draft.assigneeAgentId);
 

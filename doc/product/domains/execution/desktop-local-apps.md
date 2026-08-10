@@ -182,8 +182,8 @@ Saved View identity and group placement.
     native review path as the catalog. A running, starting, or stopping
     definition is read-only until the operator explicitly chooses `Stop &
     edit`; opening or dismissing settings alone never stops the process.
-12. Experimental Sites is the admission gate for both manually loaded Local
-    Apps in the Apps workspace and managed App Builder Apps. Disabling Sites
+12. Experimental Plugins is the admission gate for both manually loaded Local
+    Apps in the Apps workspace and managed App Builder Apps. Disabling Plugins
     rejects new operations, drains admitted operations, stops every
     running/transitioning owned definition, and preserves definitions and data.
     Re-enabling never passively restarts a definition.

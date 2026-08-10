@@ -428,7 +428,8 @@ export function AppsContextSidebar() {
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
   });
-  const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
+  const sitesEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
+    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const { entries, localApps } = useAppRegistry(sitesEnabled);
   const activeKey = activeKeyFromPath(location.pathname);
   const filteredEntries = entries.filter((entry) => {

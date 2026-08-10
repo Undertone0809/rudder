@@ -19,7 +19,7 @@ describe("Desktop Local Apps IPC", () => {
       attestedTarget: vi.fn(),
     };
     const assertEnabled = vi.fn(async () => {
-      throw new Error("Sites is disabled");
+      throw new Error("Plugins is disabled");
     });
     registerLocalAppsIpcHandlers(ipcMain, {
       getMainRenderer: () => renderer,
@@ -29,7 +29,7 @@ describe("Desktop Local Apps IPC", () => {
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
 
     await expect(handlers.get(LOCAL_APPS_IPC_CHANNELS.start)?.(event, { id: "definition-1" }))
-      .rejects.toThrow("Sites is disabled");
+      .rejects.toThrow("Plugins is disabled");
     expect(controller.start).not.toHaveBeenCalled();
     await expect(handlers.get(LOCAL_APPS_IPC_CHANNELS.stop)?.(event, { id: "definition-1" }))
       .resolves.toEqual({ status: "stopped" });

@@ -107,6 +107,7 @@ export function buildAgentSkillMentionOptions(params: {
   orgUrlKey: string | null | undefined;
   organizationSkills: OrganizationSkillListItem[] | null | undefined;
   skillSnapshot: AgentSkillSnapshot | null | undefined;
+  pluginManagedSkillIds?: ReadonlySet<string>;
 }) {
   const agent = params.agent;
   const skillSnapshot = params.skillSnapshot;
@@ -124,6 +125,7 @@ export function buildAgentSkillMentionOptions(params: {
     const organizationSkillKey = parseOrganizationSkillKey(entry.selectionKey);
     if (organizationSkillKey) {
       const organizationSkill = organizationSkillByKey.get(organizationSkillKey) ?? null;
+      if (organizationSkill?.installedPluginId || (organizationSkill && params.pluginManagedSkillIds?.has(organizationSkill.id))) continue;
       const publicRef = organizationSkill
         ? formatOrganizationSkillPublicRef(organizationSkill, {
             orgUrlKey,
@@ -194,9 +196,11 @@ export function buildAgentSkillMentionOptions(params: {
 export function buildOrganizationSkillMentionOptions(params: {
   orgUrlKey: string | null | undefined;
   organizationSkills: OrganizationSkillListItem[] | null | undefined;
+  pluginManagedSkillIds?: ReadonlySet<string>;
 }) {
   const orgUrlKey = params.orgUrlKey ?? "organization";
   return (params.organizationSkills ?? [])
+    .filter((skill) => !skill.installedPluginId && !params.pluginManagedSkillIds?.has(skill.id))
     .map((skill): SkillMentionOption | null => {
       const markdownTarget = organizationSkillMarkdownTarget(skill);
       if (!markdownTarget) return null;

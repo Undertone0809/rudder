@@ -103,6 +103,7 @@ function mentionFallbackLabel(mention: ParsedMentionChip) {
   if (mention.kind === "library_doc") return mention.title?.trim() || compactMentionId(mention.documentId);
   if (mention.kind === "library_entry") return mention.title?.trim() || basenameFromPath(mention.path) || compactMentionId(mention.entryId);
   if (mention.kind === "library_file") return mention.title?.trim() || basenameFromPath(mention.filePath) || compactMentionId(mention.filePath);
+  if (mention.kind === "plugin") return compactMentionId(mention.pluginId);
   return mention.title?.trim() || basenameFromPath(mention.directoryPath) || compactMentionId(mention.directoryPath);
 }
 
@@ -1173,7 +1174,7 @@ export function MarkdownBody({
             <span className="rudder-inline-token-label">{displayMentionLabel}</span>
           </a>
         );
-        if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
+        if (mention.kind === "automation" || mention.kind === "chat" || mention.kind === "plugin") return mentionLink;
         return (
           <RudderEntityPreview mention={mention} label={displayMentionLabel}>
             {mentionLink}

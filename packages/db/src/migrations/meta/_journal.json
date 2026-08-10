@@ -1051,6 +1051,13 @@
       "when": 1786262400000,
       "tag": "0149_app_builder_verified_source_ready",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1786303912000,
+      "tag": "0150_rudder_plugins_v1",
+      "breakpoints": true
     }
   ]
 }

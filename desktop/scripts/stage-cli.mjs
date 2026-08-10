@@ -24,7 +24,6 @@ const serverRuntimeExternals = [
   "@rudderhq/agent-runtime-opencode-local",
   "@rudderhq/agent-runtime-pi-local",
   "@rudderhq/db",
-  "@rudderhq/plugin-sdk",
   "@rudderhq/server",
   "ajv",
   "ajv-formats",

@@ -196,8 +196,10 @@ owning domain contract.
 - Editable documents, revisions, legacy issue documents, and output artifacts:
   `DOCUMENT.WORKPRODUCT.001`.
 
-## Plugin Manager And Plugin Pages
+## Plugins
 
-- Plugin install/update/uninstall and worker health: `PLUGIN.LIFECYCLE.001`.
-- Capability-gated host bridge and namespaced tools: `PLUGIN.CAPABILITY.001`.
-- Plugin jobs/webhooks/logs/state: `PLUGIN.JOBS.WEBHOOKS.001`.
+- Codex-compatible package identity and preserved components:
+  `PLUGIN.PACKAGE.001`.
+- Bounded, non-executing import inspection: `PLUGIN.IMPORT.001`.
+- Organization installation, Skill/MCP/App projection, and non-destructive
+  lifecycle: `PLUGIN.INSTALLATION.001`.

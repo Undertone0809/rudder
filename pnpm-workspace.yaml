@@ -1,8 +1,6 @@
 packages:
   - packages/*
   - packages/agent-runtimes/*
-  - packages/plugins/*
-  - packages/plugins/examples/*
   - server
   - ui
   - cli

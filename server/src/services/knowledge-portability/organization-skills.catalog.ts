@@ -85,6 +85,11 @@ export type SkillSourceMeta = {
   workspaceName?: string;
   workspaceCwd?: string;
   installationVersion?: number;
+  pluginDisplayName?: string;
+  installedPluginId?: string;
+  pluginPackageId?: string;
+  pluginDigest?: string;
+  pluginEnabled?: boolean;
 };
 
 export type LocalSkillInventoryMode = "full" | "project_root";
@@ -1234,6 +1239,16 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
     };
   }
 
+  if (asString(metadata.sourceKind) === "plugin_managed") {
+    return {
+      editable: false,
+      editableReason: "Plugin-managed skills are read-only. Customize by creating an independent Skill copy.",
+      sourceLabel: asString(metadata.pluginDisplayName) ?? "Installed Plugin",
+      sourceBadge: "rudder",
+      sourcePath: null,
+    };
+  }
+
   if (asString(metadata.sourceKind) === "community_preset") {
     return {
       editable: true,
@@ -1322,6 +1337,7 @@ export function enrichSkill(skill: OrganizationSkill, attachedAgentCount: number
     usedByAgents,
     ...source,
     workspaceEditPath: resolveWorkspaceEditPath(skill.orgId, normalizeSkillDirectory(skill)),
+    installedPluginId: asString(getSkillMeta(skill).installedPluginId),
   };
 }
 

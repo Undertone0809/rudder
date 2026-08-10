@@ -162,6 +162,7 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
 } from "@/lib/organization-skill-picker";
+import { usePluginMentionCatalog } from "@/lib/plugin-mentions";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { latestSideChatAnchor } from "@/lib/side-chat";
@@ -2414,19 +2415,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setRecentProjectConversationLimit((current) => Math.min(allRecentProjectConversations.length, current + RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT));
   }, [allRecentProjectConversations.length]); useEffect(() => {
     setRecentProjectConversationLimit(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT);
-  }, [activeProject?.id]); const availableChatSkills = useMemo(
+  }, [activeProject?.id]); const pluginMentions = usePluginMentionCatalog(selectedOrganizationId); const availableChatSkills = useMemo(
     () => buildChatSkillOptions({
       agent: activeSkillAgent,
       orgUrlKey: selectedOrganization?.urlKey ?? "organization",
       organizationSkills,
-      skillSnapshot: activeAgentSkillSnapshot, }), [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey], ); const referenceChatSkills = useMemo(
+      skillSnapshot: activeAgentSkillSnapshot,
+      pluginManagedSkillIds: pluginMentions.managedSkillIds,
+    }), [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, pluginMentions.managedSkillIds, selectedOrganization?.urlKey], ); const referenceChatSkills = useMemo(
     () => buildChatSkillReferenceOptions({
       agent: activeSkillAgent,
       orgUrlKey: selectedOrganization?.urlKey ?? "organization",
       organizationSkills,
       skillSnapshot: activeAgentSkillSnapshot,
+      pluginManagedSkillIds: pluginMentions.managedSkillIds,
     }),
-    [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey],
+    [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, pluginMentions.managedSkillIds, selectedOrganization?.urlKey],
   ); const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
     () => referenceChatSkills.map((skill) => ({
       href: skill.skillMarkdownTarget,
@@ -2470,6 +2474,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       libraryDocuments,
       libraryFiles: Array.isArray(libraryMentionFiles?.entries) ? libraryMentionFiles.entries : undefined,
       skillMentionOptions: availableChatSkills,
+      pluginMentionOptions: pluginMentions.options,
       currentUserId,
     }),
     [
@@ -2480,6 +2485,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       libraryDocuments,
       libraryMentionFiles?.entries,
       mentionConversationsQuery.data,
+      pluginMentions.options,
       visibleProjects,
     ],
   );

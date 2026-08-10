@@ -21,6 +21,7 @@ export const instanceLocaleSchema = z.enum(["en", "zh-CN"]);
 export const instanceGeneralSettingsSchema = z.object({
   censorUsernameInLogs: z.boolean().default(false),
   showDeveloperDiagnostics: z.boolean().default(false),
+  experimentalPluginsEnabled: z.boolean().optional(),
   experimentalSitesEnabled: z.boolean().default(false),
   experimentalGoalsEnabled: z.boolean().default(false),
   experimentalComputerUseEnabled: z.boolean().default(false),

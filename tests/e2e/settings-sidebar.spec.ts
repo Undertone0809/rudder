@@ -414,35 +414,6 @@ test.describe("Settings sidebar", () => {
     await expect(page.getByRole("heading", { name: "Organization Settings", exact: true })).toBeVisible();
   });
 
-  test("plugin manager no longer lists the hello world example plugin", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
-      data: {
-        name: `Plugin Manager Examples ${Date.now()}`,
-        issuePrefix: uniqueIssuePrefix(),
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
-
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await page.getByRole("button", { name: "System settings" }).click();
-
-    const modal = page.getByTestId("settings-modal-shell");
-    const modalSidebar = modal.getByTestId("workspace-sidebar");
-
-    await modalSidebar.locator('a[href$="/instance/settings/plugins"]').click();
-
-    await expect(page).toHaveURL(/\/instance\/settings\/plugins$/);
-    await expect(page.getByRole("heading", { name: "Plugin Manager" })).toBeVisible();
-    await expect(page.getByText("File Browser (Example)", { exact: true })).toBeVisible();
-    await expect(page.getByText("Kitchen Sink (Example)", { exact: true })).toBeVisible();
-    const linearRow = page.locator("li").filter({ hasText: "@rudderhq/plugin-linear" }).first();
-    await expect(linearRow).toBeVisible();
-    await expect(linearRow.getByText("Example", { exact: true })).toHaveCount(0);
-    await expect(linearRow.getByRole("button", { name: "Install Example" })).toHaveCount(0);
-    await expect(page.getByText("Hello World Widget (Example)", { exact: true })).toHaveCount(0);
-  });
-
   test("keeps the settings modal height stable across sidebar navigation", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

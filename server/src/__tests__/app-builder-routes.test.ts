@@ -60,14 +60,14 @@ function appRecord(overrides: Record<string, unknown> = {}) {
 
 const activeServers = new Set<Server>();
 
-async function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>, onAppChanged?: (orgId: string) => Promise<void>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", appBuilderRoutes({} as never));
+  app.use("/api", appBuilderRoutes({} as never, { onAppChanged }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -80,7 +80,7 @@ describe("App Builder routes", () => {
     vi.clearAllMocks();
     mockProjectService.getById.mockResolvedValue({ id: projectId, orgId });
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
-      experimentalSitesEnabled: true,
+      experimentalPluginsEnabled: true,
     });
     mockAppBuilderService.listForOrganization.mockResolvedValue([appRecord()]);
     mockAppBuilderService.getForProject.mockResolvedValue(appRecord());
@@ -109,9 +109,9 @@ describe("App Builder routes", () => {
     activeServers.clear();
   });
 
-  it("rejects App Builder API access while Sites is disabled", async () => {
+  it("rejects App Builder API access while Plugins is disabled", async () => {
     mockInstanceSettingsService.getGeneral.mockResolvedValueOnce({
-      experimentalSitesEnabled: false,
+      experimentalPluginsEnabled: false,
     });
     const app = await createApp({
       type: "board",
@@ -144,13 +144,14 @@ describe("App Builder routes", () => {
   });
 
   it("creates an organization App without a backing Project", async () => {
+    const onAppChanged = vi.fn(async () => undefined);
     const app = await createApp({
       type: "board",
       userId: "user-1",
       orgIds: [orgId],
       source: "session",
       isInstanceAdmin: false,
-    });
+    }, onAppChanged);
 
     const response = await request(app)
       .post(`/api/orgs/${orgId}/app-builder`)
@@ -166,6 +167,7 @@ describe("App Builder routes", () => {
       sourceRoot: "apps/cold-email-crm-aabbccdd",
       scaffoldVersion: "1",
     });
+    expect(onAppChanged).toHaveBeenCalledWith(orgId);
   });
 
   it("creates one Project app and records a safe activity", async () => {

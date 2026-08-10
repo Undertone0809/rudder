@@ -60,6 +60,7 @@ import { useToast } from "../context/ToastContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
+import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { timeAgo } from "../lib/timeAgo";
@@ -240,6 +241,7 @@ export function AutomationDetail({
     queryFn: () => agentsApi.skills(editDraft.assigneeAgentId, selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId) && Boolean(editDraft.assigneeAgentId),
   });
+  const pluginMentions = usePluginMentionCatalog(selectedOrganizationId);
 
   const automationDefaults = useMemo(
     () =>
@@ -708,9 +710,10 @@ export function AutomationDetail({
       agents,
       projects,
       issues,
+      pluginMentionOptions: pluginMentions.options,
       skillMentionOptions,
     }),
-    [agents, issues, projects, skillMentionOptions],
+    [agents, issues, pluginMentions.options, projects, skillMentionOptions],
   );
   const automationActivityItems = useMemo(() => {
     const runIds = new Set((automationRuns ?? []).map((run) => run.id));
