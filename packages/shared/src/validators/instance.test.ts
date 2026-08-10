@@ -48,6 +48,7 @@ describe("instanceGeneralSettingsSchema", () => {
   it("defaults developer diagnostics off", () => {
     expect(instanceGeneralSettingsSchema.parse({})).toEqual({
       censorUsernameInLogs: false,
+      experimentalComputerUseEnabled: false,
       showDeveloperDiagnostics: false,
       experimentalSitesEnabled: false,
       experimentalGoalsEnabled: false,
