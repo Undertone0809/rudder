@@ -14,6 +14,11 @@ on:
         required: true
         type: boolean
         default: true
+      resume_missing:
+        description: "Resume a partial stable npm publish without republishing existing versions"
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 
@@ -25,7 +30,7 @@ jobs:
   preflight:
     name: Release preflight
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.resume_missing) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -226,6 +231,105 @@ jobs:
           else
             pnpm desktop:verify
           fi
+
+  resume-stable:
+    name: Resume partial stable release
+    if: github.event_name == 'workflow_dispatch' && inputs.resume_missing && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment: npm-stable
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref }}
+
+      - name: Require locked v0.7.2 source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          test "$(node -p "require('./cli/package.json').version")" = "0.7.2"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          npm install --global npm@10.9.8
+
+      - name: Build resumable publish payloads
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          bash scripts/prepare-server-ui-dist.sh
+          for pkg_dir in \
+            server \
+            packages/agent-runtimes/claude-local \
+            packages/agent-runtimes/codex-local \
+            packages/agent-runtimes/cursor-local \
+            packages/agent-runtimes/gemini-local \
+            packages/agent-runtimes/opencode-local; do
+            rm -rf "$pkg_dir/skills"
+            cp -R server/resources/bundled-skills "$pkg_dir/skills"
+          done
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const file = "packages/agent-runtimes/hermes-gateway/package.json";
+          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+          pkg.repository = {
+            type: "git",
+            url: "https://github.com/Undertone0809/rudder",
+            directory: "packages/agent-runtimes/hermes-gateway",
+          };
+          fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          node scripts/release-package-map.mjs set-publish-version 0.7.2 --allow-source-mutation
+          ./scripts/build-npm.sh --skip-checks --skip-typecheck
+
+      - name: Publish only missing packages and create release
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          package_map="$(mktemp)"
+          node scripts/release-package-map.mjs list > "$package_map"
+          test "$(wc -l < "$package_map" | xargs)" = "17"
+
+          while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
+            [ -n "$pkg_dir" ] || continue
+            view_error="$(mktemp)"
+            if published="$(npm view "$pkg_name@$pkg_version" version 2>"$view_error")"; then
+              test "$published" = "$pkg_version"
+              echo "Skipping existing $pkg_name@$pkg_version"
+            elif grep -q "E404" "$view_error"; then
+              (cd "$pkg_dir" && npm publish --tag latest --access public --no-git-checks --provenance)
+            else
+              cat "$view_error" >&2
+              exit 1
+            fi
+            rm -f "$view_error"
+          done < "$package_map"
+
+          while IFS=$'\t' read -r _pkg_dir pkg_name pkg_version; do
+            test "$(npm view "$pkg_name@$pkg_version" version)" = "$pkg_version"
+          done < "$package_map"
+          rm -f "$package_map"
+
+          git tag v0.7.2 "${{ inputs.source_ref }}"
+          git push origin refs/tags/v0.7.2
+          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh 0.7.2
+          gh workflow run desktop-release.yml --ref main -f release_tag=v0.7.2 -f source_ref=v0.7.2
 
   canary:
     name: Publish npm canary

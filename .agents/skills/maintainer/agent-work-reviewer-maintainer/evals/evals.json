@@ -47,6 +47,20 @@
         "The result requires a distinct verifier to black-box the exact frozen candidate and does not treat reviewer inspection as a substitute.",
         "The result blocks commit and push until verifier PASS and final reviewer accept both apply to the same unchanged candidate."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "Review a Rudder create dialog that exposes three source routes, a searchable library, twenty recent local files, a native file action, a URL form, validation help, and advanced metadata at the same time. Every control works, the layout is aligned, and automated tests pass. The implementer argues that fewer clicks make the workflow simpler.",
+      "expected_output": "Treats simultaneous decision load as a blocking product-quality issue, distinguishes useful data density from decision density, and recommends a short peer route-choice set followed by one focused route-specific state while preserving visible risk and declaring Back, Cancel, Close, Reopen, and draft-restoration semantics. It permits restoration after Reopen only when an intentional draft contract exists.",
+      "files": [],
+      "expectations": [
+        "The review identifies that exposing controls for future branches creates cognitive load even when each control is individually usable.",
+        "The review does not equate fewer clicks or visual alignment with a simpler user journey.",
+        "The convergence direction allows the three routes to remain a coherent peer choice set, then gives each route-specific follow-up one primary submit or continuation action.",
+        "The review requires a compact state inventory that names visible and deferred controls, critical context, and Back, Cancel, Close, Reopen, and draft-restoration semantics.",
+        "The review does not infer persisted restoration from Back or dismissal behavior and permits restoration after Reopen only under an intentional draft contract.",
+        "The review explicitly names the safety-critical consequences and current-state context that must remain visible, or states that the packet lacks enough evidence to identify them."
+      ]
     }
   ]
 }
