@@ -3767,12 +3767,32 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         return heading === "Rudder Browser fixture";
       }, { expectedUrl: localAddressBarUrl }, { timeout: 30_000 });
 
+      const promotionBrowserIdentity = await page.evaluate(() => {
+        const webview = document.querySelector(
+          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+        );
+        const sideTab = document.querySelector(
+          "[data-testid='chat-side-panel-tab'][aria-selected='true']",
+        );
+        return {
+          browserTabId: webview?.getAttribute("data-browser-tab-id") ?? null,
+          viewInstanceId: sideTab?.getAttribute("data-view-instance-id") ?? null,
+        };
+      });
+      assert.ok(promotionBrowserIdentity.browserTabId, "the promoted Browser guest must expose its tab identity");
+      assert.ok(promotionBrowserIdentity.viewInstanceId, "the promoted Browser tab must expose its view instance identity");
       const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
       await browserUrlInput.fill(promotionUrl);
       await browserUrlInput.press("Enter");
-      await page.waitForFunction(async ({ expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        const addressBar = document.querySelector("input[name='browser-url']");
+      await page.waitForFunction(async ({ browserTabId, expectedUrl }) => {
+        const browserView = Array.from(document.querySelectorAll("[data-browser-tab-id]"))
+          .find((candidate) => (
+            candidate.tagName !== "WEBVIEW"
+            && candidate.getAttribute("data-browser-tab-id") === browserTabId
+          ));
+        const webview = Array.from(document.querySelectorAll("webview[data-browser-tab-id]"))
+          .find((candidate) => candidate.getAttribute("data-browser-tab-id") === browserTabId);
+        const addressBar = browserView?.querySelector("input[name='browser-url']");
         if (!webview
           || typeof webview.getURL !== "function"
           || typeof webview.executeJavaScript !== "function"
@@ -3789,25 +3809,41 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           && addressBar.value === expectedUrl
           && (typeof webview.isLoading !== "function" || !webview.isLoading())
           && (await webview.executeJavaScript("history.length")) === historyLength;
-      }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
+      }, {
+        browserTabId: promotionBrowserIdentity.browserTabId,
+        expectedUrl: promotionUrl,
+      }, { timeout: 30_000 });
 
       const movingSideTab = sidePanel.locator(
-        '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+        `[data-testid="chat-side-panel-tab"][data-view-instance-id="${promotionBrowserIdentity.viewInstanceId}"]`,
       );
-      const movingViewInstanceId = await movingSideTab.getAttribute("data-view-instance-id");
-      assert.ok(movingViewInstanceId, "the promoted Browser tab must expose its view instance identity");
+      await movingSideTab.click();
+      await page.waitForFunction(({ browserTabId, expectedUrl }) => {
+        const webview = document.querySelector(
+          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+        );
+        return Boolean(
+          webview
+          && webview.getAttribute("data-browser-tab-id") === browserTabId
+          && typeof webview.getURL === "function"
+          && webview.getURL() === expectedUrl,
+        );
+      }, {
+        browserTabId: promotionBrowserIdentity.browserTabId,
+        expectedUrl: promotionUrl,
+      }, { timeout: 15_000 });
+      const movingViewInstanceId = promotionBrowserIdentity.viewInstanceId;
       const sideTabCountBeforeMove = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const browserGuestCountBeforeMove = await page.locator("webview[data-browser-tab-id]").count();
       assert.ok(sideTabCountBeforeMove > 1, "Browser move smoke requires sibling Side Panel tabs");
       const browserTransferMarker = randomUUID();
-      const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
-        const webview = Array.from(document.querySelectorAll(
-          "[data-testid='chat-side-panel-browser-webview']",
-        )).find((candidate) => typeof candidate.getURL === "function" && candidate.getURL() === expectedUrl);
+      const guestBeforeMove = await page.evaluate(async ({ browserTabId, marker, expectedUrl }) => {
+        const webview = Array.from(document.querySelectorAll("webview[data-browser-tab-id]"))
+          .find((candidate) => candidate.getAttribute("data-browser-tab-id") === browserTabId);
         if (!webview
           || typeof webview.getWebContentsId !== "function"
           || typeof webview.executeJavaScript !== "function") {
-          throw new Error("active Browser guest was not available before Move");
+          throw new Error("the exact Browser guest was not available before Move");
         }
         webview.__rudderBrowserTransferMarker = marker;
         if (typeof webview.setZoomFactor === "function") webview.setZoomFactor(1.1);
@@ -3833,7 +3869,11 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
           expectedUrl,
         };
-      }, { marker: browserTransferMarker, expectedUrl: promotionUrl });
+      }, {
+        browserTabId: promotionBrowserIdentity.browserTabId,
+        marker: browserTransferMarker,
+        expectedUrl: promotionUrl,
+      });
       assert.equal(guestBeforeMove.url, promotionUrl);
       assert.ok(guestBeforeMove.browserTabId);
       assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
