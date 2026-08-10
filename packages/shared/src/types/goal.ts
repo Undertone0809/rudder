@@ -188,6 +188,11 @@ export interface GoalStartPreview {
     ownerAgentId?: string;
     targetTime?: Date | string | null;
   } | null;
+  blockers: Array<{
+    code: "outcome_required" | "owner_required";
+    field: "goal" | "ownerAgentId";
+    message: string;
+  }>;
   alignmentQuestion: string | null;
   warning: string | null;
 }

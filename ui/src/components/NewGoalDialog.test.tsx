@@ -91,6 +91,7 @@ const validPreview = {
     firstAction: "Verify the bounded UI journey",
   },
   alignmentQuestion: null,
+  blockers: [],
   warning: null,
 };
 
@@ -178,16 +179,16 @@ describe("NewGoalDialog", () => {
       expect(container.textContent).not.toContain(hidden);
     }
     await waitUntil(() => {
-      expect(button("Create and start")).not.toBeNull();
-      expect(button("Create and start")?.disabled).toBe(false);
+      expect(button("Start Goal")).not.toBeNull();
+      expect(button("Start Goal")?.disabled).toBe(false);
     });
     expect(container.textContent).toContain("How we will know it worked");
     expect(container.textContent).toContain("The operator workflow passes");
     expect(container.textContent).toContain("First action");
 
-    act(() => button("Create and start")?.click());
+    act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(container.querySelector("[role=alert]")?.textContent).toContain("Unable to start this Goal right now"));
-    act(() => button("Retry create and start")?.click());
+    act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
 
     const firstPayload = vi.mocked(goalsApi.start).mock.calls[0]?.[1] as Record<string, unknown>;
@@ -218,10 +219,10 @@ describe("NewGoalDialog", () => {
 
     await waitUntil(() => {
       expect(container.textContent).toContain("This Agent may not be the best match for this Goal.");
-      expect(button("Start with selected Agent")?.disabled).toBe(false);
+      expect(button("Start Goal")?.disabled).toBe(false);
     });
-    expect(button("Save draft for alignment")).toBeNull();
-    act(() => button("Start with selected Agent")?.click());
+    expect(button("Save draft")).not.toBeNull();
+    act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
     expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({
       allowCapabilityMismatch: true,
@@ -247,17 +248,17 @@ describe("NewGoalDialog", () => {
     newGoalDefaults = { ownerAgentId: agent.id };
     const container = renderDialog();
     change(field("Goal"), "Ship Goal Workspace");
-    await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
+    await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
 
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
     change(field("Target time"), "2026-08-25T14:30");
 
-    expect(button("Create and start")?.disabled).toBe(true);
-    act(() => button("Create and start")?.click());
+    expect(button("Start Goal")?.disabled).toBe(true);
+    act(() => button("Start Goal")?.click());
     expect(goalsApi.start).not.toHaveBeenCalled();
 
-    await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
-    act(() => button("Create and start")?.click());
+    await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
+    act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
 
     expect(goalsApi.previewStart).toHaveBeenLastCalledWith("org-1", expect.objectContaining({
@@ -300,7 +301,7 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => {
       expect(container.textContent).toContain("Available Agents could not be loaded");
       expect(button("Retry Agents")).not.toBeNull();
-      expect(button("Create and start")?.disabled).toBe(true);
+      expect(button("Start Goal")?.disabled).toBe(true);
     });
   });
 
@@ -318,16 +319,27 @@ describe("NewGoalDialog", () => {
   });
 
   it("saves an invalid preview as a Draft with its alignment question", async () => {
-    vi.mocked(goalsApi.previewStart).mockResolvedValue({ valid: false, packetHash: null, packet: null, review: null, alignmentQuestion: "What external result should change?", warning: null } as never);
+    vi.mocked(goalsApi.previewStart).mockResolvedValue({
+      valid: false,
+      packetHash: null,
+      packet: null,
+      review: null,
+      blockers: [{ code: "outcome_required", field: "goal", message: "Describe a verifiable result." }],
+      alignmentQuestion: "What external result should change?",
+      warning: null,
+    } as never);
     const container = renderDialog();
     change(field("Goal"), "Explore");
     change(field("Target time"), "2026-08-20T10:00");
     await waitUntil(() => {
-      expect(button("Save draft for alignment")).not.toBeNull();
-      expect(button("Save draft for alignment")?.disabled).toBe(false);
+      expect(button("Save draft")).not.toBeNull();
+      expect(button("Save draft")?.disabled).toBe(false);
+      expect(button("Start Goal")?.disabled).toBe(true);
+      expect(container.textContent).toContain("Describe a verifiable result.");
     });
+    expect(container.textContent).toContain("Describe a verifiable result.");
     expect(container.textContent).toContain("What external result should change?");
-    act(() => button("Save draft for alignment")?.click());
+    act(() => button("Save draft")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Explore",
       ownerAgentId: null,
@@ -346,10 +358,10 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => {
       expect(container.textContent).toContain("Preview unavailable");
       expect(button("Retry preview")).not.toBeNull();
-      expect(button("Save draft for alignment")?.disabled).toBe(false);
+      expect(button("Save draft")?.disabled).toBe(false);
     });
 
-    act(() => button("Save draft for alignment")?.click());
+    act(() => button("Save draft")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Save despite preview outage",
     })));
@@ -365,8 +377,8 @@ describe("NewGoalDialog", () => {
       targetTime: "2026-08-20T10:00",
     };
     const container = renderDialog();
-    await waitUntil(() => expect(button("Create and start")?.disabled).toBe(false));
-    act(() => button("Create and start")?.click());
+    await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
+    act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
     expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({ draftGoalId: "draft-1" }));
     expect(goalsApi.create).not.toHaveBeenCalled();
@@ -386,16 +398,23 @@ describe("NewGoalDialog", () => {
       packetHash: null,
       packet: null,
       review: null,
+      blockers: [{ code: "outcome_required", field: "goal", message: "Describe a verifiable result." }],
       alignmentQuestion: "What external result should change?",
       warning: null,
     } as never);
-    renderDialog();
+    const container = renderDialog();
 
-    await waitUntil(() => expect(button("Save draft for alignment")?.disabled).toBe(false));
+    await waitUntil(() => {
+      expect(button("Save draft")?.disabled).toBe(false);
+      expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe(agent.name);
+    });
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
     change(field("Target time"), "2026-08-25T14:30");
-    await waitUntil(() => expect(button("Save draft for alignment")?.disabled).toBe(false));
-    act(() => button("Save draft for alignment")?.click());
+    await waitUntil(() => {
+      expect(button("Save draft")?.disabled).toBe(false);
+      expect(vi.mocked(goalsApi.previewStart)).toHaveBeenLastCalledWith("org-1", expect.objectContaining({ ownerAgentId: "agent-2" }));
+    });
+    act(() => button("Save draft")?.click());
 
     await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("draft-1", expect.objectContaining({
       ownerAgentId: "agent-2",

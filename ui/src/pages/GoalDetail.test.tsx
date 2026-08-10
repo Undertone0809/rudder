@@ -351,17 +351,13 @@ describe("GoalDetail", () => {
     const text = container.textContent ?? "";
     const orderedSections = [
       "Outcome",
-      "Current progress",
-      "Needs your attention",
-      "Next step",
+      "Work",
+      "Action needed",
       "Progress and feedback",
-      "Goal details and related work",
     ];
-    if (text.includes("Agent is doing")) {
-      orderedSections.splice(3, 0, "Agent is doing");
-    }
+    const headingLabels = Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent?.trim());
     for (let index = 1; index < orderedSections.length; index += 1) {
-      expect(text.indexOf(orderedSections[index - 1]!)).toBeLessThan(text.indexOf(orderedSections[index]!));
+      expect(headingLabels.indexOf(orderedSections[index - 1]!)).toBeLessThan(headingLabels.indexOf(orderedSections[index]!));
     }
     for (const hiddenField of [
       "Contract activation",
@@ -524,6 +520,102 @@ describe("GoalDetail", () => {
     await waitUntil(() => expect(container.textContent).toContain("verified evidence"));
     expect(button(container, "Rename")).toBeNull();
     expect(container.querySelector("strong")?.textContent).toBe("verified evidence");
+  });
+
+  it("keeps a Draft focused on its start blocker instead of repeating empty lifecycle sections", async () => {
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      goal: {
+        ...goal,
+        title: "Explore pricing options",
+        lifecycle: "draft",
+        status: "planned",
+        outcomeStatement: null,
+        criteria: [],
+        focus: false,
+      },
+      facet: "needs_your_attention",
+      currentGoal: { summary: "Explore pricing options" },
+      currentProgress: { summary: "No evidence-backed progress has been recorded yet.", sourceActivityId: null, evidence: [] },
+      attention: {
+        kind: "alignment_question",
+        reason: "What observable result or decision should this Goal produce, and how will we know it worked?",
+        sourceId: "goal-1",
+      },
+      agentAction: null,
+      nextStep: null,
+      timeline: [],
+      changeProposals: [],
+      resultProposals: [],
+    } as never);
+
+    const container = renderPage();
+    await waitUntil(() => expect(button(container, "Continue Goal")).not.toBeNull());
+    expect(container.textContent).toContain("Before work starts");
+    expect(container.textContent).toContain("Owner");
+    expect(container.textContent).not.toContain("Needs your attention");
+    expect(container.textContent).not.toContain("Current progress");
+    expect(container.textContent).not.toContain("Agent is doing");
+    expect(container.textContent).not.toContain("Progress and feedback");
+    expect(container.textContent).not.toContain("No progress or feedback yet.");
+    expect(button(container, "Rename")).toBeNull();
+  });
+
+  it("edits a Draft title in place with explicit keyboard save and cancel", async () => {
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      goal: { ...goal, lifecycle: "draft", status: "planned", focus: false },
+      facet: "waiting_focus",
+      attention: null,
+      changeProposals: [],
+      resultProposals: [],
+    } as never);
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Edit Goal title"]')).not.toBeNull());
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Edit Goal title"]')?.click());
+    const cancelledInput = container.querySelector<HTMLInputElement>('[aria-label="Goal title"]')!;
+    change(cancelledInput, "Cancelled title");
+    act(() => cancelledInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector('[aria-label="Goal title"]')).toBeNull();
+    expect(goalsApi.update).not.toHaveBeenCalled();
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Edit Goal title"]')?.click());
+    const savedInput = container.querySelector<HTMLInputElement>('[aria-label="Goal title"]')!;
+    change(savedInput, "Ship the refined Goal Workspace");
+    act(() => savedInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("goal-1", { title: "Ship the refined Goal Workspace" }));
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal title"]')).toBeNull());
+  });
+
+  it("keeps an invalid or failed Draft title editable with inline recovery", async () => {
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      goal: { ...goal, lifecycle: "draft", status: "planned", focus: false },
+      facet: "waiting_focus",
+      attention: null,
+      changeProposals: [],
+      resultProposals: [],
+    } as never);
+    vi.mocked(goalsApi.update)
+      .mockRejectedValueOnce(new Error("Title save interrupted"))
+      .mockResolvedValue(goal as never);
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Edit Goal title"]')).not.toBeNull());
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Edit Goal title"]')?.click());
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Goal title"]')!;
+    change(input, "   ");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Save Goal title"]')?.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("cannot be empty");
+    expect(goalsApi.update).not.toHaveBeenCalled();
+
+    change(input, "A title that survives retry");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Save Goal title"]')?.click());
+    await waitUntil(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("Title save interrupted"));
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Goal title"]')?.value).toBe("A title that survives retry");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Save Goal title"]')?.click());
+    await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledTimes(2));
   });
 
   it("keeps keyboard focus on the focus control after toggling", async () => {
@@ -804,7 +896,7 @@ describe("GoalDetail", () => {
       decision: "approve",
       note: undefined,
     }));
-    await waitUntil(() => expect(document.activeElement?.textContent).toContain("Needs your attention"));
+    await waitUntil(() => expect(document.activeElement?.textContent).toContain("Action needed"));
 
     const resultBlock = container.querySelector<HTMLElement>('[aria-label="Goal result proposal"]')!;
     const reject = button(resultBlock, "Result is not sufficient")!;
@@ -881,7 +973,7 @@ describe("GoalDetail", () => {
     await waitUntil(() => expect(goalsApi.getWorkspace).toHaveBeenCalledTimes(2));
     expect(container.querySelector('[aria-label="Goal result proposal"]')).not.toBeNull();
     const attentionHeading = Array.from(container.querySelectorAll("h2"))
-      .find((heading) => heading.textContent === "Needs your attention");
+      .find((heading) => heading.textContent === "Action needed");
     expect(document.activeElement).not.toBe(attentionHeading);
 
     await act(async () => {

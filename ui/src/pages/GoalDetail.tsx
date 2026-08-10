@@ -27,7 +27,6 @@ import {
   Sparkles,
   Target,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type Ref } from "react";
@@ -814,13 +813,14 @@ export function GoalDetail() {
   const location = useLocation();
   const debugMode = new URLSearchParams(location.search).get("goalDebug") === "1";
   const { organizations, selectedOrganizationId } = useOrganization();
-  const { confirm, openNewGoal, promptText } = useDialog();
+  const { confirm, openNewGoal } = useDialog();
   const { closePanel } = usePanel();
   const { pushToast } = useToast();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const feedbackRef = useRef<HTMLTextAreaElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const feedbackFileRef = useRef<HTMLInputElement>(null);
   const focusButtonRef = useRef<HTMLButtonElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -840,6 +840,9 @@ export function GoalDetail() {
   const [historyPages, setHistoryPages] = useState<unknown[][]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null | undefined>(undefined);
   const [historyFocusKey, setHistoryFocusKey] = useState<string | null>(null);
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [titleError, setTitleError] = useState<string | null>(null);
 
   const workspaceQuery = useQuery({
     queryKey: ["goals", "detail", goalId, "workspace"],
@@ -905,6 +908,17 @@ export function GoalDetail() {
     },
     onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
   });
+
+  useEffect(() => {
+    if (!goal) return;
+    setTitleDraft(goal.title);
+    setTitleEditing(false);
+    setTitleError(null);
+  }, [goal?.id]);
+
+  useEffect(() => {
+    if (titleEditing) titleInputRef.current?.focus();
+  }, [titleEditing]);
   const setFocus = useMutation({
     mutationFn: (focus: boolean) => goalsApi.setFocus(goalId!, focus),
     onMutate: (focus) => {
@@ -1196,10 +1210,38 @@ export function GoalDetail() {
   const pendingChanges = changeProposals.filter((proposal) => proposal.status === "pending");
   const hasAttention = Boolean(workspace.attention || readyProposals.length > 0 || pendingChanges.length > 0);
   const evaluationOutcome = readString(asRecord(goal.evaluationResult), "outcome");
+  const showHeaderFacet = !["needs_attention", "needs_your_attention"].includes(workspace.facet);
 
-  const rename = async () => {
-    const title = await promptText({ title: "Rename Goal", label: "Title", defaultValue: goal.title, confirmLabel: "Save" });
-    if (title?.trim() && title.trim() !== goal.title) updateGoal.mutate({ title: title.trim() });
+  const beginTitleEdit = () => {
+    setTitleDraft(goal.title);
+    setTitleError(null);
+    setTitleEditing(true);
+  };
+  const cancelTitleEdit = () => {
+    setTitleDraft(goal.title);
+    setTitleError(null);
+    setTitleEditing(false);
+  };
+  const saveTitle = async () => {
+    const title = titleDraft.trim();
+    if (!title) {
+      setTitleError("Goal title cannot be empty.");
+      titleInputRef.current?.focus();
+      return;
+    }
+    if (title === goal.title) {
+      cancelTitleEdit();
+      return;
+    }
+    setTitleError(null);
+    try {
+      await updateGoal.mutateAsync({ title });
+      setTitleDraft(title);
+      setTitleEditing(false);
+    } catch (error) {
+      setTitleError(error instanceof Error ? error.message : "Goal title could not be saved.");
+      requestAnimationFrame(() => titleInputRef.current?.focus());
+    }
   };
   const remove = async () => {
     const dependencies = dependenciesQuery.data;
@@ -1262,51 +1304,117 @@ export function GoalDetail() {
   };
 
   return (
-    <div data-testid="goal-detail-workspace" className="min-w-0 space-y-5 overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
-      <header className="min-w-0 space-y-3">
+    <div data-testid="goal-detail-workspace" className="mx-auto min-w-0 max-w-6xl overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
+      <header className="min-w-0 space-y-3 pb-5">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <StatusBadge status={lifecycle} />
-            <span className="text-xs text-muted-foreground">{facetLabel(workspace.facet)}</span>
+            {showHeaderFacet ? <span className="text-xs text-muted-foreground">{facetLabel(workspace.facet)}</span> : null}
             {goal.focus ? <span className="text-xs font-medium text-[color:var(--accent-base)]">Focus Goal</span> : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {isDraft ? <Button size="sm" variant="outline" onClick={rename}><Pencil className="mr-1.5 h-3.5 w-3.5" />Rename</Button> : null}
-            {isDraft ? <Button size="sm" onClick={continueAlignment}><Target className="mr-1.5 h-3.5 w-3.5" />Continue alignment</Button> : null}
-            {isDraft ? <Button size="sm" variant="outline" onClick={remove} disabled={deleteGoal.isPending}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete</Button> : null}
+            {isDraft ? <Button size="sm" onClick={continueAlignment}><Target className="mr-1.5 h-3.5 w-3.5" />Continue Goal</Button> : null}
             {isActive ? <Button ref={focusButtonRef} size="sm" variant={goal.focus ? "outline" : "default"} onClick={() => setFocus.mutate(!goal.focus)} disabled={setFocus.isPending}><Focus className="mr-1.5 h-3.5 w-3.5" />{goal.focus ? "Unfocus" : "Set focus"}</Button> : null}
           </div>
         </div>
-        {!isDraft ? (
-          <>
-            <h1 className="min-w-0 whitespace-normal break-words text-2xl font-semibold">{goal.title}</h1>
-            {goal.description ? (
-              <MarkdownBody className="min-w-0 break-words text-sm text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                {goal.description}
-              </MarkdownBody>
-            ) : null}
-          </>
+        {isDraft && titleEditing ? (
+          <div className="min-w-0 space-y-2" data-testid="goal-title-editor" data-detail-escape-layer="true">
+            <div className="flex min-w-0 items-start gap-2">
+              <input
+                ref={titleInputRef}
+                aria-label="Goal title"
+                value={titleDraft}
+                onChange={(event) => {
+                  setTitleDraft(event.target.value);
+                  setTitleError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void saveTitle();
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cancelTitleEdit();
+                  }
+                }}
+                disabled={updateGoal.isPending}
+                className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-xl font-semibold outline-none focus:border-ring"
+              />
+              <Button type="button" size="icon-sm" aria-label="Save Goal title" title="Save title" onClick={() => void saveTitle()} disabled={updateGoal.isPending}>
+                {updateGoal.isPending ? <Clock3 className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+              </Button>
+              <Button type="button" size="icon-sm" variant="outline" aria-label="Cancel Goal title edit" title="Cancel" onClick={cancelTitleEdit} disabled={updateGoal.isPending}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            {titleError ? <p role="alert" className="text-sm text-destructive">{titleError}</p> : null}
+          </div>
         ) : (
-          <>
-            <InlineEditor value={goal.title} onSave={(title) => updateGoal.mutate({ title })} as="h1" className="min-w-0 whitespace-normal break-words text-2xl font-semibold" />
-            <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
-          </>
+          <div className="flex min-w-0 items-start gap-2">
+            <h1 className="min-w-0 flex-1 whitespace-normal break-words text-2xl font-semibold">{goal.title}</h1>
+            {isDraft ? (
+              <Button type="button" size="icon-sm" variant="ghost" aria-label="Edit Goal title" title="Edit title" onClick={beginTitleEdit}>
+                <Pencil className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
         )}
+        {isDraft ? (
+          <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
+        ) : goal.description ? (
+          <MarkdownBody className="min-w-0 break-words text-sm text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            {goal.description}
+          </MarkdownBody>
+        ) : null}
       </header>
 
-      <Section title="Outcome" icon={Target} headingRef={outcomeHeadingRef}>
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{currentGoalSummary}</p>
-        {currentGoalRecord.updatedFromEvidence === true ? <p className="text-xs text-muted-foreground">Updated from evidence and feedback</p> : null}
-      </Section>
+      <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_16rem] md:items-start">
+        <main className="order-2 min-w-0 space-y-5 md:order-1">
+          {isDraft ? (
+            <Section title="Before work starts" icon={Target} headingRef={outcomeHeadingRef}>
+              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">
+                {workspace.attention?.reason ?? "Clarify the result and confirm an Owner Agent before starting this Goal."}
+              </p>
+              <p className="text-xs text-muted-foreground">Next step: continue this Goal, complete the visible requirements, then confirm the start preview.</p>
+            </Section>
+          ) : (
+            <>
+              <Section title="Outcome" icon={Target} headingRef={outcomeHeadingRef}>
+                <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{currentGoalSummary}</p>
+                {currentGoalRecord.updatedFromEvidence === true ? <p className="text-xs text-muted-foreground">Updated from evidence and feedback</p> : null}
+              </Section>
+              <Section title="Work" icon={Sparkles}>
+                  <div className="divide-y divide-border border-y border-border">
+                    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                      <div className="text-xs font-medium text-muted-foreground">Current progress</div>
+                      <div className="min-w-0">
+                        <p className="whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
+                        {workspace.currentProgress.uncertainty ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
+                        <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
+                      </div>
+                    </div>
+                    {!isClosed && workspace.agentAction ? (
+                      <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                        <div className="text-xs font-medium text-muted-foreground">{agentActionHeading}</div>
+                        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
+                      </div>
+                    ) : null}
+                    {!isClosed ? <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                      <div className="text-xs font-medium text-muted-foreground">Next step</div>
+                      <div className="min-w-0">
+                        <p className="whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
+                        {wakeCondition ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
+                      </div>
+                    </div> : null}
+                  </div>
+                </Section>
+            </>
+          )}
 
-      <Section title="Current progress" icon={Sparkles}>
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
-        {workspace.currentProgress.uncertainty ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
-        <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
-      </Section>
-
-      {!isClosed && hasAttention ? (
-        <Section title="Needs your attention" icon={ShieldCheck} headingRef={attentionHeadingRef}>
+      {!isClosed && !isDraft && hasAttention ? (
+        <Section title="Action needed" icon={ShieldCheck} headingRef={attentionHeadingRef}>
           {workspace.attention ? (
             <div className="min-w-0 border-l-2 border-amber-500/50 pl-3">
               <div className="text-xs font-medium text-muted-foreground">{attentionKindLabel(workspace.attention.kind)}</div>
@@ -1449,23 +1557,7 @@ export function GoalDetail() {
         </Section>
       ) : null}
 
-      {!isClosed ? (
-        <>
-          {readyProposals.length === 0 && pendingChanges.length === 0 ? (
-            <Section title={agentActionHeading} icon={UserRound}>
-              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
-              <p className="min-w-0 break-words text-xs text-muted-foreground">Owner: {owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</p>
-            </Section>
-          ) : null}
-
-          <Section title="Next step" icon={ArrowRight}>
-            <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
-            {wakeCondition ? <p className="min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
-          </Section>
-        </>
-      ) : null}
-
-      <Section title={isClosed ? "History" : "Progress and feedback"} icon={History}>
+      {!isDraft || timeline.length > 0 || historyCursor ? <Section title={isClosed ? "History" : "Progress and feedback"} icon={History}>
         <div className="divide-y divide-border border-y border-border">
           {timeline.length === 0 && !(isActive && pendingFeedback) ? <p className="py-3 text-sm text-muted-foreground">No progress or feedback yet.</p> : null}
           {timeline.map((entry) => {
@@ -1623,22 +1715,55 @@ export function GoalDetail() {
             </Button>
           </div>
         </div> : null}
-      </Section>
+      </Section> : null}
 
-      <Section title="Goal details and related work" icon={Clock3}>
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-          <div className="min-w-0"><div className="text-xs text-muted-foreground">Owner</div><div className="mt-1 min-w-0 break-words text-sm">{owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</div></div>
-          <div className="min-w-0"><div className="text-xs text-muted-foreground">Target time</div><div className="mt-1 min-w-0 break-words text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</div></div>
-        </div>
-        {goal.criteria && goal.criteria.length > 0 ? (
-          <div className="space-y-2 border-y border-border py-3">
-            <div className="text-xs font-medium text-muted-foreground">How we will know it worked</div>
-            {goal.criteria.map((criterion) => <div key={criterion.id} className="min-w-0 py-2 text-sm"><span className="whitespace-pre-wrap break-words">{criterion.label}</span></div>)}
-          </div>
-        ) : null}
-        <WorkLinks projects={linkedProjects} issues={linkedIssues} />
-        {isDraft && dependenciesQuery.data ? <DeletionBlockers dependencies={dependenciesQuery.data} /> : null}
-      </Section>
+        </main>
+
+        <aside className="contents md:order-2 md:block md:min-w-0 md:space-y-4 md:sticky md:top-4" aria-label="Goal properties">
+          <section className="order-1 min-w-0 rounded-md border border-border bg-background/80 p-3">
+            <h2 className="text-xs font-medium text-muted-foreground">Details</h2>
+            <dl className="mt-3 divide-y divide-border">
+              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2 first:pt-0">
+                <dt className="text-xs text-muted-foreground">Status</dt>
+                <dd className="min-w-0 break-words text-right text-sm capitalize">{lifecycle}</dd>
+              </div>
+              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2">
+                <dt className="text-xs text-muted-foreground">Owner</dt>
+                <dd className="min-w-0 break-words text-right text-sm">{owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</dd>
+              </div>
+              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2 last:pb-0">
+                <dt className="text-xs text-muted-foreground">Target</dt>
+                <dd className="min-w-0 break-words text-right text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          {goal.criteria && goal.criteria.length > 0 ? (
+            <section className="order-3 min-w-0 rounded-md border border-border bg-background/80 p-3">
+              <h2 className="text-xs font-medium text-muted-foreground">How we will know it worked</h2>
+              <div className="mt-2 divide-y divide-border">
+                {goal.criteria.map((criterion) => <p key={criterion.id} className="min-w-0 whitespace-pre-wrap break-words py-2 text-sm">{criterion.label}</p>)}
+              </div>
+            </section>
+          ) : null}
+
+          {(linkedProjects.length > 0 || linkedIssues.length > 0) ? (
+            <section className="order-3 min-w-0 rounded-md border border-border bg-background/80 p-3">
+              <h2 className="mb-2 text-xs font-medium text-muted-foreground">Related work</h2>
+              <WorkLinks projects={linkedProjects} issues={linkedIssues} />
+            </section>
+          ) : null}
+
+          {isDraft ? (
+            <section className="order-3 min-w-0 space-y-3 rounded-md border border-border bg-background/80 p-3">
+              {dependenciesQuery.data ? <DeletionBlockers dependencies={dependenciesQuery.data} /> : null}
+              <Button type="button" size="sm" variant="outline" className="w-full justify-start text-destructive" onClick={remove} disabled={deleteGoal.isPending}>
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />{deleteGoal.isPending ? "Deleting..." : "Delete Goal"}
+              </Button>
+            </section>
+          ) : null}
+        </aside>
+      </div>
 
       {debugMode ? (
         <Section title="Goal diagnostics" icon={ShieldCheck}>

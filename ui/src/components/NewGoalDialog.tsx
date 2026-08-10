@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { useNavigate } from "@/lib/router";
 import type { GoalStartPreview } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Loader2, Target, X } from "lucide-react";
+import { Calendar, Check, Circle, Loader2, Target, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
@@ -22,6 +22,8 @@ type PreviewInput = {
   ownerAgentId: string | null;
   targetTime: string | null;
 };
+
+type GoalDialogAction = "save-draft" | "start";
 
 const EMPTY_NEW_GOAL_DEFAULTS: NewGoalDefaults = {};
 
@@ -147,10 +149,13 @@ export function NewGoalDialog() {
   };
 
   const createGoal = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (action: GoalDialogAction) => {
       if (!selectedOrganizationId) throw new Error("Select an organization before creating a Goal.");
-      if (!previewIsCurrent) throw new Error("Goal details changed. Wait for the latest preview before continuing.");
-      if (preview && canStart && preview.packet && preview.packetHash) {
+      if (action === "start") {
+        if (!previewIsCurrent) throw new Error("Goal details changed. Wait for the latest preview before continuing.");
+        if (!preview || !canStart || !preview.packet || !preview.packetHash) {
+          throw new Error("Complete the start requirements before starting this Goal.");
+        }
         return goalsApi.start(selectedOrganizationId, {
           requestKey: requestKeyFor(preview),
           packetHash: preview.packetHash,
@@ -188,20 +193,28 @@ export function NewGoalDialog() {
     },
   });
 
-  const actionLabel = previewCanStart
-    ? createGoal.error
-      ? preview?.warning ? "Retry start with selected Agent" : "Retry create and start"
-      : preview?.warning ? "Start with selected Agent" : "Create and start"
-    : "Save draft for alignment";
-  const pendingLabel = previewCanStart ? "Starting..." : "Saving...";
-  const actionDisabled =
+  const startDisabled =
     !goal.trim()
     || !previewIsCurrent
+    || !canStart
     || previewQuery.isFetching
     || agentsQuery.isPending
     || agentsQuery.isError
     || (!preview && !previewQuery.error)
     || createGoal.isPending;
+  const saveDisabled =
+    !goal.trim()
+    || createGoal.isPending
+    || previewQuery.isFetching
+    || (!previewIsCurrent && !previewQuery.error)
+    || (!preview && !previewQuery.error);
+  const previewBlockers = preview?.blockers ?? [];
+  const outcomeReady = Boolean(
+    canStart
+    || previewBlockers.every((blocker) => blocker.code !== "outcome_required"),
+  );
+  const ownerReady = Boolean(currentOwner && previewBlockers.every((blocker) => blocker.code !== "owner_required"));
+  const unresolvedCount = Number(!outcomeReady) + Number(!ownerReady);
 
   return (
     <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
@@ -211,7 +224,7 @@ export function NewGoalDialog() {
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
-            if (!actionDisabled) createGoal.mutate();
+            if (!startDisabled) createGoal.mutate("start");
           }
         }}
       >
@@ -222,7 +235,9 @@ export function NewGoalDialog() {
             </span>
             <span aria-hidden="true">/</span>
             <div className="min-w-0">
-              <DialogTitle className="truncate text-sm font-medium text-foreground">New Goal</DialogTitle>
+              <DialogTitle className="truncate text-sm font-medium text-foreground">
+                {newGoalDefaults.draftId ? "Continue Goal" : "New Goal"}
+              </DialogTitle>
               <DialogDescription className="sr-only">
                 Describe the outcome you want and choose the Agent who should advance it.
               </DialogDescription>
@@ -340,6 +355,10 @@ export function NewGoalDialog() {
                   </div>
                 ) : preview?.review ? (
                   <div>
+                    <div className="flex items-center gap-2 border-b border-border/60 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                      <Check className="h-4 w-4" />
+                      Ready to start
+                    </div>
                     {preview.warning ? (
                       <div role="alert" className="border-b border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm leading-5 text-foreground">
                         {preview.warning}
@@ -351,13 +370,41 @@ export function NewGoalDialog() {
                     <PreviewRow label="Boundary" value={preview.review.boundary} />
                     <PreviewRow label="First action" value={preview.review.firstAction} />
                   </div>
-                ) : preview?.alignmentQuestion ? (
-                  <div className="flex min-w-0 gap-3 py-3">
-                    <Target className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-muted-foreground">Needs alignment</div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm">{preview.alignmentQuestion}</p>
+                ) : preview ? (
+                  <div className="py-3">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Target className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      Complete before starting
                     </div>
+                    <div className="mt-2 divide-y divide-border/60 border-y border-border/60">
+                      <div className="flex min-w-0 items-start gap-2 py-2.5 text-sm">
+                        {outcomeReady
+                          ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+                          : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
+                          <div className="font-medium">Verifiable result</div>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                            {previewBlockers.find((blocker) => blocker.code === "outcome_required")?.message
+                              ?? "The Goal describes a result or decision that can be reviewed."}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex min-w-0 items-start gap-2 py-2.5 text-sm">
+                        {ownerReady
+                          ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+                          : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
+                          <div className="font-medium">Owner Agent</div>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                            {previewBlockers.find((blocker) => blocker.code === "owner_required")?.message
+                              ?? (currentOwner ? `${currentOwner.name} will own and start this Goal.` : "Select an available Agent to own and start this Goal.")}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    {preview.alignmentQuestion ? (
+                      <p className="mt-2 text-xs leading-5 text-muted-foreground">Next: {preview.alignmentQuestion}</p>
+                    ) : null}
                   </div>
                 ) : null}
               </section>
@@ -393,14 +440,26 @@ export function NewGoalDialog() {
                 </Button>
               </div>
             ) : null}
-            {createGoal.error ? <p role="alert" className="text-sm text-destructive">Unable to start this Goal right now. Try again.</p> : null}
+            {createGoal.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {createGoal.variables === "save-draft" ? "Unable to save this draft right now. Try again." : "Unable to start this Goal right now. Try again."}
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex items-center justify-end border-t border-border px-4 py-2.5">
-          <Button type="button" size="sm" disabled={actionDisabled} onClick={() => createGoal.mutate()}>
-            {createGoal.isPending ? pendingLabel : actionLabel}
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <span className="text-xs text-muted-foreground">
+            {goal.trim() && unresolvedCount > 0 ? `${unresolvedCount} ${unresolvedCount === 1 ? "requirement" : "requirements"} left to start` : ""}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={saveDisabled} onClick={() => createGoal.mutate("save-draft")}>
+              {createGoal.isPending && createGoal.variables === "save-draft" ? "Saving..." : "Save draft"}
+            </Button>
+            <Button type="button" size="sm" disabled={startDisabled} onClick={() => createGoal.mutate("start")}>
+              {createGoal.isPending && createGoal.variables === "start" ? "Starting..." : "Start Goal"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

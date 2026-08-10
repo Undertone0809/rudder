@@ -188,6 +188,22 @@ describe("BreadcrumbBar", () => {
     expect(html).not.toContain("<h1");
   });
 
+  it("uses goal detail breadcrumbs in the primary rail header", () => {
+    pathname = "/RUD/goals/goal-1";
+    mockBreadcrumbs = [
+      { label: "Goals", href: "/goals" },
+      { label: "Reach 1,000 GitHub stars by August 31" },
+    ];
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain('href="/goals"');
+    expect(html).toContain("Reach 1,000 GitHub stars by August 31");
+    expect(html).toContain("primary-detail-breadcrumb");
+    expect(html).toContain("list-none");
+    expect(html).not.toContain("<h1");
+  });
+
   it("keeps issue detail source state on ancestor breadcrumb links", () => {
     pathname = "/RUD/issues/RUD-197";
     locationState = { issueDetailBreadcrumb: { label: "Inbox", href: "/inbox?scope=recent" } };

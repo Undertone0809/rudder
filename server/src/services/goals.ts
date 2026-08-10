@@ -835,6 +835,11 @@ export function compileGoalStartPreview(
       packetHash: null,
       packet: null,
       review: null,
+      blockers: [{
+        code: "outcome_required",
+        field: "goal",
+        message: "Describe the result or decision someone should be able to verify. Include what changes and, when useful, a measure or deadline.",
+      }],
       alignmentQuestion: "What observable result or decision should this Goal produce, and how will we know it worked?",
       warning: null,
     };
@@ -845,6 +850,11 @@ export function compileGoalStartPreview(
       packetHash: null,
       packet: null,
       review: null,
+      blockers: [{
+        code: "owner_required",
+        field: "ownerAgentId",
+        message: "Select an available Agent from this organization to own and start the Goal.",
+      }],
       alignmentQuestion: "Which available same-organization Agent should own and advance this Goal?",
       warning: null,
     };
@@ -918,6 +928,7 @@ export function compileGoalStartPreview(
       ownerAgentId: owner.id,
       targetTime: input.targetTime,
     },
+    blockers: [],
     alignmentQuestion: null,
     warning,
   };

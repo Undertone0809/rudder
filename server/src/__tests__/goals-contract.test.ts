@@ -335,7 +335,27 @@ describe("Goal contract", () => {
 
     expect(preview.valid).toBe(false);
     expect(preview.packet).toBeNull();
+    expect(preview.blockers).toEqual([expect.objectContaining({
+      code: "outcome_required",
+      field: "goal",
+    })]);
     expect(preview.alignmentQuestion).toMatch(/observable result or decision/i);
+  });
+
+  it("returns an actionable Owner blocker from the same start decision", () => {
+    const preview = compileGoalStartPreview(previewGoalStartSchema.parse({
+      title: "Publish a verified Goal Workspace release candidate",
+      context: null,
+      ownerAgentId: null,
+      targetTime: null,
+    }), null);
+
+    expect(preview.valid).toBe(false);
+    expect(preview.blockers).toEqual([expect.objectContaining({
+      code: "owner_required",
+      field: "ownerAgentId",
+    })]);
+    expect(preview.alignmentQuestion).toMatch(/which available/i);
   });
 
   it("uses context in the success criterion and infers objective modes", () => {
@@ -370,6 +390,7 @@ describe("Goal contract", () => {
     }), makePreviewOwner());
 
     expect(preview.valid).toBe(true);
+    expect(preview.blockers).toEqual([]);
     expect(preview.packet?.activation.outcomeStatement).toBe("Customers renew without manual support");
     expect(preview.packet?.activation.initialContinuation.summary).toBe(preview.review?.firstAction);
   });
