@@ -655,7 +655,7 @@ describe("IssueProperties", () => {
     });
   });
 
-  it("shows the runtime selector only for the selected Agent row", () => {
+  it("shows the runtime selector beside Assignee without putting it in the picker", () => {
     mockAgents.current = [
       {
         id: "agent-1",
@@ -691,6 +691,11 @@ describe("IssueProperties", () => {
     act(() => {
       root.render(<IssueProperties issue={baseIssue} onUpdate={vi.fn()} inline />);
     });
+
+    const selector = container.querySelector('[data-testid="issue-runtime-selector"]');
+    expect(selector).toBeTruthy();
+    expect(selector?.closest('[data-slot="issue-property-row"]')?.textContent).toContain(longAgentName);
+
     act(() => {
       Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
         .find((button) => button.textContent?.includes(longAgentName))
@@ -699,8 +704,11 @@ describe("IssueProperties", () => {
 
     expect(container.querySelectorAll('[data-testid="issue-runtime-selector"]')).toHaveLength(1);
     expect(container.textContent).toContain("Unselected Agent");
-    const selectedRow = container.querySelector('[data-testid="issue-runtime-selector"]')?.closest("div");
-    expect(selectedRow?.textContent).toContain(longAgentName);
+    expect(
+      container
+        .querySelector('[data-testid="issue-properties-assignee-scroll"]')
+        ?.querySelector('[data-testid="issue-runtime-selector"]'),
+    ).toBeNull();
   });
 
   it("persists a selected model while preserving unrelated issue runtime override fields", () => {
@@ -727,11 +735,6 @@ describe("IssueProperties", () => {
           inline
         />,
       );
-    });
-    act(() => {
-      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-        .find((button) => button.textContent?.includes(longAgentName))
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     act(() => {
       container.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-selector"]')

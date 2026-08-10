@@ -24,7 +24,7 @@ export function supportsIssueRuntimeOverrides(agent: Agent | null | undefined): 
   return Boolean(agent && ISSUE_OVERRIDE_RUNTIME_TYPES.has(agent.agentRuntimeType));
 }
 
-type SelectorVariant = "compact" | "menu";
+type SelectorVariant = "compact" | "icon" | "menu";
 
 type EffortOption = {
   id: string | null;
@@ -589,15 +589,21 @@ export function IssueRuntimeSelector({
           data-testid="issue-runtime-selector"
           aria-label={`Run profile for ${agent.name}`}
           className={cn(
-            "inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground",
+            variant === "icon"
+              ? "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-100 transition-[color,background-color,opacity] hover:bg-accent/70 hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover/issue-property:pointer-events-auto md:group-hover/issue-property:opacity-100 md:group-focus-within/issue-property:pointer-events-auto md:group-focus-within/issue-property:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
+              : "inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground",
             disabled && "cursor-not-allowed opacity-60",
           )}
           disabled={disabled}
           title={summary}
         >
           <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 truncate">{summary}</span>
-          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {variant === "compact" ? (
+            <>
+              <span className="min-w-0 truncate">{summary}</span>
+              <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+            </>
+          ) : null}
         </button>
       </PopoverTrigger>
       <PopoverContent
