@@ -207,6 +207,7 @@ export const queryKeys = {
     profileSettings: ["instance", "profile-settings"] as const,
     shortcutSettings: ["instance", "shortcut-settings"] as const,
     generalSettings: ["instance", "general-settings"] as const,
+    productAnalyticsSettings: ["instance", "product-analytics"] as const,
     notificationSettings: ["instance", "notification-settings"] as const,
     schedulerHeartbeats: ["instance", "scheduler-heartbeats"] as const,
   },

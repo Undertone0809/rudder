@@ -48,9 +48,6 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
   });
 
   it("falls back to the default page for unknown paths", () => {
-    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/privacy")).toBe(
-      DEFAULT_INSTANCE_SETTINGS_PATH,
-    );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/nope")).toBe(
       DEFAULT_INSTANCE_SETTINGS_PATH,
     );
@@ -117,7 +114,6 @@ describe("normalizeRememberedSettingsPath", () => {
   });
 
   it("defaults to organization settings for unknown paths", () => {
-    expect(normalizeRememberedSettingsPath("/instance/settings/privacy")).toBe(DEFAULT_SETTINGS_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/nope")).toBe(DEFAULT_SETTINGS_PATH);
     expect(normalizeRememberedSettingsPath(null)).toBe(DEFAULT_SETTINGS_PATH);
   });

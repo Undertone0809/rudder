@@ -806,7 +806,7 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: "Save" })).toBeVisible();
   });
 
-  test("keeps profile and account controls under one concise Personal destination", async ({ page }) => {
+  test("combines profile and account settings under one Personal destination", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Combined Profile Account ${Date.now()}`,
@@ -825,7 +825,6 @@ test.describe("Settings sidebar", () => {
 
     await expect(profileLink).toHaveText("Profile");
     await expect(sidebar.locator('a[href$="/instance/settings/account"]')).toHaveCount(0);
-    await expect(sidebar.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
     await profileLink.click();
 
     await expect(modal.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible();

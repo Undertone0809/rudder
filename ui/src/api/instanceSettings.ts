@@ -14,6 +14,21 @@ import type {
 } from "@rudderhq/shared";
 import { api } from "./client";
 
+export type ProductAnalyticsSettings = {
+  mode: "off" | "anonymous" | "account_linked";
+  consentVersion: string;
+  consentEpoch: number;
+  maskedInstallationId: string | null;
+  pendingCount: number;
+  lastAttemptedAt: string | null;
+  lastSucceededAt: string | null;
+  lastErrorCode: string | null;
+  coverageGap: boolean;
+  lastPayloadAt: string | null;
+  lastPayload: Array<Record<string, unknown>> | null;
+  disclosure: { collected: string[]; excluded: string[] };
+};
+
 export const instanceSettingsApi = {
   getBrowser: () =>
     api.get<InstanceBrowserSettings>("/instance/settings/browser"),
@@ -31,6 +46,10 @@ export const instanceSettingsApi = {
     api.get<InstanceGeneralSettings>("/instance/settings/general"),
   updateGeneral: (patch: PatchInstanceGeneralSettings) =>
     api.patch<InstanceGeneralSettings>("/instance/settings/general", patch),
+  getProductAnalytics: () =>
+    api.get<ProductAnalyticsSettings>("/instance/settings/product-analytics"),
+  updateProductAnalytics: (mode: ProductAnalyticsSettings["mode"]) =>
+    api.patch<{ mode: ProductAnalyticsSettings["mode"]; consentEpoch: number }>("/instance/settings/product-analytics", { mode }),
   getNotifications: () =>
     api.get<InstanceNotificationSettings>("/instance/settings/notifications"),
   updateNotifications: (patch: PatchInstanceNotificationSettings) =>

@@ -169,7 +169,6 @@ describe("SettingsSidebar Browser entry", () => {
     const container = renderSidebar();
 
     expect(container.querySelector('a[href="/instance/settings/profile"]')?.textContent).toBe("Profile");
-    expect(container.querySelector('a[href="/instance/settings/privacy"]')).toBeNull();
     expect(container.querySelector('a[href="/instance/settings/account"]')).toBeNull();
     expect(container.querySelector('a[href="/instance/settings/shortcuts"]')).not.toBeNull();
     expect(container.querySelector('a[href="/instance/settings/general"]')).toBeNull();

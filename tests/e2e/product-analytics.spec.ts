@@ -1,17 +1,30 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("product analytics privacy controls", () => {
-  test("does not expose Privacy & Telemetry in settings and retires the old route", async ({ page }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "System settings" }).click();
-    const sidebar = page.getByTestId("settings-modal-shell").getByTestId("workspace-sidebar");
-    await expect(sidebar.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
-    await expect(sidebar.getByText("Privacy & Telemetry", { exact: true })).toHaveCount(0);
-
+  test("renders Privacy & Telemetry and persists anonymous consent from the settings shell", async ({ page }) => {
+    await page.request.patch("/api/instance/settings/product-analytics", { data: { mode: "off" } });
+    const organizationResponse = await page.request.post("/api/orgs", {
+      data: { name: `Analytics Settings UI ${Date.now()}` },
+    });
+    expect(organizationResponse.ok()).toBe(true);
+    const organization = await organizationResponse.json() as { issuePrefix?: string; urlKey?: string };
+    await page.goto(`/${organization.urlKey ?? organization.issuePrefix}/dashboard`);
     await page.goto("/instance/settings/privacy");
-    await expect(page).toHaveURL(/\/instance\/settings\/general$/);
-    await expect(page.getByRole("heading", { name: "General", level: 1 })).toBeVisible();
-    await expect(page.getByTestId("product-analytics-settings")).toHaveCount(0);
+    const settings = page.getByTestId("product-analytics-settings");
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole("heading", { name: "Privacy & Telemetry", level: 1 })).toBeVisible();
+    await expect(settings).toContainText("Masked installation ID");
+    await expect(settings).toContainText("Not collected");
+
+    const anonymousToggle = settings.getByRole("switch", { name: "Enable anonymous telemetry" });
+    await expect(anonymousToggle).toBeVisible();
+    await anonymousToggle.click();
+    await expect.poll(async () => {
+      const response = await page.request.get("/api/instance/settings/product-analytics");
+      return (await response.json() as { mode?: string }).mode;
+    }).toBe("anonymous");
+    await expect(settings).toContainText("Current mode: Anonymous");
+    await page.request.patch("/api/instance/settings/product-analytics", { data: { mode: "off" } });
   });
 
   test("keeps telemetry off by default and records explicit anonymous consent", async ({ page }) => {
