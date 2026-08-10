@@ -181,27 +181,20 @@ describe("bundled rudder docs skill", () => {
 
     for (const required of [
       "doc/engineering/PLUGIN_AUTHORING_GUIDE.md",
-      "packages/plugins/sdk/README.md",
-      "create-rudder-plugin",
-      "--sdk-path",
-      ".rudder-sdk/",
-      "src/manifest.ts",
-      "src/worker.ts",
-      "src/ui/index.tsx",
-      "tests/plugin.spec.ts",
-      "trusted code",
-      "capability-gated",
-      "routePath",
-      "ctx.assets",
-      "typecheck",
-      "test",
-      "build",
+      ".codex-plugin/plugin.json",
+      "Skills",
+      "MCP",
+      ".app.json",
+      "environment references",
+      "executes nothing",
+      "Agent Skill assignment",
+      "Managed MCP setup",
+      "non-destructive uninstall",
     ]) {
       expect(contents, required).toContain(required);
     }
-    expect(contents).toMatch(/only if the user explicitly asks[\s\S]*bundled example/i);
-    expect(contents).toMatch(/explicit user request[\s\S]*scaffold|scaffold[\s\S]*explicit user request/i);
-    expect(contents).not.toMatch(/\|\s*HTTP route\s*\|/i);
+    expect(contents).toMatch(/import only when the user requested/i);
+    expect(contents).not.toContain("src/worker.ts");
   });
 
   it("hard-deletes the two retired bundled packages", async () => {

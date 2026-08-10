@@ -1961,7 +1961,8 @@ export function ChatSidePanel({
   });
   const localAppsAvailable = Boolean(
     readDesktopShell()?.localApps?.supported
-    && sitesHealthQuery.data?.features?.experimentalSitesEnabled,
+    && (sitesHealthQuery.data?.features?.experimentalPluginsEnabled
+      ?? sitesHealthQuery.data?.features?.experimentalSitesEnabled),
   );
   useEffect(() => {
     if (!contextReady

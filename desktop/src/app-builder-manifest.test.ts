@@ -44,6 +44,7 @@ describe("App Builder manifest", () => {
     ));
     const asset = JSON.parse(await readFile(assetPath, "utf8")) as unknown;
     expect(parseAppBuilderManifest(asset)).toEqual(asset);
+    expect(parseAppBuilderManifest(asset).runtime.readinessTimeoutMs).toBe(600_000);
   });
 
   it("accepts the fixed official scaffold contract", () => {

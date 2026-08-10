@@ -31,12 +31,19 @@ function stripLegacyGitIdentity(raw: unknown): unknown {
 }
 
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
+  const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
   const parsed = instanceGeneralSettingsSchema.safeParse(stripLegacyGitIdentity(raw) ?? {});
   if (parsed.success) {
+    const experimentalPluginsEnabled = typeof rawRecord.experimentalPluginsEnabled === "boolean"
+      ? rawRecord.experimentalPluginsEnabled
+      : parsed.data.experimentalSitesEnabled ?? false;
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
-      experimentalSitesEnabled: parsed.data.experimentalSitesEnabled ?? false,
+      experimentalPluginsEnabled,
+      experimentalSitesEnabled: experimentalPluginsEnabled,
       experimentalGoalsEnabled: parsed.data.experimentalGoalsEnabled ?? false,
       locale: parsed.data.locale ?? "en",
       productAnalyticsMode: parsed.data.productAnalyticsMode ?? "off",
@@ -46,6 +53,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   return {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
+    experimentalPluginsEnabled: false,
     experimentalSitesEnabled: false,
     experimentalGoalsEnabled: false,
     locale: "en",
@@ -123,10 +131,13 @@ export function instanceSettingsService(db: Db) {
   async function updateGeneralJson(patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> {
     const current = await getOrCreateRow();
     const now = new Date();
+    const compatiblePatch = patch.experimentalPluginsEnabled === undefined
+      ? patch
+      : { ...patch, experimentalSitesEnabled: patch.experimentalPluginsEnabled };
     const [updated] = await db
       .update(instanceSettings)
       .set({
-        general: sql`${instanceSettings.general} || ${JSON.stringify(patch)}::jsonb`,
+        general: sql`${instanceSettings.general} || ${JSON.stringify(compatiblePatch)}::jsonb`,
         updatedAt: now,
       })
       .where(eq(instanceSettings.id, current.id))

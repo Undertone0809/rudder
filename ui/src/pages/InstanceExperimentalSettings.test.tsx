@@ -33,12 +33,12 @@ vi.mock("@/context/I18nContext", () => ({
       "common.experimental": "Experimental",
       "experimental.title": "Experimental",
       "experimental.description": "Try early Rudder features.",
-      "experimental.sites.section": "Apps",
-      "experimental.sites.title": "Enable Apps",
-      "experimental.sites.enabledDescription": "Apps are enabled.",
-      "experimental.sites.disabledDescription": "Apps are disabled.",
-      "experimental.sites.toggle": "Enable Apps",
-      "experimental.sites.notice": "Runs Apps on this device.",
+      "experimental.sites.section": "Plugins",
+      "experimental.sites.title": "Enable Plugins",
+      "experimental.sites.enabledDescription": "Plugins are enabled.",
+      "experimental.sites.disabledDescription": "Plugins are disabled.",
+      "experimental.sites.toggle": "Enable Plugins",
+      "experimental.sites.notice": "Imports are reviewed before installation.",
       "experimental.goals.section": "Goals",
       "experimental.goals.title": "Enable Goals",
       "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",
@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe("InstanceExperimentalSettings", () => {
-  it("enables Sites from the dedicated experimental setting", async () => {
+  it("enables Plugins while preserving the Apps compatibility setting", async () => {
     const container = await renderPage();
     await act(async () => {
       await vi.waitFor(() => {
@@ -114,12 +114,13 @@ describe("InstanceExperimentalSettings", () => {
         ?.click();
       await vi.waitFor(() => {
         expect(mocks.updateGeneral).toHaveBeenCalledWith({
+          experimentalPluginsEnabled: true,
           experimentalSitesEnabled: true,
         });
       });
     });
 
-    expect(container.textContent).toContain("Enable Apps");
+    expect(container.textContent).toContain("Enable Plugins");
     expect(mocks.setBreadcrumbs).toHaveBeenCalled();
   });
 
@@ -159,6 +160,7 @@ describe("InstanceExperimentalSettings", () => {
     });
 
     expect(mocks.updateGeneral).toHaveBeenCalledWith({
+      experimentalPluginsEnabled: false,
       experimentalSitesEnabled: false,
     });
   });

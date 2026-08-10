@@ -190,15 +190,15 @@ export const en = {
   "browser.import.result.failures": "Failures",
   "experimental.title": "Experimental",
   "experimental.description": "Try early Rudder features on this device.",
-  "experimental.sites.section": "Apps",
-  "experimental.sites.title": "Enable Apps",
+  "experimental.sites.section": "Plugins",
+  "experimental.sites.title": "Enable Plugins",
   "experimental.sites.enabledDescription":
-    "Adds Apps to the Primary Rail, enables the App Builder skill, and lets this device load and run registered Apps.",
+    "Adds Plugins to the Primary Rail and enables Codex Plugin import, package-managed Skills, MCP setup, and Local Apps.",
   "experimental.sites.disabledDescription":
-    "Stops running Apps, hides the workspace, and disables new App Builder work. Existing App source and data stay on this device.",
-  "experimental.sites.toggle": "Enable Apps",
+    "Removes Plugin capabilities from new work and stops running Local Apps. Installed packages, App source, connections, and data are preserved.",
+  "experimental.sites.toggle": "Enable Plugins",
   "experimental.sites.notice":
-    "Apps are experimental. Apps run project code on this device and are reachable only from this computer unless you configure networking yourself.",
+    "Plugins are experimental. Imported packages are inspected before installation; Skills, MCP connections, and Local Apps keep their existing runtime and permission boundaries.",
   "experimental.goals.section": "Goals",
   "experimental.goals.title": "Enable Goals",
   "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",

@@ -60,16 +60,6 @@ vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: [] }),
-}));
-
-vi.mock("@/plugins/launchers", () => ({
-  PluginLauncherOutlet: () => null,
-  usePluginLaunchers: () => ({ launchers: [] }),
-}));
-
 describe("BreadcrumbBar", () => {
   beforeEach(() => {
     pathname = "/RUD/messenger/issues";

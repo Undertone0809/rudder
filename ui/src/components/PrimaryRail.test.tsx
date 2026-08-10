@@ -529,18 +529,18 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
-  it("shows Apps only after Sites is enabled", async () => {
+  it("shows Plugins only after the experiment is enabled", async () => {
     const view = await renderPrimaryRail();
     expect(Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Apps"))).toBeUndefined();
+      .find((link) => link.textContent?.includes("Plugins"))).toBeUndefined();
 
     mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pathname = "/apps";
     await view.rerender();
 
-    const appsLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Apps"));
-    expect(appsLink?.getAttribute("href")).toBe("/apps");
+    const pluginsLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Plugins"));
+    expect(pluginsLink?.getAttribute("href")).toBe("/plugins");
     expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
   });
 
@@ -603,7 +603,7 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const links = Array.from(document.querySelectorAll("a"));
-    const apps = links.find((link) => link.textContent === "Apps");
+    const apps = links.find((link) => link.textContent === "Plugins");
     const pinned = links.find((link) => link.textContent?.includes("MKT dashboard"));
     expect(apps?.hasAttribute("aria-current")).toBe(false);
     expect(pinned?.getAttribute("aria-current")).toBe("page");

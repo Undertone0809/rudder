@@ -1168,7 +1168,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         provenance: "repo",
         serverName: "rudder-tools",
-        toolCount: 70,
+        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
         version: await readRepositoryCliVersion(),
         fallbackReason: null,
       });
@@ -1564,7 +1564,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         const browser = managedConfig.mcp["rudder-browser"];
         expect(await readMcpToolNames({ command: core.command[0], args: core.command.slice(1), env: core.environment })).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
         expect(await readMcpToolNames({ command: browser.command[0], args: browser.command.slice(1), env: browser.environment })).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
-        expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 70 });
+        expect(meta.rudderMcp).toMatchObject({
+          available: true,
+          serverName: "rudder-tools",
+          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        });
         expect(meta.browserMcp).toMatchObject({
           available: true,
           serverName: "rudder-browser",
@@ -1791,7 +1795,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(meta.promptInjectedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: 70,
+          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");

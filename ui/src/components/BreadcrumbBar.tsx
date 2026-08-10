@@ -16,12 +16,10 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
-import { getOrganizationRouteKey, toOrganizationRelativePath } from "@/lib/organization-routes";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
-import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
-import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import type { Issue, IssueSearchField } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { CircleHelp, Menu, PanelLeft, Plus, Search } from "lucide-react";
@@ -29,8 +27,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useSidebar } from "../context/SidebarContext";
-
-type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 
 type BreadcrumbBarProps = {
   desktopChrome?: boolean;
@@ -42,18 +38,6 @@ function isNativeFindShortcut(event: KeyboardEvent) {
   if (event.key.toLowerCase() !== "f") return false;
   if (!event.metaKey && !event.ctrlKey) return false;
   return !event.altKey && !event.shiftKey;
-}
-
-function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
-  const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"], orgId: context.orgId });
-  const { launchers } = usePluginLaunchers({ placementZones: ["globalToolbarButton"], orgId: context.orgId, enabled: !!context.orgId });
-  if (slots.length === 0 && launchers.length === 0) return null;
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      <PluginSlotOutlet slotTypes={["globalToolbarButton"]} context={context} className="flex items-center gap-1" />
-      <PluginLauncherOutlet placementZones={["globalToolbarButton"]} context={context} className="flex items-center gap-1" />
-    </div>
-  );
 }
 
 function issueResultLabel(issue: Pick<Issue, "id" | "identifier">) {
@@ -91,7 +75,7 @@ export function BreadcrumbBar({
   const { t } = useI18n();
   const { breadcrumbs, headerActions } = useBreadcrumbs();
   const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
-  const { selectedOrganizationId, selectedOrganization } = useOrganization();
+  const { selectedOrganizationId } = useOrganization();
   const { openNewIssue, openNewProject } = useDialog();
   const location = useLocation();
   const navigate = useNavigate();
@@ -147,16 +131,7 @@ export function BreadcrumbBar({
     enabled: !!selectedOrganizationId && showIssueResultSearchMenu,
   });
 
-  const globalToolbarSlotContext = useMemo(
-    () => ({
-      orgId: selectedOrganizationId ?? null,
-      orgPrefix: selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null,
-    }),
-    [selectedOrganizationId, selectedOrganization],
-  );
-
-  const globalToolbarSlots = <GlobalToolbarPlugins context={globalToolbarSlotContext} />;
-  const trailingToolbar = headerActions || globalToolbarSlots ? (
+  const trailingToolbar = headerActions ? (
     <div
       data-testid="workspace-main-header-actions"
       className={cn(
@@ -165,7 +140,6 @@ export function BreadcrumbBar({
       )}
     >
       {headerActions ? <div className="flex shrink-0 items-center gap-2">{headerActions}</div> : null}
-      {globalToolbarSlots}
     </div>
   ) : null;
 

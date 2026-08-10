@@ -32,7 +32,7 @@ function nextTurn(): Promise<void> {
 }
 
 describe("Desktop Local Apps native controller", () => {
-  it("blocks new launches while Sites is disabled and stops a running App when disabled", async () => {
+  it("blocks new launches while Plugins is disabled and stops a running App when disabled", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-feature-gate-"));
     const registry = new LocalAppRegistry({
       registryPath: path.join(root, "registry.json"),
@@ -64,7 +64,7 @@ describe("Desktop Local Apps native controller", () => {
       confirmDefinition: vi.fn(async () => true),
     });
 
-    await expect(controller.start(created.id)).rejects.toThrow("Sites is disabled");
+    await expect(controller.start(created.id)).rejects.toThrow("Plugins is disabled");
     expect(runtime.start).not.toHaveBeenCalled();
 
     await controller.setFeatureEnabled(true);
@@ -72,7 +72,7 @@ describe("Desktop Local Apps native controller", () => {
     await controller.setFeatureEnabled(false);
 
     expect(runtime.stop).toHaveBeenCalledWith(created.id);
-    await expect(controller.start(created.id)).rejects.toThrow("Sites is disabled");
+    await expect(controller.start(created.id)).rejects.toThrow("Plugins is disabled");
   });
 
   it("does not let start overtake an in-flight stop for the same binding", async () => {

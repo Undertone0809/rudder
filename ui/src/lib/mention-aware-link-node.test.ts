@@ -61,6 +61,7 @@ describe("getMentionAwareLinkNodeInit", () => {
         node.sanitizeUrl("chat://chat-123?t=Launch%20planning"),
         node.sanitizeUrl("library-doc://doc-123?t=Product%20principles"),
         node.sanitizeUrl("library-file://file?p=docs%2Fproduct-brief.md"),
+        node.sanitizeUrl("plugin://plugin-123"),
       ];
     });
 
@@ -71,6 +72,7 @@ describe("getMentionAwareLinkNodeInit", () => {
       "chat://chat-123?t=Launch%20planning",
       "library-doc://doc-123?t=Product%20principles",
       "library-file://file?p=docs%2Fproduct-brief.md",
+      "plugin://plugin-123",
     ]);
   });
 });

@@ -1751,13 +1751,13 @@ async function captureInstanceSettings(page: Page) {
   await captureViewport(page, "instance-settings.png");
 }
 
-async function capturePluginManager(page: Page) {
-  console.log("capture: plugin manager");
-  await page.goto("/instance/settings/plugins");
+async function capturePlugins(page: Page, orgPrefix: string) {
+  console.log("capture: plugins");
+  await page.goto(orgRoute(orgPrefix, "/plugins"));
   const main = page.locator("#main-content");
   await expect(main).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1200);
-  await captureViewport(page, "plugin-manager.png");
+  await captureViewport(page, "plugins.png");
 }
 
 async function captureCliWorkflow(page: Page) {
@@ -1881,7 +1881,7 @@ async function main() {
         "workspaces-resources.png",
         "skills-library.png",
         "instance-settings.png",
-        "plugin-manager.png",
+        "plugins.png",
         "installation-cli.png",
       ].map((file) => path.join(SHOTS_DIR, file)),
       serverLog: SERVER_LOG_PATH,
@@ -1921,7 +1921,7 @@ async function main() {
         await captureResources(page, seed.org.issuePrefix);
         await captureSkills(page, seed.org.issuePrefix);
         await captureInstanceSettings(page);
-        await capturePluginManager(page);
+        await capturePlugins(page, seed.org.issuePrefix);
         await captureCliWorkflow(page);
         await context.close();
       } finally {

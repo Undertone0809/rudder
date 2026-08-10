@@ -35,6 +35,7 @@ export function buildMarkdownMentionOptions(params: {
   libraryDocuments?: LibraryDocumentSummary[] | null;
   libraryFiles?: OrganizationWorkspaceFileEntry[] | null;
   skillMentionOptions?: MentionOption[] | null;
+  pluginMentionOptions?: MentionOption[] | null;
   excludeIssueId?: string | null;
   currentUserId?: string | null;
 }) {
@@ -57,6 +58,7 @@ export function buildMarkdownMentionOptions(params: {
   }
 
   options.push(...(params.skillMentionOptions ?? []));
+  options.push(...(params.pluginMentionOptions ?? []));
 
   for (const project of params.projects ?? []) {
     options.push({

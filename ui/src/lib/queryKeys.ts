@@ -190,7 +190,6 @@ export const queryKeys = {
     list: (orgId: string, status?: string) =>
       ["approvals", orgId, status] as const,
     detail: (approvalId: string) => ["approvals", "detail", approvalId] as const,
-    comments: (approvalId: string) => ["approvals", "comments", approvalId] as const,
     issues: (approvalId: string) => ["approvals", "issues", approvalId] as const,
   },
   access: {
@@ -265,16 +264,5 @@ export const queryKeys = {
   org: (orgId: string) => ["org", orgId] as const,
   skills: {
     available: ["skills", "available"] as const,
-  },
-  plugins: {
-    all: ["plugins"] as const,
-    available: ["plugins", "available"] as const,
-    examples: ["plugins", "examples"] as const,
-    detail: (pluginId: string) => ["plugins", pluginId] as const,
-    health: (pluginId: string) => ["plugins", pluginId, "health"] as const,
-    uiContributions: ["plugins", "ui-contributions"] as const,
-    config: (pluginId: string) => ["plugins", pluginId, "config"] as const,
-    dashboard: (pluginId: string) => ["plugins", pluginId, "dashboard"] as const,
-    logs: (pluginId: string) => ["plugins", pluginId, "logs"] as const,
   },
 };

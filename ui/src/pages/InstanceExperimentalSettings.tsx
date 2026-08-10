@@ -38,6 +38,7 @@ export function InstanceExperimentalSettings() {
   const updateMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
       const nextSettings = await instanceSettingsApi.updateGeneral({
+        experimentalPluginsEnabled: enabled,
         experimentalSitesEnabled: enabled,
       });
       if (!enabled) {
@@ -98,7 +99,8 @@ export function InstanceExperimentalSettings() {
     );
   }
 
-  const enabled = settingsQuery.data?.experimentalSitesEnabled === true;
+  const enabled = (settingsQuery.data?.experimentalPluginsEnabled
+    ?? settingsQuery.data?.experimentalSitesEnabled) === true;
   const goalsEnabled = settingsQuery.data?.experimentalGoalsEnabled === true;
 
   return (

@@ -558,7 +558,7 @@ export function organizationSkillService(
     });
     const activeBundledSlugs = getActiveRudderBundledSkillSlugs(
       browserCapability.instanceEligible,
-      generalSettings.experimentalSitesEnabled,
+      generalSettings.experimentalPluginsEnabled,
     );
     const activeBundledKeys = activeBundledSlugs.map((slug) => `rudder/${slug}`);
     for (const skillsRoot of resolveBundledSkillsRoot()) {
@@ -1209,6 +1209,7 @@ export function organizationSkillService(
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
     const skills = await listFull(orgId);
+    const pluginsEnabled = (await instanceSettingsService(db).getGeneral()).experimentalPluginsEnabled;
     const skillByKey = new Map(skills.map((skill) => [skill.key, skill]));
     const catalogEntries = await buildAgentSkillCatalogEntries(orgId, agentId, agentRuntimeType, runtimeConfig, skills);
     const bySelectionKey = new Map(catalogEntries.map((entry) => [entry.selectionKey, entry]));
@@ -1220,6 +1221,12 @@ export function organizationSkillService(
       if (entry.organizationSkillKey) {
         const skill = skillByKey.get(entry.organizationSkillKey);
         if (!skill) continue;
+        if (
+          asString(skill.metadata?.sourceKind) === "plugin_managed"
+          && (!pluginsEnabled || skill.metadata?.pluginEnabled === false)
+        ) {
+          continue;
+        }
         let source = normalizeSkillDirectory(skill);
         if (
           source
@@ -1812,9 +1819,16 @@ export function organizationSkillService(
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
     const skills = await listFull(orgId);
+    const pluginsEnabled = (await instanceSettingsService(db).getGeneral()).experimentalPluginsEnabled;
 
     const out: RudderSkillEntry[] = [];
     for (const skill of skills) {
+      if (
+        asString(skill.metadata?.sourceKind) === "plugin_managed"
+        && (!pluginsEnabled || skill.metadata?.pluginEnabled === false)
+      ) {
+        continue;
+      }
       if (
         isRetiredRudderCreationSkillReference(skill.key)
         || isRetiredRudderCreationSkillReference(skill.slug)
@@ -2079,14 +2093,41 @@ export function organizationSkillService(
     return withSkillMutationLock(orgId, initial.key, async () => {
       const skill = await getById(skillId);
       if (!skill || skill.orgId !== orgId) return null;
-      if (isBundledRudderSourceKind(asString(getSkillMeta(skill).sourceKind))) {
-        throw unprocessable("Bundled Rudder skills are read-only.");
+      const sourceKind = asString(getSkillMeta(skill).sourceKind);
+      if (isBundledRudderSourceKind(sourceKind) || sourceKind === "plugin_managed") {
+        throw unprocessable(sourceKind === "plugin_managed"
+          ? "Plugin-managed skills are removed through the owning Plugin."
+          : "Bundled Rudder skills are read-only.");
       }
 
       await enabledSkills.removeSkillKeys(orgId, [skill.key]);
       await db
         .delete(organizationSkills)
         .where(eq(organizationSkills.id, skillId));
+      await removeInstalledSkillDirectory(orgId, skill);
+      return skill;
+    });
+  }
+
+  async function deletePluginManagedSkill(
+    orgId: string,
+    skillId: string,
+    installedPluginId: string,
+  ): Promise<OrganizationSkill | null> {
+    const initial = await getById(skillId);
+    if (!initial || initial.orgId !== orgId) return null;
+    return withSkillMutationLock(orgId, initial.key, async () => {
+      const skill = await getById(skillId);
+      if (!skill || skill.orgId !== orgId) return null;
+      const metadata = getSkillMeta(skill);
+      if (
+        asString(metadata.sourceKind) !== "plugin_managed"
+        || asString(metadata.installedPluginId) !== installedPluginId
+      ) {
+        throw unprocessable("Skill is not managed by this Plugin installation.");
+      }
+      await enabledSkills.removeSkillKeys(orgId, [skill.key]);
+      await db.delete(organizationSkills).where(eq(organizationSkills.id, skillId));
       await removeInstalledSkillDirectory(orgId, skill);
       return skill;
     });
@@ -2109,6 +2150,7 @@ export function organizationSkillService(
     createLocalSkill,
     createAgentPrivateSkill,
     deleteSkill,
+    deletePluginManagedSkill,
     importFromSource,
     scanProjectWorkspaces,
     scanLocalSkillRoots,

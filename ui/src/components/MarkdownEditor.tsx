@@ -26,7 +26,7 @@ import {
   type RealmPlugin,
   type Translation,
 } from "@mdxeditor/editor";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildPluginMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import {
   $createParagraphNode,
   $createRangeSelection,
@@ -39,7 +39,7 @@ import {
   type LexicalNode,
   type TextNode,
 } from "lexical";
-import { Boxes, FileText, Folder, MessageSquare } from "lucide-react";
+import { Boxes, FileText, Folder, MessageSquare, Plug } from "lucide-react";
 import {
   forwardRef,
   useCallback,
@@ -110,7 +110,7 @@ export {
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "automation" | "chat" | "library_doc" | "library_entry" | "library_file" | "library_directory" | "skill";
+  kind?: "agent" | "project" | "issue" | "automation" | "chat" | "library_doc" | "library_entry" | "library_file" | "library_directory" | "plugin" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -149,6 +149,9 @@ export interface MentionOption {
   skillCategoryLabel?: string | null;
   skillLocationLabel?: string | null;
   skillDetailsHref?: string | null;
+  pluginId?: string;
+  pluginDescription?: string | null;
+  pluginCapabilityLabel?: string | null;
 }
 
 /* ---- Editor props ---- */
@@ -968,6 +971,9 @@ function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "refere
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, isSkill: true, label: option.skillRefLabel };
   }
+  if (option.kind === "plugin" && option.pluginId) {
+    return { href: buildPluginMentionHref(option.pluginId), isSkill: false, label: option.name };
+  }
   if (option.kind === "issue" && option.issueId) {
     return {
       href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null),
@@ -1270,6 +1276,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (mention.kind === "project" && mention.projectId) {
         map.set(`project:${mention.projectId}`, mention);
       }
+      if (mention.kind === "plugin" && mention.pluginId) {
+        map.set(`plugin:${mention.pluginId}`, mention);
+      }
       if (mention.kind === "library_doc" && mention.libraryDocumentId) {
         map.set(`library_doc:${mention.libraryDocumentId}`, mention);
       }
@@ -1315,6 +1324,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const groupedMentionOptions = useMemo(() => {
     const labelForKind = (kind: MentionOption["kind"]) => {
       if (kind === "skill") return "Skills";
+      if (kind === "plugin") return "Plugins";
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
       if (kind === "chat") return "Chats";
@@ -1778,6 +1788,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           continue;
         }
 
+        if (parsed.kind === "plugin") {
+          applyMentionChipDecoration(link, parsed);
+          continue;
+        }
+
         const option = mentionOptionByKey.get(`agent:${parsed.agentId}`);
         applyMentionChipDecoration(link, {
           ...parsed,
@@ -1991,6 +2006,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                 const visibleLabel = mentionVisibleLabel(option);
                 const mentionHref = option.kind === "project" && option.projectId
                   ? buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null)
+                  : option.kind === "plugin" && option.pluginId
+                    ? buildPluginMentionHref(option.pluginId)
                   : option.kind === "issue" && option.issueId
                     ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null)
                     : option.kind === "automation" && option.automationId
@@ -2436,7 +2453,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                           }}
                           onMouseEnter={() => setActiveMentionIndex(i)}
                         >
-                          {option.kind === "skill" && isContainerMenu ? (
+                          {option.kind === "plugin" ? (
+                            <Plug className="h-4 w-4 shrink-0 text-[#2f80ed]" />
+                          ) : option.kind === "skill" && isContainerMenu ? (
                             <>
                               <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                               <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -2492,7 +2511,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             ) : (
                               <div className="min-w-0 flex-1">
                                 <div className="truncate font-medium text-foreground">{option.name}</div>
-                                {option.kind === "skill" ? (
+                                {option.kind === "plugin" ? (
+                                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                    {option.pluginDescription ?? option.pluginCapabilityLabel ?? "Plugin"}
+                                  </div>
+                                ) : option.kind === "skill" ? (
                                   <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                                     {option.skillCategoryLabel ? (
                                       <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
@@ -2527,6 +2550,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               Skill
                             </span>
                           )}
+                          {option.kind === "plugin" && option.pluginCapabilityLabel ? (
+                            <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                              {option.pluginCapabilityLabel}
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}

@@ -1,5 +1,4 @@
 import { accessApi } from "@/api/access";
-import { pluginsApi } from "@/api/plugins";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/context/I18nContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
@@ -19,7 +18,6 @@ import {
   IdCard,
   Info,
   Palette,
-  Puzzle,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -91,10 +89,6 @@ export function InstanceSidebar() {
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
     retry: false,
-  });
-  const { data: plugins } = useQuery({
-    queryKey: queryKeys.plugins.all,
-    queryFn: () => pluginsApi.list(),
   });
   const canManageAdminSettings = currentBoardAccess?.isInstanceAdmin === true;
 
@@ -171,35 +165,6 @@ export function InstanceSidebar() {
               {t("common.runtime")}
             </div>
             <SettingsNavLink to="/instance/settings/heartbeats" label={t("common.heartbeats")} icon={Clock3} end />
-          </div>
-        ) : null}
-
-        {canManageAdminSettings ? (
-          <div className="space-y-1">
-            <div className="px-3 text-[10px] font-semibold text-muted-foreground/70">
-              {t("common.integrations")}
-            </div>
-            <SettingsNavLink to="/instance/settings/plugins" label={t("common.plugins")} icon={Puzzle} />
-            {(plugins ?? []).length > 0 ? (
-              <div className="ml-4 mt-1 flex flex-col gap-1 border-l border-[color:color-mix(in_oklab,var(--border-soft)_78%,transparent)] pl-4">
-                {(plugins ?? []).map((plugin) => (
-                  <NavLink
-                    key={plugin.id}
-                    to={`/instance/settings/plugins/${plugin.id}`}
-                    className={({ isActive }) =>
-                      cn(
-                        "rounded-[calc(var(--radius-sm)+2px)] px-2 py-1.5 text-xs transition-colors",
-                        isActive
-                          ? "bg-[color:color-mix(in_oklab,var(--surface-active)_48%,transparent)] text-foreground"
-                          : "text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-active)_24%,transparent)] hover:text-foreground",
-                      )
-                    }
-                  >
-                    {plugin.manifestJson.displayName ?? plugin.packageName}
-                  </NavLink>
-                ))}
-              </div>
-            ) : null}
           </div>
         ) : null}
 

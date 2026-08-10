@@ -33,7 +33,6 @@ const watchedDirectories = [
   "packages/agent-runtime-utils",
   "packages/adapters",
   "packages/db",
-  "packages/plugins/sdk",
   "packages/shared",
 ].map((relativePath) => path.join(repoRoot, relativePath));
 
@@ -398,22 +397,6 @@ async function maybePreflightMigrations(options = {}) {
   await refreshPendingMigrations();
 }
 
-async function buildPluginSdk() {
-  console.log("[rudder] building plugin sdk...");
-  const result = await runPnpm(
-    ["--filter", "@rudderhq/plugin-sdk", "build"],
-    { stdio: "inherit" },
-  );
-  if (result.signal) {
-    exitForSignal(result.signal);
-    return;
-  }
-  if (result.code !== 0) {
-    console.error("[rudder] plugin sdk build failed");
-    process.exit(result.code);
-  }
-}
-
 async function markChildAsCurrent() {
   previousSnapshot = collectWatchedSnapshot();
   dirtyPaths = new Set();
@@ -545,8 +528,6 @@ async function startServerChild() {
           );
         }
       }
-
-      await buildPluginSdk();
 
       const serverScript = mode === "watch" ? "dev:watch" : "dev";
       child = spawn(

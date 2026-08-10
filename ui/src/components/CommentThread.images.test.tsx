@@ -37,10 +37,6 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: () => <div>Markdown editor</div>,
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotOutlet: () => null,
-}));
-
 vi.mock("./transcript/useLiveRunTranscripts", () => ({
   useLiveRunTranscripts: () => ({
     transcriptByRun: new Map(),

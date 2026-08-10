@@ -61,6 +61,7 @@ export interface OrganizationSkillListItem {
   sourceBadge: OrganizationSkillSourceBadge;
   sourcePath: string | null;
   workspaceEditPath: OrganizationSkillWorkspaceEditPath;
+  installedPluginId?: string | null;
 }
 
 export interface OrganizationSkillUsageAgent {

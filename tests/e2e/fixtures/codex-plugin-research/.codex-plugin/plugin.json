@@ -1,0 +1,12 @@
+{
+  "name": "e2e-research-kit",
+  "version": "1.0.0",
+  "description": "Research with a repeatable evidence workflow.",
+  "author": {
+    "name": "Rudder E2E"
+  },
+  "interface": {
+    "displayName": "E2E Research Kit",
+    "shortDescription": "Research with a repeatable evidence workflow."
+  }
+}

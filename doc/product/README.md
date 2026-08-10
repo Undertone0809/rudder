@@ -89,8 +89,8 @@ history or line-by-line code copies.
   server lifecycle, and Desktop startup recovery.
 - `domains/review-feedback-learning/`: review decisions, feedback capture,
   issue/review follow-up, and learning-promotion paths.
-- `domains/plugins/`: installed plugin lifecycle, worker boundaries,
-  capabilities, jobs, webhooks, UI slots, and plugin state.
+- `domains/plugins/`: Codex-compatible plugin import, package identity,
+  installations, updates, rollback, and App, Skill, and MCP component links.
 
 ## Required Workflow
 

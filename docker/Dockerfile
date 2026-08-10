@@ -24,8 +24,6 @@ COPY packages/agent-runtimes/gemini-local/package.json packages/agent-runtimes/g
 COPY packages/agent-runtimes/openclaw-gateway/package.json packages/agent-runtimes/openclaw-gateway/
 COPY packages/agent-runtimes/opencode-local/package.json packages/agent-runtimes/opencode-local/
 COPY packages/agent-runtimes/pi-local/package.json packages/agent-runtimes/pi-local/
-COPY packages/plugins/sdk/package.json packages/plugins/sdk/
-COPY packages/plugins/examples/plugin-linear/package.json packages/plugins/examples/plugin-linear/
 
 RUN pnpm install --frozen-lockfile
 
@@ -34,7 +32,6 @@ WORKDIR /app
 COPY --from=deps /app /app
 COPY . .
 RUN pnpm --filter @rudderhq/ui build
-RUN pnpm --filter @rudderhq/plugin-sdk build
 RUN pnpm --filter @rudderhq/server... build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 

@@ -1,157 +1,95 @@
 # Plugin Authoring Guide
 
-This guide describes the current, implemented way to create a Rudder plugin in this repo.
+Rudder V1 imports Codex Plugin packages. It does not define a Rudder Plugin SDK
+or runtime. Authors should create a standard Codex Plugin folder and test the
+package without requiring Rudder-specific workers, jobs, webhooks, UI slots, or
+host APIs.
 
-It is intentionally narrower than `PLUGIN_RUNTIME_CONTRACT.md`. This guide
-covers the authoring workflow that exists now; future ideas live in
-`doc/archive/plugins/PLUGIN_SPEC.md`.
+## Package Shape
 
-## Current reality
-
-- Treat plugin workers and plugin UI as trusted code.
-- Plugin UI runs as same-origin JavaScript inside the main Rudder app.
-- Worker-side host APIs are capability-gated.
-- Plugin UI is not sandboxed by manifest capabilities.
-- There is no host-provided shared React component kit for plugins yet.
-- `ctx.assets` is not supported in the current runtime.
-
-## Scaffold a plugin
-
-Use the scaffold package:
-
-```bash
-pnpm --filter @rudderhq/create-rudder-plugin build
-node packages/plugins/create-rudder-plugin/dist/index.js @yourscope/plugin-name --output ./packages/plugins/examples
-```
-
-For a plugin that lives outside the Rudder repo:
-
-```bash
-pnpm --filter @rudderhq/create-rudder-plugin build
-node packages/plugins/create-rudder-plugin/dist/index.js @yourscope/plugin-name \
-  --output /absolute/path/to/plugin-repos \
-  --sdk-path /absolute/path/to/rudder/packages/plugins/sdk
-```
-
-That creates a package with:
-
-- `src/manifest.ts`
-- `src/worker.ts`
-- `src/ui/index.tsx`
-- `tests/plugin.spec.ts`
-- `esbuild.config.mjs`
-- `rollup.config.mjs`
-
-Inside this monorepo, the scaffold uses `workspace:*` for `@rudderhq/plugin-sdk`.
-
-Outside this monorepo, the scaffold snapshots `@rudderhq/plugin-sdk` from the local Rudder checkout into a `.rudder-sdk/` tarball so you can build and test a plugin without publishing anything to npm first.
-
-## Recommended local workflow
-
-From the generated plugin folder:
-
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
-```
-
-For local development, install it into Rudder from an absolute local path through the plugin manager or API. The server supports local filesystem installs and watches local-path plugins for file changes so worker restarts happen automatically after rebuilds.
-
-Example:
-
-```bash
-curl -X POST http://127.0.0.1:3100/api/plugins/install \
-  -H "Content-Type: application/json" \
-  -d '{"packageName":"/absolute/path/to/your-plugin","isLocalPath":true}'
-```
-
-## Supported alpha surface
-
-Worker:
-
-- config
-- events
-- jobs
-- launchers
-- http
-- secrets
-- activity
-- state
-- entities
-- projects and project workspaces
-- organizations
-- issues and comments
-- agents and agent sessions
-- goals
-- data/actions
-- streams
-- tools
-- metrics
-- logger
-
-UI:
-
-- `usePluginData`
-- `usePluginAction`
-- `usePluginStream`
-- `usePluginToast`
-- `useHostContext`
-- typed slot props from `@rudderhq/plugin-sdk/ui`
-
-Mount surfaces currently wired in the host include:
-
-- `page`
-- `settingsPage`
-- `dashboardWidget`
-- `sidebar`
-- `sidebarPanel`
-- `detailTab`
-- `taskDetailView`
-- `projectSidebarItem`
-- `globalToolbarButton`
-- `toolbarButton`
-- `contextMenuItem`
-- `commentAnnotation`
-- `commentContextMenuItem`
-
-## Organization routes
-
-Plugins may declare a `page` slot with `routePath` to own a organization route like:
+Every package requires:
 
 ```text
-/:orgPrefix/<routePath>
+my-plugin/
+  .codex-plugin/
+    plugin.json
 ```
 
-Rules:
+The manifest uses a lower-case hyphenated `name` and strict semantic `version`.
+Rudder V1 recognizes the upstream default or manifest-declared locations for:
 
-- `routePath` must be a single lowercase slug
-- it cannot collide with reserved host routes
-- it cannot duplicate another installed plugin page route
+- Skills, normally under `skills/<slug>/SKILL.md`;
+- MCP server definitions, inline or in `.mcp.json`;
+- OpenAI registered App aliases in `.app.json`.
 
-## Publishing guidance
+Skills and MCP definitions are setup-capable. `.app.json` ids, hooks, assets,
+and unknown fields are preserved and reported but do not become executable
+Rudder components by themselves. A package needs at least one supported or
+setup-capable component to install.
 
-- Use npm packages as the deployment artifact.
-- Treat repo-local example installs as a development workflow only.
-- Prefer keeping plugin UI self-contained inside the package.
-- Do not rely on host design-system components or undocumented app internals.
-- GitHub repository installs are not a first-class workflow today. For local development, use a checked-out local path. For production, publish to npm or a private npm-compatible registry.
+Minimal Skills-only example:
 
-## Verification before handoff
-
-At minimum:
-
-```bash
-pnpm --filter <your-plugin-package> typecheck
-pnpm --filter <your-plugin-package> test
-pnpm --filter <your-plugin-package> build
+```json
+{
+  "name": "research-kit",
+  "version": "1.0.0",
+  "description": "Research with a repeatable evidence workflow.",
+  "interface": {
+    "displayName": "Research Kit",
+    "shortDescription": "Gather and cite evidence."
+  }
+}
 ```
 
-If you changed host integration too, also run:
-
-```bash
-pnpm -r typecheck
-pnpm test:run
-pnpm build
+```text
+skills/research/SKILL.md
 ```
+
+Follow the current Codex Plugin format for complete fields and component
+authoring. Do not add a Rudder-specific worker entry point.
+
+## Import And Review
+
+Enable **Settings > Experimental > Enable Plugins**, open **Plugins**, and use
+the folder or ZIP import action. A team marketplace can use an ordered
+`marketplace.json` with local Plugin paths; Rudder also accepts an HTTPS GitHub
+marketplace pinned to a full commit SHA. Rudder computes a digest and displays
+compatibility before installation. Marketplace `INSTALLED_BY_DEFAULT` policy
+never bypasses Rudder review.
+
+Import inspection never executes package content. It rejects unsafe paths,
+case collisions, oversize packages, invalid manifests, missing component
+references, and literal MCP credentials. Use environment references rather than
+embedding secrets in `.mcp.json` or `plugin.json`.
+
+After installation:
+
+- package Skills appear as read-only Organization Skills and require explicit
+  Agent assignment;
+- MCP definitions can create disabled managed-connection drafts, then continue
+  through normal Managed MCP authentication and activation;
+- active Managed MCP connections may expose HTML UI resources, which Rudder
+  reads through the managed client and renders in a network-disabled sandbox;
+- Codex `.app.json` aliases remain visible but are not treated as Rudder Local
+  Apps or endpoint discovery;
+- Rudder Local Apps continue to be built and run by App Builder/Desktop and
+  appear as app-only Plugins under Yours. New App revisions wait for explicit
+  update review while the current revision stays active.
+
+## Verification
+
+Before sharing a package:
+
+- validate `.codex-plugin/plugin.json` against the current Codex specification;
+- test each Skill independently and keep its scripts/references inside its root;
+- verify MCP definitions contain no literal credentials and disclose expected
+  transport and access;
+- import the exact folder into a disposable Rudder Organization and review the
+  compatibility report;
+- verify Agent assignment, managed MCP setup, disable/re-enable, and uninstall
+  behavior for the components the package provides.
+- verify a reviewed version update, failure recovery, and rollback when sharing
+  a new version of an existing package identity.
+
+Rudder package import does not prove the component works in Codex, and Codex
+installation does not prove Rudder runtime setup has completed.

@@ -187,15 +187,15 @@ export const zhCN: Messages = {
   "browser.import.result.failures": "失败详情",
   "experimental.title": "实验性功能",
   "experimental.description": "在此设备上试用 Rudder 的早期功能。",
-  "experimental.sites.section": "Apps",
-  "experimental.sites.title": "启用 Apps",
+  "experimental.sites.section": "Plugins",
+  "experimental.sites.title": "启用 Plugins",
   "experimental.sites.enabledDescription":
-    "在主导航中显示 Apps，启用 App Builder skill，并允许此设备装载和运行已注册的应用。",
+    "在主导航中显示 Plugins，并启用 Codex Plugin 导入、受管 Skills、MCP 设置和 Local Apps。",
   "experimental.sites.disabledDescription":
-    "停止正在运行的 App、隐藏工作区并停用新的 App Builder 工作；已有应用源码和数据仍保留在此设备。",
-  "experimental.sites.toggle": "启用 Apps",
+    "从新工作中移除 Plugin 能力并停止正在运行的 Local App；已安装包、应用源码、连接和数据仍会保留。",
+  "experimental.sites.toggle": "启用 Plugins",
   "experimental.sites.notice":
-    "Apps 仍处于实验阶段。应用会在此设备上运行项目代码；除非你自行配置网络，否则只能从本机访问。",
+    "Plugins 仍处于实验阶段。导入包会先经过检查；Skills、MCP 连接和 Local Apps 继续使用各自已有的运行时与权限边界。",
   "experimental.goals.section": "Goals",
   "experimental.goals.title": "启用 Goals",
   "experimental.goals.enabledDescription": "Goals 会显示在主导航中。",

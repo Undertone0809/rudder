@@ -125,6 +125,16 @@ export type ManagedMcpClientOptions =
 export interface ManagedMcpClient {
   discoverTools(): Promise<Tool[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
+  listResources(): Promise<Array<{
+    uri: string;
+    name?: string;
+    title?: string;
+    description?: string;
+    mimeType?: string;
+  }>>;
+  readResource(uri: string): Promise<{
+    contents: Array<{ uri: string; mimeType?: string; text?: string; blob?: string }>;
+  }>;
   close(): Promise<void>;
 }
 
@@ -358,6 +368,32 @@ export async function createManagedMcpClient(
             "Managed MCP tool result exceeds the output limit",
           );
         }
+        throw await mapClientError(error, "call");
+      }
+    },
+    async listResources() {
+      try {
+        const result = await sdkClient.listResources(
+          undefined,
+          { timeout: options.startupTimeoutMs, cacheMode: "refresh" },
+        );
+        return result.resources;
+      } catch (error) {
+        throw await mapClientError(error, "discover");
+      }
+    },
+    async readResource(uri) {
+      try {
+        const result = await sdkClient.readResource(
+          { uri },
+          { timeout: options.toolTimeoutMs, cacheMode: "refresh" },
+        );
+        const outputBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+        if (outputBytes > maxOutputBytes) {
+          throw new ManagedMcpClientError("mcp_result_too_large", "Managed MCP resource exceeds the output limit");
+        }
+        return result;
+      } catch (error) {
         throw await mapClientError(error, "call");
       }
     },

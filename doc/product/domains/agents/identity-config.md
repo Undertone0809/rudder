@@ -315,9 +315,10 @@ Invariants:
   reliably the provider interrupt completes.
 - Provider parity claims require runtime-specific evidence or a documented
   blocked/substituted proof.
-- Future plugin runtimes must declare and pass the public inline-visual protocol
-  conformance version before Rudder reports the capability; provider-specific
-  filesystem capture is compatibility input, not parity evidence.
+- Extension package metadata cannot declare runtime inline-visual capability;
+  a supported provider runtime must pass the public inline-visual protocol
+  conformance version before Rudder reports it. Provider-specific filesystem
+  capture is compatibility input, not parity evidence.
 - Runtime availability groups must not silently disable a supported adapter.
   Missing default CLI commands should be shown with setup guidance while still
   allowing custom command configuration and runtime-chain testing where the

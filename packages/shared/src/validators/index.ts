@@ -287,10 +287,13 @@ export {
 } from "./access.js";
 
 export {
-  installPluginSchema, jsonSchemaSchema, listPluginStateSchema, patchPluginConfigSchema, pluginJobDeclarationSchema, pluginLauncherActionDeclarationSchema, pluginLauncherDeclarationSchema, pluginLauncherRenderDeclarationSchema, pluginManifestV1Schema, pluginStateScopeKeySchema, pluginToolDeclarationSchema,
-  pluginUiSlotDeclarationSchema, pluginWebhookDeclarationSchema, setPluginStateSchema, uninstallPluginSchema, updatePluginStatusSchema, upsertPluginConfigSchema, type InstallPlugin, type ListPluginState, type PatchPluginConfig, type PluginJobDeclarationInput, type PluginLauncherActionDeclarationInput, type PluginLauncherDeclarationInput, type PluginLauncherRenderDeclarationInput, type PluginManifestV1Input, type PluginStateScopeKey, type PluginToolDeclarationInput,
-  type PluginUiSlotDeclarationInput, type PluginWebhookDeclarationInput, type SetPluginState, type UninstallPlugin, type UpdatePluginStatus, type UpsertPluginConfig
-} from "./plugin.js";
+  configureRudderPluginMarketplaceSchema, configureRudderPluginMcpSchema, configureRudderPluginSkillsSchema, customizeRudderPluginSkillSchema,
+  inspectRudderPluginArchiveSchema, inspectRudderPluginSchema, installRudderPluginSchema,
+  rudderPluginPackageFileSchema, updateRudderPluginEnablementSchema,
+  type ConfigureRudderPluginMarketplace, type ConfigureRudderPluginMcp, type ConfigureRudderPluginSkills, type CustomizeRudderPluginSkill,
+  type InspectRudderPlugin, type InspectRudderPluginArchive, type InstallRudderPlugin,
+  type UpdateRudderPluginEnablement
+} from "./plugin-v1.js";
 
 export {
   localOfflineGrantSchema,

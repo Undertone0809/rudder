@@ -1,63 +1,79 @@
 ---
 title: "Plugins"
-description: "Add optional integrations, tools, background jobs, and interface panels to Rudder."
+description: "Install Codex-compatible packages that combine Skills, MCP servers, and Apps."
 icon: "plug"
 keywords:
   - "Rudder Plugins"
-  - "Rudder integrations"
-  - "Plugin tools"
+  - "Codex Plugins"
+  - "Plugin Skills MCP Apps"
 canonical: "https://docs.rudderhq.dev/concepts/plugins"
 "og:url": "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_en: "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 ---
 
-<a id="definition" />
+## One package for reusable capabilities
 
-## What a Plugin can add
+A Rudder Plugin is a distribution package containing one or more Skills, MCP
+server definitions, or Apps. It uses the Codex Plugin folder format, including
+the required `.codex-plugin/plugin.json` manifest.
 
-A Plugin is an optional package installed by the Rudder host. Depending on the
-package, it can add:
+Plugins organize capabilities that belong together. They do not introduce a
+separate Rudder runtime: Skills still run through an Agent, MCP servers still
+use Managed MCP setup and access policy, and Local Apps still launch through
+their existing App runtime.
 
-- tools an Agent can use
-- connections to another service
-- background jobs and webhooks
-- project panels or other interface sections
-- Plugin-specific settings and stored state
+## What installation does
 
-Rudder shows the Plugin's version, configuration, worker status, logs, jobs,
-webhooks, and requested host capabilities.
+Rudder inspects a package without executing it and shows its identity, source,
+digest, supported components, warnings, and errors. Installation creates an
+Organization-scoped snapshot. You can then assign package Skills to Agents and
+finish any MCP authentication or access setup.
 
-<a id="case" />
+Input may be a folder, bounded ZIP, local Codex marketplace, or an HTTPS GitHub
+marketplace pinned to a full commit SHA. Marketplace installation and
+authentication policy is preserved as provenance. It never bypasses Rudder's
+review or installs a Plugin silently.
 
-## Example: connect a CRM
+When a package Skill conflicts with an Organization Skill, installation pauses
+until the operator explicitly keeps the existing Skill, replaces it, or installs
+both under distinct identities.
 
-A CRM Plugin adds an account panel to a project and runs a scheduled sync. If
-the sync fails, its job and logs remain under that Plugin. The Plugin can link
-an account to Rudder work, but it does not invent a new Issue status or bypass
-normal approvals.
+Local Apps also appear in **Plugins > Yours** as app-only entries. Their direct
+launch behavior and existing `/apps/...` routes remain unchanged. A new App
+Builder revision becomes a pending immutable update; the current revision stays
+active until the operator reviews and applies it.
 
-![Plugin manager](../images/plugin-manager.png)
+Choosing **Customize** on a package Skill creates an independent, editable
+Organization Skill with package provenance. The copy is no longer controlled
+by Plugin updates, disablement, or uninstall.
 
-<a id="when-useful" />
+In composer `@` search, an installed Plugin appears as one capability entry.
+Rudder does not list every Skill inside that Plugin as a separate result.
+Independent and customized Skills remain individually searchable.
 
-## Use a Plugin for an optional edge
+## Lifecycle and trust
 
-Plugins fit integrations and specialized tools that not every Rudder user
-needs. Goals, Chat, Issues, Runs, reviews, budgets, and workspaces remain built
-in because they organize the core work.
+Disabling a Plugin removes its package capabilities from new work without
+deleting external connections, App source, or App data. Re-enabling restores
+the previous package Skill assignments. Uninstalling removes package-owned
+projections while preserving user work and independently managed resources.
 
-<a id="operating-boundaries" />
+An update is inspected before it replaces the active package. Rudder prepares
+the new component projections first, keeps the current version active if that
+preparation fails, and retains the previous immutable package for explicit
+rollback. The review compares old and new execution surfaces and requires an
+explicit confirmation when Skill execution or MCP access expands.
 
-## Install only code you trust
+An active Managed MCP connection may expose HTML UI resources. Rudder lists and
+opens those resources in a network-disabled sandbox; `.app.json` aliases never
+activate this path.
 
-Plugins contain worker or interface code that runs as part of the installation.
-Capability checks limit how a Plugin talks to Rudder, but they do not turn an
-untrusted package into a safe sandbox.
+Treat every imported package as untrusted input. Review its publisher, version,
+files, credential references, unsupported fields, and compatibility report
+before installation. Rudder V1 does not run Plugin workers, jobs, webhooks, UI
+slots, hooks, browser extensions, scheduled-task templates, or arbitrary package
+code.
 
-Before activation, review the source, publisher, version, requested
-capabilities, external services, configuration, and update notes. Uninstalling
-a Plugin stops its workers and removes its own state; it should not delete core
-Issues, Runs, approvals, or budgets.
-
-Follow [Manage Plugins](/how-to/manage-plugins) to install and test one.
+Follow [Install and Manage a Plugin](/how-to/manage-plugins) for the complete
+workflow.

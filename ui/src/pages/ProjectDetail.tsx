@@ -3,8 +3,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs } from "@/components/ui/tabs";
 import { applyOrganizationPrefix, findOrganizationByPrefix, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { isUuidLike } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
@@ -26,12 +24,7 @@ import { projectRouteRef } from "../lib/utils";
 /* ── Top-level tab types ── */
 
 type ProjectBaseTab = "issues" | "resources" | "configuration";
-type ProjectPluginTab = `plugin:${string}`;
-type ProjectTab = ProjectBaseTab | ProjectPluginTab;
-
-function isProjectPluginTab(value: string | null): value is ProjectPluginTab {
-  return typeof value === "string" && value.startsWith("plugin:");
-}
+type ProjectTab = ProjectBaseTab;
 
 function resolveProjectTab(pathname: string, projectId: string): ProjectTab | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -73,11 +66,7 @@ export function ProjectDetail() {
   const lookupCompanyId = routeCompanyId ?? selectedOrganizationId ?? undefined;
   const canFetchProject = routeProjectRef.length > 0 && (isUuidLike(routeProjectRef) || Boolean(lookupCompanyId));
   const activeRouteTab = routeProjectRef ? resolveProjectTab(location.pathname, routeProjectRef) : null;
-  const pluginTabFromSearch = useMemo(() => {
-    const tab = new URLSearchParams(location.search).get("tab");
-    return isProjectPluginTab(tab) ? tab : null;
-  }, [location.search]);
-  const activeTab = activeRouteTab ?? pluginTabFromSearch;
+  const activeTab = activeRouteTab;
 
   const { data: project, isLoading, error } = useQuery({
     queryKey: [...queryKeys.projects.detail(routeProjectRef), lookupCompanyId ?? null],
@@ -100,25 +89,6 @@ export function ProjectDetail() {
       : null,
     [project, resolvedOrganizationPrefix],
   );
-  const {
-    slots: pluginDetailSlots,
-    isLoading: pluginDetailSlotsLoading,
-  } = usePluginSlots({
-    slotTypes: ["detailTab"],
-    entityType: "project",
-    orgId: resolvedCompanyId,
-    enabled: !!resolvedCompanyId,
-  });
-  const pluginTabItems = useMemo(
-    () => pluginDetailSlots.map((slot) => ({
-      value: `plugin:${slot.pluginKey}:${slot.id}` as ProjectPluginTab,
-      label: slot.displayName,
-      slot,
-    })),
-    [pluginDetailSlots],
-  );
-  const activePluginTab = pluginTabItems.find((item) => item.value === activeTab) ?? null;
-
   useEffect(() => {
     if (!project?.orgId || project.orgId === selectedOrganizationId) return;
     setSelectedOrganizationId(project.orgId, { source: "route_sync" });
@@ -181,10 +151,6 @@ export function ProjectDetail() {
   useEffect(() => {
     if (!project) return;
     if (routeProjectRef === canonicalProjectRef) return;
-    if (isProjectPluginTab(activeTab)) {
-      navigate(`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(activeTab)}`, { replace: true });
-      return;
-    }
     if (activeTab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`, { replace: true });
       return;
@@ -248,10 +214,6 @@ export function ProjectDetail() {
     }
   }, [invalidateProject, lookupCompanyId, projectLookupRef, resolvedCompanyId, scheduleFieldReset, setFieldState]);
 
-  if (pluginTabFromSearch && !pluginDetailSlotsLoading && !activePluginTab) {
-    return <Navigate to={`/projects/${canonicalProjectRef}/configuration`} replace />;
-  }
-
   // Redirect bare /projects/:id to cached tab or default /configuration
   if (routeProjectRef && activeTab === null) {
     let cachedTab: string | null = null;
@@ -266,9 +228,6 @@ export function ProjectDetail() {
     }
     if ((cachedTab === "issues" || cachedTab === "list") && projectIssuesPath) {
       return <Navigate to={projectIssuesPath} replace />;
-    }
-    if (isProjectPluginTab(cachedTab)) {
-      return <Navigate to={`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(cachedTab)}`} replace />;
     }
     return <Navigate to={`/projects/${canonicalProjectRef}/configuration`} replace />;
   }
@@ -285,10 +244,6 @@ export function ProjectDetail() {
     // Cache the active tab per project
     if (project?.id) {
       try { localStorage.setItem(`rudder:project-tab:${project.id}`, tab); } catch {}
-    }
-    if (isProjectPluginTab(tab)) {
-      navigate(`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(tab)}`);
-      return;
     }
     if (tab === "resources") {
       navigate(`/projects/${canonicalProjectRef}/resources`);
@@ -343,47 +298,12 @@ export function ProjectDetail() {
         </Button>
       </div>
 
-      <PluginSlotOutlet
-        slotTypes={["toolbarButton", "contextMenuItem"]}
-        entityType="project"
-        context={{
-          orgId: resolvedCompanyId ?? null,
-          orgPrefix: orgPrefix ?? null,
-          projectId: project.id,
-          projectRef: canonicalProjectRef,
-          entityId: project.id,
-          entityType: "project",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-        missingBehavior="placeholder"
-      />
-
-      <PluginLauncherOutlet
-        placementZones={["toolbarButton"]}
-        entityType="project"
-        context={{
-          orgId: resolvedCompanyId ?? null,
-          orgPrefix: orgPrefix ?? null,
-          projectId: project.id,
-          projectRef: canonicalProjectRef,
-          entityId: project.id,
-          entityType: "project",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-      />
-
       <Tabs value={activeTab ?? "configuration"} onValueChange={(value) => handleTabChange(value as ProjectTab)}>
         <PageTabBar
           items={[
             { value: "configuration", label: "Configuration" },
             { value: "resources", label: "Context" },
             { value: "issues", label: "Issues" },
-            ...pluginTabItems.map((item) => ({
-              value: item.value,
-              label: item.label,
-            })),
           ]}
           align="start"
           value={activeTab ?? "configuration"}
@@ -408,21 +328,6 @@ export function ProjectDetail() {
         <div className="max-w-5xl">
           <ProjectResourcesPanel project={project} />
         </div>
-      )}
-
-      {activePluginTab && (
-        <PluginSlotMount
-          slot={activePluginTab.slot}
-          context={{
-            orgId: resolvedCompanyId,
-            orgPrefix: orgPrefix ?? null,
-            projectId: project.id,
-            projectRef: canonicalProjectRef,
-            entityId: project.id,
-            entityType: "project",
-          }}
-          missingBehavior="placeholder"
-        />
       )}
     </div>
   );

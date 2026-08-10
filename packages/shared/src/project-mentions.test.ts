@@ -10,6 +10,7 @@ import {
   buildLibraryEntryMentionMarkdown,
   buildLibraryFileMentionHref,
   buildLibraryFileMentionMarkdown,
+  buildPluginMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractAgentWakeMentionIds,
@@ -20,6 +21,7 @@ import {
   extractLibraryDocMentionIds,
   extractLibraryEntryMentionIds,
   extractLibraryFileMentionPaths,
+  extractPluginMentionIds,
   extractProjectMentionIds,
   parseAgentMentionHref,
   parseAutomationMentionHref,
@@ -33,6 +35,12 @@ import {
 } from "./project-mentions.js";
 
 describe("project-mentions", () => {
+  it("builds and extracts Plugin mentions without reading code spans", () => {
+    const href = buildPluginMentionHref("plugin-123");
+    expect(href).toBe("plugin://plugin-123");
+    expect(extractPluginMentionIds(`[@Research Kit](${href}) \`[@Hidden](plugin://hidden)\``)).toEqual(["plugin-123"]);
+  });
+
   it("builds project mentions with only the stable project id", () => {
     const href = buildProjectMentionHref("project-123", "#336699");
     expect(href).toBe("project://project-123");

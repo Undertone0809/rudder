@@ -1,6 +1,5 @@
 import { accessApi } from "@/api/access";
 import { healthApi } from "@/api/health";
-import { pluginsApi } from "@/api/plugins";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/context/I18nContext";
 import { useOrganization } from "@/context/OrganizationContext";
@@ -12,7 +11,7 @@ import { DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "@/lib/o
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
 import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { queryKeys } from "@/lib/queryKeys";
-import { Link, NavLink, useLocation, useNavigate } from "@/lib/router";
+import { Link, useLocation, useNavigate } from "@/lib/router";
 import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
@@ -28,7 +27,6 @@ import {
   Info,
   Keyboard,
   Palette,
-  Puzzle,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -97,10 +95,6 @@ export function SettingsSidebar({
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
     retry: false,
-  });
-  const { data: plugins } = useQuery({
-    queryKey: queryKeys.plugins.all,
-    queryFn: () => pluginsApi.list(),
   });
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
@@ -285,42 +279,6 @@ export function SettingsSidebar({
               />
             </div>
 
-            <div className="flex flex-col gap-1">
-              <div className={cn(
-                "px-3 font-medium text-muted-foreground/78",
-                modalVariant ? "text-[11px]" : "text-[12px]",
-              )}>
-                {t("common.integrations")}
-              </div>
-              <SidebarNavItem
-                to="/instance/settings/plugins"
-                state={overlayState}
-                label={t("common.plugins")}
-                icon={Puzzle}
-                variant={modalVariant ? "compact" : "default"}
-              />
-              {(plugins ?? []).length > 0 ? (
-                <div className="ml-4 mt-1 flex flex-col gap-1 border-l border-[color:color-mix(in_oklab,var(--border-soft)_78%,transparent)] pl-4">
-                  {(plugins ?? []).map((plugin) => (
-                    <NavLink
-                      key={plugin.id}
-                      to={`/instance/settings/plugins/${plugin.id}`}
-                      state={overlayState}
-                      className={({ isActive }) =>
-                        cn(
-                          "rounded-[calc(var(--radius-sm)+2px)] px-2 py-1.5 text-xs transition-colors",
-                          isActive
-                            ? "bg-[color:color-mix(in_oklab,var(--surface-active)_48%,transparent)] text-foreground"
-                            : "text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-active)_24%,transparent)] hover:text-foreground",
-                        )
-                      }
-                    >
-                      {plugin.manifestJson.displayName ?? plugin.packageName}
-                    </NavLink>
-                  ))}
-                </div>
-              ) : null}
-            </div>
           </>
         ) : null}
 

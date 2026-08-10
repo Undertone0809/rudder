@@ -34,7 +34,8 @@ export function AppBuilderAutoLaunchCoordinator() {
     selectedOrganizationId
     && desktopShell?.appBuilder?.supported
     && desktopShell.localApps?.supported
-    && healthQuery.data?.features?.experimentalSitesEnabled === true,
+    && (healthQuery.data?.features?.experimentalPluginsEnabled
+      ?? healthQuery.data?.features?.experimentalSitesEnabled) === true,
   );
   const appsQuery = useQuery({
     queryKey: queryKeys.appBuilder.organization(selectedOrganizationId ?? "__none__"),

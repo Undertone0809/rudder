@@ -8,7 +8,7 @@ import {
   type RealmPlugin,
   type Translation
 } from "@mdxeditor/editor";
-import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildIssueMentionHref, buildPluginMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import {
   $createParagraphNode,
   $createRangeSelection,
@@ -41,7 +41,7 @@ import { $createSkillTokenNode } from "../lib/skill-token-node";
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_entry" | "library_file" | "library_directory" | "skill";
+  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_entry" | "library_file" | "library_directory" | "plugin" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -77,6 +77,9 @@ export interface MentionOption {
   skillCategoryLabel?: string | null;
   skillLocationLabel?: string | null;
   skillDetailsHref?: string | null;
+  pluginId?: string;
+  pluginDescription?: string | null;
+  pluginCapabilityLabel?: string | null;
 }
 
 /* ---- Editor props ---- */
@@ -827,6 +830,9 @@ export function mentionTokenDetails(
   if (option.kind === "skill") {
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, isSkill: true, label: option.skillRefLabel };
+  }
+  if (option.kind === "plugin" && option.pluginId) {
+    return { href: buildPluginMentionHref(option.pluginId), isSkill: false, label: option.name };
   }
   if (option.kind === "issue" && option.issueId) {
     return {

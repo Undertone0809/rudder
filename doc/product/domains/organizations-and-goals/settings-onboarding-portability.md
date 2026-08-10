@@ -67,8 +67,6 @@ related_code:
   - ui/src/components/ImagePreviewDialog.tsx
   - ui/src/components/InspectableImage.tsx
   - ui/src/context/ImagePreviewContext.tsx
-  - ui/src/pages/PluginManager.tsx
-  - ui/src/pages/PluginSettings.tsx
   - ui/src/pages/InviteLanding.tsx
   - ui/src/pages/NotFound.tsx
   - ui/src/components/DesktopReleaseNotesDialog.tsx

@@ -3882,6 +3882,20 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   mask-size: contain;
 }
 
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="plugin"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="plugin"]::before,
+a.rudder-mention-chip[data-mention-kind="plugin"]::before {
+  border-radius: 0;
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="agent"]::before,
 a.rudder-mention-chip[data-mention-kind="agent"]::before {
   content: "";

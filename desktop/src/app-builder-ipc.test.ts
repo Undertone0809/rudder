@@ -20,14 +20,14 @@ describe("App Builder IPC", () => {
       getMainRenderer: () => renderer,
       controller,
       assertEnabled: vi.fn(async () => {
-        throw new Error("Sites is disabled");
+        throw new Error("Plugins is disabled");
       }),
     });
 
     await expect(handlers.get(APP_BUILDER_IPC_CHANNELS.inspect)!(
       { sender: renderer, senderFrame: renderer.mainFrame },
       { projectId: "project-1", appDirectory: "apps/crm" },
-    )).rejects.toThrow("Sites is disabled");
+    )).rejects.toThrow("Plugins is disabled");
     expect(controller.inspect).not.toHaveBeenCalled();
   });
 

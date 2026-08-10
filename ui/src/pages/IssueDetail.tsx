@@ -20,8 +20,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,7 +28,6 @@ import {
   Check,
   ChevronRight,
   Copy,
-  ExternalLink,
   FileCode2,
   FileText,
   Folder,
@@ -56,7 +53,6 @@ import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
-import { pluginsApi } from "../api/plugins";
 import { projectsApi } from "../api/projects";
 import { AgentIdentity } from "../components/AgentAvatar";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
@@ -93,7 +89,8 @@ import { isImageContentType } from "../lib/image-actions";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
-import { getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
+import { toOrganizationRelativePath } from "../lib/organization-routes";
+import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { formatPriorityLabel } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
@@ -365,68 +362,8 @@ const issueStatusOptions = [
 ] as const;
 
 const ISSUE_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
-const LINEAR_PLUGIN_KEY = "rudder.linear";
-const LINEAR_ISSUE_DETAIL_SLOT_ID = "linear-issue-tab";
-const LINEAR_ISSUE_LINK_DATA_KEY = "issue-link";
-
-type LinearIssueActivitySlot = {
-  pluginId: string;
-  pluginKey: string;
-  id: string;
-};
-
-type LinearIssueLinkState = {
-  externalId: string;
-  linearIdentifier: string;
-  linearTitle: string;
-  linearUrl: string;
-  orgId: string;
-  rudderIssueId: string;
-  rudderIssueIdentifier: string | null;
-  teamId: string;
-  teamName: string;
-  projectId: string | null;
-  projectName: string | null;
-  stateId: string;
-  stateName: string;
-  importedAt: string;
-  updatedAt: string;
-};
-
-type LinearIssueSummary = {
-  id: string;
-  identifier: string;
-  title: string;
-  description?: string | null;
-  url: string;
-  updatedAt: string;
-  createdAt: string;
-  team: { id: string; key?: string; name: string };
-  state: { id: string; name: string };
-  project?: { id: string; name: string } | null;
-  assignee?: { id: string; name: string } | null;
-};
-
-type LinearIssueLinkData =
-  | {
-    linked: false;
-    issueTitle: string;
-    searchQuery: string;
-  }
-  | {
-    linked: true;
-    issueTitle: string;
-    link: LinearIssueLinkState;
-    latestIssue: LinearIssueSummary | null;
-    staleReason: string | null;
-  };
-
 function issueStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function isLinearIssueDetailSlot(slot: LinearIssueActivitySlot) {
-  return slot.pluginKey === LINEAR_PLUGIN_KEY && slot.id === LINEAR_ISSUE_DETAIL_SLOT_ID;
 }
 
 function workspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
@@ -846,76 +783,6 @@ function IssueActivityRow({
   );
 }
 
-function LinearIssueActivityCard({ data }: { data: Extract<LinearIssueLinkData, { linked: true }> }) {
-  const latest = data.latestIssue;
-  const link = data.link;
-  const identifier = latest?.identifier ?? link.linearIdentifier;
-  const title = latest?.title ?? link.linearTitle;
-  const url = latest?.url ?? link.linearUrl;
-  const description = latest?.description?.trim() ?? "";
-  const teamName = latest?.team.name ?? link.teamName;
-  const stateName = latest?.state.name ?? link.stateName;
-  const projectName = latest?.project?.name ?? link.projectName;
-  const assigneeName = latest?.assignee?.name ?? null;
-  const updatedAt = latest?.updatedAt ?? link.updatedAt;
-
-  return (
-    <section
-      className="rounded-lg border border-border bg-card/70 p-3 text-sm"
-      data-testid="issue-activity-linear-link"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              Linked Linear issue
-            </span>
-            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-              {identifier}
-            </span>
-          </div>
-          <div className="font-medium text-foreground">{title}</div>
-          <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{teamName}</span>
-            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{stateName}</span>
-            {projectName ? (
-              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{projectName}</span>
-            ) : null}
-            {assigneeName ? (
-              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{assigneeName}</span>
-            ) : null}
-            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">
-              Updated {relativeTime(updatedAt)}
-            </span>
-            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">
-              Imported {relativeTime(link.importedAt)}
-            </span>
-          </div>
-        </div>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-        >
-          Open in Linear
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      </div>
-      {data.staleReason ? (
-        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-200">
-          {data.staleReason}
-        </div>
-      ) : null}
-      {description ? (
-        <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
-          {description}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
 function linkedLibraryDocumentTitle(doc: Pick<LibraryDocumentSummary, "id" | "title" | "issueLinks">) {
   if (doc.title?.trim()) return doc.title.trim();
   const issueLink = doc.issueLinks?.[0] ?? null;
@@ -1300,47 +1167,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     orgId: resolvedCompanyId,
     userId: currentUserId,
   });
-  const { slots: issuePluginDetailSlots } = usePluginSlots({
-    slotTypes: ["detailTab"],
-    entityType: "issue",
-    orgId: resolvedCompanyId,
-    enabled: !!resolvedCompanyId,
-  });
-  const issuePluginTabItems = useMemo(
-    () => issuePluginDetailSlots
-      .filter((slot) => !isLinearIssueDetailSlot(slot))
-      .map((slot) => ({
-        value: `plugin:${slot.pluginKey}:${slot.id}`,
-        label: slot.displayName,
-        slot,
-      })),
-    [issuePluginDetailSlots],
-  );
-  const linearIssueActivitySlot = issuePluginDetailSlots.find((slot) => isLinearIssueDetailSlot(slot)) ?? null;
-  const { data: linearIssueLink } = useQuery({
-    queryKey: [
-      "plugins",
-      LINEAR_PLUGIN_KEY,
-      LINEAR_ISSUE_LINK_DATA_KEY,
-      resolvedCompanyId ?? "__none__",
-      issue?.id ?? issueId ?? "__none__",
-      linearIssueActivitySlot?.pluginId ?? "__none__",
-    ] as const,
-    queryFn: async () => {
-      const response = await pluginsApi.bridgeGetData(
-        linearIssueActivitySlot!.pluginId,
-        LINEAR_ISSUE_LINK_DATA_KEY,
-        {
-          orgId: resolvedCompanyId,
-          issueId: issue!.id,
-        },
-        resolvedCompanyId,
-      );
-      return response.data as LinearIssueLinkData;
-    },
-    enabled: Boolean(resolvedCompanyId && issue?.id && linearIssueActivitySlot?.pluginId),
-  });
-
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
     for (const a of agents ?? []) map.set(a.id, a);
@@ -1354,6 +1180,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const currentAssigneeAgent = issue?.assigneeAgentId
     ? agentMap.get(issue.assigneeAgentId) ?? null
     : null;
+  const pluginMentions = usePluginMentionCatalog(resolvedCompanyId);
 
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
@@ -1460,8 +1287,9 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       });
     }
     options.push(...skillMentionOptions);
+    options.push(...pluginMentions.options);
     return options;
-  }, [agentMap, agents, allIssues, currentUserId, issue?.id, libraryDocuments, libraryMentionFiles?.entries, orderedProjects, projectById, skillMentionOptions]);
+  }, [agentMap, agents, allIssues, currentUserId, issue?.id, libraryDocuments, libraryMentionFiles?.entries, orderedProjects, pluginMentions.options, projectById, skillMentionOptions]);
 
   const orderedChildIssues = useMemo(
     () => [...childIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
@@ -1550,14 +1378,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issueActivityItems = useMemo<CommentThreadActivityItem[]>(() => {
     const items: CommentThreadActivityItem[] = [];
 
-    if (linearIssueLink?.linked) {
-      items.push({
-        id: "linear-linked-issue",
-        createdAt: linearIssueLink.latestIssue?.updatedAt ?? linearIssueLink.link.updatedAt ?? linearIssueLink.link.importedAt,
-        node: <LinearIssueActivityCard data={linearIssueLink} />,
-      });
-    }
-
     for (const evt of activity ?? []) {
       if (!shouldShowIssueActivityEvent(evt)) continue;
       items.push({
@@ -1575,7 +1395,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     }
 
     return items;
-  }, [activity, agentMap, currentBoardUserId, linearIssueLink, operatorDisplayName]);
+  }, [activity, agentMap, currentBoardUserId, operatorDisplayName]);
 
   const invalidateIssue = () => {
     const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
@@ -2222,47 +2042,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           }}
         />
 
-      <PluginSlotOutlet
-        slotTypes={["toolbarButton", "contextMenuItem"]}
-        entityType="issue"
-        context={{
-          orgId: issue.orgId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-        missingBehavior="placeholder"
-      />
-
-      <PluginLauncherOutlet
-        placementZones={["toolbarButton"]}
-        entityType="issue"
-        context={{
-          orgId: issue.orgId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-      />
-
-      <PluginSlotOutlet
-        slotTypes={["taskDetailView"]}
-        entityType="issue"
-        context={{
-          orgId: issue.orgId,
-          projectId: issue.projectId ?? null,
-          entityId: issue.id,
-          entityType: "issue",
-        }}
-        className="space-y-3"
-        itemClassName="rounded-lg border border-border p-3"
-        missingBehavior="placeholder"
-      />
-
       <section
         aria-label="Sub-issues"
         className="space-y-3"
@@ -2660,26 +2439,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         />
       </section>
 
-      {issuePluginTabItems.length > 0 ? (
-        <div className="space-y-3">
-          {issuePluginTabItems.map((item) => (
-            <section key={item.value} className="space-y-2">
-              <h3 className="text-sm font-semibold">{item.label}</h3>
-              <PluginSlotMount
-                slot={item.slot}
-                context={{
-                  orgId: issue.orgId,
-                  orgPrefix: currentOrganization ? getOrganizationRouteKey(currentOrganization) : null,
-                  projectId: issue.projectId ?? null,
-                  entityId: issue.id,
-                  entityType: "issue",
-                }}
-                missingBehavior="placeholder"
-              />
-            </section>
-          ))}
-        </div>
-      ) : null}
         </div>
       </div>
 

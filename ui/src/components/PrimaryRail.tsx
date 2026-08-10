@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import type { MessengerSavedViewTarget } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AppWindow,
+  Blocks,
   Bot,
   CircleCheckBig,
   FolderKanban,
@@ -203,7 +203,8 @@ export function PrimaryRail({
     queryFn: () => healthApi.get(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
-  const sitesEnabled = healthQuery.data?.features?.experimentalSitesEnabled === true;
+  const pluginsEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
+    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const goalsEnabled = healthQuery.data?.features?.experimentalGoalsEnabled === true;
   const pinnedLocalAppsQuery = useQuery({
     queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
@@ -214,7 +215,7 @@ export function PrimaryRail({
     }),
     enabled: Boolean(
       selectedOrganizationId
-      && sitesEnabled,
+      && pluginsEnabled,
     ),
   });
   const location = useLocation();
@@ -235,7 +236,7 @@ export function PrimaryRail({
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
-  const appsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "apps", "/apps");
+  const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/plugins");
   const railItems: RailItem[] = [
     {
       key: "messenger",
@@ -277,13 +278,13 @@ export function PrimaryRail({
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
-    ...(sitesEnabled
+    ...(pluginsEnabled
       ? [{
-          key: "apps",
-          to: appsEntryPath,
-          label: "Apps",
-          icon: AppWindow,
-          active: /^\/apps(?:\/|$)/.test(relativePath)
+          key: "plugins",
+          to: pluginsEntryPath,
+          label: "Plugins",
+          icon: Blocks,
+          active: /^\/(?:plugins|apps)(?:\/|$)/.test(relativePath)
             && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
         }]
       : []),
@@ -302,7 +303,7 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = sitesEnabled
+  const pinnedLocalAppItems: RailItem[] = pluginsEnabled
     ? (pinnedLocalAppsQuery.data?.items ?? [])
     .filter((savedView) => savedView.targetPayload.kind === "local_app")
     .map((savedView) => ({
@@ -552,7 +553,7 @@ export function PrimaryRail({
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
             onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
             localAppIdentity={item.localAppIdentity}
-            end={item.key === "apps" ? true : undefined}
+            end={item.key === "plugins" ? true : undefined}
           />
         ))}
         {pinnedLocalAppItems.length > 0 ? (

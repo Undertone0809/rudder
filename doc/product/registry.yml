@@ -2110,17 +2110,13 @@ contracts:
       - server/src/index.ts
       - server/src/app.ts
       - server/src/bootstrap/create-http-app.ts
-      - server/src/bootstrap/plugin-host-runtime.ts
       - server/src/routes/chat-background-runtime.ts
-      - server/src/services/plugin-dev-watcher.ts
       - server/src/runtime/runtime-supervisor.ts
       - server/src/realtime/live-events-ws.ts
     related_tests:
       - server/src/__tests__/app-lifecycle.test.ts
       - server/src/__tests__/chat-background-runtime.test.ts
       - server/src/__tests__/http-app-vite-lifecycle.test.ts
-      - server/src/__tests__/plugin-dev-watcher.test.ts
-      - server/src/__tests__/plugin-host-runtime-lifecycle.test.ts
       - server/src/__tests__/runtime-supervisor.test.ts
       - server/src/__tests__/live-events-ws.test.ts
       - scripts/smoke/server-runtime-lifecycle.mjs
@@ -2330,8 +2326,6 @@ contracts:
       - ui/src/pages/InstanceSettings.tsx
       - ui/src/pages/InstanceShortcutsSettings.tsx
       - ui/src/pages/OrganizationSettings.tsx
-      - ui/src/pages/PluginManager.tsx
-      - ui/src/pages/PluginSettings.tsx
     related_tests:
       - desktop/src/browser-ipc.test.ts
       - desktop/src/browser-profile.test.ts
@@ -2495,65 +2489,62 @@ contracts:
   PLUGIN.LIFECYCLE.001:
     owner: product
     domain: plugins
+    status: retired
     docs:
       - doc/product/domains/plugins/lifecycle-capabilities.md
-    related_code:
-      - packages/db/src/schema/plugins.ts
-      - packages/db/src/schema/plugin_config.ts
-      - server/src/routes/plugins.ts
-      - server/src/routes/plugins.operations-routes.ts
-      - server/src/services/plugin-registry.ts
-      - server/src/services/plugin-loader.ts
-      - server/src/services/plugin-lifecycle.ts
-      - server/src/services/plugin-worker-manager.ts
-      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
-      - ui/src/pages/PluginManager.tsx
-      - ui/src/pages/PluginSettings.tsx
-    related_tests:
-      - server/src/__tests__/plugin-worker-manager.test.ts
-      - server/src/__tests__/plugin-package-resolution.test.ts
-      - server/src/__tests__/plugin-dev-watcher.test.ts
-      - tests/e2e/linear-plugin-import.spec.ts
-      - server/src/__tests__/bundled-rudder-skill-docs.test.ts
-    related_plans:
-      - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
-      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   PLUGIN.CAPABILITY.001:
     owner: product
     domain: plugins
+    status: retired
     docs:
       - doc/product/domains/plugins/lifecycle-capabilities.md
-    related_code:
-      - server/src/services/plugin-capability-validator.ts
-      - server/src/services/plugin-tool-dispatcher.ts
-      - server/src/services/plugin-tool-registry.ts
-      - server/src/services/plugin-host-services.ts
-      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
-    related_tests:
-      - server/src/__tests__/plugin-worker-manager.test.ts
-    related_plans:
-      - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
-      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   PLUGIN.JOBS.WEBHOOKS.001:
     owner: product
     domain: plugins
+    status: retired
+    docs:
+      - doc/product/domains/plugins/lifecycle-capabilities.md
+  PLUGIN.PACKAGE.001:
+    owner: product
+    domain: plugins
+    status: active
     docs:
       - doc/product/domains/plugins/lifecycle-capabilities.md
     related_code:
-      - packages/db/src/schema/plugin_jobs.ts
-      - packages/db/src/schema/plugin_webhooks.ts
-      - packages/db/src/schema/plugin_logs.ts
-      - packages/db/src/schema/plugin_state.ts
-      - server/src/services/plugin-job-scheduler.ts
-      - server/src/services/plugin-job-store.ts
-      - server/src/services/plugin-state-store.ts
-      - server/src/routes/plugins.operations-routes.ts
-      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
+      - packages/db/src/schema/rudder_plugins.ts
+      - packages/shared/src/types/plugin-v1.ts
+      - server/src/services/rudder-plugins.ts
     related_tests:
-      - server/src/__tests__/plugin-job-scheduler.test.ts
-    related_plans:
-      - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
-      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+      - server/src/services/rudder-plugins.test.ts
+  PLUGIN.IMPORT.001:
+    owner: product
+    domain: plugins
+    status: active
+    docs:
+      - doc/product/domains/plugins/lifecycle-capabilities.md
+    related_code:
+      - packages/shared/src/validators/plugin-v1.ts
+      - server/src/routes/rudder-plugins.ts
+      - server/src/services/rudder-plugins.ts
+    related_tests:
+      - server/src/services/rudder-plugins.test.ts
+      - tests/e2e/plugins-v1.spec.ts
+  PLUGIN.INSTALLATION.001:
+    owner: product
+    domain: plugins
+    status: active
+    docs:
+      - doc/product/domains/plugins/lifecycle-capabilities.md
+    related_code:
+      - packages/db/src/migrations/0150_rudder_plugins_v1.sql
+      - packages/db/src/schema/rudder_plugins.ts
+      - server/src/routes/rudder-plugins.ts
+      - server/src/services/rudder-plugins.ts
+      - server/src/services/mcp/managed-client.ts
+      - ui/src/pages/Plugins.tsx
+    related_tests:
+      - server/src/__tests__/rudder-plugins-lifecycle.test.ts
+      - tests/e2e/plugins-v1.spec.ts
   IDENTITY.AUTH.001:
     owner: product
     domain: identity-and-access

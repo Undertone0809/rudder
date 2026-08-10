@@ -10,17 +10,13 @@ related_code:
   - server/src/index.ts
   - server/src/app.ts
   - server/src/bootstrap/create-http-app.ts
-  - server/src/bootstrap/plugin-host-runtime.ts
   - server/src/routes/chat-background-runtime.ts
-  - server/src/services/plugin-dev-watcher.ts
   - server/src/runtime/runtime-supervisor.ts
   - server/src/realtime/live-events-ws.ts
 related_tests:
   - server/src/__tests__/app-lifecycle.test.ts
   - server/src/__tests__/chat-background-runtime.test.ts
   - server/src/__tests__/http-app-vite-lifecycle.test.ts
-  - server/src/__tests__/plugin-dev-watcher.test.ts
-  - server/src/__tests__/plugin-host-runtime-lifecycle.test.ts
   - server/src/__tests__/runtime-supervisor.test.ts
   - server/src/__tests__/live-events-ws.test.ts
   - scripts/smoke/server-runtime-lifecycle.mjs
@@ -127,8 +123,7 @@ one resource failure is reported but does not skip later cleanup work.
 | Normal stop | Server is running, its active HTTP requests can drain, and `stop()` or a process signal requests shutdown | New ingress stops, registered resources close in safe order, and shutdown completes | Lifecycle-owned listeners, timers, DB resources, or descriptors remain solely because shutdown used a particular entry point | Lifecycle smoke and focused supervisor tests |
 | Repeated or concurrent stop | Disposal is already running or completed | Every caller observes the same in-flight or completed cleanup | A second cleanup races the first, closes a resource twice, or emits duplicate shutdown lifecycle events | `runtime-supervisor.test.ts` and lifecycle smoke |
 | Startup failure | Startup throws after acquiring and registering one or more resources | Registered resources are released and the original startup error is returned to the caller | Registered cleanup is skipped, or a cleanup error replaces the startup failure | `runtime-supervisor.test.ts` |
-| Application startup failure | HTTP app construction or prompt plugin-host startup fails after the plugin runtime is owned | The app-local supervisor closes acquired resources once in reverse order and returns the original error | Plugin process listeners or an acquired Vite runtime survive the failed app creation | `app-lifecycle.test.ts` |
-| Deferred plugin warm-up | Plugin discovery or tool-dispatcher initialization remains in flight after the HTTP app is ready | Readiness is not delayed; close stops new scheduler, watcher, and listener work, then waits for tracked startup work before final dispatcher and worker teardown | Shutdown races startup work or accumulates process listeners across same-process restarts | `plugin-host-runtime-lifecycle.test.ts` |
+| Application startup failure | HTTP app construction fails after one or more app-local resources are owned | The app-local supervisor closes acquired resources once in reverse order and returns the original error | An acquired Vite runtime or process listener survives failed app creation | `app-lifecycle.test.ts` |
 | Chat background work | Chat recovery, terminal projection, queue drain, lease renewal, or a claimed server-owned continuation is scheduled or running | HTTP application close stops new claims and timers, aborts owned queue execution, and waits for tracked work before completing | A stopped application leaves an old Chat worker claiming work beside a same-process replacement | `chat-background-runtime.test.ts` and `http-app-vite-lifecycle.test.ts` |
 | Active or pending WebSocket work | Live Events clients are connected or authenticated upgrade authorization is pending | Subscriptions, heartbeat work, clients, pending upgrade sockets, and the owned upgrade listener close without blocking HTTP shutdown | A pending upgrade keeps the HTTP listener or process alive | `live-events-ws.test.ts` |
 | Shared PostgreSQL | The server uses an external or previously running PostgreSQL instance | Rudder closes its client pool but leaves the shared database service running | The current server process stops a database service it does not own | Ownership guard in `server/src/index.ts`; lifecycle smoke proves the owned embedded case |
@@ -207,21 +202,14 @@ real child-process restart smoke.
 - Startup failure must preserve the original error object.
 - Plugin discovery and tool-dispatcher warm-up must not delay HTTP readiness;
   lifecycle close must wait for their tracked startup work before teardown.
-- Plugin watcher close marks the watcher closed before async package-path
-  resolution can finish, prevents post-close watches, and awaits every owned
-  filesystem-watcher close handle.
-- Plugin-host cleanup is failure-isolated within the host boundary: one watcher,
-  loader, dispatcher, host-service, or log-flush failure must not skip later
-  owned cleanup.
-- An owned Vite middleware/HMR runtime and plugin-host process listeners must be
+- An owned Vite middleware/HMR runtime and app-local process listeners must be
   closed during normal shutdown and application-start rollback so same-process
   restart can reuse the same ports and listener baseline.
 - Chat background scheduling must have one owner per HTTP application. Close
   must reject new work before clearing timers, aborting owned queue execution,
   and awaiting already tracked work; repeated close calls share one promise.
 - This contract does not promise cancellation or draining of already-started
-  agent runs, non-Chat asynchronous recovery tasks, in-flight plugin tool calls
-  or scheduled job executions, backups, or workspace operations beyond the
+  agent runs, non-Chat asynchronous recovery tasks, backups, or workspace operations beyond the
   resources explicitly owned by the server lifecycle.
 - This contract does not change API, persistence, organization scoping, runtime
   provider, or UI business logic.
@@ -249,9 +237,7 @@ Related code:
 - `server/src/index.ts`
 - `server/src/app.ts`
 - `server/src/bootstrap/create-http-app.ts`
-- `server/src/bootstrap/plugin-host-runtime.ts`
 - `server/src/routes/chat-background-runtime.ts`
-- `server/src/services/plugin-dev-watcher.ts`
 - `server/src/runtime/runtime-supervisor.ts`
 - `server/src/realtime/live-events-ws.ts`
 
@@ -260,8 +246,6 @@ Related tests:
 - `server/src/__tests__/app-lifecycle.test.ts`
 - `server/src/__tests__/chat-background-runtime.test.ts`
 - `server/src/__tests__/http-app-vite-lifecycle.test.ts`
-- `server/src/__tests__/plugin-dev-watcher.test.ts`
-- `server/src/__tests__/plugin-host-runtime-lifecycle.test.ts`
 - `server/src/__tests__/runtime-supervisor.test.ts`
 - `server/src/__tests__/live-events-ws.test.ts`
 - `scripts/smoke/server-runtime-lifecycle.mjs`
@@ -270,7 +254,7 @@ Related tests:
 Known gaps:
 
 - Non-Chat fire-and-forget recovery, in-flight scheduler ticks or backup work,
-  in-flight plugin tool calls or job executions, Feishu startup work, and
+  Feishu startup work, and
   workspace runtime cancellation remain outside this lifecycle owner.
 - Active HTTP requests are drained without a timeout or forced cancellation, so
   a non-terminating request can delay later resource cleanup and restart.

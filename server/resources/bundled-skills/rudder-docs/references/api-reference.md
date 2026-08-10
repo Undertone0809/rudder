@@ -246,8 +246,6 @@ or editing that URL by hand.
 
 - `GET /api/approvals/:approvalId`
 - `GET /api/approvals/:approvalId/issues`
-- `GET /api/approvals/:approvalId/comments`
-- `POST /api/approvals/:approvalId/comments`
 - `POST /api/approvals/:approvalId/request-revision`
 - `POST /api/approvals/:approvalId/resubmit`
 - `POST /api/approvals/:approvalId/approve`

@@ -1251,7 +1251,11 @@ describe("claude execute", { timeout: 20_000 }, () => {
         const browser = managedConfig.mcpServers["rudder-browser"];
         expect(await readMcpToolNames(core)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
         expect(await readMcpToolNames(browser)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
-        expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 70 });
+        expect(meta.rudderMcp).toMatchObject({
+          available: true,
+          serverName: "rudder-tools",
+          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        });
         expect(meta.browserMcp).toMatchObject({
           available: true,
           serverName: "rudder-browser",
@@ -1465,7 +1469,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: 70,
+          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");

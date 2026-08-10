@@ -1,45 +1,76 @@
 ---
-title: Plugin Runtime Contract
+title: Plugin Import And Activation Contract
 status: active
 ---
 
-# Plugin Runtime Contract
+# Plugin Import And Activation Contract
 
-This document is the current engineering anchor for implemented plugin host
-behavior. Product behavior is owned by `doc/product/domains/plugins/**`; plugin
-author workflows are owned by `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`.
+Rudder Plugins are distribution and lifecycle records. There is no Plugin
+runtime. Product behavior is owned by
+`doc/product/domains/plugins/lifecycle-capabilities.md`; package authoring is
+described in `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`.
 
-Use the archived `doc/archive/plugins/PLUGIN_SPEC.md` only for future-looking
-or historical design context.
+## Import Boundary
 
-## Current Runtime Boundaries
+- Input is a bounded browser upload of a Codex Plugin folder or ZIP, or an
+  ordered local/GitHub Codex marketplace. GitHub sources require an HTTPS
+  repository and full immutable commit SHA.
+- The required manifest is `.codex-plugin/plugin.json`.
+- Inspection normalizes safe package paths, computes SHA-256 over the exact
+  snapshot, parses declared/default Skills, MCP definitions, and App aliases,
+  and preserves the raw manifest and unknown content.
+- Inspection executes no scripts, hooks, MCP servers, Apps, package-manager
+  lifecycle steps, or network requests.
+- Literal MCP credentials, unsafe paths, ZIP expansion, path collisions,
+  invalid identity, missing references, and package limits fail before
+  installation.
 
-- Plugins are trusted instance-level extension code.
-- Plugin UI runs as same-origin JavaScript inside the main Rudder app.
-- Worker-side host APIs are capability-gated.
-- Manifest capabilities do not sandbox plugin UI from ordinary board-session
-  HTTP APIs.
-- Local-path installs and repo example plugins are development workflows.
-- npm packages are the intended deployment artifact for distributed plugins.
-- Dynamic install currently assumes a writable persistent filesystem, available
-  package tooling, and single-node or otherwise coordinated deployment.
+## Installation Boundary
 
-## Implemented Host Surfaces
+- Installation is scoped to one Organization and references an immutable
+  package snapshot plus the Organization's source record.
+- Skills materialize through the Organization Skill Library with
+  `plugin_managed` provenance and remain read-only.
+- Existing Skill collisions require an explicit keep, replace, or rename
+  choice. Keeping an existing Skill does not transfer Plugin ownership.
+- Agent Skill assignment is explicit and uses the existing Agent Skill
+  selection service.
+- MCP setup uses the managed MCP service and deployment allowlists. It creates
+  a disabled draft only; credentials and activation stay in Managed MCP.
+- `.app.json` aliases and unsupported components are visible evidence, never
+  executable authority.
+- Codex browser extensions, scheduled-task templates, and hooks are explicit
+  unsupported inventory. They remain in the snapshot and are never loaded.
+- Local Apps retain App Builder/Desktop process, source, attestation, and data
+  ownership. Each observable Local App revision produces an immutable pending
+  app-only package. The current revision stays active until explicit review and
+  apply advances the installed Plugin without changing its `/apps/...` route.
+  Reconciliation can recreate an uninstalled projection while the App still
+  exists.
+- Active managed MCP connections may discover and read HTML UI resources.
+  Rudder renders accepted HTML in a network-disabled sandbox; `.app.json`
+  aliases do not participate in MCP resource discovery.
 
-- Lifecycle and worker management: install, activate, disable, update,
-  uninstall, logs, and worker health.
-- Capabilities and tools: capability validation, namespaced plugin tools, and
-  host bridge dispatch.
-- Jobs and webhooks: plugin-owned scheduled/manual jobs, webhook routes, logs,
-  state, and persisted operational evidence.
-- UI slots: host-rendered plugin pages, settings pages, dashboard widgets,
-  sidebars, detail tabs, toolbar/context actions, and comment annotations.
-- SDK surfaces: worker context, UI hooks, testing harness, bundler presets, and
-  development server helpers.
+## Lifecycle Boundary
 
-## Current Truth Links
-
-- Product contracts: `doc/product/domains/plugins/lifecycle-capabilities.md`
-- Authoring workflow: `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`
-- SDK package surface: `packages/plugins/sdk/README.md`
-- Historical target architecture: `doc/archive/plugins/PLUGIN_SPEC.md`
+- Disable removes package Skills from new runtime projection and current Agent
+  selection, preserving the prior selection for re-enable.
+- Customize creates an independent editable managed-local Organization Skill
+  with package provenance. It is not a package-owned projection.
+- Update prepares new projections before switching the installation's package
+  pointer. The previous immutable package remains available for explicit
+  rollback; preparation failure leaves the current package active.
+- Update review compares the old and new component and execution surfaces.
+  Added or changed executable Skills and MCP commands/endpoints require an
+  explicit access-expansion confirmation before the package pointer can move.
+- Uninstall removes package-owned Skill projections and the active installation
+  identity. It does not delete external MCP connections, Local App source/data,
+  or user-owned Rudder records.
+- The instance `Enable Plugins` flag is non-destructive and also controls the
+  Plugins Primary Rail destination.
+- Plugin and instance disablement exclude linked MCP connections and
+  Plugin-managed Skills from new Agent runtime context without deleting the
+  Managed MCP connection or immutable package.
+- Historical legacy Plugin tables may remain for migration safety but no active
+  route, service, CLI, SDK, worker, job, webhook, UI slot, state store, or tool
+  RPC may depend on them.

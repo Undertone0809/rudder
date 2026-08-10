@@ -26,6 +26,7 @@ export type HealthStatus = {
   uiLocale?: InstanceLocale;
   features?: {
     companyDeletionEnabled?: boolean;
+    experimentalPluginsEnabled?: boolean;
     experimentalSitesEnabled?: boolean;
     experimentalGoalsEnabled?: boolean;
   };

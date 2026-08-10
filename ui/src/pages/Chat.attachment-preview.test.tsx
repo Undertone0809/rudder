@@ -549,16 +549,6 @@ vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({ t: (key: string, values?: Record<string, string>) => values?.name ?? key }),
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: [] }),
-}));
-
-vi.mock("@/plugins/launchers", () => ({
-  PluginLauncherOutlet: () => null,
-}));
-
 vi.mock("@/context/ChatGenerationContext", () => ({
   ChatGenerationCloseSupersededError: mockState.ChatGenerationCloseSupersededError,
   useChatGenerations: () => ({

@@ -32,7 +32,7 @@ const BUILD_ACTIVITY_ACTIONS: Record<AppBuilderBuildStatus, string> = {
   failed: "app_builder.build_failed",
 };
 
-export function appBuilderRoutes(db: Db) {
+export function appBuilderRoutes(db: Db, options?: { onAppChanged?: (orgId: string) => Promise<void> }) {
   const router = Router();
   const projects = projectService(db);
   const apps = appBuilderService(db);
@@ -46,8 +46,8 @@ export function appBuilderRoutes(db: Db) {
     ],
     async (_req, _res, next) => {
       const general = await settings.getGeneral();
-      if (!general.experimentalSitesEnabled) {
-        throw forbidden("Sites is disabled in Experimental settings");
+      if (!general.experimentalPluginsEnabled) {
+        throw forbidden("Plugins is disabled in Experimental settings");
       }
       next();
     },
@@ -120,6 +120,7 @@ export function appBuilderRoutes(db: Db) {
           scaffoldVersion: app.scaffoldVersion,
         },
       });
+      await options?.onAppChanged?.(orgId);
       res.status(201).json(app);
     },
   );
@@ -168,6 +169,7 @@ export function appBuilderRoutes(db: Db) {
           scaffoldVersion: app.scaffoldVersion,
         },
       });
+      await options?.onAppChanged?.(project.orgId);
       res.status(201).json(app);
     },
   );
@@ -201,6 +203,7 @@ export function appBuilderRoutes(db: Db) {
           runId: body.runId ?? null,
         },
       });
+      await options?.onAppChanged?.(app.orgId);
       res.json(updated);
     },
   );
@@ -266,6 +269,7 @@ export function appBuilderRoutes(db: Db) {
           runId: body.runId ?? null,
         },
       });
+      await options?.onAppChanged?.(project.orgId);
       res.json(app);
     },
   );
@@ -293,6 +297,7 @@ export function appBuilderRoutes(db: Db) {
         entityId: app.id,
         details: { projectId: app.projectId },
       });
+      await options?.onAppChanged?.(app.orgId);
       res.json(updated);
     },
   );
@@ -325,6 +330,7 @@ export function appBuilderRoutes(db: Db) {
         entityId: app.id,
         details: { projectId: project.id },
       });
+      await options?.onAppChanged?.(project.orgId);
       res.json(app);
     },
   );
@@ -351,6 +357,7 @@ export function appBuilderRoutes(db: Db) {
         entityId: app.id,
         details: { projectId: app.projectId },
       });
+      await options?.onAppChanged?.(app.orgId);
       res.json(updated);
     },
   );
@@ -382,6 +389,7 @@ export function appBuilderRoutes(db: Db) {
         entityId: app.id,
         details: { projectId: project.id },
       });
+      await options?.onAppChanged?.(project.orgId);
       res.json(app);
     },
   );

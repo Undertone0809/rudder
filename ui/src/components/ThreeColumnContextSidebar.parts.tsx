@@ -1,4 +1,3 @@
-import { type PluginUiContribution } from "@/api/plugins";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -21,48 +20,7 @@ import {
 import { useState, type CSSProperties, type ReactNode, type RefCallback } from "react";
 
 export const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
-export const LINEAR_PLUGIN_KEY = "rudder.linear";
-export const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
-export const LINEAR_PLUGIN_ROUTE_PATH = "linear";
-
 export type SidebarIssue = Pick<Issue, "id" | "identifier" | "status" | "title">;
-
-export type LinearSidebarItem = {
-  id: string;
-  name: string;
-  kind: "project" | "team";
-  teamId?: string;
-};
-
-export type LinearSidebarCatalog = {
-  orgId: string;
-  projects: Array<{ id: string; name: string; teamIds?: string[] }>;
-  teams: Array<{ id: string; name: string }>;
-};
-
-export function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
-  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
-  if (!contribution) return null;
-  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
-  if (!pageSlot) return null;
-  return {
-    pluginId: contribution.pluginId,
-    routePath: pageSlot.routePath || LINEAR_PLUGIN_ROUTE_PATH,
-  };
-}
-
-export function linearIssueSourceHref(item: LinearSidebarItem): string {
-  const params = new URLSearchParams();
-  params.set("source", "linear");
-  if (item.kind === "team") {
-    params.set("linearTeamId", item.id);
-  } else {
-    if (item.teamId) params.set("linearTeamId", item.teamId);
-    params.set("linearProjectId", item.id);
-  }
-  return `/issues?${params.toString()}`;
-}
-
 export function SectionLabel({
   children,
   action,

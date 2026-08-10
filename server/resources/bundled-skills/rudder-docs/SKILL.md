@@ -134,8 +134,8 @@ Read only the reference needed for the request:
    installed CLI fallback catalog plus exact command semantics.
 3. [Agent creation](references/agent-creation.md) — permission-aware Agent
    configuration, governed hiring, approval, revision, and evidence workflow.
-4. [Plugin authoring](references/plugin-authoring.md) — current scaffold,
-   manifest, worker, UI, capability, route, and verification workflow.
+4. [Plugin authoring](references/plugin-authoring.md) — Codex-compatible
+   package layout, manifest, Skills, MCPs, Apps, and verification workflow.
 5. [Work practices](references/operating-practices.md) — exact
    conditional behavior for ownership, reviews, approvals, budgets,
    workspaces, Library handoff, authentication, and safe git use.

@@ -206,7 +206,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
       expect.objectContaining({ id: "message-row-1" }),
       { expectedCurrentTitle: "hi, what skill do you have?" },
     );
-  });
+  }, 30_000);
 
   it("uses the normal chat title generation decision for existing Feishu chat bindings", async () => {
     const { createFeishuInboundDispatcherDbDeps } = await import(

@@ -93,14 +93,6 @@ export { organizationSecretVersions } from "./organization_secret_versions.js";
 export { organizationSecrets } from "./organization_secrets.js";
 export { organizationSkills } from "./organization_skills.js";
 export { organizations } from "./organizations.js";
-export { pluginConfig } from "./plugin_config.js";
-export { pluginEntities } from "./plugin_entities.js";
-export { pluginJobRuns, pluginJobs } from "./plugin_jobs.js";
-export { pluginLogs } from "./plugin_logs.js";
-export { pluginOrganizationSettings } from "./plugin_organization_settings.js";
-export { pluginState } from "./plugin_state.js";
-export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
-export { plugins } from "./plugins.js";
 export { principalPermissionGrants } from "./principal_permission_grants.js";
 export { productAnalyticsCollectorDailyRollups } from "./product_analytics_collector_daily_rollups.js";
 export { productAnalyticsCollectorEvents } from "./product_analytics_collector_events.js";
@@ -128,6 +120,13 @@ export { projectGoals } from "./project_goals.js";
 export { projectResourceAttachments } from "./project_resource_attachments.js";
 export { projectWorkspaces } from "./project_workspaces.js";
 export { projects } from "./projects.js";
+export {
+  installedPlugins,
+  pluginComponentLinks,
+  pluginImportReports,
+  pluginPackages,
+  pluginSources
+} from "./rudder_plugins.js";
 export { workspaceBackups } from "./workspace_backups.js";
 export { workspaceOperations } from "./workspace_operations.js";
 export { workspaceRuntimeServices } from "./workspace_runtime_services.js";

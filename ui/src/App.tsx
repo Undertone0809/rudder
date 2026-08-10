@@ -81,9 +81,7 @@ import { OrganizationImport } from "./pages/OrganizationImport";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
-import { PluginManager } from "./pages/PluginManager";
-import { PluginPage } from "./pages/PluginPage";
-import { PluginSettings } from "./pages/PluginSettings";
+import { Plugins } from "./pages/Plugins";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Projects } from "./pages/Projects";
 import { RunWorkspaceDetail } from "./pages/RunWorkspaceDetail";
@@ -220,7 +218,7 @@ function boardRoutes() {
       <Route path="skills/*" element={<LegacySkillsRedirect />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
-      <Route path="plugins/:pluginId" element={<PluginPage />} />
+      <Route path="plugins" element={<Plugins />} />
       <Route path="org" element={<Navigate to="../organization/settings" replace />} />
       <Route path="agents" element={<AgentsEntryRedirect />} />
       <Route path="agents/all" element={<Navigate to="/agents" replace />} />
@@ -275,7 +273,6 @@ function boardRoutes() {
       <Route path="ui-lab" element={<UiLab />} />
       <Route path="design-guide" element={<UiLab initialSection="design-guide" />} />
       <Route path="tests/ux/runs" element={<UiLab initialSection="transcripts" />} />
-      <Route path=":pluginRoutePath" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
     </>
   );
@@ -629,8 +626,7 @@ export function App() {
             <Route path="privacy" element={<InstancePrivacyTelemetrySettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
-            <Route path="plugins" element={<PluginManager />} />
-            <Route path="plugins/:pluginId" element={<PluginSettings />} />
+            <Route path="*" element={<NotFoundPage scope="global" />} />
           </Route>
           <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
           <Route path="dashboard" element={<UnprefixedBoardRedirect />} />
@@ -648,6 +644,7 @@ export function App() {
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
           <Route path="apps/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="plugins" element={<UnprefixedBoardRedirect />} />
           <Route path="calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
           <Route path="heartbeats" element={<UnprefixedBoardRedirect />} />
@@ -707,8 +704,7 @@ export function App() {
               <Route path="privacy" element={<InstancePrivacyTelemetrySettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />
-              <Route path="plugins" element={<PluginManager />} />
-              <Route path="plugins/:pluginId" element={<PluginSettings />} />
+              <Route path="*" element={<NotFoundPage scope="global" />} />
             </Route>
             <Route path=":orgPrefix" element={<DesktopSettingsOverlayLayout />}>
               <Route path="organization/settings" element={<OrganizationSettings />} />

@@ -70,6 +70,7 @@ import {
   updateIssueDraft,
   type IssueDraft,
 } from "../lib/new-issue-dialog";
+import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { priorityOptions } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -332,6 +333,7 @@ export function NewIssueDialog() {
     queryFn: () => agentsApi.skills(selectedAssigneeAgentId!, effectiveCompanyId!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(selectedAssigneeAgentId),
   });
+  const pluginMentions = usePluginMentionCatalog(effectiveCompanyId);
 
   const { data: libraryDocuments } = useQuery({
     queryKey: queryKeys.organizations.libraryDocuments(effectiveCompanyId ?? "__none__"),
@@ -392,6 +394,7 @@ export function NewIssueDialog() {
       libraryDocuments,
       libraryFiles: libraryMentionFiles?.entries,
       skillMentionOptions,
+      pluginMentionOptions: pluginMentions.options,
       currentUserId,
     }),
     [
@@ -401,6 +404,7 @@ export function NewIssueDialog() {
       libraryDocuments,
       libraryMentionFiles?.entries,
       orderedProjects,
+      pluginMentions.options,
       skillMentionOptions,
     ],
   );

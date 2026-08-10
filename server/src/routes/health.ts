@@ -94,6 +94,7 @@ export function healthRoutes(
       uiLocale: generalSettings.locale,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
+        experimentalPluginsEnabled: generalSettings.experimentalPluginsEnabled,
         experimentalSitesEnabled: generalSettings.experimentalSitesEnabled,
         experimentalGoalsEnabled: generalSettings.experimentalGoalsEnabled,
       },

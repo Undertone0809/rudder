@@ -5,7 +5,6 @@ import { schedulerHeartbeatsApi } from "@/api/heartbeats";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
-import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
 import type { QueryClient } from "@tanstack/react-query";
 
@@ -114,11 +113,6 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
 
   if (target.startsWith("/instance/settings/heartbeats")) {
     keys.push([...queryKeys.instance.schedulerHeartbeats]);
-    return keys;
-  }
-
-  if (target.startsWith("/instance/settings/plugins")) {
-    keys.push([...queryKeys.plugins.all]);
     return keys;
   }
 
@@ -256,16 +250,6 @@ export function prefetchSettingsQueries(
       }),
     );
     return Promise.allSettled(jobs);
-  }
-
-  if (target.startsWith("/instance/settings/plugins")) {
-    jobs.push(
-      queryClient.prefetchQuery({
-        queryKey: queryKeys.plugins.all,
-        queryFn: () => pluginsApi.list(),
-        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
-      }),
-    );
   }
 
   return Promise.allSettled(jobs);

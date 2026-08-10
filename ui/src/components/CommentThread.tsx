@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDialog } from "@/context/DialogContext";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizationRelativePath } from "@/lib/organization-routes";
-import { PluginSlotOutlet } from "@/plugins/slots";
 import type { Agent, InstanceLocale, IssueComment } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
 import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
@@ -375,22 +374,6 @@ function CommentActionsMenu({
               </DropdownMenuItem>
             ) : null}
           </>
-        ) : null}
-        {orgId ? (
-          <PluginSlotOutlet
-            slotTypes={["commentContextMenuItem"]}
-            entityType="comment"
-            context={{
-              orgId,
-              projectId: projectId ?? null,
-              entityId: comment.id,
-              entityType: "comment",
-              parentEntityId: comment.issueId,
-            }}
-            className="flex flex-col"
-            itemClassName="inline-flex"
-            missingBehavior="placeholder"
-          />
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -950,24 +933,6 @@ const TimelineList = memo(function TimelineList({
                 >
                   {comment.body}
                 </MarkdownBody>
-                {orgId ? (
-                  <div className="mt-2 space-y-2">
-                    <PluginSlotOutlet
-                      slotTypes={["commentAnnotation"]}
-                      entityType="comment"
-                      context={{
-                        orgId,
-                        projectId: projectId ?? null,
-                        entityId: comment.id,
-                        entityType: "comment",
-                        parentEntityId: comment.issueId,
-                      }}
-                      className="space-y-2"
-                      itemClassName="rounded-md"
-                      missingBehavior="placeholder"
-                    />
-                  </div>
-                ) : null}
                 {comment.runId ? (
                   <div className="mt-2 pt-2 border-t border-border/60">
                     {comment.runAgentId ? (

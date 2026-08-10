@@ -5,8 +5,10 @@ import {
   agents,
   customIntegrationTools,
   heartbeatRuns,
+  installedPlugins,
   mcpConnections,
   mcpOAuthGrants,
+  pluginComponentLinks,
 } from "@rudderhq/db";
 import {
   upsertMcpAgentBindingSchema,
@@ -822,6 +824,7 @@ export function managedMcpBindingService(db: Db) {
   async function listRuntimeBindings(
     orgId: string,
     agentId: string,
+    options: { pluginCapabilitiesEnabled?: boolean } = {},
   ): Promise<ManagedExternalMcpBinding[]> {
     await assertAgentInOrg(orgId, agentId);
     const rows = await db.select({
@@ -866,7 +869,7 @@ export function managedMcpBindingService(db: Db) {
     );
 
     const connectionIds = rows.map((row) => row.connection.id);
-    const [tools, grants] = await Promise.all([
+    const [tools, grants, pluginLinks] = await Promise.all([
       connectionIds.length > 0
         ? db.select().from(customIntegrationTools).where(and(
           eq(customIntegrationTools.orgId, orgId),
@@ -883,7 +886,34 @@ export function managedMcpBindingService(db: Db) {
           inArray(mcpOAuthGrants.connectionId, connectionIds),
         ))
         : Promise.resolve([]),
+      connectionIds.length > 0
+        ? db.select({
+          connectionId: pluginComponentLinks.targetId,
+          componentStatus: pluginComponentLinks.status,
+          pluginEnabled: installedPlugins.enabled,
+          pluginLifecycleState: installedPlugins.lifecycleState,
+        }).from(pluginComponentLinks).innerJoin(
+          installedPlugins,
+          eq(pluginComponentLinks.installedPluginId, installedPlugins.id),
+        ).where(and(
+          eq(pluginComponentLinks.orgId, orgId),
+          eq(pluginComponentLinks.componentType, "mcp"),
+          isNotNull(pluginComponentLinks.targetId),
+          inArray(pluginComponentLinks.targetId, connectionIds),
+        ))
+        : Promise.resolve([]),
     ]);
+    const pluginBlockedConnectionIds = new Set(
+      pluginLinks
+        .filter((link) => (
+          options.pluginCapabilitiesEnabled === false
+          || !link.pluginEnabled
+          || link.pluginLifecycleState !== "installed"
+          || link.componentStatus === "disabled"
+        ))
+        .map((link) => link.connectionId)
+        .filter((connectionId): connectionId is string => Boolean(connectionId)),
+    );
     const grantByConnection = new Map(
       grants.map((grant) => [grant.connectionId, grant]),
     );
@@ -897,6 +927,7 @@ export function managedMcpBindingService(db: Db) {
 
     const runtime: ManagedExternalMcpBinding[] = [];
     for (const { binding, connection } of rows) {
+      if (pluginBlockedConnectionIds.has(connection.id)) continue;
       if (
         connection.scope === "organization"
         && connection.provider !== "custom"

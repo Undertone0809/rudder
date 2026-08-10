@@ -25,7 +25,7 @@ export {
 } from "./local-app-process-platform.js";
 
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
-const LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 750;
+const LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS = 30_000;
 
 export type LocalAppRuntimeStatus =
@@ -97,6 +97,7 @@ type RuntimeManagerOptions = {
   spawnWatchdog?: typeof spawn;
   watchdogRunnerPath?: string;
   watchdogStartTimeoutMs?: number;
+  listenerOwnershipRetryTimeoutMs?: number;
   cleanupTimeoutMs?: number;
   terminationOptions?: Omit<TerminationOptions, "killGroup">;
   processPlatform?: LocalAppProcessPlatform;
@@ -312,6 +313,7 @@ export class LocalAppRuntimeManager {
   private readonly spawnWatchdog: typeof spawn;
   private readonly watchdogRunnerPath: string;
   private readonly watchdogStartTimeoutMs: number;
+  private readonly listenerOwnershipRetryTimeoutMs: number;
   private readonly cleanupTimeoutMs: number;
   private readonly probePersistedRuntimeLiveness: NonNullable<RuntimeManagerOptions["probePersistedRuntimeLiveness"]>;
   private readonly records = new Map<string, RuntimeRecord>();
@@ -345,7 +347,11 @@ export class LocalAppRuntimeManager {
       ?? this.processPlatform.verifyListenerOwnership;
     this.spawnWatchdog = options.spawnWatchdog ?? spawn;
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
-    this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 3_000);
+    this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 10_000);
+    this.listenerOwnershipRetryTimeoutMs = Math.max(
+      1,
+      options.listenerOwnershipRetryTimeoutMs ?? LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
+    );
     this.cleanupTimeoutMs = Math.max(1, options.cleanupTimeoutMs ?? 5_000);
     this.probePersistedRuntimeLiveness = options.probePersistedRuntimeLiveness
       ?? this.processPlatform.probePersistedRuntime;
@@ -787,7 +793,7 @@ export class LocalAppRuntimeManager {
       record.definition.readiness.timeoutMs,
       this.processPlatform.platform === "win32"
         ? WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS
-        : LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
+        : this.listenerOwnershipRetryTimeoutMs,
     );
     while (Date.now() < deadline) {
       if (

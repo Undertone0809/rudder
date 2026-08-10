@@ -496,6 +496,10 @@ export function agentRunContextService(
     const managedExternalMcpBindings = await managedMcpBindings.listRuntimeBindings(
       input.agent.orgId,
       input.agent.id,
+      {
+        pluginCapabilitiesEnabled:
+          generalSettings.experimentalPluginsEnabled ?? false,
+      },
     ).catch((error) => {
       logger.warn(
         { err: error, orgId: input.agent.orgId, agentId: input.agent.id },
@@ -520,7 +524,7 @@ export function agentRunContextService(
     const browserEligibleSkills = browserCapability.instanceEligible
       ? resolvedDesiredSkills
       : resolvedDesiredSkills.filter((key) => !isBrowserSkillSelectionKey(key));
-    const instanceDesiredSkills = generalSettings.experimentalSitesEnabled
+    const instanceDesiredSkills = generalSettings.experimentalPluginsEnabled
       ? browserEligibleSkills
       : browserEligibleSkills.filter((key) => (
           key !== "bundled:rudder/app-builder" && key !== "rudder/app-builder"

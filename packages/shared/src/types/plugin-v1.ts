@@ -1,0 +1,172 @@
+export type RudderPluginSourceType = "local_upload" | "marketplace" | "git" | "package";
+export type RudderPluginSkillConflictStrategy = "keep" | "replace" | "rename";
+export type RudderPluginComponentType = "skill" | "mcp" | "app" | "unsupported";
+export type RudderPluginComponentStatus = "ready" | "setup_required" | "unsupported" | "disabled";
+
+export interface RudderPluginPackageFileInput {
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+}
+
+export interface RudderPluginCompatibilityComponent {
+  key: string;
+  type: RudderPluginComponentType;
+  name: string;
+  path: string | null;
+  status: RudderPluginComponentStatus;
+  required: boolean;
+  detail: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface RudderPluginCapabilitySnapshot {
+  status: RudderPluginComponentStatus;
+  executionSurface: Record<string, unknown>;
+}
+
+export interface RudderPluginCapabilityChange {
+  kind: "added" | "removed" | "changed";
+  key: string;
+  type: RudderPluginComponentType;
+  name: string;
+  accessImpact: "expanded" | "reduced" | "changed" | "none";
+  detail: string;
+  before: RudderPluginCapabilitySnapshot | null;
+  after: RudderPluginCapabilitySnapshot | null;
+}
+
+export interface RudderPluginCapabilityDiff {
+  changes: RudderPluginCapabilityChange[];
+  accessExpansion: boolean;
+}
+
+export interface RudderPluginImportReport {
+  id: string;
+  orgId: string;
+  packageId: string | null;
+  sourceType: RudderPluginSourceType;
+  sourceLabel: string;
+  status: "review_required" | "accepted" | "rejected" | "failed";
+  digest: string | null;
+  manifest: Record<string, unknown> | null;
+  components: RudderPluginCompatibilityComponent[];
+  warnings: string[];
+  errors: string[];
+  limits: {
+    fileCount: number;
+    totalBytes: number;
+  };
+  createdAt: string;
+  operation: "install" | "update";
+  installedPluginId: string | null;
+  capabilityDiff: RudderPluginCapabilityDiff | null;
+  skillConflicts: Array<{
+    componentKey: string;
+    skillKey: string;
+    skillName: string;
+    existingSkillId: string;
+    existingSkillName: string;
+  }>;
+}
+
+export interface RudderPluginComponentLink {
+  id: string;
+  type: RudderPluginComponentType;
+  key: string;
+  displayName: string;
+  status: RudderPluginComponentStatus;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface RudderInstalledPlugin {
+  id: string;
+  orgId: string;
+  packageId: string;
+  previousPackageId: string | null;
+  name: string;
+  displayName: string;
+  description: string | null;
+  version: string;
+  publisher: string | null;
+  sourceLabel: string;
+  digest: string;
+  enabled: boolean;
+  lifecycleState: "installed" | "uninstalling" | "uninstalled";
+  setupState: "not_required" | "setup_required" | "configuring" | "ready" | "blocked";
+  healthState: "unknown" | "healthy" | "degraded" | "unavailable";
+  updateState: "none" | "available" | "review_required" | "applying" | "failed";
+  components: RudderPluginComponentLink[];
+  manifest: Record<string, unknown>;
+  pendingUpdate: null | {
+    packageId: string;
+    version: string;
+    digest: string;
+    displayName: string;
+    sourceLabel: string;
+  };
+  installedAt: string;
+  updatedAt: string;
+}
+
+export interface RudderPluginDiscoverEntry {
+  reportId: string;
+  packageId: string;
+  name: string;
+  displayName: string;
+  description: string | null;
+  version: string;
+  publisher: string | null;
+  sourceLabel: string;
+  sourceType: "marketplace" | "git";
+  digest: string;
+  category: string | null;
+  policy: Record<string, unknown>;
+  components: RudderPluginCompatibilityComponent[];
+}
+
+export interface RudderLocalAppPlugin {
+  id: string;
+  kind: "local_app";
+  appId: string;
+  name: string;
+  description: string | null;
+  buildStatus: string;
+  appKey: string | null;
+  updatedAt: string;
+}
+
+export interface RudderPluginDirectory {
+  installed: RudderInstalledPlugin[];
+  localApps: RudderLocalAppPlugin[];
+  discover: RudderPluginDiscoverEntry[];
+  discoverSource: "none" | "configured";
+}
+
+export interface RudderPluginArchiveInput {
+  sourceLabel: string;
+  filename: string;
+  content: string;
+  encoding: "base64";
+}
+
+export interface RudderPluginMarketplaceInput {
+  sourceLabel: string;
+  files?: RudderPluginPackageFileInput[];
+  github?: {
+    repository: string;
+    commit: string;
+  };
+}
+
+export interface RudderMcpUiResource {
+  uri: string;
+  name: string;
+  description: string | null;
+  mimeType: string;
+}
+
+export interface RudderMcpUiResourceContent extends RudderMcpUiResource {
+  html: string;
+}

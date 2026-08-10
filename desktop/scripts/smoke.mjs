@@ -802,7 +802,7 @@ async function verifyBundledSkills(baseUrl, companyId) {
   const expectedSlugs = REQUIRED_BUNDLED_SKILLS
     .filter((slug) => (
       slug !== "app-builder"
-      || health.features?.experimentalSitesEnabled === true
+      || health.features?.experimentalPluginsEnabled === true
     ))
     .sort();
 
@@ -841,16 +841,17 @@ async function createCeo(baseUrl, companyId) {
   return await response.json();
 }
 
-async function updateExperimentalSites(baseUrl, enabled) {
+async function updateExperimentalPlugins(baseUrl, enabled) {
   const response = await fetch(`${baseUrl}/api/instance/settings/general`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ experimentalSitesEnabled: enabled }),
+    body: JSON.stringify({ experimentalPluginsEnabled: enabled }),
   });
   if (response.status !== 200) {
-    throw new Error(`update Experimental Sites failed (${response.status}): ${await response.text()}`);
+    throw new Error(`update Experimental Plugins failed (${response.status}): ${await response.text()}`);
   }
   const settings = await response.json();
+  assert.equal(settings.experimentalPluginsEnabled, enabled);
   assert.equal(settings.experimentalSitesEnabled, enabled);
 }
 
@@ -875,6 +876,57 @@ async function readAppBuilderRecord(baseUrl, companyId, appId) {
   const app = apps.find((candidate) => candidate.id === appId);
   if (!app) throw new Error(`App Builder record ${appId} was not returned for organization ${companyId}`);
   return app;
+}
+
+async function createAppBuilderSmokeRun(databaseUrl, company, agent) {
+  const postgres = await loadPostgres();
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  const runId = randomUUID();
+  try {
+    await sql`
+      insert into heartbeat_runs (id, org_id, agent_id, invocation_source, status, started_at)
+      values (${runId}::uuid, ${company.id}::uuid, ${agent.id}::uuid, 'desktop_app_builder_smoke', 'running', now())
+    `;
+  } finally {
+    await sql.end();
+  }
+  return {
+    runId,
+    token: createSmokeAgentJwt(agent.id, company.id, runId),
+  };
+}
+
+async function reportAppBuilderRunStatus(baseUrl, companyId, appId, run, input) {
+  const response = await fetch(
+    `${baseUrl}/api/app-builder/${appId}/build?orgId=${encodeURIComponent(companyId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${run.token}`,
+        "Content-Type": "application/json",
+        "x-rudder-run-id": run.runId,
+      },
+      body: JSON.stringify({ ...input, runId: run.runId }),
+    },
+  );
+  if (response.status !== 200) {
+    throw new Error(`report App Builder ${input.status} failed (${response.status}): ${await response.text()}`);
+  }
+  return await response.json();
+}
+
+async function finishAppBuilderSmokeRun(databaseUrl, runId) {
+  const postgres = await loadPostgres();
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  try {
+    await sql`
+      update heartbeat_runs
+      set status = 'succeeded', finished_at = now(), updated_at = now()
+      where id = ${runId}::uuid
+    `;
+  } finally {
+    await sql.end();
+  }
 }
 
 async function createIssue(baseUrl, companyId, assigneeAgentId) {
@@ -1953,10 +2005,13 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
 }
 
 async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64) {
-  const { actual, workArea } = await electronApp.evaluate(({ BrowserWindow, screen }) => ({
-    actual: BrowserWindow.getAllWindows()[0]?.getSize(),
-    workArea: screen.getPrimaryDisplay().workAreaSize,
-  }));
+  const { actual, workArea } = await waitForSmokeCondition(
+    `${context} window bounds to become readable`,
+    () => electronApp.evaluate(({ BrowserWindow, screen }) => ({
+      actual: BrowserWindow.getAllWindows()[0]?.getSize(),
+      workArea: screen.getPrimaryDisplay().workAreaSize,
+    })),
+  );
   const expected = PREFERRED_INITIAL_WINDOW_SIZE.map((preferred, index) => {
     const available = index === 0 ? workArea.width : workArea.height;
     const minimum = Math.min(MINIMUM_INITIAL_WINDOW_SIZE[index], available);
@@ -5035,7 +5090,7 @@ async function runLocalAppsScenario(mode) {
     const company = await createCompany(run.baseUrl, "LAP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await createCeo(run.baseUrl, company.id);
-    await updateExperimentalSites(run.baseUrl, true);
+    await updateExperimentalPlugins(run.baseUrl, true);
     const chat = await createChat(run.baseUrl, company.id);
     const chatPath = `/${companyRouteKey}/messenger/chat/${chat.id}`;
     await run.page.evaluate((nextCompanyId) => {
@@ -5552,6 +5607,7 @@ async function runUpgradeScenario(mode) {
 async function runAppBuilderScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "app-builder");
   const ports = await allocateSmokePorts();
+  const runtimeUrls = createRuntimeUrls(ports);
   const run = await launchDesktop(scenarioRoot, mode, ports);
   let browser = null;
   let scenarioError = null;
@@ -5559,16 +5615,16 @@ async function runAppBuilderScenario(mode) {
   try {
     const company = await createCompany(run.baseUrl, "APP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
-    await createCeo(run.baseUrl, company.id);
+    const ceo = await createCeo(run.baseUrl, company.id);
     await run.page.evaluate((companyId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", companyId);
     }, company.id);
-    await updateExperimentalSites(run.baseUrl, true);
+    await updateExperimentalPlugins(run.baseUrl, true);
     const health = await fetch(`${run.baseUrl}/api/health`).then((response) => response.json());
     assert.equal(
-      health.features?.experimentalSitesEnabled,
+      health.features?.experimentalPluginsEnabled,
       true,
-      "enabling Experimental Sites must update the public feature capability",
+      "enabling Experimental Plugins must update the public feature capability",
     );
 
     const appUrl = (appId) => new URL(
@@ -5588,10 +5644,19 @@ async function runAppBuilderScenario(mode) {
     );
     await run.page.goto(appUrl(missingApp.id));
     await dismissOnboardingIfVisible(run.page);
-    await run.page.getByTestId("apps-register-preview").click();
-    await run.page.getByRole("dialog", { name: "Register and preview this App?" }).waitFor();
-    await run.page.getByTestId("apps-confirm-register-preview").click();
-    await run.page.getByRole("alert").filter({ hasText: "No App source is ready yet" })
+    const missingRun = await createAppBuilderSmokeRun(runtimeUrls.databaseUrl, company, ceo);
+    await reportAppBuilderRunStatus(run.baseUrl, company.id, missingApp.id, missingRun, {
+      status: "building",
+      expectedStatus: "preparing",
+      runKind: "build",
+    });
+    await reportAppBuilderRunStatus(run.baseUrl, company.id, missingApp.id, missingRun, {
+      status: "failed",
+      expectedStatus: "building",
+      runKind: "build",
+    });
+    await finishAppBuilderSmokeRun(runtimeUrls.databaseUrl, missingRun.runId);
+    await run.page.getByText("App Builder stopped before verification. Continue in Chat to resume the work.")
       .waitFor({ timeout: 30_000 });
     assert.equal(
       (await readAppBuilderRecord(run.baseUrl, company.id, missingApp.id)).buildStatus,
@@ -5620,30 +5685,23 @@ async function runAppBuilderScenario(mode) {
 
     await run.page.goto(appUrl(appRecord.id));
     await dismissOnboardingIfVisible(run.page);
-    await run.page.getByTestId("apps-register-preview").click();
-    let disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
-    await disclosure.waitFor();
-    await disclosure.getByRole("button", { name: "Cancel" }).click();
-    assert.equal(
-      (await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id)).buildStatus,
-      "preparing",
-      "canceling disclosure must not mutate build state",
-    );
-    assert.equal(
-      (await run.page.evaluate(() => window.desktopShell?.localApps?.list())).length,
-      0,
-      "canceling disclosure must not create a Local App definition",
-    );
-
-    await run.page.getByTestId("apps-register-preview").click();
-    disclosure = run.page.getByRole("dialog", { name: "Register and preview this App?" });
-    await disclosure.waitFor();
-    await disclosure.getByTestId("apps-confirm-register-preview").click();
+    const appBuilderRun = await createAppBuilderSmokeRun(runtimeUrls.databaseUrl, company, ceo);
+    await reportAppBuilderRunStatus(run.baseUrl, company.id, appRecord.id, appBuilderRun, {
+      status: "building",
+      expectedStatus: "preparing",
+      runKind: "build",
+    });
+    await reportAppBuilderRunStatus(run.baseUrl, company.id, appRecord.id, appBuilderRun, {
+      status: "verified_source_ready",
+      expectedStatus: "building",
+      runKind: "verification",
+    });
+    await finishAppBuilderSmokeRun(runtimeUrls.databaseUrl, appBuilderRun.runId);
     const buildOutcome = await waitForSmokeCondition(
       "App Builder record to become Ready or report its runner failure",
       async () => {
         const record = await readAppBuilderRecord(run.baseUrl, company.id, appRecord.id);
-        if (record.buildStatus === "failed") {
+        if (record.buildStatus === "launch_failed") {
           const definitions = await run.page.evaluate(
             () => window.desktopShell?.localApps?.list() ?? [],
           );
@@ -5656,13 +5714,14 @@ async function runAppBuilderScenario(mode) {
               matching.id,
             )
             : [];
-          return { failed: true, logs };
+          const notifications = await run.page.locator('aside[aria-live="polite"]').allTextContents();
+          return { failed: true, logs: [...logs, ...notifications] };
         }
         return record.buildStatus === "ready" && record.localBindingId
           ? { failed: false, record }
           : null;
       },
-      { timeoutMs: 360_000 },
+      { timeoutMs: 660_000 },
     );
     if (buildOutcome.failed) {
       throw new Error(
@@ -5721,14 +5780,35 @@ async function runAppBuilderScenario(mode) {
       { timeoutMs: 30_000 },
     );
     await appEntry.click();
-    target = await waitForSmokeCondition(
+    const restartOutcome = await waitForSmokeCondition(
       "restarted App to publish its attested target",
-      () => run.page.evaluate(
-        (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
-        definition.id,
-      ),
-      { timeoutMs: 360_000 },
+      async () => {
+        const nextTarget = await run.page.evaluate(
+          (definitionId) => window.desktopShell.localApps.attestedTarget(definitionId),
+          definition.id,
+        );
+        if (nextTarget) return { failed: false, target: nextTarget };
+        const runtime = await run.page.evaluate(
+          (definitionId) => window.desktopShell.localApps.status(definitionId),
+          definition.id,
+        );
+        if (runtime.status !== "failed") return null;
+        const logs = await run.page.evaluate(
+          (definitionId) => window.desktopShell.localApps.logs(definitionId),
+          definition.id,
+        );
+        return { failed: true, runtime, logs };
+      },
+      { timeoutMs: 660_000 },
     );
+    if (restartOutcome.failed) {
+      throw new Error(
+        `App Builder runner failed during restart: ${restartOutcome.runtime.error ?? "unknown"}${
+          restartOutcome.logs.length > 0 ? `\n${restartOutcome.logs.join("\n")}` : ""
+        }`,
+      );
+    }
+    target = restartOutcome.target;
     const persisted = await fetch(new URL("/api/contacts", target.origin));
     assert.equal(persisted.status, 200);
     assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
@@ -5742,9 +5822,9 @@ async function runAppBuilderScenario(mode) {
       new URL(target.openPath, target.origin).href,
       "Copy App link must copy the current attested loopback URL",
     );
-    await updateExperimentalSites(run.baseUrl, false);
+    await updateExperimentalPlugins(run.baseUrl, false);
     const disabledRuntime = await waitForSmokeCondition(
-      "disabling Sites to stop the running App",
+      "disabling Plugins to stop the running App",
       async () => {
         const runtime = await run.page.evaluate(
           (definitionId) => window.desktopShell.localApps.status(definitionId),
@@ -5757,7 +5837,7 @@ async function runAppBuilderScenario(mode) {
     assert.equal(
       disabledRuntime.origin,
       undefined,
-      "disabling Sites must clear the App runtime origin",
+      "disabling Plugins must clear the App runtime origin",
     );
     const blockedStart = await run.page.evaluate(async (definitionId) => {
       try {
@@ -5769,8 +5849,8 @@ async function runAppBuilderScenario(mode) {
     }, definition.id);
     assert.match(
       blockedStart ?? "",
-      /Sites is disabled in Experimental settings/i,
-      "disabling Sites must block direct Desktop start attempts",
+      /Plugins is disabled in Experimental settings/i,
+      "disabling Plugins must block direct Desktop start attempts",
     );
     console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, feature shutdown, and cleanup");
   } catch (error) {

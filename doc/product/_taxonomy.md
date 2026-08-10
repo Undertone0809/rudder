@@ -36,8 +36,8 @@ Seed domains:
   Calendar, and human Inbox attention.
 - `organizations-and-goals`: organization identity, goals, projects, and org
   lifecycle.
-- `plugins`: installed plugins, plugin workers, capabilities, jobs, webhooks,
-  UI slots, logs, and plugin-owned state.
+- `plugins`: Codex-compatible packages, import reports, organization
+  installations, and links to Skills, managed MCP connections, and Apps.
 
 ## Tie-Breakers
 

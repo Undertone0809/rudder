@@ -11,7 +11,6 @@ import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
-import { LinearIssueSourceBoard } from "../components/LinearIssueSourceBoard";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { PriorityBarsIcon } from "../components/PriorityIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -211,7 +210,7 @@ function DraftIssuesView({
 }
 
 export function Issues() {
-  const { selectedOrganizationId, selectedOrganization } = useOrganization();
+  const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { openNewIssue, confirm } = useDialog();
   const { pushToast } = useToast();
@@ -224,13 +223,9 @@ export function Issues() {
     () => parseIssueSearchFieldsParam(searchParams.get("searchFields")),
     [searchParams],
   );
-  const issueSource = searchParams.get("source") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
   const effectiveIssueScope = issueScope === "recent" ? "" : issueScope === "starred" ? "pinned" : issueScope;
   const isDraftScope = effectiveIssueScope === "drafts";
-  const isLinearSource = issueSource === "linear" && !isDraftScope;
-  const linearTeamId = searchParams.get("linearTeamId") ?? undefined;
-  const linearProjectId = searchParams.get("linearProjectId") ?? undefined;
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const issueViewStateKey = participantAgentId
@@ -348,8 +343,8 @@ export function Issues() {
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : isLinearSource ? "Linear Issues" : "Issue Tracker" }]);
-  }, [isDraftScope, isLinearSource, setBreadcrumbs]);
+    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : "Issue Tracker" }]);
+  }, [isDraftScope, setBreadcrumbs]);
 
   useEffect(() => {
     const refreshIssueDraftSummaries = () => {
@@ -366,12 +361,12 @@ export function Issues() {
   }, [selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId || participantAgentId || isDraftScope || isLinearSource) return;
+    if (!selectedOrganizationId || participantAgentId || isDraftScope) return;
     rememberIssueNavigation(selectedOrganizationId, {
       scope: effectiveIssueScope || undefined,
       projectId,
     });
-  }, [effectiveIssueScope, isDraftScope, isLinearSource, participantAgentId, projectId, selectedOrganizationId]);
+  }, [effectiveIssueScope, isDraftScope, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
     () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
@@ -410,7 +405,7 @@ export function Issues() {
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === ISSUE_LIST_INITIAL_LIMIT ? allPages.length * ISSUE_LIST_INITIAL_LIMIT : undefined,
-    enabled: !!selectedOrganizationId && !isDraftScope && !isLinearSource,
+    enabled: !!selectedOrganizationId && !isDraftScope,
   });
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();
@@ -479,21 +474,6 @@ export function Issues() {
           window.setTimeout(completeDeletion, DRAFT_ISSUE_DELETE_EXIT_MS);
         }}
       />
-    );
-  }
-
-  if (isLinearSource) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <LinearIssueSourceBoard
-          orgId={selectedOrganizationId}
-          orgName={selectedOrganization?.name}
-          projects={projects}
-          linearTeamId={linearTeamId}
-          linearProjectId={linearProjectId}
-          initialSearch={initialSearch}
-        />
-      </div>
     );
   }
 

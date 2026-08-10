@@ -1080,6 +1080,48 @@ describe("MarkdownEditor", () => {
     });
   });
 
+  it("stores a selected Plugin as one plugin mention", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="Use @research"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "plugin:plugin-1",
+              name: "Research Kit",
+              kind: "plugin",
+              pluginId: "plugin-1",
+              pluginCapabilityLabel: "2 Skills + 1 MCP",
+              searchText: "research kit",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "Use @research".length);
+    await chooseMentionOption("plugin:plugin-1");
+
+    expect(onChange).toHaveBeenCalledWith("Use [Research Kit](plugin://plugin-1) ");
+  });
+
   it("keeps the caret on an editable boundary after a mention inserted at the end", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");

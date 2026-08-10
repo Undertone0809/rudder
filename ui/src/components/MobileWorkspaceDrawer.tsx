@@ -1,7 +1,6 @@
 import { healthApi } from "@/api/health";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { PluginSlotOutlet } from "@/plugins/slots";
 import { useQuery } from "@tanstack/react-query";
 import {
   CircleDot,
@@ -17,7 +16,6 @@ import { agentRunsApi } from "../api/agent-runs";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useInboxBadge } from "../hooks/useInboxBadge";
-import { getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SidebarAgents } from "./SidebarAgents";
@@ -28,7 +26,7 @@ import { SidebarSection } from "./SidebarSection";
 
 export function MobileWorkspaceDrawer() {
   const { openNewIssue } = useDialog();
-  const { selectedOrganizationId, selectedOrganization } = useOrganization();
+  const { selectedOrganizationId } = useOrganization();
   const sidebarNavScrollRef = useScrollbarActivityRef(
     selectedOrganizationId ? `rudder:sidebar-scroll:${selectedOrganizationId}` : undefined,
   );
@@ -49,11 +47,6 @@ export function MobileWorkspaceDrawer() {
   function openSearch() {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
   }
-
-  const pluginContext = {
-    orgId: selectedOrganizationId,
-    orgPrefix: selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null,
-  };
 
   return (
     <aside className="surface-shell flex min-h-0 w-64 flex-1 flex-col border-r panel-divider">
@@ -95,13 +88,6 @@ export function MobileWorkspaceDrawer() {
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
           />
-          <PluginSlotOutlet
-            slotTypes={["sidebar"]}
-            context={pluginContext}
-            className="flex flex-col gap-0.5"
-            itemClassName="text-[13px] font-medium"
-            missingBehavior="placeholder"
-          />
         </div>
 
         <SidebarSection label="Work">
@@ -115,13 +101,6 @@ export function MobileWorkspaceDrawer() {
 
         <SidebarChatSessions />
 
-        <PluginSlotOutlet
-          slotTypes={["sidebarPanel"]}
-          context={pluginContext}
-          className="flex flex-col gap-3"
-          itemClassName="surface-panel rounded-[var(--radius-md)] p-3"
-          missingBehavior="placeholder"
-        />
       </nav>
     </aside>
   );

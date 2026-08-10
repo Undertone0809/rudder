@@ -787,29 +787,30 @@ function requireAppBuilderController(): AppBuilderController {
   return appBuilderController;
 }
 
-async function readSitesFeatureEnabled(): Promise<boolean> {
+async function readPluginsFeatureEnabled(): Promise<boolean> {
   if (!serverHandle?.apiUrl) return false;
   const response = await fetch(new URL("/api/health", serverHandle.apiUrl), {
     headers: { Accept: "application/json" },
   });
   if (!response.ok) {
-    throw new Error(`Unable to read Sites feature state (${response.status})`);
+    throw new Error(`Unable to read Plugins feature state (${response.status})`);
   }
   const payload = await response.json() as {
-    features?: { experimentalSitesEnabled?: unknown };
+    features?: { experimentalPluginsEnabled?: unknown; experimentalSitesEnabled?: unknown };
   };
-  return payload.features?.experimentalSitesEnabled === true;
+  return (payload.features?.experimentalPluginsEnabled
+    ?? payload.features?.experimentalSitesEnabled) === true;
 }
 
 async function refreshLocalAppsFeatureGate(): Promise<boolean> {
-  const enabled = await readSitesFeatureEnabled();
+  const enabled = await readPluginsFeatureEnabled();
   await requireLocalAppsController().setFeatureEnabled(enabled);
   return enabled;
 }
 
-async function assertSitesFeatureEnabled(): Promise<void> {
+async function assertPluginsFeatureEnabled(): Promise<void> {
   if (!await refreshLocalAppsFeatureGate()) {
-    throw new Error("Sites is disabled in Experimental settings");
+    throw new Error("Plugins is disabled in Experimental settings");
   }
 }
 
@@ -824,7 +825,7 @@ async function startLocalAppsFeatureGateWatcher(): Promise<void> {
   await refreshLocalAppsFeatureGate();
   localAppsFeatureGateTimer = setInterval(() => {
     void refreshLocalAppsFeatureGate().catch((error) => {
-      console.warn("[rudder-desktop] Sites feature reconciliation failed", error);
+      console.warn("[rudder-desktop] Plugins feature reconciliation failed", error);
     });
   }, 1_000);
   localAppsFeatureGateTimer.unref();
@@ -2241,12 +2242,12 @@ function registerIpc(): void {
   registerLocalAppsIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireLocalAppsController(),
-    assertEnabled: assertSitesFeatureEnabled,
+    assertEnabled: assertPluginsFeatureEnabled,
   });
   registerAppBuilderIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireAppBuilderController(),
-    assertEnabled: assertSitesFeatureEnabled,
+    assertEnabled: assertPluginsFeatureEnabled,
   });
   requireDesktopIdentityRuntime().registerIpc();
   ipcMain.handle("desktop:get-boot-state", async (event) => {

@@ -20,11 +20,11 @@
     "should_trigger": true
   },
   {
-    "query": "Scaffold a new Rudder Plugin named @acme/quality-gate in a temporary external package directory. Verify the current create-rudder-plugin and SDK workflow first, then run its typecheck, tests, and build.",
+    "query": "Create a Codex-compatible Rudder Plugin named quality-gate in a temporary directory with one Skill. Verify plugin.json and the current import boundary, then test the package.",
     "should_trigger": true
   },
   {
-    "query": "Rudder Plugin 的 worker capability、same-origin UI、routePath 和 ctx.assets 现在到底有哪些边界？请查当前 authoring guide、SDK 和源码后回答。",
+    "query": "Rudder Plugin 的 Codex package、Skills、MCP、App、导入检查和运行权限现在有哪些边界？请查当前 authoring guide 和源码后回答。",
     "should_trigger": true
   },
   {

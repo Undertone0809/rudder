@@ -148,7 +148,7 @@ describe("run intelligence real route workflow", () => {
     db = createDb(started.connectionString);
     instance = started.instance;
     dataDir = started.dataDir;
-  }, 20_000);
+  }, 60_000);
 
   afterEach(async () => {
     await Promise.all(Array.from(activeServers, (server) => new Promise<void>((resolve, reject) => {

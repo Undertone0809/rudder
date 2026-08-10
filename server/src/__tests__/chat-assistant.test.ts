@@ -1201,6 +1201,51 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("For this automation-run input, mayCreateAutomation: false.");
   });
 
+  it("persists resolved managed MCP bindings without dropping caller run context", async () => {
+    const managedBinding = {
+      bindingId: "8f3a21b4-7c6d-4e52-9a80-1b2c3d4e5f60",
+      serverName: "research-tools",
+      accessMode: "full" as const,
+      toolPolicy: {
+        mode: "allowlist" as const,
+        allowedToolNames: ["research_status"],
+      },
+      required: false,
+      startupTimeoutMs: 10_000,
+      toolTimeoutMs: 30_000,
+    };
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { model: "gpt-5.4" },
+      runtimeConfig: {
+        model: "gpt-5.4",
+        managedExternalMcpBindings: [managedBinding],
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+      runContext: {
+        targetType: "automation_run",
+        automationRunId: "run-1",
+        managedMcpPolicySnapshot: [{ bindingId: "caller-injected" }],
+      },
+    });
+
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      runContext: expect.objectContaining({
+        targetType: "automation_run",
+        automationRunId: "run-1",
+        managedMcpPolicySnapshot: [managedBinding],
+      }),
+    }));
+  });
+
   it("keeps automation-run execution context when the operator answers an ask_user follow-up", async () => {
     const svc = chatAssistantService({} as any);
     const now = new Date("2026-03-29T08:02:00.000Z");

@@ -9,7 +9,6 @@ let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
-let mockIssuePluginSlots: Array<Record<string, unknown>> = [];
 
 const parentIssue = {
   id: "issue-parent",
@@ -366,16 +365,6 @@ vi.mock("../components/Identity", () => ({
   Identity: ({ name }: { name: string }) => <span>{name}</span>,
 }));
 
-vi.mock("@/plugins/slots", () => ({
-  PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: mockIssuePluginSlots }),
-}));
-
-vi.mock("@/plugins/launchers", () => ({
-  PluginLauncherOutlet: () => null,
-}));
-
 vi.mock("@/components/ui/separator", () => ({
   Separator: () => <hr />,
 }));
@@ -592,21 +581,12 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     capturedInlineEditorProps = [];
     mockSourceBreadcrumb = null;
-    mockIssuePluginSlots = [];
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "org-2", "follows"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
-    queryData.delete(JSON.stringify([
-      "plugins",
-      "rudder.linear",
-      "issue-link",
-      "org-2",
-      "issue-parent",
-      "plugin-linear",
-    ]));
   });
 
   it("does not duplicate the header-owned issue breadcrumb in the page body", () => {
@@ -1182,81 +1162,4 @@ describe("IssueDetail", () => {
     expect(html.match(/href="\/messenger\/approvals\/approval-repeat-link"/g)).toHaveLength(2);
   });
 
-  it("moves the linked Linear issue summary into activity instead of a separate tab", () => {
-    mockIssuePluginSlots = [
-      {
-        type: "detailTab",
-        id: "linear-issue-tab",
-        displayName: "Linear",
-        exportName: "LinearIssueTab",
-        entityTypes: ["issue"],
-        pluginId: "plugin-linear",
-        pluginKey: "rudder.linear",
-        pluginDisplayName: "Linear",
-        pluginVersion: "0.1.0",
-      },
-      {
-        type: "detailTab",
-        id: "delivery-tab",
-        displayName: "Delivery",
-        exportName: "DeliveryTab",
-        entityTypes: ["issue"],
-        pluginId: "plugin-delivery",
-        pluginKey: "rudder.delivery",
-        pluginDisplayName: "Delivery",
-        pluginVersion: "0.1.0",
-      },
-    ];
-    queryData.set(JSON.stringify([
-      "plugins",
-      "rudder.linear",
-      "issue-link",
-      "org-2",
-      "issue-parent",
-      "plugin-linear",
-    ]), {
-      linked: true,
-      issueTitle: "Parent issue",
-      link: {
-        externalId: "lin-1",
-        linearIdentifier: "ENG-42",
-        linearTitle: "Imported Linear issue",
-        linearUrl: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
-        orgId: "org-2",
-        rudderIssueId: "issue-parent",
-        rudderIssueIdentifier: "ORG2-1",
-        teamId: "team-1",
-        teamName: "Engineering",
-        projectId: "linear-project-1",
-        projectName: "Roadmap",
-        stateId: "state-progress",
-        stateName: "In Progress",
-        importedAt: new Date("2026-04-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-04-20T01:00:00.000Z"),
-      },
-      latestIssue: {
-        id: "lin-1",
-        identifier: "ENG-42",
-        title: "Imported Linear issue",
-        description: "Fresh Linear context.",
-        url: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
-        updatedAt: new Date("2026-04-20T02:00:00.000Z"),
-        createdAt: new Date("2026-04-19T00:00:00.000Z"),
-        team: { id: "team-1", name: "Engineering" },
-        state: { id: "state-progress", name: "In Progress" },
-        project: { id: "linear-project-1", name: "Roadmap" },
-        assignee: { id: "linear-user-1", name: "Amy Zhang" },
-      },
-      staleReason: null,
-    });
-
-    const html = renderToStaticMarkup(<IssueDetail />);
-
-    expect(html).toContain("Linked Linear issue");
-    expect(html).toContain("ENG-42");
-    expect(html).toContain("Fresh Linear context.");
-    expect(html).toContain("Open in Linear");
-    expect(html).toContain(">Delivery</h3>");
-    expect(html).not.toContain(">Linear</h3>");
-  });
 });

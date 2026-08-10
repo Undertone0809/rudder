@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { cleanupStaleSysvSharedMemorySegments } from "../../../packages/db/src/embedded-postgres-recovery.js";
 
 const execFileAsync = promisify(execFile);
+const PROCESS_INSPECTION_TIMEOUT_MS = 15_000;
 
 type ProcessInfo = {
   pid: number;
@@ -81,7 +82,9 @@ async function readServerLease(
 
 async function commandLine(pid: number): Promise<string> {
   try {
-    const result = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { timeout: 2_000 });
+    const result = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], {
+      timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+    });
     return result.stdout.trim();
   } catch {
     return "";
@@ -90,7 +93,9 @@ async function commandLine(pid: number): Promise<string> {
 
 async function listeningPids(port: number): Promise<number[]> {
   try {
-    const result = await execFileAsync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { timeout: 2_000 });
+    const result = await execFileAsync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
+      timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+    });
     return result.stdout
       .split(/\r?\n/)
       .map((value) => Number(value.trim()))
@@ -102,7 +107,9 @@ async function listeningPids(port: number): Promise<number[]> {
 
 async function listProcesses(): Promise<ProcessInfo[] | null> {
   try {
-    const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], { timeout: 2_000 });
+    const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], {
+      timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+    });
     return stdout
       .split(/\r?\n/)
       .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/))

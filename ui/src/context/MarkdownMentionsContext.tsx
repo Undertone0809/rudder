@@ -10,6 +10,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { buildOrganizationSkillMentionOptions } from "@/lib/agent-skill-mentions";
 import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
+import { usePluginMentionCatalog } from "@/lib/plugin-mentions";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -113,13 +114,15 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
     queryFn: () => organizationSkillsApi.list(organizationId!),
     enabled: Boolean(organizationId),
   });
+  const pluginMentions = usePluginMentionCatalog(organizationId);
 
   const skillMentionOptions = useMemo(
     () => buildOrganizationSkillMentionOptions({
       orgUrlKey: organizationUrlKey,
       organizationSkills,
+      pluginManagedSkillIds: pluginMentions.managedSkillIds,
     }),
-    [organizationSkills, organizationUrlKey],
+    [organizationSkills, organizationUrlKey, pluginMentions.managedSkillIds],
   );
 
   const mentions = useMemo(
@@ -132,6 +135,7 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
       libraryDocuments,
       libraryFiles: libraryMentionFiles?.entries,
       skillMentionOptions,
+      pluginMentionOptions: pluginMentions.options,
     }),
     [
       agents,
@@ -141,6 +145,7 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
       libraryDocuments,
       libraryMentionFiles?.entries,
       projects,
+      pluginMentions.options,
       skillMentionOptions,
     ],
   );
