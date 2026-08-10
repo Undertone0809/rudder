@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { ComputerUseBrokerCommand } from "@rudderhq/shared";
+import { describe, expect, it, vi } from "vitest";
 import type { ComputerDriver } from "./computer-driver.js";
 import { createComputerRuntime } from "./computer-runtime.js";
 
