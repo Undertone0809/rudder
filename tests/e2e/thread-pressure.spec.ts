@@ -1355,11 +1355,19 @@ test("keeps the mobile issue comment composer compact, growing, and bounded", as
     const rect = range.getBoundingClientRect();
     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   });
+  const commentButtonTextRange = await composer.getByRole("button", { name: "Comment" }).evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
   await editor.fill("Composer alignment probe");
   const editorTextRange = await readTextRange(editor);
   expect(Math.abs(placeholderTextRange.x - editorTextRange.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(placeholderTextRange.y - editorTextRange.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(placeholderTextRange.height - editorTextRange.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(commentButtonTextRange.y - editorTextRange.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(commentButtonTextRange.height - editorTextRange.height)).toBeLessThanOrEqual(1);
   await editor.fill("");
   await expect(placeholder).toBeVisible();
 

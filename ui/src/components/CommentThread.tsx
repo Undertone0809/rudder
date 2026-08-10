@@ -36,7 +36,7 @@ const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markd
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
 const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
 const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-const MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX = 28;
+const MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX = 30;
 const MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX = 160;
 const MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO = 0.24;
 
@@ -1491,7 +1491,7 @@ export function CommentThread({
         ref={setComposerEditorScrollElement}
         data-testid="issue-comment-composer-editor-scroll"
         className="motion-comment-composer-height scrollbar-auto-hide relative col-start-2 row-start-1 h-[var(--comment-composer-editor-height)] min-w-0 max-h-[min(24dvh,10rem)] overflow-y-auto overscroll-contain pr-1 md:h-auto md:max-h-[min(38dvh,22rem)]"
-        style={{ "--comment-composer-editor-height": "1.75rem" } as CSSProperties}
+        style={{ "--comment-composer-editor-height": "1.875rem" } as CSSProperties}
       >
         {!body.trim() ? (
           <span
