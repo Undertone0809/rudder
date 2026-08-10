@@ -40,8 +40,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(151);
-    expect(result.candidateSqlFiles).toBe(153);
+    expect(result.candidateMigrations).toBe(152);
+    expect(result.candidateSqlFiles).toBe(154);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.2",
       "0.7.1",
@@ -56,8 +56,8 @@ describe("release migration compatibility matrix", () => {
       channel: "canary",
     });
 
-    expect(result.candidateMigrations).toBe(151);
-    expect(result.candidateSqlFiles).toBe(153);
+    expect(result.candidateMigrations).toBe(152);
+    expect(result.candidateSqlFiles).toBe(154);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.1",
       "0.7.0",
