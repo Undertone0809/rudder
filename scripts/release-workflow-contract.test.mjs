@@ -113,6 +113,9 @@ describe("release workflow latency contracts", () => {
     expect(gateJob).toContain("if: runner.os != 'Windows'");
     expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
     expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
+    expect(releaseCompatibilityRuntimeScript).toContain("fileURLToPath(import.meta.url)");
+    expect(releaseCompatibilityRuntimeScript).toContain("cwd: REPO_ROOT");
+    expect(releaseCompatibilityRuntimeScript).not.toContain('["-C", REPO_ROOT');
     expect(releaseCompatibilityRuntimeScript).toContain("chat_conversations");
     expect(releaseCompatibilityRuntimeScript).toContain("principal_permission_grants");
     expect(releaseCompatibilityRuntimeScript).toContain("await db.restart()");

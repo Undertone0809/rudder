@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   applyPendingMigrations,
   cleanupStaleSysvSharedMemorySegments,
@@ -13,7 +14,7 @@ import {
   validatePostMigrationInvariants,
 } from "../packages/db/src/index.js";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requireFromDb = createRequire(path.join(REPO_ROOT, "packages/db/package.json"));
 const postgresModule = requireFromDb("postgres") as { default?: (...args: any[]) => any } | ((...args: any[]) => any);
 const postgres = ("default" in postgresModule ? postgresModule.default : postgresModule) as (...args: any[]) => any;
@@ -35,7 +36,7 @@ const IDS = {
 };
 
 function gitShow(ref: string, file: string): string {
-  return execFileSync("git", ["-C", REPO_ROOT, "show", `${ref}:${file}`], { encoding: "utf8" });
+  return execFileSync("git", ["show", `${ref}:${file}`], { cwd: REPO_ROOT, encoding: "utf8" });
 }
 
 function sqlLiteral(value: unknown): string {
@@ -80,8 +81,8 @@ async function materializeMigrations(ref: string, root: string): Promise<string>
   const journal = JSON.parse(gitShow(ref, journalPath)) as { entries?: Array<{ tag?: string }> };
   const migrationFiles = execFileSync(
     "git",
-    ["-C", REPO_ROOT, "ls-tree", "-r", "--name-only", ref, "--", MIGRATION_PATH],
-    { encoding: "utf8" },
+    ["ls-tree", "-r", "--name-only", ref, "--", MIGRATION_PATH],
+    { cwd: REPO_ROOT, encoding: "utf8" },
   )
     .split("\n")
     .filter((file) => file.startsWith(`${MIGRATION_PATH}/`) && file.endsWith(".sql"))
