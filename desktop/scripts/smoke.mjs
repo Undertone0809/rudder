@@ -3782,44 +3782,77 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.ok(promotionBrowserIdentity.browserTabId, "the promoted Browser guest must expose its tab identity");
       assert.ok(promotionBrowserIdentity.viewInstanceId, "the promoted Browser tab must expose its view instance identity");
       const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
-      await browserUrlInput.fill(promotionUrl);
-      await browserUrlInput.press("Enter");
-      await page.waitForFunction(async ({ browserTabId, expectedUrl, viewInstanceId }) => {
-        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
-          .find((candidate) => (
-            !candidate.hidden
-            && candidate.getAttribute("data-owner-id")?.startsWith("side:")
-            && candidate.getAttribute("data-target-kind") === "browser"
-            && candidate.getAttribute("data-view-instance-id") === viewInstanceId
-          ));
-        const browserView = host?.querySelector(
-          `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
-        );
-        const webview = host?.querySelector(
-          `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
-        );
-        const addressBar = browserView?.querySelector("input[name='browser-url']");
-        if (!webview
-          || typeof webview.getURL !== "function"
-          || typeof webview.executeJavaScript !== "function"
-          || !(addressBar instanceof HTMLInputElement)
-          || addressBar.value !== expectedUrl
-          || webview.getURL() !== expectedUrl) return false;
-        if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
-        if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
-          return false;
+      let promotionStable = false;
+      for (let attempt = 1; attempt <= 3 && !promotionStable; attempt += 1) {
+        await browserUrlInput.fill(promotionUrl);
+        await browserUrlInput.press("Enter");
+        try {
+          await page.waitForFunction(async ({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            if (!webview
+              || typeof webview.getURL !== "function"
+              || typeof webview.executeJavaScript !== "function"
+              || !(addressBar instanceof HTMLInputElement)
+              || addressBar.value !== expectedUrl
+              || webview.getURL() !== expectedUrl) return false;
+            if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
+            if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
+              return false;
+            }
+            const historyLength = await webview.executeJavaScript("history.length");
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            return webview.getURL() === expectedUrl
+              && addressBar.value === expectedUrl
+              && (typeof webview.isLoading !== "function" || !webview.isLoading())
+              && (await webview.executeJavaScript("history.length")) === historyLength;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          }, { timeout: 10_000 });
+          await page.waitForTimeout(2_000);
+          promotionStable = await page.evaluate(({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            return typeof webview?.getURL === "function"
+              && webview.getURL() === expectedUrl
+              && addressBar instanceof HTMLInputElement
+              && addressBar.value === expectedUrl;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          });
+        } catch (error) {
+          if (attempt === 3) throw error;
         }
-        const historyLength = await webview.executeJavaScript("history.length");
-        await new Promise((resolve) => setTimeout(resolve, 750));
-        return webview.getURL() === expectedUrl
-          && addressBar.value === expectedUrl
-          && (typeof webview.isLoading !== "function" || !webview.isLoading())
-          && (await webview.executeJavaScript("history.length")) === historyLength;
-      }, {
-        browserTabId: promotionBrowserIdentity.browserTabId,
-        expectedUrl: promotionUrl,
-        viewInstanceId: promotionBrowserIdentity.viewInstanceId,
-      }, { timeout: 30_000 });
+      }
+      assert.equal(promotionStable, true, "Browser promotion URL must remain stable before Move");
 
       const movingSideTab = sidePanel.locator(
         `[data-testid="chat-side-panel-tab"][data-view-instance-id="${promotionBrowserIdentity.viewInstanceId}"]`,
