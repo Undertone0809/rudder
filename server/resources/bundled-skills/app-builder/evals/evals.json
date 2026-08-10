@@ -9,6 +9,7 @@
       "assertions": [
         "Does not ask the user to choose a framework, database, package manager, or process topology.",
         "Uses the maintained App Builder scaffold and SQLite persistence.",
+        "Uses the versioned Rudder UI preset and its semantic shadcn primitives instead of inventing a generic dashboard theme.",
         "Does not ask for or place email credential values in Chat or source.",
         "Includes the primary contact workflow plus import, persistence, and a production-shaped edge case in verification."
       ]
@@ -32,7 +33,7 @@
       "files": [],
       "assertions": [
         "Does not inspect or mutate real customer records merely to design the table.",
-        "Uses the existing scaffold components and avoids decorative dashboard clutter.",
+        "Uses the existing Rudder UI preset components and semantic tokens, preserves readable density, and avoids decorative dashboard clutter.",
         "Verifies the table at desktop width and a 390px viewport.",
         "Captures rendered screenshot evidence and checks an empty or error state."
       ]

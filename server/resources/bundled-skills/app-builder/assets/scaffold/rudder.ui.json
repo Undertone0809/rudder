@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "preset": "rudder",
+  "revision": 1,
+  "sourceOwnership": "app",
+  "appearance": {
+    "designStyle": "luma",
+    "baseColor": "neutral",
+    "accentTheme": "emerald",
+    "colorMode": "system"
+  },
+  "density": "compact"
+}

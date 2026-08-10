@@ -76,6 +76,12 @@ describe("App Builder controller facade", () => {
     expect(inspected.manifest.runtime.engine).toBe("managed-node-22");
     expect(JSON.parse(await readFile(path.join(root, "crm", "package.json"), "utf8")))
       .toMatchObject({ name: "real-crm" });
+    expect(JSON.parse(await readFile(path.join(root, "crm", "rudder.ui.json"), "utf8")))
+      .toMatchObject({ preset: "rudder", revision: 1, sourceOwnership: "app" });
+    expect(JSON.parse(await readFile(path.join(root, "crm", "components.json"), "utf8")))
+      .toMatchObject({ style: "new-york", iconLibrary: "lucide" });
+    await expect(readFile(path.join(root, "crm", "components", "ui", "table.tsx"), "utf8"))
+      .resolves.toContain("export function Table");
   });
 
   it("creates a customized app from the fixed official scaffold", async () => {

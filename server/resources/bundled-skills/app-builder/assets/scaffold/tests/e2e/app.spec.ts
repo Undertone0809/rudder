@@ -4,7 +4,7 @@ test("creates a contact and keeps it after reload", async ({ page }) => {
   const suffix = crypto.randomUUID();
   const name = `Avery ${suffix.slice(0, 8)}`;
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Customer workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Contacts", exact: true })).toBeVisible();
   await page.getByLabel("Name").fill(name);
   await page.getByLabel("Email").fill(`${suffix}@example.test`);
   await page.getByLabel("Company").fill("Acme");
@@ -12,6 +12,40 @@ test("creates a contact and keeps it after reload", async ({ page }) => {
   await expect(page.getByText(name)).toBeVisible();
   await page.reload();
   await expect(page.getByText(name)).toBeVisible();
+});
+
+test("ships the Rudder UI preset in system light and dark modes", async ({ browser }) => {
+  const lightPage = await browser.newPage({ colorScheme: "light" });
+  await lightPage.goto("/");
+  await expect(lightPage.getByText("Pipeline Desk")).toBeVisible();
+  const lightStyle = await lightPage.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return {
+      background: getComputedStyle(document.body).backgroundColor,
+      radius: style.getPropertyValue("--radius"),
+    };
+  });
+  expect(Number.parseFloat(lightStyle.radius)).toBe(0.375);
+
+  const darkPage = await browser.newPage({ colorScheme: "dark" });
+  await darkPage.goto("/");
+  const darkBackground = await darkPage.evaluate(() => (
+    getComputedStyle(document.body).backgroundColor
+  ));
+  expect(darkBackground).not.toBe(lightStyle.background);
+  await lightPage.close();
+  await darkPage.close();
+});
+
+test("keeps the primary workflow usable at 390px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Contacts", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add contact" })).toBeVisible();
+  await expect(page.getByLabel("Search contacts")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete Maya Chen" })).toBeVisible();
+  await expect(page.getByText("Northwind").first()).toBeVisible();
+  await expect(page.locator("nextjs-portal")).toBeHidden();
 });
 
 test("shows the empty-search state", async ({ page }) => {
