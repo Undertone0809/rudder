@@ -13,6 +13,8 @@ import { forbidden, unauthorized, unprocessable } from "../errors.js";
 
 export const PRODUCT_ANALYTICS_EVENT_NAMES = [
   "organization_created",
+  "issue_created",
+  "chat_created",
   "human_work_started",
   "run_started",
   "run_succeeded",
@@ -29,6 +31,8 @@ export const PRODUCT_ANALYTICS_EVENT_NAMES = [
 
 export const PRODUCT_ANALYTICS_PRODUCED_EVENT_NAMES = [
   "organization_created",
+  "issue_created",
+  "chat_created",
   "human_work_started",
   "run_started",
   "run_succeeded",
@@ -77,6 +81,17 @@ export const PRODUCT_ANALYTICS_EVENT_PROPERTY_ALLOWLIST: Record<ProductAnalytics
     "is_first_organization",
     "is_user_initiated",
   ]),
+  issue_created: new Set([
+    "creation_path",
+    "has_goal_link",
+    "has_project_link",
+    "is_sub_issue",
+  ]),
+  chat_created: new Set([
+    "creation_path",
+    "initial_role",
+    "plan_mode",
+  ]),
   human_work_started: new Set(["work_surface", "origin"]),
   run_started: new Set(["run_kind", "runtime", "attempt_kind"]),
   run_succeeded: new Set(["run_kind", "runtime", "attempt_kind"]),
@@ -119,6 +134,52 @@ export type RecordProductAnalyticsEventInput = {
   dedupeKey: string;
   properties?: AnalyticsProperties;
 };
+
+export type RecordProductAnalyticsChatCreatedInput = {
+  orgId: string;
+  conversationId: string;
+  createdAt: Date;
+  createdByUserId: string | null;
+  actorType?: ProductAnalyticsActorType;
+  actorId?: string | null;
+  creationPath: string;
+  planMode: boolean;
+  initialRole?: "user" | "assistant" | "system";
+};
+
+export async function recordProductAnalyticsChatCreated(
+  db: Db,
+  input: RecordProductAnalyticsChatCreatedInput,
+) {
+  const actorType = input.createdByUserId ? "human" : input.actorType ?? "system";
+  const origin = actorType === "human"
+    ? "human"
+    : actorType === "automation"
+      ? "automation"
+      : "system";
+  return recordProductAnalyticsEvent(db, {
+    orgId: input.orgId,
+    eventName: "chat_created",
+    occurredAt: input.createdAt,
+    sourceTransition: input.creationPath === "manual"
+      ? "chat.initial_message.create"
+      : `chat.${input.creationPath}.create`,
+    confidence: "exact",
+    actorType,
+    actorId: input.createdByUserId ?? input.actorId ?? null,
+    entityType: "chat",
+    entityId: input.conversationId,
+    workSurface: "chat",
+    workId: input.conversationId,
+    origin,
+    dedupeKey: `chat_created:${input.conversationId}`,
+    properties: {
+      creation_path: input.creationPath,
+      ...(input.initialRole ? { initial_role: input.initialRole } : {}),
+      plan_mode: input.planMode,
+    },
+  });
+}
 
 async function resolveProductAnalyticsInstallationId(db: Db, installationId?: string | null) {
   if (installationId) return installationId;
@@ -874,6 +935,8 @@ export function productAnalyticsService(db: Db) {
           productive_installations: Number(productiveInstallationRows[0]?.count ?? 0),
           successful_runs: counts.run_succeeded ?? 0,
           failed_runs: counts.run_failed ?? 0,
+          issues_created: counts.issue_created ?? 0,
+          chats_created: counts.chat_created ?? 0,
           human_work_started: counts.human_work_started ?? 0,
           output_ready: counts.output_ready ?? 0,
           review_decisions_recorded: counts.review_decision_recorded ?? 0,

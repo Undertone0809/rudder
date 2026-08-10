@@ -4571,10 +4571,28 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   color: color-mix(in oklab, var(--foreground) 64%, #58a6ff 36%);
 }
 
+.rudder-inline-token-label {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rudder-entity-preview-wrap {
+  min-width: 0;
+  max-width: min(30rem, 100%);
+}
+
 a.rudder-website-link {
   display: inline-flex;
   align-items: baseline;
-  max-width: 100%;
+  min-width: 0;
+  max-width: min(30rem, 100%);
+  overflow: hidden;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -4626,15 +4644,27 @@ a.rudder-website-link:hover {
 }
 
 .rudder-website-link-label {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 a.rudder-website-link:hover .rudder-website-link-label {
   text-decoration: underline;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.18em;
+}
+
+a.rudder-local-file-link {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: min(30rem, 100%);
+  overflow: hidden;
+  vertical-align: baseline;
+}
+
+a.rudder-local-file-link > [data-local-file-icon] {
+  flex: 0 0 auto;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
@@ -4656,6 +4686,10 @@ a.rudder-skill-token {
   letter-spacing: 0;
   text-decoration: none;
   vertical-align: -0.16em;
+  min-width: 0;
+  max-width: min(30rem, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
@@ -4700,6 +4734,7 @@ a.rudder-skill-token {
 a.rudder-skill-token::before {
   content: "";
   display: inline-block;
+  flex: 0 0 auto;
   width: 1.25em;
   height: 1.25em;
   background: currentColor;
@@ -4711,7 +4746,8 @@ a.rudder-skill-token::before {
 .rudder-skill-token-wrap {
   position: relative;
   display: inline-flex;
-  max-width: 100%;
+  min-width: 0;
+  max-width: min(30rem, 100%);
   line-height: 1;
   vertical-align: -0.16em;
 }
@@ -4773,7 +4809,13 @@ a.rudder-skill-token::before {
 
 .rudder-entity-preview-wrap {
   display: inline-block;
+  min-width: 0;
+  max-width: min(30rem, 100%);
   vertical-align: baseline;
+}
+
+.rudder-entity-preview-wrap > :is(a.rudder-mention-chip, a.rudder-project-mention-chip) {
+  max-width: 100%;
 }
 
 .rudder-entity-preview-card {
@@ -5419,6 +5461,10 @@ a.rudder-project-mention-chip {
   letter-spacing: 0;
   text-decoration: none;
   vertical-align: -0.16em;
+  min-width: 0;
+  max-width: min(30rem, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -6013,5 +6059,121 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   .control-hover:focus-visible:not([aria-disabled="true"]):not([data-variant="link"]),
   .control-hover:active:not(:disabled):not([aria-disabled="true"]):not([data-variant="link"]) {
     transform: none !important;
+  }
+}
+
+/* Agent detail adapts to the workspace left after a docked Side Panel opens. */
+.agent-detail-container {
+  container-name: agent-detail;
+  container-type: inline-size;
+}
+
+.agent-runs-layout {
+  container-name: agent-runs;
+  container-type: inline-size;
+}
+
+.agent-dashboard-date-control-inline {
+  display: none;
+}
+
+.agent-runs-desktop-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(18rem, 24cqi, 24rem);
+  align-items: start;
+  gap: 1rem;
+}
+
+.agent-runs-list-pane {
+  width: 100%;
+}
+
+.agent-runs-list-scroll {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+}
+
+@container agent-detail (max-width: 52rem) {
+  .agent-detail-header {
+    align-items: flex-start;
+  }
+
+  .agent-detail-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .agent-detail-actions .agent-detail-action-label {
+    display: none;
+  }
+
+  .agent-detail-actions :is(button, a) > svg {
+    margin-right: 0;
+  }
+
+  .agent-detail-tabs-row {
+    display: block;
+  }
+
+  .agent-dashboard-date-control-header {
+    display: none;
+  }
+
+  .agent-dashboard-date-control-inline {
+    display: block;
+  }
+}
+
+@container agent-runs (max-width: 62rem) {
+  .agent-runs-desktop-split {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-runs-list-pane {
+    order: -1;
+  }
+
+  .agent-runs-list-scroll {
+    position: static;
+    max-height: min(18rem, 40vh);
+  }
+
+  .agent-run-filter-shell,
+  .agent-run-filter-toolbar {
+    width: 100%;
+  }
+
+  .agent-run-filter-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    justify-content: stretch;
+  }
+
+  .agent-run-filter-views {
+    grid-column: 1 / -1;
+    overflow-x: auto;
+  }
+
+  .agent-run-filter-search {
+    width: 100%;
+  }
+}
+
+@container agent-runs (min-width: 38rem) {
+  .agent-run-summary-layout {
+    flex-direction: row;
+  }
+
+  .agent-run-facts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-run-summary-metrics {
+    border-top-width: 0;
+    border-left-width: 1px;
+    column-gap: 2rem;
   }
 }

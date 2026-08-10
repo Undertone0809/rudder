@@ -44,10 +44,20 @@ describe("managed MCP provider registry", () => {
           containers: ["workspace", "organization"],
         },
       },
+      github: {
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        oauthOrigins: [],
+        requiresOAuth: false,
+        credentialMode: "pat",
+        scopeMode: "account",
+        scopeSelection: "none",
+        defaultAccessMode: "read_only",
+      },
       custom: {
         endpoint: null,
         oauthOrigins: [],
         requiresOAuth: false,
+        credentialMode: "custom",
         scopeSelection: "none",
       },
     });
@@ -100,6 +110,23 @@ describe("managed MCP provider registry", () => {
       accessMode: "read_only",
       externalScope: "workspace-a",
     }).href).toBe("https://mcp.linear.app/mcp/readonly");
+  });
+
+  it("resolves GitHub to its fixed account endpoint and never advertises OAuth", () => {
+    expect(resolveCuratedMcpEndpoint({
+      provider: "github",
+      accessMode: "read_only",
+      externalScope: null,
+    })).toEqual({
+      href: "https://api.githubcopilot.com/mcp/",
+      transport: "streamable_http",
+    });
+    expect(() => resolveCuratedMcpEndpoint({
+      provider: "github",
+      accessMode: "provider_default",
+      externalScope: null,
+    })).toThrow(/read_only|read_write/i);
+    expect(MCP_CURATED_OAUTH_ORIGINS).not.toContain("https://api.githubcopilot.com");
   });
 
   it("rejects custom providers because their URL comes from validated connection config", () => {

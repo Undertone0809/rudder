@@ -2284,7 +2284,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(error.userMessage).not.toContain("credential.yaml");
   });
 
-  it("streams assistant progress through transcript entries and final body through deltas", async () => {
+  it("resumes streamed assistant progress after para-memory-files tool activity", async () => {
     const svc = chatAssistantService({} as any);
     const deltas: string[] = [];
     const entries: Array<{ kind: string; text?: string }> = [];
@@ -2300,6 +2300,34 @@ describe("chatAssistantService operator profile prompt injection", () => {
           structuredPayload: null,
         })}`;
 
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.started",
+          item: { type: "tool_use", id: "memory-tool-1", name: "para-memory-files", input: { operation: "read" } },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "tool_result", tool_use_id: "memory-tool-1", content: "memory loaded", status: "completed" },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.started",
+          item: { type: "tool_use", id: "memory-tool-2", name: "para-memory-files", input: { operation: "write" } },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "tool_result", tool_use_id: "memory-tool-2", content: "", status: "completed" },
+        })}\n`,
+      );
       await ctx.onLog(
         "stdout",
         `${JSON.stringify({
@@ -2351,12 +2379,22 @@ describe("chatAssistantService operator profile prompt injection", () => {
       },
     });
     expect(entries).toEqual([
+      expect.objectContaining({ kind: "tool_call" }),
+      expect.objectContaining({ kind: "tool_result" }),
+      expect.objectContaining({ kind: "tool_call" }),
       expect.objectContaining({ kind: "assistant", text: "Checking the success " }),
       expect.objectContaining({ kind: "assistant", text: "criteria first." }),
     ]);
     expect(deltas.join("")).toBe("Clarify the success criteria first.");
     expect(deltas.join("")).not.toContain("__RUDDER_RESULT_");
-    expect(states).toEqual(["streaming", "finalizing"]);
+    expect(states).toEqual([
+      "streaming",
+      "tool_busy",
+      "streaming",
+      "tool_busy",
+      "streaming",
+      "finalizing",
+    ]);
   });
 
   it("never projects raw runtime-neutral visual bytes to Chat-visible stream or run result surfaces", async () => {

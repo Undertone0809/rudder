@@ -197,6 +197,9 @@ function providerDescription(provider: McpProviderCatalogEntry): string {
   if (provider.id === "supabase") {
     return "Connect account access. Agents choose the project for each task. Starts with read & write.";
   }
+  if (provider.id === "github") {
+    return "Connect account access with a GitHub personal access token. Starts read-only.";
+  }
   const permission = provider.defaultAccessMode === "read_only"
     ? " Starts read-only."
     : provider.accessModes.includes("read_only")
@@ -307,6 +310,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
   const [managedConnection, setManagedConnection] = useState<McpConnectionSummary | null>(null);
   const [managedScopeMode, setManagedScopeMode] = useState<McpProviderAvailability["organization"]["scopeMode"]>(null);
   const [pendingProvider, setPendingProvider] = useState<Exclude<McpConnectionProvider, "custom"> | null>(null);
+  const [pendingGithubPat, setPendingGithubPat] = useState("");
   const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget>({
     scope: "organization",
     ownerAgentId: null,
@@ -360,7 +364,8 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       provider: Exclude<McpConnectionProvider, "custom">;
       accessMode?: McpConnectionAccessMode;
       target: ConnectionTarget;
-      authorizationLauncher: AuthorizationLauncher;
+      pat?: string;
+      authorizationLauncher?: AuthorizationLauncher;
     }) => {
       const { provider, authorizationLauncher } = input;
       try {
@@ -370,23 +375,29 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           {
             ...input.target,
             accessMode: input.accessMode,
+            ...(input.pat ? { pat: input.pat } : {}),
           },
         );
+        if (provider === "github") return connection;
+        if (!authorizationLauncher) throw new Error("Authorization launcher was not reserved");
         const started = await managedMcpApi.startOAuth(orgId, connection.id);
         await authorizationLauncher.navigate(started.authorizationUrl);
         return connection;
       } catch (error) {
-        authorizationLauncher.close();
+        authorizationLauncher?.close();
         throw error;
       }
     },
-    onSuccess: async () => {
+    onSuccess: async (connection) => {
       setPendingProvider(null);
+      setPendingGithubPat("");
       await invalidate();
       pushToast({
-        title: "Authorization opened",
-        body: "Finish provider authorization in the browser. Rudder will update this page automatically.",
-        tone: "info",
+        title: connection.provider === "github" ? "GitHub connected" : "Authorization opened",
+        body: connection.provider === "github"
+          ? "GitHub tools are ready for agents with access."
+          : "Finish provider authorization in the browser. Rudder will update this page automatically.",
+        tone: connection.provider === "github" ? "success" : "info",
       });
     },
     onError: async (error) => {
@@ -463,13 +474,17 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     provider: Exclude<McpConnectionProvider, "custom">,
     target: ConnectionTarget,
     accessMode?: McpConnectionAccessMode,
+    pat?: string,
   ) => {
     try {
       createOfficial.mutate({
         provider,
         accessMode,
         target,
-        authorizationLauncher: reserveAuthorizationLauncher(),
+        ...(pat ? { pat } : {}),
+        ...(provider === "github"
+          ? {}
+          : { authorizationLauncher: reserveAuthorizationLauncher() }),
       });
     } catch (error) {
       pushToast({
@@ -506,6 +521,20 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     provider: Exclude<McpConnectionProvider, "custom">,
     connectionId: string | null,
   ) => {
+    if (provider === "github") {
+      const connection = connectionId
+        ? connections.find((candidate) => candidate.id === connectionId)
+        : null;
+      if (connection) {
+        setConnectionTarget({
+          scope: connection.scope,
+          ownerAgentId: connection.ownerAgentId,
+        });
+      }
+      setPendingGithubPat("");
+      setPendingProvider(provider);
+      return;
+    }
     if (!connectionId) {
       setPendingProvider(provider);
       return;
@@ -607,6 +636,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
                       }
                       if (state === "not_connected") {
                         setConnectionTarget({ scope: "organization", ownerAgentId: null });
+                        setPendingGithubPat("");
                         setPendingProvider(provider.id);
                       }
                       else resumeOfficialAuthorization(provider.id, status?.organization.connectionId ?? null);
@@ -692,11 +722,16 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       <ConnectionTargetDialog
         provider={pendingProvider}
         target={connectionTarget}
+        githubPat={pendingGithubPat}
         agents={eligibleAgents}
         pending={createOfficial.isPending}
         connections={connections}
+        onGithubPatChange={setPendingGithubPat}
         onTargetChange={setConnectionTarget}
-        onClose={() => setPendingProvider(null)}
+        onClose={() => {
+          setPendingProvider(null);
+          setPendingGithubPat("");
+        }}
         onConfirm={() => {
           if (!pendingProvider) return;
           const existing = connections.find((connection) => (
@@ -705,13 +740,18 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
             && connection.ownerAgentId === connectionTarget.ownerAgentId
             && connection.status !== "revoked"
           ));
-          if (existing) {
+          if (existing && pendingProvider !== "github") {
             setPendingProvider(null);
             setManagedConnection(existing);
             setManagedScopeMode(null);
             return;
           }
-          beginOfficialAuthorization(pendingProvider, connectionTarget);
+          beginOfficialAuthorization(
+            pendingProvider,
+            connectionTarget,
+            undefined,
+            pendingProvider === "github" ? pendingGithubPat.trim() : undefined,
+          );
         }}
       />
       <OrganizationConnectionDialog
@@ -867,18 +907,22 @@ function ConnectionTargetSelect({
 function ConnectionTargetDialog({
   provider,
   target,
+  githubPat,
   agents,
   pending,
   connections,
+  onGithubPatChange,
   onTargetChange,
   onClose,
   onConfirm,
 }: {
   provider: Exclude<McpConnectionProvider, "custom"> | null;
   target: ConnectionTarget;
+  githubPat: string;
   agents: Agent[];
   pending: boolean;
   connections: McpConnectionSummary[];
+  onGithubPatChange: (value: string) => void;
   onTargetChange: (target: ConnectionTarget) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -912,11 +956,29 @@ function ConnectionTargetDialog({
             The target cannot be changed after connection. Disconnect and reconnect to use a different target.
           </p>
         </div>
+        {provider === "github" ? (
+          <div className="space-y-2">
+            <label htmlFor="github-pat" className="text-sm font-medium text-foreground">
+              GitHub personal access token
+            </label>
+            <Input
+              id="github-pat"
+              type="password"
+              autoComplete="new-password"
+              placeholder="github_pat_..."
+              value={githubPat}
+              onChange={(event) => onGithubPatChange(event.target.value)}
+            />
+          </div>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-          <Button disabled={pending} onClick={onConfirm}>
+          <Button
+            disabled={pending || (provider === "github" && githubPat.trim().length === 0)}
+            onClick={onConfirm}
+          >
             {pending ? <Loader2 className="size-4 animate-spin" /> : null}
-            {existing ? "Manage" : "Connect"}
+            {existing && provider !== "github" ? "Manage" : "Connect"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -993,10 +1055,12 @@ function OrganizationConnectionDialog({
 }) {
   const { pushToast } = useToast();
   const [accessMode, setAccessMode] = useState<McpConnectionAccessMode>("provider_default");
+  const [githubPat, setGithubPat] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [confirmHistoricalDisconnect, setConfirmHistoricalDisconnect] = useState(false);
   useEffect(() => {
     if (connection) setAccessMode(connection.accessMode);
+    setGithubPat("");
     setConfirmDisconnect(false);
     setConfirmHistoricalDisconnect(false);
   }, [connection]);
@@ -1044,6 +1108,11 @@ function OrganizationConnectionDialog({
   const reconnect = useMutation({
     mutationFn: async () => {
       if (!connection) throw new Error("Connection is unavailable");
+      if (connection.provider === "github") {
+        const pat = githubPat.trim();
+        if (!pat) throw new Error("Enter a GitHub personal access token to reconnect");
+        return managedMcpApi.reconnect(orgId, connection.id, { pat });
+      }
       if (connection.provider === "custom") {
         return managedMcpApi.reconnect(orgId, connection.id);
       }
@@ -1058,7 +1127,10 @@ function OrganizationConnectionDialog({
       }
     },
     onSuccess: async () => {
-      pushToast({ title: "Authorization opened", tone: "info" });
+      pushToast({
+        title: connection?.provider === "github" ? "GitHub connected" : "Authorization opened",
+        tone: connection?.provider === "github" ? "success" : "info",
+      });
       await onChanged();
     },
     onError: (error) => pushToast({
@@ -1130,6 +1202,7 @@ function OrganizationConnectionDialog({
     || disconnectHistorical.isPending
     || upgradeAccountAccess.isPending;
   const isLegacySupabase = connection?.provider === "supabase" && scopeMode === "legacy_project";
+  const isGitHub = connection?.provider === "github";
   const [statusLabel] = connection ? statusCopy(connection.status) : ["", ""];
 
   return (
@@ -1229,6 +1302,21 @@ function OrganizationConnectionDialog({
                   </Button>
                 </div>
               ) : null}
+              {isGitHub ? (
+                <div className="space-y-2">
+                  <label htmlFor="github-reconnect-pat" className="text-sm font-medium text-foreground">
+                    New GitHub personal access token
+                  </label>
+                  <Input
+                    id="github-reconnect-pat"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="github_pat_..."
+                    value={githubPat}
+                    onChange={(event) => setGithubPat(event.target.value)}
+                  />
+                </div>
+              ) : null}
               {!isLegacySupabase && provider && provider.accessModes.length > 1 ? (
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium">Maximum access</legend>
@@ -1277,7 +1365,11 @@ function OrganizationConnectionDialog({
             </div>
             <DialogFooter className="sm:justify-between">
               {isLegacySupabase ? <span /> : (
-                <Button variant="outline" disabled={pending} onClick={() => reconnect.mutate()}>
+                <Button
+                  variant="outline"
+                  disabled={pending || (isGitHub && githubPat.trim().length === 0)}
+                  onClick={() => reconnect.mutate()}
+                >
                   <ExternalLink className="size-3.5" /> Reconnect
                 </Button>
               )}

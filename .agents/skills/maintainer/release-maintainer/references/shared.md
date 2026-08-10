@@ -55,6 +55,9 @@ early.
 - On an explicit stable release request, resolve and freeze the immutable SHA
   before drafting notes or waiting on unrelated `main` work. Later commits are
   next-release candidates unless the user explicitly retargets the release.
+- Manual stable dispatch accepts the full 40-character commit SHA only. This
+  gives automatic canary and manual stable runs the same concurrency identity;
+  a real stable dispatch replaces duplicate automatic work for that source.
 - Canary and stable share the non-cancelling `release-publish` concurrency
   group in the current workflow.
 - Do not let an in-flight canary for the same or an older base hold a ready
@@ -69,9 +72,25 @@ early.
   run is superseded, rerun the same locked SHA after the active publish ends.
 - A `GITHUB_TOKEN` tag push does not trigger another workflow automatically;
   dispatch Desktop explicitly where the workflow requires it.
-- Release-maintenance commits that should not publish canary use
-  `[skip release]`, and the resulting release workflow must be observed as
-  skipped.
+- After a stable campaign begins, release-only candidate repairs use
+  `[skip release]` unless canary publication is explicitly required. Confirm CI
+  for the repair SHA and confirm the automatic Release workflow was skipped.
+
+## Convergence Budget
+
+- Do not dispatch stable while exact-source CI is still running. One candidate
+  SHA gets one exact-source CI and one production stable execution.
+- Do not run manual stable and automatic canary gates concurrently for the same
+  SHA. Use the full SHA so workflow concurrency can replace the duplicate path.
+- The three-fixture historical migration runtime must finish within five
+  minutes per platform and emit its current phase every ten seconds. The full
+  prepublish platform job has a 25-minute hard ceiling, including packaged
+  Desktop verification.
+- A timeout is a failure with a named last phase, not permission to increase the
+  timeout. Fix the blocked lifecycle or process ownership before rerunning.
+- After two failures at the same stage with unchanged inputs, stop dispatching.
+  Record the run IDs, last phase, elapsed time, and candidate SHA; make one
+  scoped repair and start again from exact-source CI.
 
 ## Single Stable Execution
 

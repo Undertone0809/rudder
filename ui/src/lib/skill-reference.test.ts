@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import {
+  applySkillTokenDecoration,
   buildAgentSkillReferenceHref,
   buildLocalSkillReferenceHref,
   buildOrganizationSkillReferenceHref,
@@ -123,5 +125,15 @@ describe("skill-reference", () => {
         "build-advisor",
       ),
     ).toBe("Use this");
+  });
+
+  it("keeps the full editor token label available as a tooltip", () => {
+    const element = document.createElement("span");
+    element.textContent = "a-very-long-skill-reference-label";
+
+    applySkillTokenDecoration(element, "/workspace/.agents/skills/example/SKILL.md");
+
+    expect(element.title).toBe("a-very-long-skill-reference-label");
+    expect(element.dataset.skillToken).toBe("true");
   });
 });

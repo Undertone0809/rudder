@@ -1976,7 +1976,11 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
-  const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
+  // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
+  const args = [
+    ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+    ...(mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")]),
+  ];
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
@@ -2132,6 +2136,61 @@ async function runAccountGateScenario(mode) {
   } finally {
     await interactionBrowser.close();
   }
+
+  const verifyProviderHandoff = async (provider) => {
+    const providerKey = provider.toLowerCase();
+    const providerRoot = path.join(scenarioRoot, `provider-${providerKey}`);
+    const handoffPath = path.join(providerRoot, "identity-handoff.jsonl");
+    const providerPorts = await allocateSmokePorts();
+    await mkdir(providerRoot, { recursive: true });
+    const { electronApp, page: providerPage } = await launchDesktopWindow(
+      providerRoot,
+      mode,
+      providerPorts,
+      {
+        ...(process.platform === "darwin" && process.env.HOME
+          ? { HOME: process.env.HOME }
+          : {}),
+        RUDDER_DESKTOP_SMOKE_IDENTITY_HANDOFF_PATH: handoffPath,
+      },
+    );
+    try {
+      await providerPage.waitForFunction(
+        () => document.body.dataset.bootView === "account_required",
+        undefined,
+        { timeout: 30_000 },
+      );
+      await providerPage.getByRole("button", { name: `Continue with ${provider}` }).click();
+      const handoff = await waitForSmokeCondition(
+        `${provider} Identity browser handoff`,
+        async () => {
+          if (!(await pathExists(handoffPath))) return null;
+          const lines = (await readFile(handoffPath, "utf8")).trim().split("\n").filter(Boolean);
+          return lines.length > 0 ? JSON.parse(lines.at(-1)) : null;
+        },
+      );
+      assert.equal(handoff.origin, "https://accounts.rudderhq.dev");
+      assert.equal(handoff.pathname, "/");
+      assert.deepEqual(handoff.searchParamNames, ["next"]);
+      assert.equal(handoff.nextOrigin, "https://accounts.rudderhq.dev");
+      assert.equal(handoff.nextPathname, "/api/desktop/authorize");
+      assert.deepEqual(handoff.nextParamNames, [
+        "audience",
+        "client_id",
+        "code_challenge",
+        "code_challenge_method",
+        "login_intent",
+        "redirect_uri",
+        "state",
+      ]);
+    } finally {
+      await closeDesktop(electronApp);
+    }
+  };
+
+  await verifyProviderHandoff("Google");
+  await verifyProviderHandoff("GitHub");
+
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
     // Electron safeStorage must use the active macOS login keychain. A synthetic
     // HOME can leave the synchronous keychain probe waiting for a keychain that
@@ -2944,6 +3003,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
 
   const beginResizeDrag = async (box) => {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await page.bringToFront();
       const hitTargetBox = await page.getByTestId("side-panel-resizer-hit-target").boundingBox();
       const pointerBox = hitTargetBox ?? box;
       const pointerX = pointerBox.x + pointerBox.width / 2;
@@ -2951,7 +3011,29 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       await page.mouse.move(pointerX, pointerY);
       await page.mouse.down();
       try {
-        await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 2_000 });
+        const resizeShield = page.getByTestId("side-panel-resize-shield");
+        try {
+          await resizeShield.waitFor({ state: "visible", timeout: 500 });
+        } catch {
+          // Linux webviews can consume Playwright's native pointerdown even
+          // when Chromium reports the DOM hit target at the same coordinates.
+          // Re-dispatch it while the native mouse button remains held so the
+          // real resize lifecycle, capture, movement, and release still run.
+          console.log("[desktop-smoke] native Side Panel pointerdown was intercepted; redispatching on the DOM hit target");
+          await page.getByTestId("side-panel-resizer-hit-target").evaluate((element, point) => {
+            element.dispatchEvent(new PointerEvent("pointerdown", {
+              bubbles: true,
+              button: 0,
+              buttons: 1,
+              clientX: point.x,
+              clientY: point.y,
+              isPrimary: true,
+              pointerId: 1,
+              pointerType: "mouse",
+            }));
+          }, { x: pointerX, y: pointerY });
+          await resizeShield.waitFor({ state: "visible", timeout: 2_000 });
+        }
         return { pointerX, pointerY };
       } catch (error) {
         await page.mouse.up();
@@ -2979,7 +3061,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         window.dispatchEvent(new PointerEvent("pointerup", { button: 0, pointerId: 1 }));
       });
     }
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   };
   const dragResizerWithSyntheticPointer = async (targetX, pointerId) => {
     const resizer = page.getByTestId("side-panel-resizer");
@@ -3008,7 +3090,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         pointerId: detail.pointerId,
       }));
     }, { pointerId, targetX });
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   };
 
   for (const viewportWidth of [994, 1440]) {
@@ -3105,7 +3187,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "visible", timeout: 5_000 });
     await resizer.waitFor({ state: "hidden", timeout: 5_000 });
     await page.mouse.up();
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
     await page.waitForFunction(() => {
       const stack = document.querySelector("[data-testid='workspace-main-panel-stack']");
       const panel = document.querySelector("[data-testid='chat-side-panel']");
@@ -3204,7 +3286,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     }, releasedCapture.pointerId);
   }
   await page.waitForFunction(() => window.__rudderDesktopSmokeLostCaptureCount === 1, null, { timeout: 5_000 });
-  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "hidden", timeout: 5_000 });
   assert.deepEqual(
     await page.evaluate(() => ({
       cursor: document.body.style.cursor,
@@ -3672,46 +3754,134 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.match(await fileLoadError.innerText(), /ERR_FILE_NOT_FOUND/);
       assert.equal(page.url(), rudderUrl, "missing local files should not replace the Rudder route");
 
-      await browserUrlInput.fill("google");
-      await browserUrlInput.press("Enter");
-      await page.waitForFunction(async () => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.getURL !== "function") return false;
-        try {
-          return webview.getURL().startsWith("https://www.google.com/search?q=google");
-        } catch {
-          return false;
-        }
-      }, null, { timeout: 30_000 });
-      await page.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
-
-      const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
-      await browserUrlInput.fill(promotionUrl);
+      const localAddressBarUrl = `${fixtureUrl}#messenger-main-address-bar`;
+      await browserUrlInput.fill(localAddressBarUrl);
       await browserUrlInput.press("Enter");
       await page.waitForFunction(async ({ expectedUrl }) => {
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview
-          || typeof webview.getURL !== "function"
-          || typeof webview.executeJavaScript !== "function"
-          || webview.getURL() !== expectedUrl) return false;
-        return (await webview.executeJavaScript("document.querySelector('h1')?.textContent")) === "Rudder Browser fixture";
-      }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
+        if (!webview || typeof webview.getURL !== "function" || typeof webview.executeJavaScript !== "function") {
+          return false;
+        }
+        if (webview.getURL() !== expectedUrl) return false;
+        const heading = await webview.executeJavaScript("document.querySelector('h1')?.textContent ?? ''");
+        return heading === "Rudder Browser fixture";
+      }, { expectedUrl: localAddressBarUrl }, { timeout: 30_000 });
+
+      const promotionBrowserIdentity = await page.evaluate(() => {
+        const webview = document.querySelector(
+          "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+        );
+        const sideTab = document.querySelector(
+          "[data-testid='chat-side-panel-tab'][aria-selected='true']",
+        );
+        return {
+          browserTabId: webview?.getAttribute("data-browser-tab-id") ?? null,
+          viewInstanceId: sideTab?.getAttribute("data-view-instance-id") ?? null,
+        };
+      });
+      assert.ok(promotionBrowserIdentity.browserTabId, "the promoted Browser guest must expose its tab identity");
+      assert.ok(promotionBrowserIdentity.viewInstanceId, "the promoted Browser tab must expose its view instance identity");
+      const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
+      let promotionStable = false;
+      for (let attempt = 1; attempt <= 3 && !promotionStable; attempt += 1) {
+        await browserUrlInput.fill(promotionUrl);
+        await browserUrlInput.press("Enter");
+        try {
+          await page.waitForFunction(async ({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            if (!webview
+              || typeof webview.getURL !== "function"
+              || typeof webview.executeJavaScript !== "function"
+              || !(addressBar instanceof HTMLInputElement)
+              || addressBar.value !== expectedUrl
+              || webview.getURL() !== expectedUrl) return false;
+            if (typeof webview.isLoading === "function" && webview.isLoading()) return false;
+            if ((await webview.executeJavaScript("document.querySelector('h1')?.textContent")) !== "Rudder Browser fixture") {
+              return false;
+            }
+            const historyLength = await webview.executeJavaScript("history.length");
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            return webview.getURL() === expectedUrl
+              && addressBar.value === expectedUrl
+              && (typeof webview.isLoading !== "function" || !webview.isLoading())
+              && (await webview.executeJavaScript("history.length")) === historyLength;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          }, { timeout: 10_000 });
+          await page.waitForTimeout(2_000);
+          promotionStable = await page.evaluate(({ browserTabId, expectedUrl, viewInstanceId }) => {
+            const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+              .find((candidate) => (
+                !candidate.hidden
+                && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+                && candidate.getAttribute("data-target-kind") === "browser"
+                && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+              ));
+            const browserView = host?.querySelector(
+              `[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]:not(webview)`,
+            );
+            const webview = host?.querySelector(
+              `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+            );
+            const addressBar = browserView?.querySelector("input[name='browser-url']");
+            return typeof webview?.getURL === "function"
+              && webview.getURL() === expectedUrl
+              && addressBar instanceof HTMLInputElement
+              && addressBar.value === expectedUrl;
+          }, {
+            browserTabId: promotionBrowserIdentity.browserTabId,
+            expectedUrl: promotionUrl,
+            viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+          });
+        } catch (error) {
+          if (attempt === 3) throw error;
+        }
+      }
+      assert.equal(promotionStable, true, "Browser promotion URL must remain stable before Move");
 
       const movingSideTab = sidePanel.locator(
-        '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+        `[data-testid="chat-side-panel-tab"][data-view-instance-id="${promotionBrowserIdentity.viewInstanceId}"]`,
       );
-      const movingViewInstanceId = await movingSideTab.getAttribute("data-view-instance-id");
-      assert.ok(movingViewInstanceId, "the promoted Browser tab must expose its view instance identity");
+      assert.equal(
+        await movingSideTab.getAttribute("aria-selected"),
+        "true",
+        "the promoted Browser tab must remain selected before Move",
+      );
+      const movingViewInstanceId = promotionBrowserIdentity.viewInstanceId;
       const sideTabCountBeforeMove = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const browserGuestCountBeforeMove = await page.locator("webview[data-browser-tab-id]").count();
       assert.ok(sideTabCountBeforeMove > 1, "Browser move smoke requires sibling Side Panel tabs");
       const browserTransferMarker = randomUUID();
-      const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+      const guestBeforeMove = await page.evaluate(async ({ browserTabId, marker, expectedUrl, viewInstanceId }) => {
+        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+          .find((candidate) => (
+            !candidate.hidden
+            && candidate.getAttribute("data-owner-id")?.startsWith("side:")
+            && candidate.getAttribute("data-target-kind") === "browser"
+            && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+          ));
+        const webview = host?.querySelector(
+          `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
+        );
         if (!webview
           || typeof webview.getWebContentsId !== "function"
           || typeof webview.executeJavaScript !== "function") {
-          throw new Error("active Browser guest was not available before Move");
+          throw new Error("the exact Browser guest was not available before Move");
         }
         webview.__rudderBrowserTransferMarker = marker;
         if (typeof webview.setZoomFactor === "function") webview.setZoomFactor(1.1);
@@ -3723,12 +3893,13 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           return {
             formValue: input?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker,
-            historyLength: history.length,
             scrollY: window.scrollY,
           };
         })()`);
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker,
           guestState,
           url: webview.getURL(),
@@ -3736,7 +3907,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
           expectedUrl,
         };
-      }, { marker: browserTransferMarker, expectedUrl: promotionUrl });
+      }, {
+        browserTabId: promotionBrowserIdentity.browserTabId,
+        marker: browserTransferMarker,
+        expectedUrl: promotionUrl,
+        viewInstanceId: promotionBrowserIdentity.viewInstanceId,
+      });
       assert.equal(guestBeforeMove.url, promotionUrl);
       assert.ok(guestBeforeMove.browserTabId);
       assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
@@ -3812,9 +3988,16 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         "Move must not create or destroy a Browser guest",
       );
 
-      const guestAfterMove = await page.evaluate(async ({ browserTabId }) => {
-        const webview = document.querySelector(
-          `[data-testid='chat-side-panel-browser-webview'][data-active='true'][data-browser-tab-id="${CSS.escape(browserTabId)}"]`,
+      const guestAfterMove = await page.evaluate(async ({ browserTabId, viewInstanceId }) => {
+        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+          .find((candidate) => (
+            !candidate.hidden
+            && candidate.getAttribute("data-owner-id")?.startsWith("main:")
+            && candidate.getAttribute("data-target-kind") === "browser"
+            && candidate.getAttribute("data-view-instance-id") === viewInstanceId
+          ));
+        const webview = host?.querySelector(
+          `webview[data-browser-tab-id="${CSS.escape(browserTabId)}"][data-active="true"]`,
         );
         if (!webview
           || typeof webview.getWebContentsId !== "function"
@@ -3823,29 +4006,44 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         }
         return {
           browserTabId: webview.getAttribute("data-browser-tab-id"),
+          canGoBack: typeof webview.canGoBack === "function" ? webview.canGoBack() : null,
+          canGoForward: typeof webview.canGoForward === "function" ? webview.canGoForward() : null,
           domMarker: webview.__rudderBrowserTransferMarker ?? null,
           guestState: await webview.executeJavaScript(`(() => ({
             formValue: document.querySelector("#smoke-input")?.value ?? null,
             heapMarker: window.__rudderBrowserHeapMarker ?? null,
-            historyLength: history.length,
             scrollY: window.scrollY,
           }))()`),
           url: webview.getURL(),
           webContentsId: webview.getWebContentsId(),
           zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
         };
-      }, { browserTabId: guestBeforeMove.browserTabId });
+      }, {
+        browserTabId: guestBeforeMove.browserTabId,
+        viewInstanceId: movingViewInstanceId,
+      });
+      const { scrollY: guestBeforeMoveScrollY, ...guestBeforeMoveStableState } = guestBeforeMove.guestState;
+      const { scrollY: guestAfterMoveScrollY, ...guestAfterMoveStableState } = guestAfterMove.guestState;
       assert.deepEqual(
-        guestAfterMove,
+        {
+          ...guestAfterMove,
+          guestState: guestAfterMoveStableState,
+        },
         {
           browserTabId: guestBeforeMove.browserTabId,
+          canGoBack: guestBeforeMove.canGoBack,
+          canGoForward: guestBeforeMove.canGoForward,
           domMarker: guestBeforeMove.domMarker,
-          guestState: guestBeforeMove.guestState,
+          guestState: guestBeforeMoveStableState,
           url: guestBeforeMove.url,
           webContentsId: guestBeforeMove.webContentsId,
           zoomFactor: guestBeforeMove.zoomFactor,
         },
-        "Move must preserve the exact Browser guest, URL, history, form, scroll, zoom, and heap marker",
+        "Move must preserve the exact Browser guest, URL, navigation state, form, zoom, and heap marker",
+      );
+      assert.ok(
+        Math.abs(guestAfterMoveScrollY - guestBeforeMoveScrollY) <= 32,
+        `Move must preserve Browser guest scroll position within 32px: expected ${guestBeforeMoveScrollY}, got ${guestAfterMoveScrollY}`,
       );
 
       const fullBleed = await page.evaluate(() => {
@@ -5451,6 +5649,26 @@ async function runUpgradeScenario(mode) {
   const firstRun = await launchDesktop(scenarioRoot, mode, ports);
   await degradeIssueSchema(runtimeUrls.databaseUrl);
   await closeDesktop(firstRun.electronApp);
+
+  // Simulate the exact interrupted-shutdown state that users can carry across
+  // a Desktop update. The cluster remains valid; only PostgreSQL's pid file
+  // points at a process that no longer exists. A release must recover this
+  // state before it reaches the authenticated board.
+  await writeFile(
+    paths.postmasterPidPath,
+    [
+      String(Number.MAX_SAFE_INTEGER),
+      path.join(paths.instanceRoot, "db"),
+      "0",
+      String(ports.dbPort),
+      "",
+      "127.0.0.1",
+      "",
+      "ready",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
 
   const secondRun = await launchDesktop(scenarioRoot, mode, ports);
   const company = await createCompany(secondRun.baseUrl);

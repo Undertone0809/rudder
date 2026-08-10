@@ -687,6 +687,23 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("keeps agent attribution left while nudging the assistant body toward center", () => {
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Centered answer",
+    }));
+
+    const messageColumn = container.querySelector(
+      '[data-testid="chat-assistant-message"] > [data-message-highlight-target="true"]',
+    );
+    expect(messageColumn?.classList.contains("mx-auto")).toBe(false);
+    expect(
+      container.querySelector('[data-annotation-surface="assistant_body"]')?.classList.contains("md:ml-6"),
+    ).toBe(true);
+  });
+
   it("marks only stable visible assistant bodies as response annotation sources", () => {
     const completed = renderChatMessageItem(message({
       id: "assistant-completed",

@@ -15,6 +15,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
+import { recordProductAnalyticsChatCreated } from "./product-analytics.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
 const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
@@ -284,6 +285,18 @@ export function sideChatService(db: Db) {
         }
         return raced.id;
       }
+
+      await recordProductAnalyticsChatCreated(tx as unknown as Db, {
+        orgId: input.orgId,
+        conversationId: child.id,
+        createdAt: child.createdAt,
+        createdByUserId: input.userId,
+        actorType: "human",
+        actorId: input.userId,
+        creationPath: "side_chat",
+        planMode: child.planMode,
+        initialRole: "system",
+      });
 
       const contextLinks = await tx
         .select()

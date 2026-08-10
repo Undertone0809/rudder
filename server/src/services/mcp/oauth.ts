@@ -378,6 +378,11 @@ export function managedMcpOAuthService(
   function assertCurated(row: McpConnectionRow): asserts row is McpConnectionRow & {
     provider: "supabase" | "linear" | "notion";
   } {
+    if (row.provider === "github") {
+      throw unprocessable(
+        "GitHub connections use personal access tokens and do not support managed OAuth",
+      );
+    }
     if (row.provider !== "supabase" && row.provider !== "linear" && row.provider !== "notion") {
       throw unprocessable("Custom MCP connections do not use managed OAuth");
     }

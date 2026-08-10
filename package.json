@@ -33,6 +33,7 @@
     "db:migrate": "pnpm --filter @rudderhq/db migrate",
     "secrets:migrate-inline-env": "tsx scripts/migrate-inline-env-secrets.ts",
     "db:backup": "./scripts/backup-db.sh",
+    "db:backfill-chat-transcripts": "node cli/node_modules/tsx/dist/cli.mjs scripts/backfill-chat-transcripts.ts",
     "rudder": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts",
     "build:npm": "./scripts/build-npm.sh",
     "release": "./scripts/release.sh",

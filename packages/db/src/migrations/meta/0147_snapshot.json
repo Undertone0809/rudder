@@ -1,5 +1,5 @@
 {
-  "id": "8d8c7f61-71dd-4d4b-bb15-d5a6b3cba5fd",
+  "id": "99f4e7dc-13a4-4f10-8ef5-55ddc2ee2ab7",
   "prevId": "686bb717-a374-4711-b98e-24a13fb28497",
   "version": "7",
   "dialect": "postgresql",
@@ -13418,22 +13418,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "goal_result_proposals_goal_ready_uq": {
-          "name": "goal_result_proposals_goal_ready_uq",
-          "columns": [
-            {
-              "expression": "goal_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"goal_result_proposals\".\"status\" = 'ready'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -18336,7 +18320,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"mcp_connections\".\"provider\" in ('supabase', 'linear', 'notion') and \"mcp_connections\".\"canonical_state\" = 'canonical' and \"mcp_connections\".\"scope\" = 'organization'",
+          "where": "\"mcp_connections\".\"provider\" in ('supabase', 'linear', 'notion', 'github') and \"mcp_connections\".\"canonical_state\" = 'canonical' and \"mcp_connections\".\"scope\" = 'organization'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -18364,7 +18348,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"mcp_connections\".\"provider\" in ('supabase', 'linear', 'notion') and \"mcp_connections\".\"canonical_state\" = 'canonical' and \"mcp_connections\".\"scope\" = 'agent'",
+          "where": "\"mcp_connections\".\"provider\" in ('supabase', 'linear', 'notion', 'github') and \"mcp_connections\".\"canonical_state\" = 'canonical' and \"mcp_connections\".\"scope\" = 'agent'",
           "concurrently": false,
           "method": "btree",
           "with": {}

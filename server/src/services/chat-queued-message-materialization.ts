@@ -18,6 +18,8 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { conflict, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
+import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 
 type QueueRow = typeof chatQueuedMessages.$inferSelect;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -319,6 +321,7 @@ export async function materializeQueuedUserMessage(
     ...(input.structuredPayload ?? {}),
     ...(annotations.length > 0 ? { inlineAnnotations: annotations } : {}),
   });
+  const transcript = chatTranscriptFromPayload(structuredPayload);
   const [message] = await tx
     .insert(chatMessages)
     .values({
@@ -329,7 +332,7 @@ export async function materializeQueuedUserMessage(
       kind: "message",
       status: "completed",
       body,
-      structuredPayload,
+      structuredPayload: stripChatMetadataFromPayload(structuredPayload),
       chatTurnId: randomUUID(),
       turnVariant: 0,
       createdAt: input.now,
@@ -367,12 +370,19 @@ export async function materializeQueuedUserMessage(
   });
   await tx
     .update(chatMessages)
-    .set({ structuredPayload, updatedAt: input.now })
+    .set({ structuredPayload: stripChatMetadataFromPayload(structuredPayload), updatedAt: input.now })
     .where(and(
       eq(chatMessages.id, message.id),
       eq(chatMessages.orgId, input.orgId),
       eq(chatMessages.conversationId, input.conversationId),
     ));
+  if (transcript.length > 0) {
+    await replaceDetachedChatTranscript(tx, {
+      orgId: input.orgId,
+      messageId: message.id,
+      entries: transcript,
+    });
+  }
   const materializedPayload = {
     ...payload,
     inlineAnnotations: canonicalAnnotations,

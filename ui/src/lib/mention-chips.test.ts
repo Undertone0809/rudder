@@ -29,6 +29,7 @@ describe("mention chips", () => {
 
     expect(element.textContent).toBe("rudder dev");
     expect(element.dataset.mentionKind).toBe("project");
+    expect(element.title).toBe("rudder dev");
   });
 
   it("keeps project color as an identity marker instead of restyling the whole chip", () => {

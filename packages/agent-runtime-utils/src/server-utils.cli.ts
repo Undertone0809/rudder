@@ -1422,7 +1422,7 @@ export async function runChildProcess(
         const startedAt = new Date().toISOString();
 
         if (opts.stdin != null && child.stdin) {
-          child.stdin.write(opts.stdin);
+          child.stdin.on("error", (err: Error) => (err as NodeJS.ErrnoException).code === "EPIPE" ? undefined : onLogError(err, runId, "failed to write child process stdin")); child.stdin.write(opts.stdin);
           child.stdin.end();
         }
 

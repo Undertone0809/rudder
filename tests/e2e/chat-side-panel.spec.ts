@@ -494,6 +494,110 @@ test.describe("Chat Side Panel", () => {
     });
   });
 
+  test("keeps a long local source file scrollable in the Side Panel", async ({ page }, testInfo) => {
+    const localFilePath = "/Users/zeeland/projects/rudder-oss/ui/src/components/MessengerContextSidebar.tsx";
+    const source = Array.from(
+      { length: 240 },
+      (_, index) => `export const localCodeLine${index} = ${index};`,
+    ).join("\n");
+    await installDesktopShellLocalFilePreviewStub(
+      page,
+      localFilePath,
+      "MessengerContextSidebar.tsx",
+      "40",
+      source,
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Local-Code-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Local Code Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Local source scroll host chat",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Show the long source file beside this chat." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [MessengerContextSidebar.tsx](${localFilePath}:40).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const localFileLink = assistantMessage.getByRole("link", { name: "MessengerContextSidebar.tsx" });
+    await expect(localFileLink).toBeVisible({ timeout: 15_000 });
+    await localFileLink.click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const localEditor = sidePanel.getByTestId("chat-side-panel-local-file-editor");
+    const sourceEditor = localEditor.getByTestId("chat-side-panel-local-file-source-editor");
+    const scroller = sourceEditor.locator(".cm-scroller");
+    await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible({ timeout: 15_000 });
+    await expect(sourceEditor).toHaveAttribute("data-workspace-code-language", "TypeScript");
+    await expect(scroller).toBeVisible();
+
+    const scrollMetrics = await scroller.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: window.getComputedStyle(element).overflowY,
+    }));
+    expect(scrollMetrics.overflowY).toBe("auto");
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+
+    await scroller.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await scroller.hover();
+    await page.mouse.wheel(0, 900);
+    await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await scroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const [scrollerBox, lastLineBox] = await Promise.all([
+      scroller.boundingBox(),
+      sourceEditor.locator(".cm-line").last().boundingBox(),
+    ]);
+    expect(scrollerBox).not.toBeNull();
+    expect(lastLineBox).not.toBeNull();
+    expect(lastLineBox!.y + lastLineBox!.height).toBeLessThanOrEqual(
+      scrollerBox!.y + scrollerBox!.height + 2,
+    );
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-local-code-scroll.png"),
+      fullPage: true,
+    });
+  });
+
   test("resolves a relative command-read file against the recorded command cwd", async ({ page }, testInfo) => {
     const commandCwd = "/Users/zeeland/projects/rudder-oss";
     const relativePath = "doc/README.md";
@@ -3108,11 +3212,21 @@ test.describe("Chat Side Panel", () => {
         await expect(sidePanel).toBeVisible({ timeout: 15_000 });
         await expect(resizer).toBeVisible();
         await expect.poll(() => resizer.evaluate((element) => element.offsetWidth)).toBe(4);
+        expect(
+          await resizer.evaluate((element) => Number.parseInt(getComputedStyle(element).zIndex, 10)),
+        ).toBeGreaterThanOrEqual(80);
         expect(await resizerHitTarget.evaluate((element) => element.offsetWidth)).toBeGreaterThanOrEqual(10);
         expect(await resizerHitTarget.evaluate((element) => {
           const rect = element.getBoundingClientRect();
           const edgeTarget = document.elementFromPoint(rect.left + 0.5, rect.top + rect.height / 2);
           return edgeTarget === element || element.contains(edgeTarget);
+        })).toBe(true);
+        expect(await resizerHitTarget.evaluate((element) => {
+          const hitTarget = element.getBoundingClientRect();
+          const resizer = element.parentElement?.getBoundingClientRect();
+          return Boolean(resizer)
+            && hitTarget.left < resizer!.left
+            && hitTarget.right <= resizer!.right + 0.5;
         })).toBe(true);
 
         const [initialStackBox, initialPanelBox, initialResizerBox] = await Promise.all([

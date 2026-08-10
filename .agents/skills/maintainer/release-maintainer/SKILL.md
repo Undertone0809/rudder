@@ -53,8 +53,9 @@ exposing secrets, or expanding to another product/environment.
 
 ## Cross-Branch Invariants
 
-- Lock stable source to an immutable commit SHA or stable tag. Later `main`
-  movement does not silently retarget it.
+- Lock stable source to a full immutable commit SHA. Later `main` movement does
+  not silently retarget it, and manual stable dispatch must not use a branch or
+  tag as `source_ref`.
 - Freeze that source as soon as a stable release imperative arrives. New
   unrelated `main` work belongs to the next release instead of extending the
   active release window.
@@ -78,6 +79,11 @@ exposing secrets, or expanding to another product/environment.
   canary work when safe, and let stable cleanup remove its Release/tag.
 - Keep public install smoke, including slow Windows runtime installation. A slow
   real install is product evidence to optimize, not a release gate to delete.
+- Once a stable campaign is active, candidate-repair commits use `[skip release]`
+  unless a canary is explicitly needed. CI still validates the repair, while the
+  automatic canary path does not duplicate the manual stable candidate.
+- Do not dispatch a third run after the same stage fails twice on unchanged
+  inputs. Diagnose and repair that stage, then rerun the new immutable SHA once.
 - Preserve unrelated dirty work. Prefer a clean temporary worktree/clone for
   hands-on publication.
 
@@ -92,8 +98,8 @@ exposing secrets, or expanding to another product/environment.
    bounded release-notes subagent in parallel with read-only preflight. Give it
    the locked diff and require drafts for the GitHub notes plus both public
    changelogs; the primary agent reviews and integrates the drafts.
-5. State the selected version, locked source SHA, channel, and unresolved
-   blockers in a progress update.
+5. State the selected version, locked source SHA, channel, active workflow run,
+   last completed stage, and unresolved blockers in a progress update.
 6. Execute one stable publish path whose machine gates run before mutation; do
    not introduce a separate preview dispatch or second human hand-off.
 7. Verify every applicable public surface from the same locked source.

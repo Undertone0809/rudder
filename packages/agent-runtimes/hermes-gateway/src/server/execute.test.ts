@@ -71,6 +71,7 @@ afterEach(async () => {
 
 describe("Hermes gateway execution", () => {
   it("maps an SSE terminal completion without polling into a timeout", async () => {
+    const logs: string[] = [];
     const server = await listen((req, res) => {
       if (sessionRoute(req, res)) return;
       if (req.url === "/v1/runs" && req.method === "POST") return json(res, 202, { run_id: "hermes-run-1", status: "started" });
@@ -86,13 +87,24 @@ describe("Hermes gateway execution", () => {
       throw new Error(`unexpected ${req.method} ${req.url}`);
     });
 
-    const result = await execute(context({ url: server.url, apiKey: "hermes-test-key", timeoutMs: 2_000 }));
+    const result = await execute(context({
+      url: server.url,
+      apiKey: "hermes-test-key",
+      timeoutMs: 2_000,
+    }, {
+      onLog: async (stream, chunk) => {
+        if (stream === "stdout") logs.push(chunk);
+      },
+    }));
 
     expect(result.exitCode).toBe(0);
     expect(result.timedOut).toBe(false);
     expect(result.summary).toBe("hello from Hermes");
     expect(result.resultJson).toMatchObject({ upstreamRunId: "hermes-run-1", status: "completed", output: "hello from Hermes" });
     expect((result.resultJson as { synthetic_tool_continuity: Record<string, unknown> }).synthetic_tool_continuity).toMatchObject({ native: false, lossless: false, eventCount: 3 });
+    expect(logs.some((line) => line.includes("type=message.delta data=") && line.includes('"delta":"hello"'))).toBe(true);
+    expect(logs.some((line) => line.includes("type=run.completed data=") && line.includes('"output":"hello from Hermes"'))).toBe(true);
+    expect(logs.some((line) => line.includes("summary="))).toBe(false);
     expect(server.requests.map((request) => request.path)).toEqual([
       "/api/sessions",
       "/api/sessions/hermes-session-1/messages",

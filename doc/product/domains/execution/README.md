@@ -51,6 +51,9 @@ edit_policy: user_confirmed_only
   release/promote correctly.
 - `RUN.RESULT.001`: transcripts, usage, logs, sessions, and result metadata are
   persisted for inspection.
+- `DATABASE.MIGRATION.COMPATIBILITY.001`: existing PostgreSQL data is upgraded
+  only through immutable, recoverable, verified migration paths, and public
+  releases are blocked until compatibility gates pass.
 - `DESKTOP.SHELL.IDENTITY.001`: packaged macOS keeps its bundle-owned `.icns`
   identity while running and after restart; development and non-macOS icon
   paths remain platform-specific.

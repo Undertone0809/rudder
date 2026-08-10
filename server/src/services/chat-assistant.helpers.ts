@@ -153,7 +153,7 @@ export interface StreamChatAssistantReplyInput extends GenerateChatAssistantRepl
   controlCoordinator?: AgentRuntimeControlCoordinator;
   onRunCreated?: (runId: string) => Promise<void> | void;
   onAssistantDelta?: (delta: string) => Promise<void> | void;
-  onAssistantState?: (state: "streaming" | "finalizing" | "stopped") => Promise<void> | void;
+  onAssistantState?: (state: "streaming" | "tool_busy" | "finalizing" | "stopped") => Promise<void> | void;
   onInvocationMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void> | void;
   onTranscriptEntry?: (entry: TranscriptEntry) => Promise<void> | void;
   onObservedTranscriptEntry?: (entry: TranscriptEntry) => Promise<void> | void;
@@ -1505,7 +1505,7 @@ export function userVisiblePartialBodyFromError(error: unknown) {
 
 export async function maybeEmitAssistantState(
   callback: StreamChatAssistantReplyInput["onAssistantState"],
-  state: "streaming" | "finalizing" | "stopped",
+  state: "streaming" | "tool_busy" | "finalizing" | "stopped",
 ) {
   if (!callback) return;
   await callback(state);

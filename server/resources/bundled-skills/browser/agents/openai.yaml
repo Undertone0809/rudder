@@ -1,7 +1,7 @@
 interface:
   display_name: "Browser"
   short_description: "Control and test pages in Rudder Browser"
-  default_prompt: "Use $browser to inspect this page and interact through safe high-level refs or explicit coordinate CUA in Rudder's built-in Browser."
+  default_prompt: "Use $browser only when the user explicitly requests Rudder's built-in Browser; then inspect this page and interact through safe high-level refs or explicit coordinate CUA."
 
 dependencies:
   tools:
@@ -11,4 +11,4 @@ dependencies:
       transport: "stdio"
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

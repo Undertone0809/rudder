@@ -9,7 +9,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 function focusedLiveRuntime() {
   const host = document.activeElement
@@ -40,15 +40,30 @@ export function DesktopBrowserLinkBridge() {
   const organization = useOptionalOrganization();
   const { openTarget } = useSidePanel();
   const toast = useOptionalToast();
+  const linkRoutingRef = useRef({
+    liveSurfaceRuntime,
+    openTarget,
+    organizationId: organization?.selectedOrganizationId,
+    queryClient,
+    toast,
+  });
+  linkRoutingRef.current = {
+    liveSurfaceRuntime,
+    openTarget,
+    organizationId: organization?.selectedOrganizationId,
+    queryClient,
+    toast,
+  };
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
     if (!desktopShell?.onOpenWebLink) return undefined;
 
     return desktopShell.onOpenWebLink((request) => {
+      const routing = linkRoutingRef.current;
       void routeDesktopWebLink({
         request,
-        getSettings: () => queryClient.fetchQuery({
+        getSettings: () => routing.queryClient.fetchQuery({
           queryKey: queryKeys.instance.browserSettings,
           queryFn: () => instanceSettingsApi.getBrowser(),
           staleTime: 0,
@@ -57,7 +72,7 @@ export function DesktopBrowserLinkBridge() {
           if (
             request.sourceWebContentsId
           ) {
-            const openedForGuest = liveSurfaceRuntime?.openTargetForGuest(
+            const openedForGuest = routing.liveSurfaceRuntime?.openTargetForGuest(
               request.sourceWebContentsId,
               target,
             ) ?? false;
@@ -70,14 +85,14 @@ export function DesktopBrowserLinkBridge() {
             return;
           }
           const organizationId =
-            organization?.selectedOrganizationId?.trim() ?? "";
-          const allowNewBrowserGuest = !liveSurfaceRuntime
+            routing.organizationId?.trim() ?? "";
+          const allowNewBrowserGuest = !routing.liveSurfaceRuntime
             || !organizationId
-            || liveSurfaceRuntime.getLiveBrowserCount(organizationId)
+            || routing.liveSurfaceRuntime.getLiveBrowserCount(organizationId)
               < MAIN_WORKBENCH_BROWSER_CAPACITY;
-          const opened = openTarget(target, { allowNewBrowserGuest });
+          const opened = routing.openTarget(target, { allowNewBrowserGuest });
           if (!opened.admitted) {
-            toast?.pushToast({
+            routing.toast?.pushToast({
               title: "Browser tab limit reached",
               body: `Close a Browser tab to open another. Side Panel and Main share ${MAIN_WORKBENCH_BROWSER_CAPACITY} live tabs.`,
               tone: "error",
@@ -92,13 +107,7 @@ export function DesktopBrowserLinkBridge() {
         console.warn("[rudder-ui] failed to route Desktop web link", error);
       });
     });
-  }, [
-    liveSurfaceRuntime,
-    openTarget,
-    organization?.selectedOrganizationId,
-    queryClient,
-    toast,
-  ]);
+  }, []);
 
   useEffect(() => {
     const desktopShell = readDesktopShell();

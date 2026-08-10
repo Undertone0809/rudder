@@ -128,13 +128,26 @@ function packagePath(nodeModulesDir, packageName) {
   return path.join(nodeModulesDir, ...packageName.split("/"));
 }
 
-async function resolveInstalledPackage(packageRoot, packageName, dependencyName) {
-  const direct = packagePath(packageNodeModulesDir(packageRoot, packageName), dependencyName);
-  try {
-    return await fs.realpath(direct);
-  } catch {
-    return null;
+async function resolveInstalledPackage(serverPackageDir, packageRoot, packageName, dependencyName) {
+  const candidates = new Set([
+    packagePath(path.join(packageRoot, "node_modules"), dependencyName),
+    packagePath(packageNodeModulesDir(packageRoot, packageName), dependencyName),
+  ]);
+  let ancestor = path.dirname(packageNodeModulesDir(packageRoot, packageName));
+  while (path.relative(serverPackageDir, ancestor) !== "" && !path.relative(serverPackageDir, ancestor).startsWith("..")) {
+    if (path.basename(ancestor) === "node_modules") {
+      candidates.add(packagePath(ancestor, dependencyName));
+    }
+    ancestor = path.dirname(ancestor);
   }
+  for (const candidate of candidates) {
+    try {
+      return await fs.realpath(candidate);
+    } catch {
+      // Try the next supported node_modules layout.
+    }
+  }
+  return null;
 }
 
 function virtualStoreEntry(pnpmDir, packageRoot) {
@@ -154,6 +167,7 @@ function virtualStoreEntry(pnpmDir, packageRoot) {
 async function collectReachablePackages(serverPackageDir, options) {
   const nodeModulesDir = path.join(serverPackageDir, "node_modules");
   const pnpmDir = path.join(nodeModulesDir, ".pnpm");
+  const realServerPackageDir = await fs.realpath(serverPackageDir);
   const realPnpmDir = await fs.realpath(pnpmDir);
   const serverManifest = await readJson(path.join(serverPackageDir, "package.json"));
   const omittedPackages = new Set(options.omittedPackages ?? []);
@@ -194,7 +208,7 @@ async function collectReachablePackages(serverPackageDir, options) {
 
     for (const dependencyName of Object.keys(dependencies)) {
       if (omittedPackages.has(dependencyName)) continue;
-      const dependencyRoot = await resolveInstalledPackage(realRoot, packageName, dependencyName);
+      const dependencyRoot = await resolveInstalledPackage(realServerPackageDir, realRoot, packageName, dependencyName);
       if (!dependencyRoot) {
         if (manifest.optionalDependencies?.[dependencyName] !== undefined) continue;
         if (manifest.peerDependencies?.[dependencyName] !== undefined) continue;

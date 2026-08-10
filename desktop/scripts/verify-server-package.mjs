@@ -1,7 +1,7 @@
 import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
   FORBIDDEN_PRODUCTION_PACKAGES,
@@ -36,6 +36,11 @@ async function exists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function readJsonIfPresent(targetPath) {
+  if (!(await exists(targetPath))) return null;
+  return JSON.parse(await readFile(targetPath, "utf8"));
 }
 
 /**
@@ -154,8 +159,10 @@ async function verifyModuleResolution(serverPackageDir) {
     const req = createRequire(pkgJsonPath);
     const entry = req.resolve("@rudderhq/server");
     ok(`createRequire resolves @rudderhq/server → ${path.relative(serverPackageDir, entry)}`);
+    await import(pathToFileURL(entry).href);
+    ok("dynamic import loads @rudderhq/server");
   } catch (e) {
-    error(`createRequire cannot resolve @rudderhq/server: ${e.message}`);
+    error(`packaged @rudderhq/server cannot be imported: ${e.message}`);
   }
 }
 
@@ -321,6 +328,56 @@ async function verifyOptimizedProductionPackage(serverPackageDir) {
   }
 }
 
+/**
+ * A portable Desktop asset must be version-closed: the Electron shell, the
+ * server, the bundled CLI, and every first-party server dependency must come
+ * from the same release. A partial runtime cache can otherwise make the app
+ * install successfully and fail only after login when the local database
+ * starts.
+ *
+ * @param {string} serverPackageDir
+ */
+async function verifyVersionCompatibility(serverPackageDir) {
+  const resourcesDir = path.dirname(serverPackageDir);
+  const serverManifest = await readJsonIfPresent(path.join(serverPackageDir, "package.json"));
+  if (!serverManifest?.version) {
+    error(`server-package manifest is missing a release version: ${path.join(serverPackageDir, "package.json")}`);
+    return;
+  }
+
+  const expectedVersion = serverManifest.version;
+  const versionedFiles = [
+    ["Desktop shell", path.join(resourcesDir, "app", "package.json")],
+    ["bundled CLI", path.join(serverPackageDir, "rudder-cli-package.json")],
+  ];
+  for (const [label, manifestPath] of versionedFiles) {
+    const manifest = await readJsonIfPresent(manifestPath);
+    if (!manifest) {
+      error(`${label} manifest is missing: ${manifestPath}`);
+    } else if (manifest.version !== expectedVersion) {
+      error(`${label} version ${manifest.version ?? "<missing>"} does not match server ${expectedVersion}`);
+    }
+  }
+
+  const serverDependencies = {
+    ...(serverManifest.dependencies ?? {}),
+    ...(serverManifest.optionalDependencies ?? {}),
+  };
+  const firstPartyDependencies = Object.keys(serverDependencies).filter((name) => name.startsWith("@rudderhq/"));
+  for (const dependencyName of firstPartyDependencies) {
+    const dependencyManifest = await readJsonIfPresent(
+      path.join(serverPackageDir, "node_modules", ...dependencyName.split("/"), "package.json"),
+    );
+    if (!dependencyManifest) {
+      error(`first-party dependency ${dependencyName} is missing from server-package`);
+    } else if (dependencyManifest.version !== expectedVersion) {
+      error(`first-party dependency ${dependencyName} version ${dependencyManifest.version ?? "<missing>"} does not match server ${expectedVersion}`);
+    }
+  }
+
+  ok(`release version compatibility checked (${expectedVersion}; ${firstPartyDependencies.length} first-party dependencies)`);
+}
+
 function packagedRuntimeSegment() {
   const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
   return `${process.platform}-${targetArch}`;
@@ -407,6 +464,7 @@ async function verifyServerPackage(serverPackageDir) {
     "express",
     "better-auth",
     "embedded-postgres",
+    "postgres",
     "dotenv",
     "zod",
     "pino",
@@ -455,6 +513,9 @@ async function verifyServerPackage(serverPackageDir) {
 
   // 5. Module resolution
   await verifyModuleResolution(serverPackageDir);
+
+  // 5b. The shell, CLI, server, and first-party packages must agree.
+  await verifyVersionCompatibility(serverPackageDir);
 
   // 6. PostgreSQL runtime payload required by packaged Desktop local startup.
   await verifyPostgresRuntimePayload(serverPackageDir);

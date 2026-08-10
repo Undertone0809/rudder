@@ -15,7 +15,8 @@ import { and, eq, gt, gte, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
-import { stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
+import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
 
@@ -102,6 +103,7 @@ export function createChatAnnotationMessagePersistence(
       let turnId: string = randomUUID();
       let turnVariant = 0;
       let messageStructuredPayload = options.structuredPayload ?? null;
+      let messageTranscript = chatTranscriptFromPayload(messageStructuredPayload);
       const attachmentIdMap = new Map<string, string>();
 
       if (editUserMessageId) {
@@ -159,9 +161,18 @@ export function createChatAnnotationMessagePersistence(
           turnId = target.chatTurnId;
         }
         turnVariant = target.turnVariant + 1;
-        messageStructuredPayload = options.structuredPayloadProvided
-          ? options.structuredPayload ?? null
-          : stripChatMetadataFromPayload(target.structuredPayload);
+        if (options.structuredPayloadProvided) {
+          messageStructuredPayload = options.structuredPayload ?? null;
+          messageTranscript = chatTranscriptFromPayload(messageStructuredPayload);
+        } else {
+          const detached = await listDetachedChatTranscripts(tx, [target]);
+          messageTranscript = selectChatTranscript({
+            ledger: undefined,
+            detached: detached.get(target.id),
+            legacyPayload: target.structuredPayload,
+          });
+          messageStructuredPayload = stripChatMetadataFromPayload(target.structuredPayload);
+        }
       }
 
       const canonicalAnnotations = chatInlineAnnotationsFromStructuredPayload(
@@ -198,7 +209,7 @@ export function createChatAnnotationMessagePersistence(
           kind: "message",
           status: "completed",
           body,
-          structuredPayload: sanitizeChatStructuredPayload(messageStructuredPayload),
+          structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload(messageStructuredPayload)),
           chatTurnId: turnId,
           turnVariant,
         })
@@ -273,7 +284,7 @@ export function createChatAnnotationMessagePersistence(
       await tx
         .update(chatMessages)
         .set({
-          structuredPayload: sanitizeChatStructuredPayload(messageStructuredPayload),
+          structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload(messageStructuredPayload)),
           updatedAt: now,
         })
         .where(and(
@@ -281,6 +292,13 @@ export function createChatAnnotationMessagePersistence(
           eq(chatMessages.orgId, orgId),
           eq(chatMessages.conversationId, conversationId),
         ));
+      if (messageTranscript.length > 0) {
+        await replaceDetachedChatTranscript(tx, {
+          orgId,
+          messageId: message.id,
+          entries: messageTranscript,
+        });
+      }
       await tx
         .update(chatConversations)
         .set({ lastMessageAt: message.createdAt, updatedAt: message.createdAt })

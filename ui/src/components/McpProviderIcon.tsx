@@ -6,6 +6,7 @@ const MCP_PROVIDER_LOGOS: Partial<Record<McpConnectionProvider, string>> = {
   supabase: "/brands/supabase-logo.svg",
   notion: "/brands/notion-logo.svg",
   linear: "/brands/linear-logo.svg",
+  github: "/brands/github-logo.svg",
 };
 
 export function mcpProviderLogoSrc(provider: McpConnectionProvider): string | undefined {

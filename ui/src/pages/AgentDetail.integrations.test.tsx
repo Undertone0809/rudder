@@ -24,6 +24,10 @@ import { AgentIntegrationsTab, getFeishuIntegrationState } from "./AgentDetail.i
 const mockWindowOpen = vi.fn();
 
 const mockInvalidateQueries = vi.hoisted(() => vi.fn());
+const mockManagedMcpApi = vi.hoisted(() => ({
+  ensureOfficialConnection: vi.fn(),
+  startOAuth: vi.fn(),
+}));
 const mockCustomIntegrationsData = vi.hoisted(() => ({
   rows: [] as CustomIntegrationSummary[],
 }));
@@ -125,6 +129,10 @@ vi.mock("../api/agents", () => ({
   },
 }));
 
+vi.mock("../api/managedMcp", () => ({
+  managedMcpApi: mockManagedMcpApi,
+}));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -145,6 +153,8 @@ afterEach(() => {
   mockManagedMcpConnectionsData.failed = false;
   mockManagedMcpProviderStatusData.rows = [];
   mockManagedMcpProviderStatusData.failed = false;
+  mockManagedMcpApi.ensureOfficialConnection.mockReset();
+  mockManagedMcpApi.startOAuth.mockReset();
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -322,7 +332,7 @@ function customIntegration(overrides: Partial<CustomIntegrationSummary> = {}): C
 }
 
 function managedMcpConnection(
-  provider: "supabase" | "linear" | "notion",
+  provider: "supabase" | "linear" | "notion" | "github",
   overrides: Partial<McpAgentConnectionSummary> = {},
 ): McpAgentConnectionSummary {
   const now = new Date("2026-07-24T12:00:00.000Z");
@@ -336,10 +346,15 @@ function managedMcpConnection(
       scope: "organization",
       ownerAgentId: null,
       transport: "streamable_http",
-      externalScope: `${provider}-workspace`,
+      externalScope: provider === "github" ? null : `${provider}-workspace`,
       accessMode: provider === "notion" ? "provider_default" : "read_only",
       status: "active",
-      safeConfig: {},
+      safeConfig: provider === "github"
+        ? {
+            endpoint: "https://api.githubcopilot.com/mcp/",
+            scopeMode: "account",
+          }
+        : {},
       startupTimeoutMs: 10_000,
       toolTimeoutMs: 60_000,
       enabled: true,
@@ -373,7 +388,7 @@ function managedMcpConnection(
 }
 
 function managedMcpProviderStatus(
-  provider: "supabase" | "linear" | "notion",
+  provider: "supabase" | "linear" | "notion" | "github",
   overrides: Partial<McpProviderAvailability> = {},
 ): McpProviderAvailability {
   return {
@@ -382,7 +397,7 @@ function managedMcpProviderStatus(
       state: "connected",
       connectionId: `${provider}-connection`,
       maxAccess: provider === "notion" ? "provider_granted" : "read_write",
-      scopeMode: provider === "supabase" ? "account" : "workspace",
+      scopeMode: provider === "supabase" || provider === "github" ? "account" : "workspace",
       revision: 3,
     },
     agent: {
@@ -413,11 +428,11 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Supabase");
     expect(container.textContent).toContain("Notion");
     expect(container.textContent).toContain("Linear");
-    expect(container.textContent?.match(/Not connected/g)?.length).toBe(3);
+    expect(container.textContent?.match(/Not connected/g)?.length).toBe(4);
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Set up");
-    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(4);
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(3);
     expect(container.textContent).not.toContain("0 of 10 connected");
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
   });
@@ -598,6 +613,66 @@ describe("AgentIntegrationsTab", () => {
       "Wesley",
       "Organization",
     ]);
+  });
+
+  it("connects an agent-scoped GitHub connection with a PAT without opening OAuth", async () => {
+    mockManagedMcpProviderStatusData.rows = [managedMcpProviderStatus("github", {
+      organization: {
+        state: "not_connected",
+        connectionId: null,
+        maxAccess: null,
+        scopeMode: null,
+        revision: null,
+      },
+      agent: {
+        access: "none",
+        activeRunUsesOlderPolicy: false,
+        connection: null,
+        effectiveSource: "none",
+        effectiveConnectionId: null,
+        explicitlyDisabled: false,
+      },
+    })];
+    const githubConnection = managedMcpConnection("github").connection;
+    mockManagedMcpApi.ensureOfficialConnection.mockResolvedValue(githubConnection);
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const card = container.querySelector('[data-testid="managed-mcp-provider-github"]')!;
+    act(() => {
+      card.querySelector<HTMLButtonElement>('button[aria-label="Manage GitHub"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const manageDialog = document.body.querySelector('[role="dialog"]')!;
+    act(() => {
+      [...manageDialog.querySelectorAll("button")]
+        .find((button) => button.textContent === "Add connection")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const targetDialog = document.body.querySelector('[role="dialog"]')!;
+    const patInput = targetDialog.querySelector<HTMLInputElement>("#agent-github-pat")!;
+    const connect = [...targetDialog.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Connect")) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    const pat = "github_pat_12345678901234567890";
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(patInput, pat);
+      patInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const enabledConnect = [...targetDialog.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Connect")) as HTMLButtonElement;
+    expect(enabledConnect.disabled).toBe(false);
+    await act(async () => {
+      enabledConnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockManagedMcpApi.ensureOfficialConnection).toHaveBeenCalledWith(
+      "org-1",
+      "github",
+      { scope: "agent", ownerAgentId: "agent-1", pat },
+    );
+    expect(mockManagedMcpApi.startOAuth).not.toHaveBeenCalled();
   });
 
   it("opens a focused access dialog instead of navigating to Manage", () => {
@@ -813,7 +888,7 @@ describe("AgentIntegrationsTab", () => {
   it("uses the larger integration action radius on catalog buttons", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const githubButton = [...container.querySelectorAll("button")]
-      .find((button) => button.getAttribute("aria-label") === "GitHub coming soon");
+      .find((button) => button.getAttribute("aria-label") === "Gmail coming soon");
 
     expect(githubButton?.className).toContain("rounded-[var(--radius-md)]");
   });
@@ -857,10 +932,12 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("View and edit calendar events for scheduling work.");
     expect(container.textContent).toContain("Browse Drive files and attach workspace context.");
     expect(container.textContent).toContain("Search pages, databases, and operating notes through organization-managed MCP tools.");
-    expect(container.textContent).toContain("Clone and inspect repositories during agent runs.");
+    expect(container.textContent).toContain(
+      "Search and inspect GitHub repositories through a securely stored personal access token.",
+    );
     expect(container.textContent).toContain("Work with the organization’s Linear workspace through managed MCP tools.");
     expect(container.textContent).not.toContain("Feishu Workspace");
-    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(4);
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(3);
 
     const gmailButton = [...container.querySelectorAll("button")]
       .find((button) => button.getAttribute("aria-label") === "Gmail coming soon");

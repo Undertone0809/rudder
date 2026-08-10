@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
-import { buildProductAnalyticsExportPayload, productAnalyticsRunTerminalEventName, pseudonymizeProductAnalyticsId, recordProductAnalyticsEvent } from "./product-analytics.js";
+import {
+  buildProductAnalyticsExportPayload,
+  productAnalyticsRunTerminalEventName,
+  pseudonymizeProductAnalyticsId,
+  recordProductAnalyticsChatCreated,
+  recordProductAnalyticsEvent,
+} from "./product-analytics.js";
 
 function createInsertDb(returnedRows: Array<{ id: string }>) {
   const returning = vi.fn().mockResolvedValue(returnedRows);
@@ -112,6 +118,74 @@ describe("product analytics local ledger", () => {
         is_user_initiated: true,
       },
     })).resolves.toEqual({ id: "organization-event" });
+  });
+
+  it("allows content-free issue and chat creation dimensions", async () => {
+    const issueStub = createInsertDb([{ id: "issue-created-event" }]);
+    await expect(recordProductAnalyticsEvent(issueStub.db, {
+      ...baseEvent,
+      eventName: "issue_created",
+      dedupeKey: "issue_created:issue-1",
+      properties: {
+        creation_path: "manual",
+        has_goal_link: true,
+        has_project_link: false,
+        is_sub_issue: false,
+      },
+    })).resolves.toEqual({ id: "issue-created-event" });
+
+    const chatStub = createInsertDb([{ id: "chat-created-event" }]);
+    await expect(recordProductAnalyticsEvent(chatStub.db, {
+      ...baseEvent,
+      eventName: "chat_created",
+      entityType: "chat",
+      entityId: "chat-1",
+      dedupeKey: "chat_created:chat-1",
+      properties: { creation_path: "manual", initial_role: "user", plan_mode: true },
+    })).resolves.toEqual({ id: "chat-created-event" });
+  });
+
+  it("normalizes chat creation provenance through the shared helper", async () => {
+    const stub = createInsertDb([{ id: "chat-created-event" }]);
+
+    await expect(recordProductAnalyticsChatCreated(stub.db, {
+      orgId: "org-1",
+      conversationId: "chat-1",
+      createdAt: new Date("2026-08-06T10:00:00Z"),
+      createdByUserId: "user-1",
+      actorType: "human",
+      actorId: "user-1",
+      creationPath: "side_chat",
+      planMode: false,
+      initialRole: "system",
+    })).resolves.toEqual({ id: "chat-created-event" });
+    expect(stub.values).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTransition: "chat.side_chat.create",
+      actorType: "human",
+      actorId: "user-1",
+      origin: "human",
+      dedupeKey: "chat_created:chat-1",
+      properties: { creation_path: "side_chat", initial_role: "system", plan_mode: false },
+    }));
+  });
+
+  it("keeps automation chat creation attributed to automation", async () => {
+    const stub = createInsertDb([{ id: "automation-chat-created-event" }]);
+
+    await expect(recordProductAnalyticsChatCreated(stub.db, {
+      orgId: "org-1",
+      conversationId: "automation-chat-1",
+      createdAt: new Date("2026-08-06T10:00:00Z"),
+      createdByUserId: null,
+      actorType: "automation",
+      creationPath: "automation",
+      planMode: true,
+    })).resolves.toEqual({ id: "automation-chat-created-event" });
+    expect(stub.values).toHaveBeenCalledWith(expect.objectContaining({
+      actorType: "automation",
+      origin: "automation",
+      properties: { creation_path: "automation", plan_mode: true },
+    }));
   });
 
   it("records work-loop events without treating deferred names as unavailable", async () => {

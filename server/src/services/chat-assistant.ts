@@ -604,6 +604,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const processTranscriptEntries = async (entries: TranscriptEntry[]) => {
         for (const entry of entries) {
           if (isStopped()) return;
+          if (entry.kind === "tool_call") {
+            await maybeEmitAssistantState(input.onAssistantState, "tool_busy");
+            if (isStopped()) return;
+          }
           if (entry.kind === "assistant") {
             if (entry.phase === "commentary") {
               const commentaryText = redactRudderInlineVisualSources(entry.text);
@@ -817,18 +821,20 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, safeEntry);
           }
           if (isStopped()) return;
-          if (shouldSuppressChatTranscriptEntry(entry, resultSentinel)) {
-            continue;
-          }
-          if (
+          const suppressVisibleEntry = shouldSuppressChatTranscriptEntry(entry, resultSentinel)
+            || (
             ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
             || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
-          ) {
-            continue;
+            );
+          if (!suppressVisibleEntry) {
+            await maybeEmitTranscriptEntry(input.onTranscriptEntry, safeEntry);
+            if (isStopped()) return;
+            await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry);
           }
-          await maybeEmitTranscriptEntry(input.onTranscriptEntry, safeEntry);
-          if (isStopped()) return;
-          await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry);
+          if (entry.kind === "tool_result") {
+            await maybeEmitAssistantState(input.onAssistantState, "streaming");
+            if (isStopped()) return;
+          }
         }
       };
 

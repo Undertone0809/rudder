@@ -6,6 +6,7 @@ import {
   chatGenerations,
   chatGenerationTerminalOutbox,
   chatMessages,
+  chatMessageTranscriptEntries,
   chatQueuedMessages,
   createDb,
   ensurePostgresDatabase,
@@ -209,7 +210,7 @@ describe("chatGenerationProtocolService", () => {
     });
   });
 
-  it("keeps streaming transcript evidence in the ledger and a reloadable visible projection", async () => {
+  it("keeps streaming transcript evidence in the ledger without rewriting message JSON", async () => {
     const generation = await seedGeneration();
     const entry = {
       kind: "thinking" as const,
@@ -252,14 +253,7 @@ describe("chatGenerationProtocolService", () => {
       .from(chatGenerationEvents)
       .where(eq(chatGenerationEvents.id, projection.event.id));
 
-    expect(persistedMessage?.structuredPayload).toEqual({
-      __chatTranscript: [{
-        ...entry,
-        generationId: generation.id,
-        generationSeqStart: projection.event.generationSeq,
-        generationSeqEnd: projection.event.generationSeq,
-      }],
-    });
+    expect(persistedMessage?.structuredPayload).toBeNull();
     expect(persistedEvent?.payload).toEqual(expect.objectContaining({ entry }));
     expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
   });
@@ -355,12 +349,17 @@ describe("chatGenerationProtocolService", () => {
       .from(chatMessages)
       .where(eq(chatMessages.id, message!.id))
       .then((rows) => rows[0]);
-    expect(persistedMessage?.structuredPayload).toMatchObject({
-      __chatTranscript: [{
+    expect(persistedMessage?.structuredPayload).toBeNull();
+    const persistedEntries = await db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, message!.id));
+    expect(persistedEntries).toEqual([{
+      payload: expect.objectContaining({
         kind: "tool_result",
-        content: "non-stream\uFFFDoutput",
-      }],
-    });
+        content: `non-stream${String.fromCharCode(0xfffd)}output`,
+      }),
+    }]);
   });
 
   it("serializes visible events and applies an idempotent Stop cutoff", async () => {
@@ -842,14 +841,7 @@ describe("chatGenerationProtocolService", () => {
       .select()
       .from(chatMessages)
       .where(eq(chatMessages.id, first.message.id));
-    expect(persistedBeforeStop?.structuredPayload?.__chatTranscript).toEqual([
-      expect.objectContaining({
-        text: "Inspect the source.",
-        generationId: generation.id,
-        generationSeqStart: first.event.generationSeq,
-        generationSeqEnd: second.event.generationSeq,
-      }),
-    ]);
+    expect(persistedBeforeStop?.structuredPayload).toBeNull();
 
     await protocol.beginStopAction({
       orgId: generation.orgId,

@@ -142,10 +142,12 @@ function Harness({
   mainAnchor = true,
   mutateSourceBeforeDetach = false,
   existingResult = null,
+  runtimeTargetBeforePromote = null,
 }: {
   mainAnchor?: boolean;
   mutateSourceBeforeDetach?: boolean;
   existingResult?: MessengerSavedViewKeepResult | null;
+  runtimeTargetBeforePromote?: SidePanelTarget | null;
 }) {
   const sidePanel = useSidePanel();
   const workbench = useOrganizationMainWorkbench(organizationId);
@@ -200,6 +202,12 @@ function Harness({
   const promote = async () => {
     setOutcome("pending");
     try {
+      if (runtimeTargetBeforePromote) {
+        liveSurfaceRuntime.updateTarget(
+          createLiveSurfaceRuntimeId(organizationId, targetB as LiveSurfaceTarget),
+          runtimeTargetBeforePromote as LiveSurfaceTarget,
+        );
+      }
       await trackPromotion(promotion.promote({
         contextKey,
         existingResult,
@@ -505,6 +513,32 @@ afterEach(() => {
 });
 
 describe("SavedViewPromotionProvider", () => {
+  it("moves and persists the latest live Browser target when the Side target lags", async () => {
+    const latestTarget = {
+      ...targetB,
+      label: "B latest",
+      url: "https://example.com/b#latest",
+    };
+    renderHarness({ runtimeTargetBeforePromote: latestTarget });
+    await waitForText("side-order", "A,B,C");
+    await clickButton("Move B");
+    await settlePromotion();
+
+    expect(keepSavedView).toHaveBeenCalledWith(
+      organizationId,
+      expect.objectContaining({
+        target: expect.objectContaining({
+          url: latestTarget.url,
+          viewInstanceId: targetB.viewInstanceId,
+        }),
+        subtitle: latestTarget.url,
+        title: latestTarget.label,
+      }),
+    );
+    expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
+      .toBe(latestTarget.label);
+  });
+
   it("moves only the exact B instance and preserves A/C order", async () => {
     renderHarness();
     await waitForText("side-order", "A,B,C");

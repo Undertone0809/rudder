@@ -312,6 +312,30 @@
       "rationale": "Organization MCP settings currently combine connection lifecycle, OAuth state, bindings, and tool inspection in one route.",
       "target": "Extract connection and binding controllers and reduce the route below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/index.ts",
+      "lines": 1501,
+      "owner": "server-runtime",
+      "rationale": "Server bootstrap still coordinates route registration, runtime lifecycle, database wiring, and compatibility setup while the server boundaries stabilize.",
+      "target": "Extract bootstrap responsibilities behind focused server adapters and reduce the entrypoint below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/goals.ts",
+      "lines": 1501,
+      "owner": "goals-server",
+      "rationale": "Goal lifecycle, alignment, contract, evidence, and acceptance persistence remain concentrated while the Goal workflow contract stabilizes.",
+      "target": "Extract Goal lifecycle use cases and reduce the service below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/mcp/managed-connections.ts",
+      "lines": 1501,
+      "owner": "integrations-server",
+      "rationale": "Managed MCP discovery, connection lifecycle, OAuth compatibility, and agent binding coordination remain concentrated during provider convergence.",
+      "target": "Extract connection lifecycle and provider-specific coordinators and reduce the service below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }

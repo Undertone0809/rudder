@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertOfficialPostgresVersion,
   buildOfficialPostgresInitdbArgs,
+  buildOfficialPostgresStartArgs,
+  buildOfficialPostgresStartSpawnOptions,
   createLocalPostgresInstance,
   resolveOfficialPostgresBinaries,
   resolveOfficialPostgresBinDir,
@@ -169,5 +171,33 @@ describe("local postgres provider", () => {
       "--encoding=UTF8",
       "--locale=C",
     ]);
+  });
+
+  it("redirects pg_ctl startup output away from the parent process pipes", () => {
+    const databaseDir = path.join("tmp", "rudder-db");
+
+    expect(
+      buildOfficialPostgresStartArgs({
+        databaseDir,
+        user: "rudder",
+        password: "rudder",
+        port: 55432,
+        persistent: true,
+      }),
+    ).toEqual([
+      "-D",
+      databaseDir,
+      "-l",
+      path.join(databaseDir, "postgres.log"),
+      "-o",
+      "-h 127.0.0.1 -p 55432",
+      "-w",
+      "start",
+    ]);
+
+    expect(buildOfficialPostgresStartSpawnOptions("C:\\PostgreSQL\\18\\bin", "rudder")).toMatchObject({
+      stdio: "ignore",
+      windowsHide: true,
+    });
   });
 });

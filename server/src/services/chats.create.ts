@@ -6,9 +6,24 @@ import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
-import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
+import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
+import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
+import {
+  ensureProductAnalyticsWorkCycle,
+  recordProductAnalyticsChatCreated,
+  recordProductAnalyticsEvent,
+} from "./product-analytics.js";
 
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
+
+function chatCreationPath(data: Pick<CreateChatWithInitialMessageInput, "activity" | "contextLinks" | "initialMessage">) {
+  const eventType = data.initialMessage.structuredPayload?.eventType;
+  if (typeof eventType === "string" && eventType.startsWith("automation_")) return "automation";
+  if (data.contextLinks?.some((link) => link.metadata?.source === "agent_integration")) return "integration";
+  if (data.activity?.actorType === "agent") return "agent";
+  if (data.activity?.actorType === "user") return "manual";
+  return "system";
+}
 
 export type CreateChatInput = {
   title?: string;
@@ -59,6 +74,14 @@ export async function createChatConversation(db: Db, orgId: string, data: Create
         })))
         .onConflictDoNothing();
     }
+    await recordProductAnalyticsChatCreated(tx as unknown as Db, {
+      orgId,
+      conversationId: conversation.id,
+      createdAt: conversation.createdAt,
+      createdByUserId: conversation.createdByUserId,
+      creationPath: "empty",
+      planMode: conversation.planMode,
+    });
     return conversation;
   });
   return created;
@@ -189,6 +212,8 @@ export async function createChatWithInitialMessage(
     }
 
     const structuredPayload = sanitizeChatStructuredPayload(canonicalInitialPayload);
+    const transcript = chatTranscriptFromPayload(structuredPayload);
+    const persistedStructuredPayload = stripChatMetadataFromPayload(structuredPayload);
     const [messageRow] = await client
       .insert(chatMessages)
       .values({
@@ -198,7 +223,7 @@ export async function createChatWithInitialMessage(
         kind: data.initialMessage.kind,
         status: data.initialMessage.status,
         body: normalizedBody,
-        structuredPayload,
+        structuredPayload: persistedStructuredPayload,
         replyingAgentId: data.initialMessage.replyingAgentId ?? null,
         chatTurnId: data.initialMessage.chatTurnId ?? (data.initialMessage.role === "user" ? randomUUID() : null),
         turnVariant: 0,
@@ -207,6 +232,28 @@ export async function createChatWithInitialMessage(
       })
       .returning();
     if (!messageRow) throw new Error("Failed to create initial chat message");
+    if (transcript.length > 0) {
+      await replaceDetachedChatTranscript(client, {
+        orgId,
+        messageId: messageRow.id,
+        entries: transcript,
+      });
+    }
+
+    const creationPath = chatCreationPath(data);
+    await recordProductAnalyticsChatCreated(client, {
+      orgId,
+      conversationId: conversationRow.id,
+      createdAt: conversationRow.createdAt,
+      createdByUserId: data.createdByUserId,
+      actorType: creationPath === "automation"
+        ? "automation"
+        : data.activity?.actorType === "user" ? "human" : data.activity?.actorType,
+      actorId: data.activity?.actorId ?? null,
+      creationPath,
+      planMode: data.planMode,
+      initialRole: data.initialMessage.role,
+    });
 
     if (data.initialMessage.role === "user" && data.createdByUserId) {
       const workCycleId = `chat:${conversationRow.id}`;
@@ -294,10 +341,10 @@ export async function createChatWithInitialMessage(
       role: messageRow.role as ChatMessage["role"],
       kind: messageRow.kind as ChatMessage["kind"],
       status: messageRow.status as ChatMessage["status"],
-      structuredPayload,
+      structuredPayload: persistedStructuredPayload,
       approval: null,
       attachments: [],
-      transcript: [],
+      transcript,
     } as ChatMessage;
     return { conversation, message };
   };

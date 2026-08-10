@@ -1,7 +1,7 @@
 import { useDialog } from "@/context/DialogContext";
 import { translateMessage } from "@/context/I18nContext";
 import { extractAgentWakeMentionIds, parseShortRef, type AgentStatus, type InstanceLocale } from "@rudderhq/shared";
-import { useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { MarkdownEditorRef } from "./MarkdownEditor";
 
 export function isAgentWakeEligible(status: AgentStatus | null | undefined): boolean {
@@ -72,12 +72,32 @@ export function useCommentSubmit({
   const [submitting, setSubmitting] = useState(false);
   const [confirmingUnmentioned, setConfirmingUnmentioned] = useState(false);
   const submissionInFlightRef = useRef(false);
+  const focusRetryFrameRef = useRef<number | null>(null);
+  const focusRetryTimeoutRef = useRef<number | null>(null);
   const validAgentIds = useMemo(() => new Set(agentMap?.keys() ?? []), [agentMap]);
+
+  useEffect(() => () => {
+    if (focusRetryFrameRef.current !== null) {
+      window.cancelAnimationFrame(focusRetryFrameRef.current);
+    }
+    if (focusRetryTimeoutRef.current !== null) {
+      window.clearTimeout(focusRetryTimeoutRef.current);
+    }
+  }, []);
 
   function restoreEditorFocus() {
     editorRef.current?.focus();
     if (typeof window !== "undefined") {
+      if (focusRetryFrameRef.current !== null) {
+        window.cancelAnimationFrame(focusRetryFrameRef.current);
+        focusRetryFrameRef.current = null;
+      }
+      if (focusRetryTimeoutRef.current !== null) {
+        window.clearTimeout(focusRetryTimeoutRef.current);
+        focusRetryTimeoutRef.current = null;
+      }
       const retry = () => {
+        focusRetryFrameRef.current = null;
         const activeElement = document.activeElement;
         if (
           !activeElement
@@ -87,8 +107,11 @@ export function useCommentSubmit({
           editorRef.current?.focus();
         }
       };
-      window.requestAnimationFrame(retry);
-      window.setTimeout(retry, 250);
+      focusRetryFrameRef.current = window.requestAnimationFrame(retry);
+      focusRetryTimeoutRef.current = window.setTimeout(() => {
+        focusRetryTimeoutRef.current = null;
+        retry();
+      }, 250);
     }
   }
 

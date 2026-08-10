@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCodexJsonl } from "./parse.js";
+import { isCodexTransportDisconnectError, parseCodexJsonl } from "./parse.js";
 
 describe("parseCodexJsonl", () => {
   it("does not promote incomplete assistant progress to a final summary", () => {
@@ -33,5 +33,28 @@ describe("parseCodexJsonl", () => {
     ].join("\n"));
 
     expect(parsed.summary).toBe("Final visible answer.");
+  });
+
+  it("recognizes only the Codex responses transport disconnect", () => {
+    expect(isCodexTransportDisconnectError(
+      "",
+      "stream disconnected before completion: error sending request for url (https://sub.zeeland.studio/v1/responses)",
+    )).toBe(true);
+    expect(isCodexTransportDisconnectError("", "authentication failed")).toBe(false);
+    expect(isCodexTransportDisconnectError(
+      "",
+      "stream disconnected before completion: error sending request for url (https://sub.zeeland.studio/v1/models)",
+    )).toBe(false);
+  });
+
+  it("treats explicit error and failed-turn events as terminal", () => {
+    const parsed = parseCodexJsonl([
+      JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+      JSON.stringify({ type: "error", message: "provider rejected the turn" }),
+      JSON.stringify({ type: "turn.failed", error: { message: "provider rejected the turn" } }),
+    ].join("\n"));
+
+    expect(parsed.terminalEventObserved).toBe(true);
+    expect(parsed.terminalCompleted).toBe(false);
   });
 });

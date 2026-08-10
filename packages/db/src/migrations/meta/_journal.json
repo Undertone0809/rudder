@@ -1034,8 +1034,22 @@
     {
       "idx": 147,
       "version": "7",
-      "when": 1786036606028,
-      "tag": "0147_third_slyde",
+      "when": 1786056000000,
+      "tag": "0147_github_mcp_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1786096800000,
+      "tag": "0148_chat_message_transcript_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1786100400000,
+      "tag": "0149_third_slyde",
       "breakpoints": true
     }
   ]

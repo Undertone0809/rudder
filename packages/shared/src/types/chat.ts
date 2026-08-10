@@ -745,7 +745,11 @@ export interface ChatStreamAssistantDeltaEvent {
 
 export interface ChatStreamAssistantStateEvent {
   type: "assistant_state";
-  state: "streaming" | "finalizing" | "stopped";
+  state: "streaming" | "tool_busy" | "finalizing" | "stopped";
+  generationId?: string;
+  attemptEpoch?: number;
+  generationSeq?: number;
+  bodyHash?: string;
 }
 
 export interface ChatStreamTranscriptEntryEvent {

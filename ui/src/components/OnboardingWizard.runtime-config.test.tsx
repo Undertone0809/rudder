@@ -347,6 +347,10 @@ describe("OnboardingWizard runtime config", () => {
       expect(agentsApi.adapterModels).toHaveBeenCalledWith("org-1", "pi_local");
     });
 
+    await vi.waitFor(() => {
+      expect(findButton(surface, "kimi-for-coding")).toBeTruthy();
+    });
+
     await act(async () => {
       click(findButton(surface, "kimi-for-coding"));
       await flush();

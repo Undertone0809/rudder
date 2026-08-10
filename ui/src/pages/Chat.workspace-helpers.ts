@@ -104,7 +104,36 @@ export function applyChatStreamProgressEvent(
   streamKey: string,
   event: ChatStreamProgressEvent,
 ): ChatStreamDraft | null {
-  if (!current || current.streamKey !== streamKey || (current.state !== "streaming" && current.state !== "finalizing")) {
+  if (
+    !current
+    || current.streamKey !== streamKey
+    || !["streaming", "tool_busy", "finalizing"].includes(current.state)
+  ) {
+    return current;
+  }
+  const eventGenerationId = "generationId" in event ? event.generationId : undefined;
+  const eventAttemptEpoch = "attemptEpoch" in event ? event.attemptEpoch : undefined;
+  const eventGenerationSeq = "generationSeq" in event ? event.generationSeq : undefined;
+  if (
+    current.generationId
+    && eventGenerationId
+    && current.generationId !== eventGenerationId
+  ) {
+    return current;
+  }
+  if (
+    current.attemptEpoch !== null
+    && current.attemptEpoch !== undefined
+    && eventAttemptEpoch !== undefined
+    && eventAttemptEpoch < current.attemptEpoch
+  ) {
+    return current;
+  }
+  if (
+    eventGenerationSeq !== undefined
+    && current.lastCommittedRenderSeq !== undefined
+    && eventGenerationSeq <= current.lastCommittedRenderSeq
+  ) {
     return current;
   }
   if (event.type === "assistant_delta") {
@@ -117,7 +146,16 @@ export function applyChatStreamProgressEvent(
       renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
     };
   }
-  if (event.type === "assistant_state") return { ...current, state: event.state };
+  if (event.type === "assistant_state") {
+    const state = event.state === "tool_busy" ? "tool_busy" : event.state;
+    return {
+      ...current,
+      state,
+      generationId: eventGenerationId ?? current.generationId ?? null,
+      attemptEpoch: eventAttemptEpoch ?? current.attemptEpoch ?? null,
+      lastCommittedRenderSeq: eventGenerationSeq ?? current.lastCommittedRenderSeq ?? 0,
+    };
+  }
   const transcript = [...current.transcript];
   appendTranscriptEntry(transcript, event.entry);
   return {

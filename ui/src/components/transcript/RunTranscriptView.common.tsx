@@ -66,23 +66,41 @@ export interface TranscriptActionIconTreatment {
 export interface TranscriptToolSemanticInfo {
   category: TranscriptToolCategory;
   label: string;
+  actionKind?: "read" | "skill" | "file_change" | "image_view";
   summary: string;
   bucket: TranscriptDigestBucket;
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
   skillTargets?: TranscriptSkillTarget[];
+  fileChanges?: TranscriptFileChangeEvidence[];
   image?: TranscriptImageEvidence;
+  evidenceWarning?: string;
 }
 
 export interface TranscriptFileTarget {
+  /** Original evidence label. Keep this for raw details and tooltips. */
   label: string;
+  /** Compact operator-facing label. */
+  displayLabel: string;
   path: string | null;
 }
 
 export interface TranscriptSkillTarget {
   name: string;
   path: string | null;
+}
+
+export interface TranscriptFileChangeEvidence {
+  additions: number;
+  deletions: number;
+  diff: string | null;
+  diffOriginalBytes: number | null;
+  diffTruncated: boolean;
+  displayLabel: string;
+  movePath: string | null;
+  operation: "add" | "delete" | "update" | "move" | "unknown";
+  path: string;
 }
 
 export interface TranscriptImageEvidence {

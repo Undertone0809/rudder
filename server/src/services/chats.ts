@@ -38,6 +38,17 @@ import {
   withQueuedAnnotationAssetState,
   type StagedQueuedAnnotationAttachment,
 } from "./chat-queued-message-materialization.js";
+import {
+  compareChatGenerationSelection,
+  listChatGenerationTranscripts,
+  listDetachedChatTranscripts,
+  listDetachedChatTranscriptSummaries,
+  loadChatTranscripts,
+  replaceDetachedChatTranscript,
+  selectChatTranscript,
+  transcriptSummaryFromSources,
+  type ChatGenerationSelectionCandidate,
+} from "./chat-transcript-persistence.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import {
   listActiveChatGenerationIds,
@@ -55,7 +66,6 @@ import {
   buildSearchSnippet,
   CHAT_TRANSCRIPT_KEY,
   chatTranscriptFromPayload,
-  chatTranscriptSummaryFromEntries,
   contentPath,
   escapeLikePattern,
   incomingMessagePreviewSql,
@@ -72,7 +82,6 @@ import {
   truncatePreview,
   visibleIncomingMessageSql,
   withOperationProposalDecisionState,
-  withPersistedTranscript,
 } from "./chats.helpers.js";
 import {
   copyForkChatMessages,
@@ -91,7 +100,10 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
-import { completeProductAnalyticsWorkCycle } from "./product-analytics.js";
+import {
+  completeProductAnalyticsWorkCycle,
+  recordProductAnalyticsChatCreated,
+} from "./product-analytics.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -3226,7 +3238,7 @@ export function chatService(db: Db) {
     const nativeSteerMessageIds = rows
       .filter((row) => row.role === "user" && row.structuredPayload?.source === "steer")
       .map((row) => row.id);
-    const [attachmentsByMessageId, approvalsById, generationMessageRows, linkedSteerQueueRows] = await Promise.all([
+    const [attachmentsByMessageId, approvalsById, generationMessageRows, linkedSteerQueueRows, detachedTranscriptByMessageId] = await Promise.all([
       listAttachmentsForMessageIds(rows.map((row) => row.id)),
       listApprovalsForMessages(rows),
       assistantMessageIds.length > 0
@@ -3236,6 +3248,7 @@ export function chatService(db: Db) {
             generationId: chatGenerationEvents.generationId,
             generationCreatedAt: chatGenerations.createdAt,
             eventRecordedAt: chatGenerationEvents.recordedAt,
+            generationSeq: chatGenerationEvents.generationSeq,
           })
           .from(chatGenerationEvents)
           .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
@@ -3247,6 +3260,7 @@ export function chatService(db: Db) {
             desc(chatGenerations.createdAt),
             desc(chatGenerationEvents.recordedAt),
             desc(chatGenerationEvents.generationSeq),
+            desc(chatGenerationEvents.generationId),
           )
         : Promise.resolve([]),
       nativeSteerMessageIds.length > 0
@@ -3264,6 +3278,9 @@ export function chatService(db: Db) {
             inArray(chatQueuedMessages.continuationMessageId, nativeSteerMessageIds),
           ))
         : Promise.resolve([]),
+      includeTranscript
+        ? listDetachedChatTranscripts(db, rows)
+        : Promise.resolve(new Map<string, ChatStreamTranscriptEntry[]>()),
     ]);
     const generationIds = [...new Set(generationMessageRows.map((row) => row.generationId))];
     const generationsById = generationIds.length === 0
@@ -3283,13 +3300,23 @@ export function chatService(db: Db) {
         .map((generation) => [generation.id, generation]));
     const messageById = new Map(rows.map((row) => [row.id, row]));
     const generationIdByAssistantMessageId = new Map<string, string>();
+    const generationSelectionByAssistantMessageId = new Map<string, ChatGenerationSelectionCandidate>();
     for (const generationMessageRow of generationMessageRows) {
       const assistantMessageId = generationMessageRow.assistantMessageId;
-      if (!assistantMessageId || generationIdByAssistantMessageId.has(assistantMessageId)) continue;
+      if (!assistantMessageId) continue;
       const message = messageById.get(assistantMessageId);
       const generation = generationsById.get(generationMessageRow.generationId);
       if (!message || !generation) continue;
       if (generation.orgId !== message.orgId || generation.conversationId !== message.conversationId) continue;
+      const candidate = {
+        generationId: generationMessageRow.generationId,
+        generationCreatedAt: generationMessageRow.generationCreatedAt,
+        eventRecordedAt: generationMessageRow.eventRecordedAt,
+        generationSeq: generationMessageRow.generationSeq,
+      } satisfies ChatGenerationSelectionCandidate;
+      const current = generationSelectionByAssistantMessageId.get(assistantMessageId);
+      if (current && compareChatGenerationSelection(candidate, current) <= 0) continue;
+      generationSelectionByAssistantMessageId.set(assistantMessageId, candidate);
       generationIdByAssistantMessageId.set(assistantMessageId, generationMessageRow.generationId);
     }
     const steerDispositionByMessageId = new Map<string, string>();
@@ -3337,6 +3364,11 @@ export function chatService(db: Db) {
         const generationId = generationIdByAssistantMessageId.get(messageId);
         return Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
       });
+    const hydratedDetachedTranscriptByMessageId = includeTranscript
+      ? detachedTranscriptByMessageId
+      : nativeSteerAssistantMessageIds.length > 0
+        ? await listDetachedChatTranscripts(db, rows)
+        : detachedTranscriptByMessageId;
     const assistantGenerationIds = [
       ...new Set(generationIdByAssistantMessageId.values()),
     ];
@@ -3431,6 +3463,9 @@ export function chatService(db: Db) {
         });
       }
     }
+    const detachedTranscriptSummaryByMessageId = includeTranscript
+      ? new Map<string, MessageHydrationRow["transcriptSummary"]>()
+      : await listDetachedChatTranscriptSummaries(db, rows);
     const nativeSteerTranscriptPayloadByMessageId = new Map<string, Record<string, unknown> | null>();
     if (nativeSteerAssistantMessageIds.length > 0) {
       const transcriptPayloadRows = await db
@@ -3455,13 +3490,22 @@ export function chatService(db: Db) {
       const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
       const ledgerTranscript = transcriptByAssistantMessageId.get(row.id);
       const transcript = includeRowTranscript
-        ? ledgerTranscript?.length
-          ? ledgerTranscript
-          : chatTranscriptFromPayload(transcriptPayload)
+        ? selectChatTranscript({
+          ledger: ledgerTranscript,
+          detached: hydratedDetachedTranscriptByMessageId.get(row.id),
+          legacyPayload: transcriptPayload,
+        })
         : [];
       const transcriptSummary = includeRowTranscript
-        ? chatTranscriptSummaryFromEntries(transcript)
-        : transcriptSummaryByAssistantMessageId.get(row.id) ?? row.transcriptSummary ?? null;
+        ? transcriptSummaryFromSources({
+          ledger: ledgerTranscript,
+          detached: hydratedDetachedTranscriptByMessageId.get(row.id),
+          legacyPayload: transcriptPayload,
+        })
+        : transcriptSummaryByAssistantMessageId.get(row.id)
+          ?? detachedTranscriptSummaryByMessageId.get(row.id)
+          ?? row.transcriptSummary
+          ?? null;
       const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...row,
@@ -3784,6 +3828,18 @@ export function chatService(db: Db) {
         .returning();
       if (!child) throw new Error("Failed to create forked chat conversation");
 
+      await recordProductAnalyticsChatCreated(tx as unknown as Db, {
+        orgId: input.orgId,
+        conversationId: child.id,
+        createdAt: child.createdAt,
+        createdByUserId: input.createdByUserId,
+        actorType: "human",
+        actorId: input.userId,
+        creationPath: "fork",
+        planMode: child.planMode,
+        initialRole: "system",
+      });
+
       const contextLinks = await tx
         .select()
         .from(chatContextLinks)
@@ -3828,6 +3884,7 @@ export function chatService(db: Db) {
         sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
+        transcriptBySourceMessageId: await loadChatTranscripts(tx, forkMessages),
       });
 
       const [systemEvent] = await tx
@@ -4172,62 +4229,26 @@ export function chatService(db: Db) {
       const row = await db
         .select({
           id: chatMessages.id,
+          orgId: chatMessages.orgId,
+          conversationId: chatMessages.conversationId,
+          role: chatMessages.role,
           structuredPayload: chatMessages.structuredPayload,
         })
         .from(chatMessages)
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      const generation = await db
-        .select({
-          generationId: chatGenerationEvents.generationId,
-          acceptedThroughSeq: chatGenerations.acceptedThroughSeq,
-        })
-        .from(chatGenerationEvents)
-        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
-        .where(eq(chatGenerationEvents.assistantMessageId, messageId))
-        .orderBy(
-          desc(chatGenerations.createdAt),
-          desc(chatGenerationEvents.recordedAt),
-          desc(chatGenerationEvents.generationSeq),
-        )
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      const transcript = generation
-        ? await db
-          .select({
-            generationId: chatGenerationEvents.generationId,
-            generationSeq: chatGenerationEvents.generationSeq,
-            payload: chatGenerationEvents.payload,
-          })
-          .from(chatGenerationEvents)
-          .where(and(
-            eq(chatGenerationEvents.generationId, generation.generationId),
-            eq(chatGenerationEvents.assistantMessageId, messageId),
-            eq(chatGenerationEvents.eventKind, "transcript"),
-            generation.acceptedThroughSeq === null
-              ? undefined
-              : lte(chatGenerationEvents.generationSeq, generation.acceptedThroughSeq),
-          ))
-          .orderBy(asc(chatGenerationEvents.generationSeq))
-          .then((events) => events.flatMap((event) => {
-            const entry = event.payload.entry;
-            return entry && typeof entry === "object" && !Array.isArray(entry)
-              ? [withChatTranscriptGenerationProvenance(
-                  entry as ChatStreamTranscriptEntry,
-                  {
-                    generationId: event.generationId,
-                    generationSeq: event.generationSeq,
-                  },
-                )]
-              : [];
-          }))
-        : [];
+      const [generation, detached] = await Promise.all([
+        listChatGenerationTranscripts(db, [row]),
+        listDetachedChatTranscripts(db, [row]),
+      ]);
       return {
         messageId: row.id,
-        transcript: transcript.length > 0
-          ? transcript
-          : chatTranscriptFromPayload(row.structuredPayload),
+        transcript: selectChatTranscript({
+          ledger: generation.transcriptByMessageId.get(row.id),
+          detached: detached.get(row.id),
+          legacyPayload: row.structuredPayload,
+        }),
       };
   }
 
@@ -4243,6 +4264,26 @@ export function chatService(db: Db) {
       if (!row) return null;
       const [hydrated] = await hydrateMessages([row]);
       return hydrated ? hydrated as ChatMessage : null;
+  }
+
+  async function transcriptSnapshotForWrite(
+    database: Pick<Db, "select">,
+    message: Pick<MessageRow, "id" | "orgId" | "conversationId" | "role" | "structuredPayload">,
+    requestedTranscript: ChatStreamTranscriptEntry[] | undefined,
+  ) {
+    // Generation events are the canonical live source. Never duplicate their
+    // transcript into the detached snapshot table during a metadata update.
+    if (message.role === "assistant") {
+      const generation = await listChatGenerationTranscripts(database, [message]);
+      if ((generation.transcriptByMessageId.get(message.id)?.length ?? 0) > 0) return [];
+    }
+    if (requestedTranscript !== undefined) return requestedTranscript;
+    const detached = await listDetachedChatTranscripts(database, [message]);
+    return selectChatTranscript({
+      ledger: undefined,
+      detached: detached.get(message.id),
+      legacyPayload: message.structuredPayload,
+    });
   }
 
   async function addMessage(
@@ -4265,26 +4306,37 @@ export function chatService(db: Db) {
       const durableBody = input.role === "user"
         ? input.body
         : await normalizeLocalLibraryPathMarkdown(input.body, input.orgId);
-      const [message] = await db
-        .insert(chatMessages)
-        .values({
-          orgId: input.orgId,
-          conversationId,
-          role: input.role,
-          kind: input.kind,
-          status: input.status ?? "completed",
-          body: durableBody,
-          structuredPayload: withPersistedTranscript(
-            sanitizeChatStructuredPayload(input.structuredPayload ?? null),
-            input.transcript ?? [],
-          ),
-          approvalId: input.approvalId ?? null,
-          runId: input.runId ?? null,
-          replyingAgentId: input.replyingAgentId ?? null,
-          chatTurnId: input.chatTurnId ?? null,
-          turnVariant: input.turnVariant ?? 0,
-        })
-        .returning();
+      const sanitizedPayload = sanitizeChatStructuredPayload(input.structuredPayload ?? null);
+      const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
+      const transcript = input.transcript ?? transcriptFromPayload;
+      const { message } = await db.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(chatMessages)
+          .values({
+            orgId: input.orgId,
+            conversationId,
+            role: input.role,
+            kind: input.kind,
+            status: input.status ?? "completed",
+            body: durableBody,
+            structuredPayload: stripChatMetadataFromPayload(sanitizedPayload),
+            approvalId: input.approvalId ?? null,
+            runId: input.runId ?? null,
+            replyingAgentId: input.replyingAgentId ?? null,
+            chatTurnId: input.chatTurnId ?? null,
+            turnVariant: input.turnVariant ?? 0,
+          })
+          .returning();
+        if (!inserted) throw new Error("Failed to create chat message");
+        if (transcript.length > 0) {
+          await replaceDetachedChatTranscript(tx, {
+            orgId: input.orgId,
+            messageId: inserted.id,
+            entries: transcript,
+          });
+        }
+        return { message: inserted };
+      });
       if (!message) throw new Error("Failed to create chat message");
       if (input.role === "user" || isVisibleIncomingChatMessage(message)) {
         await refreshConversationTouch(conversationId, message.createdAt);
@@ -4332,32 +4384,43 @@ export function chatService(db: Db) {
         (input.kind !== undefined && input.kind !== existing.kind) ||
         (input.approvalId !== undefined && input.approvalId !== existing.approvalId);
 
-      const [updated] = await db
-        .update(chatMessages)
-        .set({
-          ...(becameVisibleIncoming ? { createdAt: now } : {}),
-          ...(input.kind !== undefined ? { kind: input.kind } : {}),
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(durableInputBody !== undefined ? { body: durableInputBody } : {}),
-          ...(input.structuredPayload !== undefined || input.transcript !== undefined
-            ? {
-              structuredPayload: withPersistedTranscript(
-                input.structuredPayload !== undefined
-                  ? sanitizeChatStructuredPayload(input.structuredPayload)
-                  : sanitizeChatStructuredPayload(stripChatMetadataFromPayload(existing.structuredPayload)),
-                input.transcript !== undefined
-                  ? input.transcript
-                  : chatTranscriptFromPayload(existing.structuredPayload),
-          ),
-            }
-            : {}),
-          ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
-          ...(input.runId !== undefined ? { runId: input.runId } : {}),
-          ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
-          updatedAt: now,
-        })
-        .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
-        .returning();
+      const hasPayloadUpdate = input.structuredPayload !== undefined || input.transcript !== undefined;
+      const sanitizedPayload = input.structuredPayload !== undefined
+        ? sanitizeChatStructuredPayload(input.structuredPayload)
+        : sanitizeChatStructuredPayload(stripChatMetadataFromPayload(existing.structuredPayload));
+      const requestedTranscript = input.transcript !== undefined
+        ? input.transcript
+        : input.structuredPayload !== undefined && Object.hasOwn(sanitizedPayload ?? {}, CHAT_TRANSCRIPT_KEY)
+          ? chatTranscriptFromPayload(sanitizedPayload)
+          : undefined;
+      const { updated } = await db.transaction(async (tx) => {
+        const transcript = hasPayloadUpdate
+          ? await transcriptSnapshotForWrite(tx, existing, requestedTranscript)
+          : null;
+        const [next] = await tx
+          .update(chatMessages)
+          .set({
+            ...(becameVisibleIncoming ? { createdAt: now } : {}),
+            ...(input.kind !== undefined ? { kind: input.kind } : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(durableInputBody !== undefined ? { body: durableInputBody } : {}),
+            ...(hasPayloadUpdate ? { structuredPayload: stripChatMetadataFromPayload(sanitizedPayload) } : {}),
+            ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+            ...(input.runId !== undefined ? { runId: input.runId } : {}),
+            ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
+            updatedAt: now,
+          })
+          .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+          .returning();
+        if (next && transcript !== null) {
+          await replaceDetachedChatTranscript(tx, {
+            orgId: existing.orgId,
+            messageId: existing.id,
+            entries: transcript,
+          });
+        }
+        return { updated: next };
+      });
       if (!updated) return null;
       if (
         (existing.role === "user" && input.body !== undefined) ||
@@ -4423,18 +4486,30 @@ export function chatService(db: Db) {
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
-      const [updated] = await db
-        .update(chatMessages)
-        .set({
-          structuredPayload: withPersistedTranscript(
-            sanitizeChatStructuredPayload(structuredPayload),
-            chatTranscriptFromPayload(existing.structuredPayload),
-          ),
-          updatedAt: new Date(),
-        })
-        .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
-        .returning();
-      const [hydrated] = await hydrateMessages([updated]);
+      const sanitizedPayload = sanitizeChatStructuredPayload(structuredPayload);
+      const requestedTranscript = Object.hasOwn(sanitizedPayload ?? {}, CHAT_TRANSCRIPT_KEY)
+        ? chatTranscriptFromPayload(sanitizedPayload)
+        : undefined;
+      const { updated } = await db.transaction(async (tx) => {
+        const transcript = await transcriptSnapshotForWrite(tx, existing, requestedTranscript);
+        const [next] = await tx
+          .update(chatMessages)
+          .set({
+            structuredPayload: stripChatMetadataFromPayload(sanitizedPayload),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+          .returning();
+        if (next) {
+          await replaceDetachedChatTranscript(tx, {
+            orgId: existing.orgId,
+            messageId: existing.id,
+            entries: transcript,
+          });
+        }
+        return { updated: next };
+      });
+      const [hydrated] = await hydrateMessages(updated ? [updated] : []);
       return hydrated ?? null;
   }
 

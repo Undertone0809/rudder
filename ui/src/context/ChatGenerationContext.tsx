@@ -3,10 +3,18 @@ import { useActivityCoordinator } from "@/context/ActivityCoordinatorContext";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
-export type ChatStreamDraftState = "streaming" | "finalizing" | "stopping" | "stopped" | "failed";
+export type ChatStreamDraftState = "streaming" | "tool_busy" | "finalizing" | "stopping" | "stopped" | "failed";
+
+export class ChatGenerationCloseSupersededError extends Error {
+  constructor() {
+    super("Side Chat close was superseded by a newer generation.");
+    this.name = "ChatGenerationCloseSupersededError";
+  }
+}
 
 export type ChatStreamDraft = {
-  chatId: string;
+  // Provisional Side Chats have no backend conversation until their first send is acknowledged.
+  chatId: string | null;
   streamKey: string;
   userBody: string;
   userCreatedAt: Date;
@@ -25,6 +33,20 @@ export type ChatStreamDraft = {
   replyingAgentId: string | null;
 };
 
+export type ChatGenerationScopeStart = {
+  epoch: number;
+  conversationId: string | null;
+};
+
+export type ChatGenerationScopeClose = ChatGenerationScopeStart;
+
+type ChatGenerationScopeState = {
+  epoch: number;
+  conversationId: string | null;
+  closeRequested: boolean;
+  sendClaimed: boolean;
+};
+
 type ChatGenerationContextValue = {
   activeChatIds: ReadonlySet<string>;
   streamDrafts: Record<string, ChatStreamDraft>;
@@ -40,6 +62,21 @@ type ChatGenerationContextValue = {
   ) => void;
   setStreamAbortController: (chatId: string, controller: AbortController | null) => void;
   abortChatStream: (chatId: string) => void;
+  beginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart;
+  tryBeginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart | null;
+  rememberChatGenerationConversation: (scopeKey: string, conversationId: string) => void;
+  setChatGenerationConversation: (scopeKey: string, epoch: number, conversationId: string) => boolean;
+  isChatGenerationCurrent: (scopeKey: string, epoch: number) => boolean;
+  isChatGenerationClosePending: (scopeKey: string, epoch?: number) => boolean;
+  releaseChatGenerationScope: (scopeKey: string, epoch: number) => void;
+  requestChatGenerationClose: (scopeKey: string, knownConversationId?: string | null) => ChatGenerationScopeClose;
+  resetChatGenerationClose: (scopeKey: string, epoch: number) => void;
+  clearChatGenerationConversation: (scopeKey: string, conversationId: string) => void;
+  destroyChatGenerationConversation: (
+    scopeKey: string,
+    conversationId: string,
+    destroyer: () => Promise<void>,
+  ) => Promise<void>;
 };
 
 type ChatGenerationActions = Pick<
@@ -49,6 +86,17 @@ type ChatGenerationActions = Pick<
   | "setStreamDraftForChat"
   | "setStreamAbortController"
   | "abortChatStream"
+  | "beginChatGeneration"
+  | "tryBeginChatGeneration"
+  | "rememberChatGenerationConversation"
+  | "setChatGenerationConversation"
+  | "isChatGenerationCurrent"
+  | "isChatGenerationClosePending"
+  | "releaseChatGenerationScope"
+  | "requestChatGenerationClose"
+  | "resetChatGenerationClose"
+  | "clearChatGenerationConversation"
+  | "destroyChatGenerationConversation"
 >;
 
 class ChatGenerationStatusStore {
@@ -86,6 +134,19 @@ const defaultValue: ChatGenerationContextValue = {
   setStreamDraftForChat: () => {},
   setStreamAbortController: () => {},
   abortChatStream: () => {},
+  beginChatGeneration: () => ({ epoch: 0, conversationId: null }),
+  tryBeginChatGeneration: () => null,
+  rememberChatGenerationConversation: () => {},
+  setChatGenerationConversation: () => false,
+  isChatGenerationCurrent: () => false,
+  isChatGenerationClosePending: () => false,
+  releaseChatGenerationScope: () => {},
+  requestChatGenerationClose: () => ({ epoch: 0, conversationId: null }),
+  resetChatGenerationClose: () => {},
+  clearChatGenerationConversation: () => {},
+  destroyChatGenerationConversation: async (_scopeKey, _conversationId, destroyer) => {
+    await destroyer();
+  },
 };
 
 const ChatGenerationContext = createContext<ChatGenerationContextValue>(defaultValue);
@@ -102,6 +163,12 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   if (!statusStoreRef.current) statusStoreRef.current = new ChatGenerationStatusStore();
   const statusStore = statusStoreRef.current;
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
+  const generationScopesRef = useRef<Record<string, ChatGenerationScopeState>>({});
+  const generationEpochRef = useRef(0);
+  const destructionPromisesRef = useRef<Record<string, {
+    conversationId: string;
+    promise: Promise<void>;
+  }>>({});
   const presentationTimerRef = useRef<number | null>(null);
   const scrollStopTimerRef = useRef<number | null>(null);
   const scrollingUntilRef = useRef(0);
@@ -221,6 +288,143 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     streamAbortControllersRef.current[chatId]?.abort();
   }, []);
 
+  const ensureGenerationScope = useCallback((scopeKey: string) => {
+    const existing = generationScopesRef.current[scopeKey];
+    if (existing) return existing;
+    const next: ChatGenerationScopeState = {
+      epoch: 0,
+      conversationId: null,
+      closeRequested: false,
+      sendClaimed: false,
+    };
+    generationScopesRef.current = {
+      ...generationScopesRef.current,
+      [scopeKey]: next,
+    };
+    return next;
+  }, []);
+
+  const beginChatGeneration = useCallback((
+    scopeKey: string,
+    conversationId: string | null,
+  ): ChatGenerationScopeStart => {
+    const scope = ensureGenerationScope(scopeKey);
+    const previousConversationId = scope.closeRequested ? null : scope.conversationId;
+    scope.epoch = ++generationEpochRef.current;
+    scope.closeRequested = false;
+    scope.sendClaimed = true;
+    scope.conversationId = conversationId ?? previousConversationId;
+    return {
+      epoch: scope.epoch,
+      conversationId: scope.conversationId,
+    };
+  }, [ensureGenerationScope]);
+
+  const tryBeginChatGeneration = useCallback((
+    scopeKey: string,
+    conversationId: string | null,
+  ): ChatGenerationScopeStart | null => {
+    const scope = ensureGenerationScope(scopeKey);
+    if (scope.sendClaimed && !scope.closeRequested) return null;
+    return beginChatGeneration(scopeKey, conversationId);
+  }, [beginChatGeneration, ensureGenerationScope]);
+
+  const rememberChatGenerationConversation = useCallback((scopeKey: string, conversationId: string) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (!scope || scope.closeRequested) return;
+    if (scope.conversationId === null || scope.conversationId === conversationId) {
+      scope.conversationId = conversationId;
+    }
+  }, []);
+
+  const setChatGenerationConversation = useCallback((
+    scopeKey: string,
+    epoch: number,
+    conversationId: string,
+  ) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (!scope) return false;
+    if (scope.epoch !== epoch || scope.closeRequested) return false;
+    scope.conversationId = conversationId;
+    return true;
+  }, []);
+
+  const isChatGenerationCurrent = useCallback((scopeKey: string, epoch: number) => {
+    const scope = generationScopesRef.current[scopeKey];
+    return Boolean(scope && scope.epoch === epoch && !scope.closeRequested);
+  }, []);
+
+  const isChatGenerationClosePending = useCallback((scopeKey: string, epoch?: number) => {
+    const scope = generationScopesRef.current[scopeKey];
+    return Boolean(
+      scope?.closeRequested
+      && (epoch === undefined || scope.epoch === epoch),
+    );
+  }, []);
+
+  const releaseChatGenerationScope = useCallback((scopeKey: string, epoch: number) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (!scope || scope.epoch !== epoch) return;
+    const { [scopeKey]: _removed, ...rest } = generationScopesRef.current;
+    generationScopesRef.current = rest;
+  }, []);
+
+  const requestChatGenerationClose = useCallback((
+    scopeKey: string,
+    knownConversationId?: string | null,
+  ): ChatGenerationScopeClose => {
+    const scope = ensureGenerationScope(scopeKey);
+    if (knownConversationId && !scope.conversationId) {
+      scope.conversationId = knownConversationId;
+    }
+    scope.epoch = ++generationEpochRef.current;
+    scope.closeRequested = true;
+    scope.sendClaimed = false;
+    return {
+      epoch: scope.epoch,
+      conversationId: scope.conversationId,
+    };
+  }, [ensureGenerationScope]);
+
+  const resetChatGenerationClose = useCallback((scopeKey: string, epoch: number) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (scope?.epoch === epoch) {
+      scope.closeRequested = false;
+      scope.sendClaimed = false;
+    }
+  }, []);
+
+  const clearChatGenerationConversation = useCallback((scopeKey: string, conversationId: string) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (scope?.conversationId === conversationId) scope.conversationId = null;
+  }, []);
+
+  const destroyChatGenerationConversation = useCallback((
+    scopeKey: string,
+    conversationId: string,
+    destroyer: () => Promise<void>,
+  ) => {
+    const existing = destructionPromisesRef.current[scopeKey];
+    if (existing?.conversationId === conversationId) return existing.promise;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        await destroyer();
+      } finally {
+        const current = destructionPromisesRef.current[scopeKey];
+        if (current?.promise === promise) {
+          const { [scopeKey]: _removed, ...rest } = destructionPromisesRef.current;
+          destructionPromisesRef.current = rest;
+        }
+      }
+    })();
+    destructionPromisesRef.current = {
+      ...destructionPromisesRef.current,
+      [scopeKey]: { conversationId, promise },
+    };
+    return promise;
+  }, []);
+
   const isChatGenerationActive = useCallback(
     (chatId: string | null | undefined) => Boolean(chatId && statusStore.getSnapshot(chatId)),
     [statusStore],
@@ -228,13 +432,35 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
 
   const actions = useMemo<ChatGenerationActions>(() => ({
     abortChatStream,
+    beginChatGeneration,
+    clearChatGenerationConversation,
+    destroyChatGenerationConversation,
+    tryBeginChatGeneration,
     isChatGenerationActive,
+    isChatGenerationCurrent,
+    isChatGenerationClosePending,
+    rememberChatGenerationConversation,
+    releaseChatGenerationScope,
+    requestChatGenerationClose,
+    resetChatGenerationClose,
+    setChatGenerationConversation,
     setChatSendInFlight,
     setStreamDraftForChat,
     setStreamAbortController,
   }), [
     abortChatStream,
+    beginChatGeneration,
+    clearChatGenerationConversation,
+    destroyChatGenerationConversation,
+    tryBeginChatGeneration,
     isChatGenerationActive,
+    isChatGenerationCurrent,
+    isChatGenerationClosePending,
+    rememberChatGenerationConversation,
+    releaseChatGenerationScope,
+    requestChatGenerationClose,
+    resetChatGenerationClose,
+    setChatGenerationConversation,
     setChatSendInFlight,
     setStreamAbortController,
     setStreamDraftForChat,
@@ -245,7 +471,18 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       activeChatIds,
       streamDrafts,
       sendInFlightByChatId,
+      beginChatGeneration,
+      tryBeginChatGeneration,
+      clearChatGenerationConversation,
+      destroyChatGenerationConversation,
       isChatGenerationActive,
+      isChatGenerationCurrent,
+      isChatGenerationClosePending,
+      rememberChatGenerationConversation,
+      releaseChatGenerationScope,
+      requestChatGenerationClose,
+      resetChatGenerationClose,
+      setChatGenerationConversation,
       setChatSendInFlight,
       setStreamDraftForChat,
       setStreamAbortController,
@@ -254,12 +491,23 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     [
       abortChatStream,
       activeChatIds,
+      beginChatGeneration,
+      clearChatGenerationConversation,
+      destroyChatGenerationConversation,
       isChatGenerationActive,
+      isChatGenerationCurrent,
+      isChatGenerationClosePending,
+      rememberChatGenerationConversation,
+      releaseChatGenerationScope,
       sendInFlightByChatId,
+      requestChatGenerationClose,
+      resetChatGenerationClose,
+      setChatGenerationConversation,
       setChatSendInFlight,
       setStreamAbortController,
       setStreamDraftForChat,
       streamDrafts,
+      tryBeginChatGeneration,
     ],
   );
 

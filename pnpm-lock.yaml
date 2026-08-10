@@ -764,6 +764,9 @@ importers:
       pino-pretty:
         specifier: ^13.1.3
         version: 13.1.3
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.8
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -900,6 +903,9 @@ importers:
       '@rudderhq/agent-runtime-gemini-local':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/gemini-local
+      '@rudderhq/agent-runtime-hermes-gateway':
+        specifier: workspace:*
+        version: link:../packages/agent-runtimes/hermes-gateway
       '@rudderhq/agent-runtime-openclaw-gateway':
         specifier: workspace:*
         version: link:../packages/agent-runtimes/openclaw-gateway

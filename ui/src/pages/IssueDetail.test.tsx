@@ -184,7 +184,9 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
-  Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
+  Link: ({ children, to, title }: { children: ReactNode; to: string; title?: string }) => (
+    <a href={to} title={title}>{children}</a>
+  ),
   useLocation: () => ({ pathname: "/ORG2/issues/ORG2-1", state: null }),
   useNavigate: () => vi.fn(),
   useParams: () => ({ issueId: "ORG2-1" }),
@@ -1044,6 +1046,29 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("edited a comment");
     expect(html).not.toContain("deleted a comment");
     expect(html).not.toContain("deleted the issue");
+  });
+
+  it("bounds long chat activity descriptions and keeps the full label in the summary title", () => {
+    const longChatTitle = "A very long chat title that should be truncated in the compact issue activity row";
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), [{
+      id: "activity-long-chat",
+      orgId: "org-2",
+      actorType: "user",
+      actorId: "user-1",
+      action: "chat.created",
+      entityType: "chat",
+      entityId: "chat-long",
+      agentId: null,
+      runId: null,
+      details: { conversationTitle: longChatTitle },
+      createdAt: new Date("2026-04-20T01:25:00.000Z"),
+    }]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("data-testid=\"issue-activity-summary\"");
+    expect(html).toContain("min-w-0 truncate");
+    expect(html).toContain("title=\"" + longChatTitle + "\"");
   });
 
   it("renders approval link events as ordinary activity rows", () => {

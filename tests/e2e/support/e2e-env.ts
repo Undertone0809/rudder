@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +32,15 @@ function sanitizeInstanceRunId(value: string): string {
     .slice(0, 48);
 }
 
+function assertSafeInstanceId(value: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value)) {
+    throw new Error(
+      `RUDDER_E2E_INSTANCE_ID must be a simple directory name containing only letters, numbers, dots, underscores, and hyphens: ${value}`,
+    );
+  }
+  return value;
+}
+
 function hashPortOffset(value: string): number {
   let hash = 0;
   for (const char of value) {
@@ -51,23 +61,53 @@ function resolvePort(name: string, fallback: number): number {
 const rawRunId =
   nonEmpty(process.env.RUDDER_E2E_RUN_ID)
   ?? nonEmpty(process.env.CODEX_THREAD_ID)
-  ?? null;
+  ?? `local-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const runId = rawRunId ? sanitizeRunId(rawRunId) : null;
 const instanceRunId = rawRunId ? sanitizeInstanceRunId(rawRunId) : null;
 const portOffset = rawRunId ? hashPortOffset(rawRunId) : 0;
+
+function isWithin(root: string, candidate: string): boolean {
+  const normalizedRoot = path.resolve(root);
+  const normalizedCandidate = path.resolve(candidate);
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+}
+
+function assertSafeE2EHome(home: string): string {
+  const resolvedHome = path.resolve(home);
+  const allowedRoots = [
+    path.join(E2E_ROOT, ".tmp"),
+    os.tmpdir(),
+    "/tmp",
+    "/private/tmp",
+  ];
+  const hasSafeRoot = allowedRoots.some((root) => isWithin(root, resolvedHome));
+  const isNamedTempHome = /^rudder(?:-|$)/.test(path.basename(resolvedHome));
+  if (!hasSafeRoot || !isNamedTempHome || allowedRoots.some((root) => path.resolve(root) === resolvedHome)) {
+    throw new Error(
+      `RUDDER_E2E_HOME must be a named Rudder temporary directory under tests/e2e/.tmp or the system temp directory: ${resolvedHome}`,
+    );
+  }
+  return resolvedHome;
+}
 
 export const E2E_PORT = resolvePort("RUDDER_E2E_PORT", DEFAULT_APP_PORT + portOffset);
 export const E2E_DB_PORT = resolvePort("RUDDER_E2E_DB_PORT", DEFAULT_DB_PORT + portOffset);
 export const E2E_BASE_URL = nonEmpty(process.env.RUDDER_E2E_BASE_URL) ?? `http://127.0.0.1:${E2E_PORT}`;
 export const E2E_HOME = path.resolve(
-  nonEmpty(process.env.RUDDER_E2E_HOME)
-    ?? path.join(E2E_ROOT, ".tmp", runId ? `rudder-e2e-home-${runId}` : "rudder-e2e-home"),
+  assertSafeE2EHome(
+    nonEmpty(process.env.RUDDER_E2E_HOME)
+      ?? path.join(E2E_ROOT, ".tmp", `rudder-e2e-home-${runId}`),
+  ),
 );
-export const E2E_INSTANCE_ID = nonEmpty(process.env.RUDDER_E2E_INSTANCE_ID)
-  ?? (instanceRunId ? `playwright-${instanceRunId}` : "playwright");
+export const E2E_INSTANCE_ID = assertSafeInstanceId(
+  nonEmpty(process.env.RUDDER_E2E_INSTANCE_ID)
+    ?? (instanceRunId ? `playwright-${instanceRunId}` : "playwright"),
+);
 export const E2E_INSTANCE_ROOT = path.join(E2E_HOME, "instances", E2E_INSTANCE_ID);
+export const E2E_LOCK_PATH = path.join(E2E_ROOT, ".tmp", ".locks", E2E_INSTANCE_ID);
 export const E2E_CONFIG_PATH = path.join(E2E_INSTANCE_ROOT, "config.json");
 export const E2E_SERVER_PID_PATH = path.join(E2E_INSTANCE_ROOT, "server.pid");
+export const E2E_RUNTIME_DESCRIPTOR_PATH = path.join(E2E_INSTANCE_ROOT, "runtime", "server.json");
 export const E2E_BIN_DIR = path.join(E2E_HOME, "bin");
 export const E2E_CODEX_STUB = path.join(E2E_BIN_DIR, "codex");
 export const E2E_CODEX_APP_SERVER_STUB = path.join(E2E_ROOT, "fixtures", "codex-app-server");

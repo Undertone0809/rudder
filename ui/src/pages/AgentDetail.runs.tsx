@@ -485,7 +485,9 @@ export function RunsTab({
         label: "Run feedback",
       };
       feedbackTargetRef.current = restoredTarget;
-      sidePanel.openTargetForContext(contextKey, restoredTarget);
+      if (sidePanel.open) {
+        sidePanel.openTargetForContext(contextKey, restoredTarget);
+      }
     } catch {
       // Ignore malformed or unavailable local draft storage.
     }
@@ -670,21 +672,24 @@ export function RunsTab({
 
   // Desktop: detail pane first, compact navigation rail on the right.
   return (
-    <div className="agent-runs-layout-container min-w-0">
+    <div className="agent-runs-layout-container agent-runs-layout min-w-0">
       {toolbar}
       {activeFilterChips.length > 0 && (
         <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mb-3 justify-end" />
       )}
-      <div className="agent-runs-layout flex min-w-0 items-start gap-4">
+      <div className="agent-runs-desktop-split agent-runs-layout flex min-w-0 items-start gap-4">
         <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
           <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} onAnnotate={annotateRun} />
         </div>
 
         <div
-          className="w-[clamp(14rem,24vw,24rem)] shrink-0 border border-border rounded-lg overflow-clip"
+          className="agent-runs-list-pane w-[clamp(14rem,24vw,24rem)] shrink-0 overflow-clip rounded-lg border border-border"
           data-testid="agent-runs-list-pane"
         >
-          <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
+          <div
+            className="agent-runs-list-scroll sticky top-4 overflow-y-auto"
+            style={{ maxHeight: "calc(100vh - 2rem)" }}
+          >
             {selectedRunOutsideFilters && (
               <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 Selected run is outside the current filters.
@@ -885,7 +890,7 @@ export function RunDetail({
     <div className="run-detail-container space-y-4 min-w-0">
       {/* Run summary card */}
       <div className="border border-border rounded-lg overflow-hidden" data-testid="run-summary-card">
-        <div className="run-detail-summary-layout flex flex-col sm:flex-row">
+        <div className="run-detail-summary-layout agent-run-summary-layout flex flex-col sm:flex-row">
           {/* Left column: status + timing */}
           <div className="min-w-0 flex-1 p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
@@ -1015,7 +1020,7 @@ export function RunDetail({
               </div>
             )}
             {facts.length > 0 && (
-              <div className="run-detail-facts grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2" data-testid="run-agent-run-facts">
+              <div className="run-detail-facts agent-run-facts-grid grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2" data-testid="run-agent-run-facts">
                 {facts.map((fact) => (
                   <div key={`${fact.label}:${fact.value}`} className="min-w-0">
                     <div className="text-[11px] text-muted-foreground">{fact.label}</div>
@@ -1091,7 +1096,7 @@ export function RunDetail({
 
           {/* Right column: metrics */}
           {hasMetrics && (
-            <div className="run-detail-metrics border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
+            <div className="run-detail-metrics agent-run-summary-metrics grid grid-cols-2 content-center gap-x-4 gap-y-3 border-t border-border p-4 tabular-nums sm:border-t-0 sm:border-l sm:gap-x-8">
               <div>
                 <div className="text-xs text-muted-foreground">Prompt input</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.promptTokens)}</div>

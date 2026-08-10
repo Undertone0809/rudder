@@ -5,13 +5,13 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { AppBuilderDataManager } from "./app-builder-data.js";
 import {
   AppBuilderController,
   registerAppBuilderIpcHandlers,
 } from "./app-builder-ipc.js";
 import { AppBuilderPreviewController } from "./app-builder-preview.js";
+import { resolveAppBuilderWorkspaceRoot } from "./app-builder-workspace.js";
 import { shouldOverrideDesktopDockIcon } from "./app-icon.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
@@ -23,10 +23,7 @@ import {
   createBrowserAgentTabController,
 } from "./browser-agent-tabs.js";
 import {
-  isDesktopBrowserRunActive,
-  readDesktopBrowserSettings,
-  registerDesktopBrowserBroker,
-  unregisterDesktopBrowserBroker,
+  createDesktopBrowserApiClient,
 } from "./browser-broker-registration.js";
 import { startBrowserBrokerServer } from "./browser-broker-server.js";
 import { runBrowserCookieImportWorker } from "./browser-cookie-import-worker.js";
@@ -55,7 +52,7 @@ import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLin
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
-import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
+import { resolveDesktopLocalEnvProfile, resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
 import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
@@ -741,8 +738,14 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   if (workspaceHome) {
     process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
   }
-  process.env.PORT ??= profile.port;
-  process.env.RUDDER_EMBEDDED_POSTGRES_PORT ??= profile.embeddedPostgresPort;
+  // The Desktop profile owns its local ports. A restarted Desktop can inherit
+  // the CLI/updater's dev port from its parent process; preserving that value
+  // makes the new release look for PostgreSQL in the wrong instance/port and
+  // surfaces as a generic database startup failure. Smoke runs deliberately
+  // provide isolated ports and are the only caller allowed to override them.
+  const ownedPorts = resolveDesktopOwnedPorts(profile);
+  process.env.PORT = ownedPorts.port;
+  process.env.RUDDER_EMBEDDED_POSTGRES_PORT = ownedPorts.embeddedPostgresPort;
   process.env.RUDDER_DEPLOYMENT_MODE = "local_trusted";
   process.env.RUDDER_DEPLOYMENT_EXPOSURE = "private";
   process.env.HOST = "127.0.0.1";
@@ -874,21 +877,11 @@ function initializeLocalApps(desktopInstallationId: string): void {
       if (!serverHandle?.apiUrl) {
         throw new Error("Rudder must finish starting before App Builder can resolve its workspace.");
       }
-      const response = await fetch(
-        buildDesktopApiRequestUrl(
-          serverHandle.apiUrl,
-          `/orgs/${encodeURIComponent(organizationId)}/workspace/files`,
-        ),
-      );
-      if (!response.ok) {
-        throw new Error(`Unable to resolve the App Builder workspace (${response.status})`);
-      }
-      const workspace = await response.json() as { rootPath?: unknown };
-      const root = workspace.rootPath;
-      if (typeof root !== "string" || !path.isAbsolute(root)) {
-        throw new Error("The organization workspace is not available on this device.");
-      }
-      return root;
+      return resolveAppBuilderWorkspaceRoot({
+        apiBaseUrl: serverHandle.apiUrl,
+        organizationId,
+        fetchApi: (input, init) => session.defaultSession.fetch(input, init),
+      });
     },
     selectExportDirectory: async ({ appId, snapshotId }) => {
       const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
@@ -1082,6 +1075,12 @@ async function closeAgentBrowserGuests(): Promise<void> {
 
 function replaceBrowserRuntimeLifecycle(): void {
   const controller = requireBrowserProfileController();
+  const browserApi = createDesktopBrowserApiClient(
+    (input, init) => session.defaultSession.fetch(
+      input instanceof URL ? input.toString() : input,
+      init,
+    ),
+  );
   const partition = controller.getPartition();
   const agentTabs = createBrowserAgentTabController({
     createTab: createElectronBrowserAgentTabFactory({
@@ -1118,16 +1117,16 @@ function replaceBrowserRuntimeLifecycle(): void {
       if (generation === undefined) {
         throw new Error("Rudder Browser Broker registration generation is missing.");
       }
-      return registerDesktopBrowserBroker(apiUrl, {
+      return browserApi.registerBroker(apiUrl, {
         ...broker,
         ownerId: desktopBrowserBrokerOwnerId,
         generation,
         ...(refresh ? { refresh: true } : {}),
       });
     },
-    unregisterBroker: unregisterDesktopBrowserBroker,
-    readSettings: readDesktopBrowserSettings,
-    isRunActive: isDesktopBrowserRunActive,
+    unregisterBroker: browserApi.unregisterBroker,
+    readSettings: browserApi.readSettings,
+    isRunActive: browserApi.isRunActive,
     sweepIntervalMs: 5_000,
     onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
   });

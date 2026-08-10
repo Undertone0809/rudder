@@ -26,6 +26,7 @@ describe("BrowserLiveSurface", () => {
   let root: Root | null = null;
 
   afterEach(() => {
+    vi.useRealTimers();
     if (root) act(() => root?.unmount());
     root = null;
     container?.remove();
@@ -262,6 +263,571 @@ describe("BrowserLiveSurface", () => {
     expect(onWebContentsIdChange).toHaveBeenCalledWith(73);
   });
 
+  it("ignores late webview events from any previous address after navigation", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const previousUrl = "https://example.com/previous";
+    const nextUrl = "https://example.com/next";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = previousUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-stale-events",
+            url: previousUrl,
+            viewInstanceId: "view-stale-events",
+          }}
+          targetKey="browser-tab:stale-events"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    expect(address).not.toBeNull();
+
+    act(() => {
+      address!.value = nextUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    const didNavigate = new Event("did-navigate");
+    Object.defineProperty(didNavigate, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(didNavigate));
+    onReplaceTarget.mockClear();
+
+    const finalUrl = "https://example.com/final";
+    act(() => {
+      address!.value = finalUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    const lateNavigation = new Event("did-navigate");
+    Object.defineProperty(lateNavigation, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(lateNavigation));
+
+    guestUrl = previousUrl;
+    act(() => webview.dispatchEvent(new Event("did-stop-loading")));
+
+    expect(onReplaceTarget).not.toHaveBeenCalled();
+  });
+
+  it("uses the attached guest to navigate instead of relying on a src update", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const loadURL = vi.fn(async () => undefined);
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-attached-guest",
+            url: "https://example.com/previous",
+            viewInstanceId: "view-attached-guest",
+          }}
+          targetKey="browser-tab:attached-guest"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & {
+      loadURL?: (url: string) => Promise<void>;
+    };
+    webview.loadURL = loadURL;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    act(() => {
+      address!.value = "https://example.com/next#section";
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(loadURL).toHaveBeenCalledWith("https://example.com/next#section");
+  });
+
+  it("does not reload a retained guest when the incoming target already matches its physical URL", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const initialTarget = {
+      kind: "browser" as const,
+      label: "Previous",
+      tabId: "browser-retained-target",
+      url: "https://example.com/previous",
+      viewInstanceId: "view-retained-target",
+    };
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="workbench"
+          target={initialTarget}
+          targetKey="browser-tab:browser-retained-target"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => "https://example.com/retained";
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="workbench"
+          target={{ ...initialTarget, url: "https://example.com/retained", label: "Retained" }}
+          targetKey="browser-tab:browser-retained-target"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+    expect(webview.getAttribute("src")).toBe("https://example.com/previous");
+  });
+
+  it("keeps the settled navigation fence for late earlier events", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const secondUrl = "https://example.com/second";
+    const thirdUrl = "https://example.com/third";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-settled-generation",
+            url: firstUrl,
+            viewInstanceId: "view-settled-generation",
+          }}
+          targetKey="browser-tab:settled-generation"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    const settle = (url: string, stop = true) => {
+      guestUrl = url;
+      const event = new Event("did-navigate");
+      Object.defineProperty(event, "url", { configurable: true, value: url });
+      act(() => webview.dispatchEvent(event));
+      if (stop) act(() => webview.dispatchEvent(new Event("did-stop-loading")));
+    };
+
+    act(() => {
+      address.value = secondUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    settle(secondUrl);
+    act(() => {
+      address.value = thirdUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    settle(thirdUrl, false);
+    onReplaceTarget.mockClear();
+
+    guestUrl = thirdUrl;
+    const lateFirstStart = new Event("did-start-navigation");
+    Object.defineProperty(lateFirstStart, "url", { configurable: true, value: firstUrl });
+    const lateSecondStart = new Event("did-start-navigation");
+    Object.defineProperty(lateSecondStart, "url", { configurable: true, value: secondUrl });
+    const lateFirst = new Event("did-navigate");
+    Object.defineProperty(lateFirst, "url", { configurable: true, value: firstUrl });
+    const lateSecond = new Event("did-navigate");
+    Object.defineProperty(lateSecond, "url", { configurable: true, value: secondUrl });
+    act(() => {
+      webview.dispatchEvent(lateFirstStart);
+      webview.dispatchEvent(lateSecondStart);
+      webview.dispatchEvent(lateFirst);
+      webview.dispatchEvent(lateSecond);
+    });
+
+    expect(onReplaceTarget).not.toHaveBeenCalled();
+    act(() => webview.dispatchEvent(new Event("did-stop-loading")));
+  });
+
+  it("keeps an explicit navigation authoritative across unrelated intermediate events", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const requestedUrl = "https://example.com/requested";
+    const intermediateUrl = "https://example.com/intermediate";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-explicit-authority",
+            url: firstUrl,
+            viewInstanceId: "view-explicit-authority",
+          }}
+          targetKey="browser-tab:explicit-authority"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    act(() => {
+      address.value = requestedUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = intermediateUrl;
+    const intermediateNavigation = new Event("did-navigate");
+    Object.defineProperty(intermediateNavigation, "url", { configurable: true, value: intermediateUrl });
+    act(() => webview.dispatchEvent(intermediateNavigation));
+    expect(onReplaceTarget).not.toHaveBeenCalled();
+
+    guestUrl = requestedUrl;
+    const requestedNavigation = new Event("did-navigate");
+    Object.defineProperty(requestedNavigation, "url", { configurable: true, value: requestedUrl });
+    act(() => webview.dispatchEvent(requestedNavigation));
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:explicit-authority",
+      expect.objectContaining({ url: requestedUrl }),
+    );
+  });
+
+  it("allows an address-bar request to revisit a URL fenced as stale", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const secondUrl = "https://example.com/second";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-explicit-stale",
+            url: firstUrl,
+            viewInstanceId: "view-explicit-stale",
+          }}
+          targetKey="browser-tab:explicit-stale"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    act(() => {
+      address.value = secondUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    guestUrl = secondUrl;
+    const secondNavigation = new Event("did-navigate");
+    Object.defineProperty(secondNavigation, "url", { configurable: true, value: secondUrl });
+    act(() => webview.dispatchEvent(secondNavigation));
+    onReplaceTarget.mockClear();
+
+    act(() => {
+      address.value = firstUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    guestUrl = firstUrl;
+    const firstNavigation = new Event("did-navigate");
+    Object.defineProperty(firstNavigation, "url", { configurable: true, value: firstUrl });
+    act(() => webview.dispatchEvent(firstNavigation));
+
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:explicit-stale",
+      expect.objectContaining({ url: firstUrl }),
+    );
+  });
+
+  it("accepts an in-guest navigation to a historical URL after the current load settles", () => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const firstUrl = "https://example.com/first";
+    const secondUrl = "https://example.com/second";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = firstUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "First",
+            tabId: "browser-in-guest-history",
+            url: firstUrl,
+            viewInstanceId: "view-in-guest-history",
+          }}
+          targetKey="browser-tab:in-guest-history"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const webview = container.querySelector("webview") as HTMLElement & { getURL?: () => string };
+    webview.getURL = () => guestUrl;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']")!;
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+    act(() => {
+      address.value = secondUrl;
+      address.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    guestUrl = secondUrl;
+    const secondNavigation = new Event("did-navigate");
+    Object.defineProperty(secondNavigation, "url", { configurable: true, value: secondUrl });
+    act(() => {
+      webview.dispatchEvent(secondNavigation);
+      webview.dispatchEvent(new Event("did-stop-loading"));
+    });
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = firstUrl;
+    const firstWillNavigate = new Event("will-navigate");
+    Object.defineProperty(firstWillNavigate, "url", { configurable: true, value: firstUrl });
+    const firstStart = new Event("did-start-navigation");
+    Object.defineProperty(firstStart, "url", { configurable: true, value: firstUrl });
+    const firstNavigation = new Event("did-navigate");
+    Object.defineProperty(firstNavigation, "url", { configurable: true, value: firstUrl });
+    act(() => {
+      webview.dispatchEvent(firstWillNavigate);
+      webview.dispatchEvent(firstStart);
+      webview.dispatchEvent(firstNavigation);
+    });
+
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:in-guest-history",
+      expect.objectContaining({ url: firstUrl }),
+    );
+  });
+
+  it("accepts an explicit back navigation to a historical URL", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const previousUrl = "https://example.com/previous";
+    const nextUrl = "https://example.com/next";
+    const onReplaceTarget = vi.fn();
+    let guestUrl = previousUrl;
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Previous",
+            tabId: "browser-history-back",
+            url: previousUrl,
+            viewInstanceId: "view-history-back",
+          }}
+          targetKey="browser-tab:history-back"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const goBack = vi.fn();
+    const webview = container.querySelector("webview") as HTMLElement & {
+      canGoBack?: () => boolean;
+      getURL?: () => string;
+      goBack?: () => void;
+    };
+    webview.getURL = () => guestUrl;
+    webview.canGoBack = () => true;
+    webview.goBack = goBack;
+    const address = container.querySelector<HTMLInputElement>("input[name='browser-url']");
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    act(() => {
+      address!.value = nextUrl;
+      address!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    const didNavigate = new Event("did-navigate");
+    Object.defineProperty(didNavigate, "url", { configurable: true, value: nextUrl });
+    act(() => webview.dispatchEvent(didNavigate));
+    onReplaceTarget.mockClear();
+
+    guestUrl = nextUrl;
+    act(() => container!.querySelector<HTMLButtonElement>("button[aria-label='Back']")?.click());
+    expect(goBack).toHaveBeenCalledOnce();
+    guestUrl = previousUrl;
+    const backNavigation = new Event("did-navigate");
+    Object.defineProperty(backNavigation, "url", { configurable: true, value: previousUrl });
+    act(() => webview.dispatchEvent(backNavigation));
+
+    await act(async () => {
+      await vi.waitFor(() => expect(onReplaceTarget).toHaveBeenCalledWith(
+        "browser-tab:history-back",
+        expect.objectContaining({ url: previousUrl }),
+      ));
+    });
+  });
+
+  it("serializes rapid history actions until the physical guest settles", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const currentUrl = "https://example.com/current";
+    const previousUrl = "https://example.com/previous";
+    let guestUrl = currentUrl;
+    const goBack = vi.fn();
+    const goForward = vi.fn();
+
+    const onReplaceTarget = vi.fn();
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Current",
+            tabId: "browser-rapid-history",
+            url: currentUrl,
+            viewInstanceId: "view-rapid-history",
+          }}
+          targetKey="browser-tab:rapid-history"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={onReplaceTarget}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const browserContainer = container;
+    const webview = container.querySelector("webview") as HTMLElement & {
+      canGoBack?: () => boolean;
+      canGoForward?: () => boolean;
+      getURL?: () => string;
+      goBack?: () => void;
+      goForward?: () => void;
+    };
+    Object.assign(webview, {
+      canGoBack: () => true,
+      canGoForward: () => true,
+      getURL: () => guestUrl,
+      goBack,
+      goForward,
+    });
+    act(() => webview.dispatchEvent(new Event("dom-ready")));
+
+    act(() => {
+      browserContainer.querySelector<HTMLButtonElement>("button[aria-label='Back']")?.click();
+      browserContainer.querySelector<HTMLButtonElement>("button[aria-label='Forward']")?.click();
+    });
+
+    expect(goBack).toHaveBeenCalledOnce();
+    expect(goForward).not.toHaveBeenCalled();
+
+    guestUrl = previousUrl;
+    const backNavigation = new Event("did-navigate");
+    Object.defineProperty(backNavigation, "url", { configurable: true, value: previousUrl });
+    act(() => webview.dispatchEvent(backNavigation));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(onReplaceTarget).toHaveBeenCalledWith(
+      "browser-tab:rapid-history",
+      expect.objectContaining({ url: previousUrl }),
+    );
+  });
+
   it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
     const onOpenTarget = vi.fn();
     const onCloseTarget = vi.fn();
@@ -316,7 +882,7 @@ describe("BrowserLiveSurface", () => {
     expect(onCloseTarget).not.toHaveBeenCalled();
   });
 
-  it("executes owner-routed Browser actions against the active ready guest", () => {
+  it("executes owner-routed Browser actions against the active ready guest", async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -360,9 +926,11 @@ describe("BrowserLiveSurface", () => {
     const goBack = vi.fn();
     const goForward = vi.fn();
     const setZoomFactor = vi.fn();
+    let guestUrl = "https://example.com";
     Object.assign(webview, {
       canGoBack: () => true,
       canGoForward: () => true,
+      getURL: () => guestUrl,
       goBack,
       goForward,
       reload,
@@ -375,9 +943,17 @@ describe("BrowserLiveSurface", () => {
       shortcutController?.("reload");
       shortcutController?.("reload_ignoring_cache");
       shortcutController?.("go_back");
-      shortcutController?.("go_forward");
       shortcutController?.("zoom_in");
     });
+
+    guestUrl = "https://example.com/previous";
+    const backNavigation = new Event("did-navigate");
+    Object.defineProperty(backNavigation, "url", { configurable: true, value: guestUrl });
+    act(() => webview.dispatchEvent(backNavigation));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    act(() => shortcutController?.("go_forward"));
 
     expect(reload).toHaveBeenCalledOnce();
     expect(reloadIgnoringCache).toHaveBeenCalledOnce();

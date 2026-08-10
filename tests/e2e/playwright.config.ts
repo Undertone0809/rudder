@@ -11,8 +11,10 @@ import {
   E2E_HOME,
   E2E_INSTANCE_ID,
   E2E_INSTANCE_ROOT,
+  E2E_LOCK_PATH,
   E2E_PORT,
   E2E_ROOT,
+  E2E_RUNTIME_DESCRIPTOR_PATH,
   E2E_SERVER_PID_PATH,
 } from "./support/e2e-env";
 
@@ -99,6 +101,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
+  globalSetup: "./support/global-setup.ts",
+  globalTeardown: "./support/global-teardown.ts",
   projects: [
     {
       name: "chromium",
@@ -115,7 +119,7 @@ export default defineConfig({
   webServer: USE_EXISTING_SERVER
     ? undefined
     : {
-    command: `bash -lc 'set -euo pipefail; rm -rf "${E2E_HOME}"; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
+    command: `bash -lc 'set -euo pipefail; mkdir -p "$(dirname "${E2E_LOCK_PATH}")"; if ! mkdir "${E2E_LOCK_PATH}" 2>/dev/null; then owner_pid="$(cat "${E2E_LOCK_PATH}/pid" 2>/dev/null || true)"; if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then echo "E2E run lock is already held by PID $owner_pid: ${E2E_LOCK_PATH}" >&2; else echo "E2E run lock is stale; refusing unsafe takeover: ${E2E_LOCK_PATH}" >&2; fi; exit 1; fi; printf "%s\\n" "$$" > "${E2E_LOCK_PATH}/pid"; trap '"'"'rm -rf "${E2E_LOCK_PATH}"; rm -f "${E2E_SERVER_PID_PATH}" "${E2E_RUNTIME_DESCRIPTOR_PATH}"'"'"' EXIT INT TERM; "${SERVER_DIR}/node_modules/.bin/tsx" "${E2E_ROOT}/support/e2e-preflight.ts"; rm -rf "${E2E_HOME}"; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
 #!/usr/bin/env node
 let prompt = "";
 process.stdin.setEncoding("utf8");
@@ -137,6 +141,7 @@ process.stdin.on("end", async () => {
     body: "Streaming reply for chat.",
     structuredPayload: null,
   });
+  const memoryToolName = /para-memory-files/i.test(prompt) ? "para-memory-files" : "command_execution";
   process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-e2e", model: "gpt-5.4" }) + "\\n");
   process.stdout.write(
     JSON.stringify({
@@ -147,7 +152,7 @@ process.stdin.on("end", async () => {
   process.stdout.write(
     JSON.stringify({
       type: "item.started",
-      item: { type: "tool_use", id: "tool-1", name: "command_execution", input: { command: "echo chat" } },
+      item: { type: "tool_use", id: "tool-1", name: memoryToolName, input: { command: "echo chat" } },
     }) + "\\n",
   );
   process.stdout.write(
@@ -211,7 +216,7 @@ cat > "${E2E_CONFIG}" <<'"'"'EOF'"'"'
 ${e2eConfigJson}
 EOF
 ${CLEAR_INHERITED_RUNTIME_ENV_COMMAND}
-echo "$$" > "${E2E_SERVER_PID_PATH}"
+printf '"'"'{"pid":%s,"configPath":"%s","instanceRoot":"%s","port":%s}\\n'"'"' "$$" "${E2E_CONFIG}" "${E2E_INSTANCE_ROOT}" "${PORT}" > "${E2E_SERVER_PID_PATH}"
 exec env ${SERVER_ENV_PREFIX} pnpm --dir "${SERVER_DIR}" dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,

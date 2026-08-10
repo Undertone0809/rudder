@@ -366,14 +366,38 @@ async function main() {
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
   const sourceManifestSnapshots = await snapshotSourcePackageManifests();
+  const rootManifestPath = path.join(repoRoot, "package.json");
+  let rootManifest = null;
   try {
-    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot, {
+    rootManifest = await fs.readFile(rootManifestPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  try {
+    if (rootManifest !== null) {
+      const deployManifest = JSON.parse(rootManifest);
+      deployManifest.pnpm = {
+        ...deployManifest.pnpm,
+        allowNonAppliedPatches: true,
+      };
+      await writeFileBreakingLinks(rootManifestPath, `${JSON.stringify(deployManifest, null, 2)}\n`);
+    }
+    const deployTarget = path.relative(repoRoot, targetDir);
+    await run(pnpmBin, [
+      "--config.node-linker=hoisted",
+      "--filter",
+      "@rudderhq/server",
+      "--prod",
+      "deploy",
+      deployTarget,
+    ], repoRoot, {
       env: {
         PNPM_CONFIG_FORCE_LEGACY_DEPLOY: "true",
       },
     });
   } finally {
     await restoreSourcePackageManifests(sourceManifestSnapshots);
+    if (rootManifest !== null) await writeFileBreakingLinks(rootManifestPath, rootManifest);
   }
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);

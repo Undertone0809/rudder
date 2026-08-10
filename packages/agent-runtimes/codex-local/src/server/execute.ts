@@ -56,7 +56,11 @@ import {
 } from "./codex-home.js";
 import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
-import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
+import {
+  isCodexTransportDisconnectError,
+  isCodexUnknownSessionError,
+  parseCodexJsonl,
+} from "./parse.js";
 import { resolveCodexCommand } from "./resolve-command.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
@@ -806,23 +810,39 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return args;
   };
 
-  const runAttempt = async (resumeSessionId: string | null) => {
+  const transportContinuationPrompt = [
+    "The previous Codex turn was interrupted by a temporary provider transport disconnect before Rudder received a terminal response.",
+    "Continue the existing task from the current Codex session and workspace state.",
+    "Inspect the current state before acting. Do not repeat completed actions or resubmit an external side effect unless you can verify it did not complete.",
+    "When the task is complete, provide the final response.",
+  ].join("\n");
+
+  const runAttempt = async (
+    resumeSessionId: string | null,
+    attemptPrompt = prompt,
+    isTransportContinuation = false,
+  ) => {
     const startedAt = new Date();
     const args = buildArgs(resumeSessionId);
+    const attemptCommandNotes = isTransportContinuation
+      ? [...commandNotes, "Continuing the same Codex session once after a provider transport disconnect."]
+      : commandNotes;
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "codex_local",
         command,
         cwd,
-        commandNotes,
+        commandNotes: attemptCommandNotes,
         commandArgs: args.map((value, idx) => {
-          if (idx === args.length - 1 && value !== "-") return `<prompt ${prompt.length} chars>`;
+          if (idx === args.length - 1 && value !== "-") return `<prompt ${attemptPrompt.length} chars>`;
           return value;
         }),
         env: redactEnvForLogs(env),
-        prompt,
-        agentInstructionStack: prompt,
-        promptMetrics,
+        prompt: attemptPrompt,
+        agentInstructionStack: attemptPrompt,
+        promptMetrics: isTransportContinuation
+          ? { ...promptMetrics, promptChars: attemptPrompt.length }
+          : promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
@@ -830,7 +850,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           available: browserEnabled,
           preflight: browserMcpPreflight,
         }),
-        context,
+        context: isTransportContinuation
+          ? { ...context, rudderCodexTransportRecovery: true }
+          : context,
       });
     }
 
@@ -850,7 +872,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const proc = await runChildProcess(runId, executableCommand, args, {
       cwd,
       env,
-      stdin: prompt,
+      stdin: attemptPrompt,
       timeoutSec,
       graceSec,
       onSpawn,
@@ -886,6 +908,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const toResult = async (
     attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; startedAt: Date; endedAt: Date },
     clearSessionOnMissingSession = false,
+    transportRecovery?: {
+      kind: "codex_transport_disconnect";
+      outcome: "succeeded" | "failed";
+      sessionId: string;
+      initialError: string;
+    },
   ): Promise<AgentRuntimeExecutionResult> => {
     if (attempt.proc.timedOut) {
       return {
@@ -893,6 +921,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         signal: attempt.proc.signal,
         timedOut: true,
         errorMessage: `Timed out after ${timeoutSec}s`,
+        ...(transportRecovery ? { errorCode: "codex_transport_continuation_failed" } : {}),
+        ...(transportRecovery ? { resultJson: { transportRecovery } } : {}),
         clearSession: clearSessionOnMissingSession,
       };
     }
@@ -938,6 +968,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       })
       : [];
 
+    const resultJson = {
+      stdout: attempt.proc.stdout,
+      stderr: attempt.proc.stderr,
+      ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
+      ...(transportRecovery ? { transportRecovery } : {}),
+    };
     return {
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
@@ -946,6 +982,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         attempt.proc.exitCode === 0 && attempt.proc.signal === null
           ? null
           : fallbackErrorMessage,
+      ...(transportRecovery && (attempt.proc.exitCode ?? 0) !== 0
+        ? { errorCode: "codex_transport_continuation_failed" }
+        : {}),
       usage: attempt.parsed.usage,
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,
@@ -955,11 +994,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       model,
       billingType: resultBillingType,
       costUsd: estimatedCostUsd,
-      resultJson: {
-        stdout: attempt.proc.stdout,
-        stderr: attempt.proc.stderr,
-        ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
-      },
+      resultJson,
       summary: attempt.parsed.summary,
       clearSession: Boolean(clearSessionOnMissingSession && !resolvedSessionId),
     };
@@ -992,6 +1027,36 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     const initial = await runAttempt(sessionId);
+    const transportRecoverySessionId = initial.parsed.sessionId ?? sessionId;
+    if (
+      !ctx.abortSignal?.aborted
+      && transportRecoverySessionId
+      && !initial.proc.timedOut
+      && (initial.proc.exitCode ?? 0) !== 0
+      && !initial.parsed.terminalEventObserved
+      && !initial.parsed.terminalCompleted
+      && !initial.parsed.modelOutputObserved
+      && isCodexTransportDisconnectError(initial.proc.stdout, initial.rawStderr)
+    ) {
+      const initialError = initial.parsed.errorMessage?.trim() || firstMeaningfulErrorLine(initial.proc.stderr);
+      await onLog(
+        "stdout",
+        `[rudder] Codex stream disconnected before completion; continuing Codex session "${transportRecoverySessionId}" once.\n`,
+      );
+      const retry = await runAttempt(
+        transportRecoverySessionId,
+        transportContinuationPrompt,
+        true,
+      );
+      return await toResult(retry, false, {
+        kind: "codex_transport_disconnect",
+        outcome: retry.proc.exitCode === 0 && retry.proc.signal === null && !retry.proc.timedOut
+          ? "succeeded"
+          : "failed",
+        sessionId: transportRecoverySessionId,
+        initialError,
+      });
+    }
     if (
       sessionId &&
       !initial.proc.timedOut &&

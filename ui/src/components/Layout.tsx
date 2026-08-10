@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { flushSync } from "react-dom";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
@@ -390,6 +391,23 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   return relativePath === "/messenger";
 }
 
+export function shouldAutoCollapseAgentContextSidebar({
+  isMobile,
+  relativePath,
+  sidePanelOpen,
+  sidePanelContextReady,
+}: {
+  isMobile: boolean;
+  relativePath: string;
+  sidePanelOpen: boolean;
+  sidePanelContextReady: boolean;
+}): boolean {
+  return !isMobile
+    && sidePanelOpen
+    && sidePanelContextReady
+    && /^\/agents\/[^/]+(?:\/|$)/.test(relativePath);
+}
+
 function decodeSidePanelRouteSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);
@@ -603,6 +621,7 @@ function DesktopSidePanelSlot({
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const sidePanelWidthRatioRef = useRef<number | null>(null);
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const sidePanelResizeShieldRef = useRef<HTMLDivElement | null>(null);
   const previousSidePanelOpenRef = useRef(sidePanel.open);
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
@@ -698,7 +717,7 @@ function DesktopSidePanelSlot({
     sidePanelResizeCleanupRef.current?.();
   }, []);
 
-  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElement>) => {
     if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
     sidePanelResizeActiveRef.current = true;
@@ -706,7 +725,7 @@ function DesktopSidePanelSlot({
     hasRememberedWidthRef.current = true;
     widthInitializedRef.current = true;
     const startX = event.clientX;
-    const resizeHandle = event.currentTarget;
+    const resizeHandle = event.currentTarget.closest<HTMLElement>("[data-testid='side-panel-resizer']") ?? event.currentTarget;
     const resizeWorkspace = workspaceAnchorRef.current?.parentElement;
     const layoutPanelWidth = resizeWorkspace
       ?.querySelector<HTMLElement>("[data-testid='chat-side-panel']")
@@ -751,8 +770,7 @@ function DesktopSidePanelSlot({
       onMove: onPointerMove,
       onStop: () => {
         sidePanelResizeCleanupRef.current = null;
-        sidePanelResizeActiveRef.current = false;
-        setResizingSidePanel(false);
+        sidePanelResizeActiveRef.current = false; sidePanelResizeShieldRef.current?.classList.add("hidden"); setResizingSidePanel(false);
         if (!collapsedByDrag && latestWidth <= collapseWidth) {
           sidePanel.hidePanel();
           resetSidePanelWidth();
@@ -761,6 +779,7 @@ function DesktopSidePanelSlot({
     });
     stopResizing = lifecycle.stop;
     sidePanelResizeCleanupRef.current = lifecycle.isActive() ? stopResizing : null;
+    if (lifecycle.isActive()) { flushSync(() => setResizingSidePanel(true)); sidePanelResizeShieldRef.current?.classList.remove("hidden"); }
   }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && sidePanel.open;
@@ -794,32 +813,26 @@ function DesktopSidePanelSlot({
         data-testid="side-panel-resizer"
         aria-hidden={!resizerVisible}
         className={cn(
-          "motion-resize workspace-column-resizer group relative z-20 flex shrink-0 touch-none select-none items-stretch justify-center",
+          "motion-resize workspace-column-resizer group relative z-[80] flex shrink-0 touch-none select-none items-stretch justify-center",
           resizerVisible ? "cursor-col-resize opacity-100" : "pointer-events-none opacity-0",
           resizingSidePanel && "is-resizing",
         )}
         style={{ width: resizerVisible ? SIDE_PANEL_RESIZER_WIDTH : 0 }}
         onPointerDown={startSidePanelResize}
         onMouseDown={startSidePanelResize}
-        role={resizerVisible ? "separator" : undefined}
-        aria-orientation="vertical"
+        role={resizerVisible ? "separator" : undefined} aria-orientation="vertical"
         aria-label={resizerVisible ? "Resize Side Panel" : undefined}
       >
         <span
           data-testid="side-panel-resizer-hit-target"
-          className="absolute inset-y-0 left-1/2 -translate-x-1/2"
-          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
-          aria-hidden="true"
+          className="absolute inset-y-0 right-0"
+          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }} aria-hidden="true"
+          onPointerDown={(event) => { event.stopPropagation(); startSidePanelResize(event); }}
+          onMouseDown={(event) => { event.stopPropagation(); startSidePanelResize(event); }}
         />
         <div className="workspace-column-resizer-line" />
       </div>
-      {resizingSidePanel ? (
-        <div
-          data-testid="side-panel-resize-shield"
-          className="fixed inset-0 z-[200] cursor-col-resize"
-          aria-hidden="true"
-        />
-      ) : null}
+      <div ref={sidePanelResizeShieldRef} data-testid="side-panel-resize-shield" className="fixed inset-0 z-[200] hidden cursor-col-resize" aria-hidden="true" />
       <div
         key="panel"
         className={cn(
@@ -1028,6 +1041,13 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
+  const autoCollapseAgentContextSidebar = shouldAutoCollapseAgentContextSidebar({
+    isMobile,
+    relativePath: relativeBoardPath,
+    sidePanelOpen,
+    sidePanelContextReady,
+  });
+  const contextSidebarVisible = sidebarOpen && !autoCollapseAgentContextSidebar;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1643,15 +1663,16 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          aria-hidden={!sidebarOpen}
-                          inert={sidebarOpen ? undefined : true}
+                          data-auto-collapsed={autoCollapseAgentContextSidebar || undefined}
+                          aria-hidden={!contextSidebarVisible}
+                          inert={contextSidebarVisible ? undefined : true}
                           className={cn(
-                            "flex min-h-0 shrink-0 overflow-hidden",
+                            "box-border flex min-h-0 shrink-0 overflow-hidden",
                             "workspace-context-card",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
                             sidebarOpen ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
                           )}
-                          style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
+                          style={{ width: contextSidebarVisible ? contextColumnWidth : 0 }}
                         >
                           {isWorkspaceBackupsRoute ? (
                             <WorkspaceBackupFilesSidebar />
@@ -1663,14 +1684,15 @@ export function Layout() {
                         </div>
                         <div
                           data-testid="workspace-column-resizer"
-                          aria-hidden={!sidebarOpen}
+                          aria-hidden={!contextSidebarVisible}
                           className={cn(
-                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
+                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+                            !resizingColumn && "motion-resize",
+                            contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
                             resizingColumn && "is-resizing",
                           )}
                           onPointerDown={startContextColumnResize}
-                          role={sidebarOpen ? "separator" : undefined}
+                          role={contextSidebarVisible ? "separator" : undefined}
                           aria-orientation="vertical"
                           aria-label="Resize workspace columns"
                         >

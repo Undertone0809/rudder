@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Commit SHA, branch, or tag to promote as stable"
+        description: "Full commit SHA to promote as stable"
         required: true
-        default: "main"
       dry_run:
         description: "Preview stable publish without publishing"
         required: true
@@ -17,6 +16,10 @@ on:
         default: true
 permissions:
   contents: read
+
+concurrency:
+  group: release-source-${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
 
 jobs:
   preflight:
@@ -40,6 +43,16 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}
+
+      - name: Require immutable stable source SHA
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Stable source_ref must be a full 40-character commit SHA, not a moving branch or tag." >&2
+            exit 1
+          fi
 
       - name: Resolve immutable release source
         id: source
@@ -77,18 +90,146 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
+            channel="canary"
             version="$(./scripts/release.sh canary --preflight)"
           else
+            channel="stable"
             version="$(./scripts/release.sh stable --preflight)"
           fi
+          node scripts/release-compatibility-matrix.mjs \
+            --channel "$channel" \
+            --candidate-version "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release source: ${{ steps.source.outputs.sha }}"
           echo "Release version: $version"
 
+  prepublish-upgrade-gate:
+    name: Prepublish database and packaged upgrade gate (${{ matrix.os }})
+    needs: preflight
+    if: >-
+      github.event_name == 'workflow_run' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache PostgreSQL 18.4 runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/release.yml') }}
+
+      - name: Prepare PostgreSQL 18.4 runtime
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            runtime_arch="$(node -p 'process.arch')"
+            runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${runtime_arch}"
+            bin_dir="${runtime_root}/bin"
+            if [ ! -x "${bin_dir}/postgres" ]; then
+              source_url="https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+              source_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+              source_archive="${RUNNER_TEMP}/postgresql-18.4.tar.bz2"
+              source_root="${RUNNER_TEMP}/postgresql-18.4"
+              build_root="${RUNNER_TEMP}/postgresql-18.4-build"
+              curl --fail --location --output "${source_archive}" "${source_url}"
+              actual_sha256="$(shasum -a 256 "${source_archive}" | awk '{print $1}')"
+              test "${actual_sha256}" = "${source_sha256}"
+              tar -xjf "${source_archive}" -C "${RUNNER_TEMP}"
+              mkdir -p "${build_root}"
+              cd "${build_root}"
+              "${source_root}/configure" \
+                --prefix="${runtime_root}" \
+                --without-icu \
+                --without-readline \
+                --without-zlib
+              make -j2
+              make install
+            fi
+            test -f "${runtime_root}/share/postgres.bki"
+            test -f "${runtime_root}/share/postgresql.conf.sample"
+            test -d "${runtime_root}/share/timezone"
+            test -x "${bin_dir}/pg_config"
+            postgres_configure="$("${bin_dir}/pg_config" --configure)"
+            if grep -q -- '--with-system-tzdata' <<< "${postgres_configure}"; then
+              echo "Linux portable PostgreSQL must bundle its own timezone database." >&2
+              exit 1
+            fi
+          else
+            bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          fi
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+          RUDDER_POSTGRES_BIN_DIR="${bin_dir}" node -e "const {execFileSync}=require('node:child_process'); const path=require('node:path'); const exe=process.platform==='win32'?'postgres.exe':'postgres'; console.log(execFileSync(path.join(process.env.RUDDER_POSTGRES_BIN_DIR, exe), ['--version'], {encoding:'utf8'}).trim())"
+
+      - name: Verify locked migration compatibility
+        shell: bash
+        run: |
+          channel="canary"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then channel="stable"; fi
+          node scripts/release-compatibility-matrix.mjs \
+            --channel "$channel" \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Run database migration and recovery tests
+        if: runner.os != 'Windows'
+        shell: bash
+        run: pnpm --filter @rudderhq/db exec vitest run --maxWorkers=1 src/client.test.ts src/migration-manifest.test.ts
+
+      - name: Run historical schema upgrade matrix with shaped data
+        shell: bash
+        timeout-minutes: 5
+        env:
+          RUDDER_RELEASE_COMPATIBILITY_HEARTBEAT_MS: "10000"
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
+
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            pnpm exec playwright install chromium
+          fi
+
+      - name: Run packaged upgrade smoke
+        shell: bash
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:verify
+          else
+            pnpm desktop:verify
+          fi
+
   canary:
     name: Publish npm canary
-    needs: preflight
-    if: github.event_name == 'workflow_run'
+    needs:
+      - preflight
+      - prepublish-upgrade-gate
+    if: github.event_name == 'workflow_run' && needs.prepublish-upgrade-gate.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -100,8 +241,6 @@ jobs:
     environment: npm-canary
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
@@ -116,6 +255,12 @@ jobs:
       - name: Locked canary preflight
         id: locked-preflight
         run: echo "version=$(./scripts/release.sh canary --preflight)" >> "$GITHUB_OUTPUT"
+
+      - name: Locked canary migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel canary \
+            --candidate-version "${{ steps.locked-preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:
@@ -186,13 +331,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Locked stable migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel stable \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:
@@ -214,8 +363,10 @@ jobs:
 
   stable:
     name: Publish stable release
-    needs: preflight
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    needs:
+      - preflight
+      - prepublish-upgrade-gate
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder' && needs.prepublish-upgrade-gate.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -227,8 +378,6 @@ jobs:
     environment: npm-stable
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
@@ -236,6 +385,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Locked stable migration compatibility preflight
+        run: |
+          node scripts/release-compatibility-matrix.mjs \
+            --channel stable \
+            --candidate-version "${{ needs.preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:

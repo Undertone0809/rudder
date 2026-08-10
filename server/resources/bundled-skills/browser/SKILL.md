@@ -1,13 +1,20 @@
 ---
 name: browser
-description: "Control Rudder's built-in Browser through the separate run-scoped rudder-browser MCP. Use for opening or showing pages, inspecting visible or interactive state, navigating, clicking, typing, testing localhost web apps, responsive checks, screenshots, dialogs, downloads, uploads, exports, console logs, clipboard, and page assets. Also use to list tabs already open in Rudder's built-in Browser."
+description: "Control Rudder's built-in Browser through the separate run-scoped rudder-browser MCP, but invoke this skill only when the user explicitly mentions or selects Rudder's built-in Browser, Rudder Browser, or $browser. Use it then for opening or showing pages, inspecting visible or interactive state, navigating, clicking, typing, localhost testing, responsive checks, screenshots, dialogs, downloads, uploads, exports, console logs, clipboard, page assets, or listing tabs already open in Rudder's built-in Browser. Do not invoke it for generic web browsing, URL visits, web research, localhost testing, screenshots, or page interaction when the user has not explicitly chosen Rudder's built-in Browser."
 ---
 
 # Browser
 
-Use the Rudder Browser when the task depends on a rendered page or browser
-interaction. It may already share signed-in website state from the local Rudder
-Browser profile.
+Use Rudder's built-in Browser only when the user explicitly names or selects
+that surface, for example by saying `Rudder Browser`, `Rudder's built-in
+Browser`, or `$browser`, or by referring to a page or tab already open there.
+The request must identify the Rudder Browser as the intended surface; a generic
+request to browse the web, visit a URL, research a site, test localhost, take a
+screenshot, or interact with a page is not enough to invoke this skill.
+
+When explicitly selected, the Browser may share signed-in website state from
+the local Rudder Browser profile. If the user does not explicitly select it,
+do not open, inspect, or interact with Rudder's Browser on the skill's behalf.
 
 The Browser is a separate optional integration named `rudder-browser`. Do not
 look for Browser tools inside `rudder-tools`, launch another browser,

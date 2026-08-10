@@ -20,7 +20,7 @@ type Connection = {
   orgId: string;
   name: string;
   displayName: string;
-  provider: "supabase" | "linear" | "notion" | "custom";
+  provider: "supabase" | "linear" | "notion" | "github" | "custom";
   scope: "organization" | "agent";
   ownerAgentId: string | null;
   transport: "stdio" | "streamable_http";
@@ -145,6 +145,18 @@ async function installManagedMcpApiMock(
           defaultAccessMode: "provider_default",
         },
         {
+          id: "github",
+          label: "GitHub",
+          curated: true,
+          requiresOAuth: false,
+          credentialMode: "pat",
+          requiresScopeSelection: false,
+          scopeLabel: "Account",
+          transports: ["streamable_http"],
+          accessModes: ["read_only", "read_write"],
+          defaultAccessMode: "read_only",
+        },
+        {
           id: "custom",
           label: "Custom MCP",
           curated: false,
@@ -159,7 +171,7 @@ async function installManagedMcpApiMock(
       return;
     }
     if (path.endsWith("/mcp/provider-status") && method === "GET") {
-      await routeJson(route, ["supabase", "linear", "notion"].map((provider) => {
+      await routeJson(route, ["supabase", "linear", "notion", "github"].map((provider) => {
         const connection = connections.find((candidate) =>
           candidate.provider === provider && candidate.scope === "organization");
         const agentConnectionCount = connections.filter((candidate) =>
@@ -186,7 +198,9 @@ async function installManagedMcpApiMock(
                 : connection!.accessMode
               : null,
             scopeMode: connected
-              ? connection!.provider === "supabase" ? "account" : "workspace"
+              ? connection!.provider === "supabase" || connection!.provider === "github"
+                ? "account"
+                : "workspace"
               : null,
             revision: connection ? 1 : null,
             agentConnectionCount,
@@ -199,7 +213,7 @@ async function installManagedMcpApiMock(
       await routeJson(route, connections);
       return;
     }
-    const officialProvider = path.match(/\/mcp\/providers\/(supabase|linear|notion)\/connect$/)?.[1];
+    const officialProvider = path.match(/\/mcp\/providers\/(supabase|linear|notion|github)\/connect$/)?.[1];
     if (officialProvider && method === "POST") {
       if (officialProvider === heldOfficialProvider) {
         await new Promise<void>((resolve) => {
@@ -212,6 +226,7 @@ async function installManagedMcpApiMock(
         scope?: Connection["scope"];
         ownerAgentId?: string | null;
         accessMode?: Connection["accessMode"];
+        pat?: string;
       } | null;
       const scope = target?.scope ?? "organization";
       const ownerAgentId = scope === "agent" ? target?.ownerAgentId ?? null : null;
@@ -232,13 +247,22 @@ async function installManagedMcpApiMock(
               ? "read_write"
               : officialProvider === "linear"
                 ? "read_write"
-                : "provider_default"),
-          safeConfig: {},
+                : officialProvider === "github"
+                  ? "read_only"
+                  : "provider_default"),
+          safeConfig: officialProvider === "github"
+            ? { endpoint: "https://api.githubcopilot.com/mcp/", scopeMode: "account" }
+            : {},
           startupTimeoutMs: 10_000,
           toolTimeoutMs: 60_000,
           enabled: true,
           required: false,
         });
+        if (officialProvider === "github" && target?.pat) {
+          connection.status = "active";
+          connection.hasCredentials = true;
+          connection.activatedAt = new Date().toISOString();
+        }
         connections.push(connection);
         tools.set(connection.id, [{
           id: randomUUID(),
@@ -376,6 +400,11 @@ async function installManagedMcpApiMock(
     if (path.endsWith("/reconnect") && method === "POST") {
       connection.status = connection.provider === "custom" ? "draft" : "active";
       connection.enabled = true;
+      if (connection.provider === "github") {
+        connection.hasCredentials = true;
+        await routeJson(route, connection);
+        return;
+      }
       await routeJson(route, connection.provider === "custom"
         ? connection
         : {
@@ -399,7 +428,7 @@ async function installManagedMcpApiMock(
     const request = route.request();
     const path = new URL(request.url()).pathname;
     requests.push({ path, method: request.method(), body: null });
-    await routeJson(route, ["supabase", "linear", "notion"].map((provider) => {
+    await routeJson(route, ["supabase", "linear", "notion", "github"].map((provider) => {
       const organizationConnection = connections.find((candidate) =>
         candidate.provider === provider && candidate.scope === "organization");
       const agentConnection = connections.find((candidate) =>
@@ -420,7 +449,9 @@ async function installManagedMcpApiMock(
             ? organizationConnection!.provider === "notion" ? "provider_granted" : organizationConnection!.accessMode
             : null,
           scopeMode: connected
-            ? organizationConnection!.provider === "supabase" ? "account" : "workspace"
+            ? organizationConnection!.provider === "supabase" || organizationConnection!.provider === "github"
+              ? "account"
+              : "workspace"
             : null,
           revision: organizationConnection ? 1 : null,
           agentConnectionCount: connections.filter((candidate) =>
@@ -576,6 +607,68 @@ test.describe("Managed MCP integrations", () => {
       mock.releaseOfficialConnect();
     }
     await expect.poll(() => mock.connections.length).toBe(1);
+  });
+
+  test("connects GitHub with a PAT without opening OAuth", async ({ page }, testInfo) => {
+    const orgResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `GitHub MCP ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+    const agentResponse = await page.request.post(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/agents`,
+      { data: { name: "GitHub MCP Operator", role: "engineer", agentRuntimeType: "codex_local" } },
+    );
+    expect(agentResponse.ok()).toBe(true);
+    const agent = await agentResponse.json() as { id: string };
+
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.open = () => {
+        throw new Error("GitHub PAT connections must not open OAuth");
+      };
+    }, { orgId: organization.id });
+    const mock = await installManagedMcpApiMock(page, organization.id, agent.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/organization/settings`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("tab", { name: "Integrations / MCPs" }).click();
+
+    const githubCard = page.getByTestId("mcp-provider-github");
+    await githubCard.getByRole("button", { name: "Connect" }).click();
+    const targetDialog = page.getByRole("dialog", { name: "GitHub" });
+    const connectButton = targetDialog.getByRole("button", { name: "Connect" });
+    await expect(connectButton).toBeDisabled();
+    const pat = "github_pat_12345678901234567890";
+    await targetDialog.getByLabel("GitHub personal access token").fill(pat);
+    await expect(connectButton).toBeEnabled();
+    await connectButton.click();
+
+    await expect.poll(() => mock.connections.filter((connection) => connection.provider === "github").length)
+      .toBe(1);
+    await expect(githubCard).toContainText("Connected");
+    const connectRequest = mock.requests.find((request) =>
+      request.path.endsWith("/mcp/providers/github/connect")
+      && request.method === "POST");
+    expect(connectRequest?.body).toMatchObject({
+      scope: "organization",
+      ownerAgentId: null,
+      pat,
+    });
+    expect(mock.requests.some((request) => request.path.endsWith("/oauth/start"))).toBe(false);
+    expect(JSON.stringify(mock.connections.find((connection) => connection.provider === "github")))
+      .not.toContain(pat);
+
+    await page.getByRole("tab", { name: "Manage", exact: true }).click();
+    const connectionRow = page.getByTestId(`mcp-connection-${mock.connections.find((connection) =>
+      connection.provider === "github")!.id}`);
+    await expect(connectionRow).toContainText(/github/i);
+    await expect(connectionRow).toContainText("Connected");
+    await page.screenshot({
+      path: testInfo.outputPath("github-mcp-pat-connected.png"),
+      fullPage: true,
+    });
   });
 
   test("connects account-scoped Supabase and manages coarse agent access in focused dialogs", async ({ page }) => {

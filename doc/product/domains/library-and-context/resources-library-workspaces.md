@@ -64,7 +64,7 @@ related_tests:
   - tests/e2e/library-media-preview.spec.ts
   - server/src/__tests__/organization-workspace-media-routes.test.ts
   - tests/e2e/organization-workspaces-launcher.spec.ts
-  - tests/e2e/new-project-resource-popover-scroll.spec.ts
+  - tests/e2e/new-project-sources-dialog.spec.ts
   - tests/e2e/workspace-shell.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/workspace-backups.spec.ts
@@ -77,9 +77,9 @@ edit_policy: user_confirmed_only
 
 Why:
 
-- Project Context Resources define what background material is intentionally
-  eligible for a run. They are a context admission layer, not a generic file
-  dump.
+- Project Sources define what background material is intentionally eligible for
+  a run. They are a context admission layer, not a generic file dump. The
+  underlying resource and attachment models retain their compatibility names.
 
 Product model:
 
@@ -93,15 +93,21 @@ Product model:
 
 Flow:
 
-1. Operator opens the project resource picker. `Create external resource` is
-   the fixed first action above independently scrolling Library and existing
-   resource choices.
-2. Operator creates or selects a Library/external resource.
-3. Project attaches the resource with role and note.
-4. Agent run context resolves the project.
-5. Instruction context includes a Project Context Resources section with
-   bounded resource facts and references.
-6. The runtime can inspect the referenced Library file through agent-facing
+1. While creating a Project, the operator selects `Add sources` in the New
+   Project composer and sees one focused chooser with `Add from library`,
+   `Select from local`, and `Add from URL`.
+2. The selected source type replaces the chooser inside the same dialog so only
+   one decision step is visible at a time.
+3. Library sources can be reused from the organization Library. Local sources
+   show the most recently used local resources first, support multi-select, and
+   keep `Choose file` fixed outside the scrolling list. URL sources accept only
+   HTTP(S) URLs and derive a useful source name from the URL.
+4. The operator queues one or more sources and creates the Project.
+5. Project creation persists the queued resource attachments with role, note,
+   and ordering, and the Project Sources surface shows them when reopened.
+6. Agent run context resolves the project and includes bounded resource facts
+   and references in instruction context.
+7. The runtime can inspect the referenced Library file through agent-facing
    APIs/CLI when needed.
 
 Invariants:
@@ -110,19 +116,25 @@ Invariants:
   boundary.
 - Organization resources must not be injected into unrelated runs just because
   they exist.
-- The project resource picker must keep its external-resource creation action
-  outside the scrolling choice list so long catalogs do not hide or move the
-  primary action.
-- A Chat Work manifest Reference is not a Project Context Resource. It becomes
+- The New Project composer's `Add sources` flow must use progressive disclosure
+  rather than presenting all Library, local, and URL controls at once. The
+  existing Project Sources attachment editor is a separate post-creation flow.
+- The Local source step must keep `Choose file` outside the scrolling recent
+  source list so dense histories do not hide or move the primary action.
+- URL sources must use an `http://` or `https://` locator.
+- A Chat Work manifest Reference is not a Project Source. It becomes
   eligible run context only after an operator explicitly creates/selects the
   resource and attaches it to the Project through this contract's flow.
 
 Evidence:
 
-- ProjectResourcesPanel shows attachment role/order/note.
-- NewProjectDialog tests verify the external-resource action is the popover's
-  first child, remains outside the scroll region, and stays usable after the
-  resource list scrolls to the end.
+- ProjectResourcesPanel shows persisted Project Sources with attachment
+  role/order/note.
+- NewProjectDialog unit tests cover the focused chooser, isolated Library/local/
+  URL steps, local multi-select, and URL validation.
+- `tests/e2e/new-project-sources-dialog.spec.ts` verifies dense recent-local
+  selection, fixed file selection, project creation, persisted source readback,
+  and HTTP(S) URL handling through the real UI and API.
 - Agent run context tests assert resource prompt content.
 
 ## LIBRARY.FILES.001

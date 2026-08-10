@@ -216,23 +216,35 @@ async function downloadArchive(url, targetPath) {
     return;
   }
 
-  const abortController = new AbortController();
-  const timeout = Number.isFinite(downloadTimeoutMs) && downloadTimeoutMs > 0
-    ? setTimeout(() => abortController.abort(), downloadTimeoutMs)
-    : null;
   let response;
-  try {
-    response = await fetch(url, { signal: abortController.signal });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error(`timed out downloading ${url} after ${downloadTimeoutMs}ms`);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const abortController = new AbortController();
+    const timeout = Number.isFinite(downloadTimeoutMs) && downloadTimeoutMs > 0
+      ? setTimeout(() => abortController.abort(), downloadTimeoutMs)
+      : null;
+    try {
+      response = await fetch(url, {
+        signal: abortController.signal,
+        headers: { "user-agent": "Rudder-PostgreSQL-Runtime/1.0" },
+      });
+    } catch (error) {
+      if (timeout) clearTimeout(timeout);
+      if (attempt === 3) {
+        if (error?.name === "AbortError") {
+          throw new Error(`timed out downloading ${url} after ${downloadTimeoutMs}ms`);
+        }
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
+      continue;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
-    throw error;
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-  if (!response.ok) {
-    throw new Error(`failed to download ${url}: ${response.status} ${response.statusText}`);
+    if (response.ok) break;
+    if (![403, 429, 500, 502, 503, 504].includes(response.status) || attempt === 3) {
+      throw new Error(`failed to download ${url}: ${response.status} ${response.statusText}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
   }
   await writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
 }

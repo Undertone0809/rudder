@@ -633,9 +633,9 @@ export function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <div className={cn("space-y-6", isMobile && showConfigActionBar && "pb-24")}>
+      <div className={cn("agent-detail-container space-y-6", isMobile && showConfigActionBar && "pb-24")}>
       {/* Header */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="agent-detail-header flex items-center justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0">
           <AgentIconPicker
             value={agent.icon}
@@ -663,14 +663,16 @@ export function AgentDetail() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <div className="agent-detail-actions flex shrink-0 items-center gap-1 sm:gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={() => openNewIssue({ assigneeAgentId: agent.id })}
+            aria-label="Assign Task"
+            title="Assign Task"
           >
             <Plus className="h-3.5 w-3.5 sm:mr-1" />
-            <span className="hidden sm:inline">Assign Task</span>
+            <span className="agent-detail-action-label hidden sm:inline">Assign Task</span>
           </Button>
           <Button variant="outline" size="sm" asChild>
             <Link
@@ -678,9 +680,11 @@ export function AgentDetail() {
                 pathname: "/messenger/chat",
                 search: `?agentId=${encodeURIComponent(agent.id)}`,
               }}
+              aria-label="Chat"
+              title="Chat"
             >
               <MessageSquare className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Chat</span>
+              <span className="agent-detail-action-label hidden sm:inline">Chat</span>
             </Link>
           </Button>
           <RunButton
@@ -699,6 +703,7 @@ export function AgentDetail() {
             <Link
               to={agentRunPath(`/agents/${canonicalAgentRef}/runs/${mobileLiveRun.id}`)}
               className="sm:hidden flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 transition-colors no-underline"
+              aria-label="View live run"
             >
               <span className="relative flex h-2 w-2">
                 <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
@@ -755,7 +760,8 @@ export function AgentDetail() {
         value={activeView}
         onValueChange={handleDetailTabChange}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="agent-detail-tabs-row flex min-w-0 items-start justify-between gap-4">
+          <div className="scrollbar-auto-hide min-w-0 max-w-full overflow-x-auto pb-1">
           <PageTabBar
             items={[
               { value: "dashboard", label: "Dashboard" },
@@ -772,8 +778,9 @@ export function AgentDetail() {
             value={activeView}
             onValueChange={handleDetailTabChange}
           />
+          </div>
           {activeView === "dashboard" ? (
-            <div className="hidden lg:block shrink-0">
+            <div className="agent-dashboard-date-control-header shrink-0">
               <DashboardDateRangeControl
                 preset={datePreset}
                 customFrom={customFrom}
@@ -870,7 +877,7 @@ export function AgentDetail() {
           showDashboardFilters={datePreset !== "custom" || customReady}
           isOneDay={datePreset === "1d"}
           dateFilterControl={(
-            <div className="lg:hidden">
+            <div className="agent-dashboard-date-control-inline">
               <DashboardDateRangeControl
                 preset={datePreset}
                 customFrom={customFrom}

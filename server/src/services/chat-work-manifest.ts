@@ -34,7 +34,12 @@ import {
   type ChatWorkManifestSubagentSummary,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import {
+  compareChatGenerationSelection,
+  listDetachedChatTranscripts,
+  type ChatGenerationSelectionCandidate,
+} from "./chat-transcript-persistence.js";
 
 type ManifestCandidate = {
   orgId: string;
@@ -150,6 +155,10 @@ export function chatWorkManifestService(db: Db) {
     }
 
     const messageIds = messages.map((message) => message.id);
+    const detachedByMessageId = await listDetachedChatTranscripts(db, messages.map((message) => ({
+      id: message.id,
+      orgId: conversation.orgId,
+    })));
     const eventRows = await db
       .select({
         messageId: chatGenerationEvents.assistantMessageId,
@@ -159,6 +168,8 @@ export function chatWorkManifestService(db: Db) {
         eventRunId: chatGenerationEvents.runId,
         generationStatus: chatGenerations.status,
         generationStartedAt: chatGenerations.startedAt,
+        generationCreatedAt: chatGenerations.createdAt,
+        eventRecordedAt: chatGenerationEvents.recordedAt,
       })
       .from(chatGenerationEvents)
       .innerJoin(chatGenerations, eq(chatGenerationEvents.generationId, chatGenerations.id))
@@ -174,36 +185,53 @@ export function chatWorkManifestService(db: Db) {
         ),
       ))
       .orderBy(
-        asc(chatGenerations.startedAt),
+        desc(chatGenerations.createdAt),
+        desc(chatGenerationEvents.recordedAt),
+        desc(chatGenerationEvents.generationSeq),
+        desc(chatGenerationEvents.generationId),
         asc(chatGenerationEvents.generationSeq),
       );
 
     const nativeByMessageId = new Map<string, {
       generationId: string;
+      generationCreatedAt: Date;
       generationStartedAt: Date;
       generationStatus: string;
       runId: string | null;
-      entries: ChatStreamTranscriptEntry[];
+      entries: Array<{ generationSeq: number; entry: ChatStreamTranscriptEntry }>;
     }>();
+    const nativeSelectionByMessageId = new Map<string, ChatGenerationSelectionCandidate>();
     for (const row of eventRows) {
       if (!row.messageId) continue;
       const entry = row.payload.entry;
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
       const current = nativeByMessageId.get(row.messageId);
-      const belongsToNewerGeneration = !current
-        || row.generationStartedAt.getTime() > current.generationStartedAt.getTime();
-      if (belongsToNewerGeneration) {
+      const candidate = {
+        generationId: row.generationId,
+        generationCreatedAt: row.generationCreatedAt,
+        eventRecordedAt: row.eventRecordedAt,
+        generationSeq: row.generationSeq,
+      } satisfies ChatGenerationSelectionCandidate;
+      const currentSelection = nativeSelectionByMessageId.get(row.messageId);
+      const sameGeneration = current?.generationId === row.generationId;
+      if (!current || (!sameGeneration && currentSelection !== undefined
+        && compareChatGenerationSelection(candidate, currentSelection) > 0)) {
+        nativeSelectionByMessageId.set(row.messageId, candidate);
         nativeByMessageId.set(row.messageId, {
           generationId: row.generationId,
+          generationCreatedAt: row.generationCreatedAt,
           generationStartedAt: row.generationStartedAt,
           generationStatus: row.generationStatus,
           runId: row.eventRunId,
-          entries: [entry as ChatStreamTranscriptEntry],
+          entries: [{ generationSeq: row.generationSeq, entry: entry as ChatStreamTranscriptEntry }],
         });
         continue;
       }
       if (current.generationId !== row.generationId) continue;
-      current.entries.push(entry as ChatStreamTranscriptEntry);
+      current.entries.push({ generationSeq: row.generationSeq, entry: entry as ChatStreamTranscriptEntry });
+      if (!currentSelection || compareChatGenerationSelection(candidate, currentSelection) > 0) {
+        nativeSelectionByMessageId.set(row.messageId, candidate);
+      }
       current.runId = row.eventRunId ?? current.runId;
       current.generationStatus = row.generationStatus;
     }
@@ -211,8 +239,14 @@ export function chatWorkManifestService(db: Db) {
     const summaries: ChatWorkManifestSubagentSummary[] = [];
     for (const message of messages) {
       const native = nativeByMessageId.get(message.id);
-      const entries = native?.entries?.length
-        ? native.entries
+      const nativeEntries = native?.entries
+        ?.slice()
+        .sort((left, right) => left.generationSeq - right.generationSeq)
+        .map((item) => item.entry);
+      const entries = nativeEntries?.length
+        ? nativeEntries
+        : detachedByMessageId.get(message.id)?.length
+          ? detachedByMessageId.get(message.id)!
         : legacyTranscriptFromPayload(message.structuredPayload);
       if (entries.length === 0) continue;
       const sourceActive = native

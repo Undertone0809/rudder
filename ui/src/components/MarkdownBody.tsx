@@ -437,10 +437,11 @@ function MarkdownIssueMentionLink({
       data-mention-kind="issue"
       data-mention-comment={resolvedMention.commentId ? "true" : undefined}
       data-mention-status={resolvedMention.status ?? undefined}
+      title={label}
       {...sourceAttributes}
       onClick={onClick}
     >
-      {label}
+      <span className="rudder-inline-token-label">{label}</span>
     </a>
   );
 
@@ -1162,13 +1163,14 @@ export function MarkdownBody({
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
+            title={displayMentionLabel}
             style={mentionChipInlineStyle(mention)}
             {...sourceAttributesForNode(node)}
             onClick={(event) => {
               handleMarkdownLinkClick(event, targetHref, displayMentionLabel);
             }}
           >
-            {displayMentionLabel}
+            <span className="rudder-inline-token-label">{displayMentionLabel}</span>
           </a>
         );
         if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
@@ -1238,7 +1240,7 @@ export function MarkdownBody({
             href={href}
             target="_blank"
             rel="noreferrer noopener"
-            title={isBareUrlLink ? href : undefined}
+            title={linkLabel.trim() || (isBareUrlLink ? href : undefined)}
             className="rudder-website-link"
             {...sourceAttributesForNode(node)}
             onClick={(event) => {
@@ -1247,7 +1249,7 @@ export function MarkdownBody({
             }}
           >
             <WebsiteLinkIcon url={websiteUrl} />
-            <span className="rudder-website-link-label">{linkChildren}</span>
+            <span className="rudder-website-link-label rudder-inline-token-label">{linkChildren}</span>
           </a>
         );
       }
@@ -1256,6 +1258,7 @@ export function MarkdownBody({
           <a
             href={href}
             className="rudder-local-file-link"
+            title={linkLabel || undefined}
             {...sourceAttributesForNode(node)}
             onClick={(event) => {
               if (!href) return;
@@ -1263,7 +1266,7 @@ export function MarkdownBody({
             }}
           >
             <LocalFileLinkIcon filePath={localFilePath} />
-            {linkChildren}
+            <span className="rudder-inline-token-label">{linkChildren}</span>
           </a>
         );
       }

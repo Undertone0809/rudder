@@ -94,6 +94,7 @@ export {
   MCP_OAUTH_SESSION_STATUSES,
   MCP_OAUTH_SESSION_TTL_MS,
   MCP_PROVIDER_CATALOG,
+  MCP_PROVIDER_CREDENTIAL_MODES,
   MCP_PROVIDER_ORGANIZATION_STATES,
   MCP_PROVIDER_SCOPE_MODES,
   MCP_TOOL_CAPABILITY_CLASSES,
@@ -103,6 +104,7 @@ export {
   type McpConnectionTransport,
   type McpOAuthGrantStatus,
   type McpOAuthSessionStatus,
+  type McpProviderCredentialMode,
   type McpProviderOrganizationState,
   type McpProviderScopeMode,
   type McpToolCapabilityClass
@@ -142,6 +144,7 @@ export type {
   McpDiscoveredTool,
   McpExternalScopeOption,
   McpExternalScopeSelectionResponse,
+  McpGitHubSafeConfig,
   McpLegacyManualSafeConfig,
   McpOAuthCallbackResult,
   McpOAuthGrantSummary,
@@ -180,13 +183,16 @@ export {
   mcpCuratedSafeConfigSchema,
   mcpDiscoveredToolSchema,
   mcpExternalScopeOptionSchema,
+  mcpGitHubPatSchema,
+  mcpGitHubSafeConfigSchema,
+  mcpGitHubSecretsMutationSchema,
   mcpLegacyManualSafeConfigSchema,
   mcpOAuthCallbackSchema,
   mcpOAuthGrantStatusSchema,
   mcpOAuthGrantSummarySchema,
   mcpOAuthStartResponseSchema,
   mcpOAuthStartSchema, mcpProviderAvailabilitySchema, mcpProviderCatalogEntrySchema,
-  mcpProviderCatalogSchema, mcpProviderMaxAccessSchema,
+  mcpProviderCatalogSchema, mcpProviderCredentialModeSchema, mcpProviderMaxAccessSchema,
   mcpProviderOrganizationStateSchema,
   mcpProviderScopeModeSchema,
   mcpScopeSelectionSchema,
@@ -313,6 +319,17 @@ export {
   type LocalOfflineGrantInput,
   type LocalServerExchangeInput
 } from "./validators/local-account-auth.js";
+
+export {
+  AGENT_ISSUE_CREATION_REQUEST_STATUSES,
+  type AgentIssueCreationRequestStatus
+} from "./constants.js";
+
+export {
+  agentIssueCreationRequestStatusSchema,
+  createAgentIssueCreationRequestSchema,
+  type CreateAgentIssueCreationRequest
+} from "./validators/agent-issue-creation.js";
 
 export {
   DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,

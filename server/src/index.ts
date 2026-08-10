@@ -1,6 +1,7 @@
 /// <reference path="./types/express.d.ts" />
 import {
   applyPendingMigrations,
+  assertPostMigrationInvariants,
   authUsers,
   cleanupStaleSysvSharedMemorySegments,
   createDb,
@@ -13,11 +14,16 @@ import {
   instanceUserRoles,
   invites,
   isEmbeddedPostgresSharedMemoryError,
+  listLegacyColumnRenames,
   normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
+  readPostmasterPidFile,
   reconcilePendingMigrationHistory,
+  removeStalePostmasterPidFile,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
+  runDatabaseBackup,
+  withMigrationAdvisoryLock,
   type Db,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
@@ -30,7 +36,7 @@ import {
 import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -433,13 +439,96 @@ async function startServerRuntime(
   
   type EnsureMigrationsOptions = {
     autoApply?: boolean;
+    recoveryPointDir?: string;
+    recoveryPointRetentionDays?: number;
   };
+
+  async function createMigrationRecoveryPoint(
+    connectionString: string,
+    label: string,
+    opts: EnsureMigrationsOptions,
+  ): Promise<string> {
+    const backupDir = opts.recoveryPointDir;
+    if (!backupDir) {
+      throw new Error(
+        `${label} requires a migration recovery point, but no database backup directory is configured. ` +
+          "Refusing to migrate without a restorable pre-migration backup.",
+      );
+    }
+
+    try {
+      const result = await runDatabaseBackup({
+        connectionString,
+        backupDir,
+        retentionDays: Math.max(1, opts.recoveryPointRetentionDays ?? 30),
+        filenamePrefix: "rudder-pre-migration",
+        includeMigrationJournal: true,
+      });
+      logger.info(
+        {
+          label,
+          backupFile: result.backupFile,
+          sizeBytes: result.sizeBytes,
+          prunedCount: result.prunedCount,
+        },
+        `${label} migration recovery point created before schema upgrade`,
+      );
+      return result.backupFile;
+    } catch (error) {
+      throw new Error(
+        `${label} migration recovery point failed; refusing to apply schema changes: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  async function applyMigrationsWithRecoveryPoint(
+    connectionString: string,
+    label: string,
+    pendingMigrations: string[],
+    opts: EnsureMigrationsOptions,
+    requiresRecoveryPoint = true,
+    existingRecoveryPoint?: string | null,
+  ): Promise<void> {
+    const recoveryPoint = existingRecoveryPoint ?? (requiresRecoveryPoint
+      ? await createMigrationRecoveryPoint(connectionString, label, opts)
+      : null);
+    logger.info(
+      { label, pendingMigrations, ...(recoveryPoint ? { recoveryPoint } : {}) },
+      `Applying ${pendingMigrations.length} pending migrations for ${label}`,
+    );
+    await applyPendingMigrations(connectionString, { advisoryLockHeld: true });
+    try {
+      await assertPostMigrationInvariants(connectionString);
+    } catch (error) {
+      throw new Error(
+        `${label} migration completed without passing post-migration invariants. ` +
+          `${recoveryPoint ? `Recovery point: ${recoveryPoint}. ` : ""}` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
   
-  async function ensureMigrations(
+  async function ensureMigrationsUnlocked(
     connectionString: string,
     label: string,
     opts?: EnsureMigrationsOptions,
   ): Promise<MigrationSummary> {
+    // Drift detection is read-only. The recovery point must be captured before
+    // normalization, journal reconciliation, or SQL migrations can mutate the
+    // schema or migration history.
+    const legacyColumnRenames = await listLegacyColumnRenames(connectionString);
+    const initialState = await inspectMigrations(connectionString);
+    let recoveryPoint: string | null = null;
+    if (
+      initialState.tableCount > 0
+      && (legacyColumnRenames.length > 0 || initialState.status === "needsMigrations")
+    ) {
+      recoveryPoint = await createMigrationRecoveryPoint(connectionString, label, opts ?? {});
+    }
+
     const normalizedLegacyColumns = await normalizeLegacyColumnNames(connectionString);
     if (normalizedLegacyColumns.length > 0) {
       logger.warn(
@@ -458,10 +547,16 @@ async function startServerRuntime(
           `${label} had drifted migration history; repaired migration journal entries from existing schema state.`,
         );
         state = await inspectMigrations(connectionString);
-        if (state.status === "upToDate") return "already applied";
+        if (state.status === "upToDate") {
+          await assertPostMigrationInvariants(connectionString);
+          return "already applied";
+        }
       }
     }
-    if (state.status === "upToDate") return "already applied";
+    if (state.status === "upToDate") {
+      await assertPostMigrationInvariants(connectionString);
+      return "already applied";
+    }
     if (state.status === "needsMigrations" && state.reason === "no-migration-journal-non-empty-db") {
       logger.warn(
         { tableCount: state.tableCount },
@@ -475,8 +570,7 @@ async function startServerRuntime(
         );
       }
   
-      logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
-      await applyPendingMigrations(connectionString);
+      await applyMigrationsWithRecoveryPoint(connectionString, label, state.pendingMigrations, opts ?? {}, true);
       return "applied (pending migrations)";
     }
   
@@ -488,9 +582,26 @@ async function startServerRuntime(
       );
     }
   
-    logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
-    await applyPendingMigrations(connectionString);
+    await applyMigrationsWithRecoveryPoint(
+      connectionString,
+      label,
+      state.pendingMigrations,
+      opts ?? {},
+      state.tableCount > 0,
+      recoveryPoint,
+    );
     return "applied (pending migrations)";
+  }
+
+  async function ensureMigrations(
+    connectionString: string,
+    label: string,
+    opts?: EnsureMigrationsOptions,
+  ): Promise<MigrationSummary> {
+    return withMigrationAdvisoryLock(
+      connectionString,
+      () => ensureMigrationsUnlocked(connectionString, label, opts),
+    );
   }
   
   function isLoopbackHost(host: string): boolean {
@@ -572,7 +683,10 @@ async function startServerRuntime(
     | { mode: "embedded-postgres"; provider: string; dataDir: string; port: number; postgresBinDir?: string };
   options.onEvent?.({ stage: "database", message: "Preparing database" });
   if (config.databaseUrl) {
-    migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL");
+    migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL", {
+      recoveryPointDir: config.databaseBackupDir,
+      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
+    });
   
     db = createDb(config.databaseUrl);
     logger.info("Using external PostgreSQL via DATABASE_URL/config");
@@ -661,23 +775,12 @@ async function startServerRuntime(
     const clusterVersionFile = resolve(dataDir, "PG_VERSION");
     const clusterAlreadyInitialized = existsSync(clusterVersionFile);
     const postmasterPidFile = resolve(dataDir, "postmaster.pid");
-    const isPidRunning = (pid: number): boolean => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-  
     const getRunningPid = (): number | null => {
-      if (!existsSync(postmasterPidFile)) return null;
+      const postmaster = readPostmasterPidFile(postmasterPidFile);
+      if (!postmaster?.pid) return null;
       try {
-        const pidLine = readFileSync(postmasterPidFile, "utf8").split("\n")[0]?.trim();
-        const pid = Number(pidLine);
-        if (!Number.isInteger(pid) || pid <= 0) return null;
-        if (!isPidRunning(pid)) return null;
-        return pid;
+        process.kill(postmaster.pid, 0);
+        return postmaster.pid;
       } catch {
         return null;
       }
@@ -719,9 +822,19 @@ async function startServerRuntime(
           logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
         }
 
-        if (existsSync(postmasterPidFile)) {
-          logger.warn("Removing stale embedded PostgreSQL lock file");
-          rmSync(postmasterPidFile, { force: true });
+        const removedPostmaster = removeStalePostmasterPidFile({
+          postmasterPidFile,
+          expectedDataDir: dataDir,
+        });
+        if (removedPostmaster) {
+          logger.warn(
+            {
+              stalePid: removedPostmaster.pid,
+              stalePort: removedPostmaster.port,
+              dataDir,
+            },
+            "Removed stale embedded PostgreSQL pid file before startup",
+          );
         }
         try {
           await embeddedPostgres.start();
@@ -763,6 +876,8 @@ async function startServerRuntime(
     }
     migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL", {
       autoApply: shouldAutoApplyFirstRunMigrations,
+      recoveryPointDir: config.databaseBackupDir,
+      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
     });
   
     db = createDb(embeddedConnectionString);

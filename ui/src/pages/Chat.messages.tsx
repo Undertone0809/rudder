@@ -1437,10 +1437,11 @@ function ChatUserIssueMentionLink({
       data-mention-kind="issue"
       data-mention-comment={resolvedMention.commentId ? "true" : undefined}
       data-mention-status={resolvedMention.status ?? undefined}
+      title={label}
       style={mentionChipInlineStyle(resolvedMention)}
       onClick={onClick}
     >
-      {label}
+      <span className="rudder-inline-token-label">{label}</span>
     </Link>
   );
 
@@ -1510,7 +1511,7 @@ export function ChatUserPlainTextBody({
                 onClick={(event) => handlePlainTextLinkClick(event, href, part.label)}
               >
                 <WebsiteLinkIcon url={websiteUrl} />
-                <span className="rudder-website-link-label">{part.label}</span>
+                <span className="rudder-website-link-label rudder-inline-token-label">{part.label}</span>
               </a>
             );
           }
@@ -1571,10 +1572,11 @@ export function ChatUserPlainTextBody({
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
+            title={mentionLabel}
             style={mentionChipInlineStyle(mention)}
             onClick={(event) => handlePlainTextLinkClick(event, targetHref, mentionLabel)}
           >
-            {mentionLabel}
+            <span className="rudder-inline-token-label">{mentionLabel}</span>
           </Link>
         );
         if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
@@ -2576,7 +2578,7 @@ export function ChatMessageItem({
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
-            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground md:ml-6">
               <TextDots text="Thinking" className="text-muted-foreground" />
             </div>
           ) : (
@@ -2588,7 +2590,7 @@ export function ChatMessageItem({
                 "data-annotation-surface": "assistant_body",
                 "data-message-id": message.id,
               } : {})}
-              className="relative"
+              className="relative md:ml-6"
             >
               <ChatLongMessageBody
                 body={message.body}
@@ -3012,7 +3014,7 @@ export function StreamTranscriptItem({
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
     [entries, steerMessages],
   );
-  const streamingActive = state === "streaming" || state === "finalizing";
+  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
   const [internalProcessOpen, setInternalProcessOpen] = useState(
     () => streamingActive || defaultOpen || hasSteerInterjection,
@@ -3137,7 +3139,7 @@ export function AssistantDraftItem({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
-  const streamingActive = state === "streaming" || state === "finalizing";
+  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
 
   if (!body.trim() && !streamingActive) {

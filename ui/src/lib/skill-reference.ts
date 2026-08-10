@@ -183,6 +183,8 @@ export function applySkillTokenDecoration(element: HTMLElement, href?: string | 
   element.setAttribute("contenteditable", "false");
   element.setAttribute("tabindex", "-1");
   element.setAttribute("draggable", "false");
+  const label = element.textContent?.trim() ?? "";
+  if (label) element.setAttribute("title", label);
   element.classList.add("rudder-skill-token");
   const style = skillTokenIconInlineStyle();
   if (style["--rudder-skill-icon-mask"]) {
@@ -191,11 +193,13 @@ export function applySkillTokenDecoration(element: HTMLElement, href?: string | 
 }
 
 export function clearSkillTokenDecoration(element: HTMLElement) {
+  const wasSkillToken = element.classList.contains("rudder-skill-token") || element.dataset.skillToken === "true";
   delete element.dataset.skillToken;
   delete element.dataset.skillHref;
   element.removeAttribute("contenteditable");
   element.removeAttribute("tabindex");
   element.removeAttribute("draggable");
+  if (wasSkillToken) element.removeAttribute("title");
   element.classList.remove("rudder-skill-token");
   element.style.removeProperty("--rudder-skill-icon-mask");
 }

@@ -148,6 +148,7 @@ export type {
   McpDiscoveredTool,
   McpExternalScopeOption,
   McpExternalScopeSelectionResponse,
+  McpGitHubSafeConfig,
   McpLegacyManualSafeConfig,
   McpOAuthCallbackResult,
   McpOAuthGrantSummary,

@@ -5,11 +5,24 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { createMigrationManifest, type MigrationManifest } from "./migration-manifest.js";
 import * as schema from "./schema/index.js";
 
 const MIGRATIONS_FOLDER = fileURLToPath(new URL("./migrations", import.meta.url));
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 const MIGRATIONS_JOURNAL_JSON = fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url));
+export const MIGRATION_ADVISORY_LOCK_NAME = "rudder:database-migrations";
+// These hashes belong to migrations that were intentionally superseded by a
+// consolidated migration but remain in existing journals. They are accepted
+// as historical evidence; any other unknown journal hash fails closed.
+const KNOWN_LEGACY_MIGRATION_HISTORY_IDENTIFIERS = new Set([
+  "e21cac193575f50627e67946ef9afa44ddd17af24627c8799c5024ce534f89e3",
+  "fdf8b69236a60593c52be53ebff89d7f581ddbdbde0227081b11c53b1f6d6578",
+  "fba251275287250b3f05a5533e00d3941a3b1c1a526d0073e5d636a2dd868f80",
+  "a1fc0446af5ec1640890bb9cf36208eab8dce6687c233029bd54e179613e1af7",
+  "legacy-0100-hash",
+  "legacy-conflicting-0100-hash",
+]);
 const LEGACY_COLUMN_RENAMES = [
   { tableName: "agents", from: "adapter_type", to: "agent_runtime_type" },
   { tableName: "agents", from: "adapter_config", to: "agent_runtime_config" },
@@ -66,6 +79,34 @@ export type MigrationState =
       pendingMigrations: string[];
       reason: "no-migration-journal-empty-db" | "no-migration-journal-non-empty-db" | "pending-migrations" | "missing-core-schema";
     };
+
+export type PostMigrationInvariantIssue = Readonly<{
+  code:
+    | "migration_manifest_invalid"
+    | "migration_state_not_current"
+    | "migration_journal_missing"
+    | "migration_journal_invalid"
+    | "organizations_table_missing"
+    | "organizations_primary_key_invalid"
+    | "foreign_keys_missing"
+    | "foreign_keys_not_validated"
+    | "indexes_invalid";
+  message: string;
+}>;
+
+export type PostMigrationInvariantReport = Readonly<{
+  valid: boolean;
+  manifestFingerprint: string | null;
+  expectedMigrationCount: number;
+  migrationJournalSchema: string | null;
+  migrationJournalEntryCount: number;
+  organizationsTablePresent: boolean;
+  organizationsPrimaryKeyValid: boolean;
+  foreignKeyCount: number;
+  unvalidatedForeignKeys: readonly string[];
+  invalidIndexes: readonly string[];
+  issues: readonly PostMigrationInvariantIssue[];
+}>;
 
 export function createDb(url: string) {
   const sql = postgres(url);
@@ -442,19 +483,21 @@ async function tableExists(
 }
 
 async function columnExists(
-  sql: ReturnType<typeof postgres>,
+  sql: SqlExecutor,
   tableName: string,
   columnName: string,
 ): Promise<boolean> {
-  const rows = await sql<{ exists: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = ${tableName}
-        AND column_name = ${columnName}
-    ) AS exists
-  `;
+  const rows = await sql.unsafe<{ exists: boolean }[]>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ${quoteLiteral(tableName)}
+          AND column_name = ${quoteLiteral(columnName)}
+      ) AS exists
+    `,
+  );
   return rows[0]?.exists ?? false;
 }
 
@@ -519,23 +562,42 @@ async function constraintExists(
   return rows[0]?.exists ?? false;
 }
 
+async function findLegacyColumnRenames(sql: SqlExecutor): Promise<typeof LEGACY_COLUMN_RENAMES[number][]> {
+  const pending: typeof LEGACY_COLUMN_RENAMES[number][] = [];
+  for (const rename of LEGACY_COLUMN_RENAMES) {
+    const fromExists = await columnExists(sql, rename.tableName, rename.from);
+    if (!fromExists) continue;
+
+    const toExists = await columnExists(sql, rename.tableName, rename.to);
+    if (!toExists) pending.push(rename);
+  }
+  return pending;
+}
+
+export async function listLegacyColumnRenames(url: string): Promise<string[]> {
+  const sql = createUtilitySql(url);
+  try {
+    const pending = await findLegacyColumnRenames(sql);
+    return pending.map(({ tableName, from, to }) => `${tableName}.${from}->${to}`);
+  } finally {
+    await sql.end();
+  }
+}
+
 export async function normalizeLegacyColumnNames(url: string): Promise<string[]> {
   const sql = createUtilitySql(url);
   const repaired: string[] = [];
 
   try {
-    for (const rename of LEGACY_COLUMN_RENAMES) {
-      const fromExists = await columnExists(sql, rename.tableName, rename.from);
-      if (!fromExists) continue;
-
-      const toExists = await columnExists(sql, rename.tableName, rename.to);
-      if (toExists) continue;
-
-      await sql.unsafe(
-        `ALTER TABLE ${quoteIdentifier(rename.tableName)} RENAME COLUMN ${quoteIdentifier(rename.from)} TO ${quoteIdentifier(rename.to)}`,
-      );
-      repaired.push(`${rename.tableName}.${rename.from}->${rename.to}`);
-    }
+    await sql.begin(async (transaction) => {
+      const pending = await findLegacyColumnRenames(transaction);
+      for (const rename of pending) {
+        await transaction.unsafe(
+          `ALTER TABLE ${quoteIdentifier(rename.tableName)} RENAME COLUMN ${quoteIdentifier(rename.from)} TO ${quoteIdentifier(rename.to)}`,
+        );
+        repaired.push(`${rename.tableName}.${rename.from}->${rename.to}`);
+      }
+    });
   } finally {
     await sql.end();
   }
@@ -880,7 +942,268 @@ export async function inspectMigrations(url: string): Promise<MigrationState> {
   }
 }
 
-export async function applyPendingMigrations(url: string): Promise<void> {
+export async function validatePostMigrationInvariants(
+  url: string,
+): Promise<PostMigrationInvariantReport> {
+  const issues: PostMigrationInvariantIssue[] = [];
+  let manifestFingerprint: string | null = null;
+  let expectedMigrationCount = 0;
+  let expectedManifest: MigrationManifest | null = null;
+
+  try {
+    const manifest = await createMigrationManifest();
+    expectedManifest = manifest;
+    manifestFingerprint = manifest.fingerprint;
+    expectedMigrationCount = manifest.entries.length;
+  } catch (error) {
+    issues.push({
+      code: "migration_manifest_invalid",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const state = await inspectMigrations(url);
+  if (state.status !== "upToDate") {
+    issues.push({
+      code: "migration_state_not_current",
+      message: `Database migrations are not current (${state.reason}: ${state.pendingMigrations.join(", ")})`,
+    });
+  }
+
+  const sql = createUtilitySql(url);
+  let migrationJournalSchema: string | null = null;
+  let migrationJournalEntryCount = 0;
+  let organizationsTablePresent = false;
+  let organizationsPrimaryKeyValid = false;
+  let foreignKeyCount = 0;
+  let unvalidatedForeignKeys: string[] = [];
+  let invalidIndexes: string[] = [];
+
+  try {
+    migrationJournalSchema = await discoverMigrationTableSchema(sql);
+    if (!migrationJournalSchema) {
+      issues.push({
+        code: "migration_journal_missing",
+        message: "Migration journal table is missing",
+      });
+    } else {
+      const qualifiedTable = `${quoteIdentifier(migrationJournalSchema)}.${quoteIdentifier(DRIZZLE_MIGRATIONS_TABLE)}`;
+      const columnNames = await getMigrationTableColumnNames(sql, migrationJournalSchema);
+      const journalRows = await sql.unsafe<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM ${qualifiedTable}`,
+      );
+      migrationJournalEntryCount = Number(journalRows[0]?.count ?? 0);
+      if (
+        !columnNames.has("created_at")
+        || (!columnNames.has("hash") && !columnNames.has("name"))
+      ) {
+        issues.push({
+          code: "migration_journal_invalid",
+          message: "Migration journal must contain created_at and either hash or name",
+        });
+      } else if (expectedManifest) {
+        const selectedColumns = [
+          columnNames.has("id") ? "id" : null,
+          columnNames.has("hash") ? "hash" : null,
+          columnNames.has("name") ? "name" : null,
+          "created_at",
+        ].filter((column): column is string => column !== null);
+        const orderColumn = columnNames.has("id") ? "id" : "created_at";
+        const journalEntries = await sql.unsafe<Array<Record<string, unknown>>>(
+          `SELECT ${selectedColumns.map(quoteIdentifier).join(", ")} FROM ${qualifiedTable} ORDER BY ${quoteIdentifier(orderColumn)}`,
+        );
+        const expectedByHash = new Map(expectedManifest.entries.map((entry) => [entry.sha256, entry]));
+        const expectedByName = new Map(expectedManifest.entries.map((entry) => [entry.fileName, entry]));
+        const matchedExpectedFiles = new Set<string>();
+        if (journalEntries.length < expectedManifest.entries.length) {
+          issues.push({
+            code: "migration_journal_invalid",
+            message: `Migration journal has ${journalEntries.length} entries; expected at least ${expectedManifest.entries.length}`,
+          });
+        }
+        for (let index = 0; index < journalEntries.length; index += 1) {
+          const actual = journalEntries[index];
+          const actualHash = typeof actual?.hash === "string" ? actual.hash : null;
+          const actualName = typeof actual?.name === "string" ? actual.name : null;
+          const expectedByActualHash = actualHash ? expectedByHash.get(actualHash) : undefined;
+          const expectedByActualName = actualName ? expectedByName.get(actualName) : undefined;
+          const matchedExpected = expectedByActualHash ?? expectedByActualName;
+          if (matchedExpected) {
+            if (matchedExpectedFiles.has(matchedExpected.fileName)) {
+              issues.push({
+                code: "migration_journal_invalid",
+                message: `Migration journal contains duplicate history for ${matchedExpected.fileName}`,
+              });
+            }
+            matchedExpectedFiles.add(matchedExpected.fileName);
+          } else {
+            const isKnownLegacyHash = actualHash !== null
+              && KNOWN_LEGACY_MIGRATION_HISTORY_IDENTIFIERS.has(actualHash);
+            if (!isKnownLegacyHash) {
+              issues.push({
+                code: "migration_journal_invalid",
+                message: `Migration journal entry ${index} does not match any current migration manifest entry`,
+              });
+            }
+          }
+          if (
+            (expectedByActualHash && actualName !== null && actualName !== expectedByActualHash.fileName)
+            || (expectedByActualName && actualHash !== null && actualHash !== expectedByActualName.sha256)
+          ) {
+            issues.push({
+              code: "migration_journal_invalid",
+              message: `Migration journal entry ${index} does not match its current migration manifest entry`,
+            });
+          }
+        }
+        const missingExpectedFiles = expectedManifest.entries
+          .map((entry) => entry.fileName)
+          .filter((fileName) => !matchedExpectedFiles.has(fileName));
+        if (missingExpectedFiles.length > 0) {
+          issues.push({
+            code: "migration_journal_invalid",
+            message: `Migration journal is missing current migration(s): ${missingExpectedFiles.join(", ")}`,
+          });
+        }
+      }
+    }
+
+    organizationsTablePresent = await tableExists(sql, "organizations");
+    if (!organizationsTablePresent) {
+      issues.push({
+        code: "organizations_table_missing",
+        message: "Core organizations table is missing",
+      });
+    }
+
+    const primaryKeyRows = await sql.unsafe<{ constraint_name: string }[]>(`
+      SELECT constraint_row.conname AS constraint_name
+      FROM pg_constraint constraint_row
+      JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = table_row.relnamespace
+      JOIN pg_index index_row ON index_row.indexrelid = constraint_row.conindid
+      WHERE namespace_row.nspname = 'public'
+        AND table_row.relname = 'organizations'
+        AND constraint_row.contype = 'p'
+        AND constraint_row.convalidated
+        AND index_row.indisvalid
+        AND index_row.indisready
+    `);
+    organizationsPrimaryKeyValid = primaryKeyRows.length === 1;
+    if (!organizationsPrimaryKeyValid) {
+      issues.push({
+        code: "organizations_primary_key_invalid",
+        message: "Core organizations primary key is missing or invalid",
+      });
+    }
+
+    const foreignKeyCountRows = await sql.unsafe<{ count: number }[]>(`
+      SELECT count(*)::int AS count
+      FROM pg_constraint constraint_row
+      JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = table_row.relnamespace
+      WHERE namespace_row.nspname = 'public'
+        AND constraint_row.contype = 'f'
+    `);
+    foreignKeyCount = Number(foreignKeyCountRows[0]?.count ?? 0);
+    if (foreignKeyCount === 0) {
+      issues.push({
+        code: "foreign_keys_missing",
+        message: "No public foreign key constraints were found",
+      });
+    }
+
+    const unvalidatedForeignKeyRows = await sql.unsafe<{ constraint_name: string }[]>(`
+      SELECT table_row.relname || '.' || constraint_row.conname AS constraint_name
+      FROM pg_constraint constraint_row
+      JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = table_row.relnamespace
+      WHERE namespace_row.nspname = 'public'
+        AND constraint_row.contype = 'f'
+        AND NOT constraint_row.convalidated
+      ORDER BY table_row.relname, constraint_row.conname
+    `);
+    unvalidatedForeignKeys = unvalidatedForeignKeyRows.map((row) => row.constraint_name);
+    if (unvalidatedForeignKeys.length > 0) {
+      issues.push({
+        code: "foreign_keys_not_validated",
+        message: `Unvalidated foreign keys: ${unvalidatedForeignKeys.join(", ")}`,
+      });
+    }
+
+    const invalidIndexRows = await sql.unsafe<{ index_name: string }[]>(`
+      SELECT table_row.relname || '.' || index_row.relname AS index_name
+      FROM pg_index index_state
+      JOIN pg_class index_row ON index_row.oid = index_state.indexrelid
+      JOIN pg_class table_row ON table_row.oid = index_state.indrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = table_row.relnamespace
+      WHERE namespace_row.nspname = 'public'
+        AND (NOT index_state.indisvalid OR NOT index_state.indisready)
+      ORDER BY table_row.relname, index_row.relname
+    `);
+    invalidIndexes = invalidIndexRows.map((row) => row.index_name);
+    if (invalidIndexes.length > 0) {
+      issues.push({
+        code: "indexes_invalid",
+        message: `Invalid indexes: ${invalidIndexes.join(", ")}`,
+      });
+    }
+  } finally {
+    await sql.end();
+  }
+
+  return Object.freeze({
+    valid: issues.length === 0,
+    manifestFingerprint,
+    expectedMigrationCount,
+    migrationJournalSchema,
+    migrationJournalEntryCount,
+    organizationsTablePresent,
+    organizationsPrimaryKeyValid,
+    foreignKeyCount,
+    unvalidatedForeignKeys: Object.freeze(unvalidatedForeignKeys),
+    invalidIndexes: Object.freeze(invalidIndexes),
+    issues: Object.freeze(issues),
+  });
+}
+
+export async function assertPostMigrationInvariants(url: string): Promise<void> {
+  const report = await validatePostMigrationInvariants(url);
+  if (!report.valid) {
+    throw new Error(
+      `Post-migration database invariants failed: ${report.issues.map((issue) => issue.message).join("; ")}`,
+    );
+  }
+}
+
+export async function withMigrationAdvisoryLock<T>(
+  url: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const lockSql = createUtilitySql(url);
+  try {
+    await lockSql`
+      SELECT pg_advisory_lock(
+        hashtext(current_database()),
+        hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+      )
+    `;
+    return await action();
+  } finally {
+    try {
+      await lockSql`
+        SELECT pg_advisory_unlock(
+          hashtext(current_database()),
+          hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+        )
+      `;
+    } finally {
+      await lockSql.end();
+    }
+  }
+}
+
+async function applyPendingMigrationsWithoutLock(url: string): Promise<void> {
   await normalizeLegacyColumnNames(url);
   const initialState = await inspectMigrations(url);
   if (initialState.status === "upToDate") return;
@@ -953,6 +1276,24 @@ export async function applyPendingMigrations(url: string): Promise<void> {
       `Failed to apply pending migrations: ${finalState.pendingMigrations.join(", ")}`,
     );
   }
+}
+
+export async function applyPendingMigrations(
+  url: string,
+  options: { advisoryLockHeld?: boolean } = {},
+): Promise<void> {
+  const apply = async () => {
+    await createMigrationManifest();
+    await applyPendingMigrationsWithoutLock(url);
+    await assertPostMigrationInvariants(url);
+  };
+
+  if (options.advisoryLockHeld) {
+    await apply();
+    return;
+  }
+
+  await withMigrationAdvisoryLock(url, apply);
 }
 
 export type MigrationBootstrapResult =

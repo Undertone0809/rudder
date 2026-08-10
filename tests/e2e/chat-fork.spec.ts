@@ -243,6 +243,13 @@ test("forks a chat from a selected message and groups the fork family in Messeng
       kind: "message",
       status: "completed",
       body: "Middle branch point",
+      structuredPayload: {
+        __chatTranscript: [{
+          kind: "thinking",
+          ts: "2026-06-22T08:02:00.500Z",
+          text: "Fork must retain this transcript",
+        }],
+      },
       replyingAgentId: agentId,
       createdAt: new Date("2026-06-22T08:02:00.000Z"),
       updatedAt: new Date("2026-06-22T08:02:00.000Z"),
@@ -304,7 +311,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
 
   const messagesRes = await page.request.get(`/api/chats/${forkedConversation.id}/messages`);
   expect(messagesRes.ok()).toBe(true);
-  const forkMessages = await messagesRes.json() as Array<{ role: string; body: string; structuredPayload: Record<string, unknown> | null }>;
+  const forkMessages = await messagesRes.json() as Array<{ id: string; role: string; body: string; structuredPayload: Record<string, unknown> | null }>;
   expect(forkMessages.map((message) => message.body).slice(0, 2)).toEqual([
     "Original premise",
     "Middle branch point",
@@ -317,6 +324,16 @@ test("forks a chat from a selected message and groups the fork family in Messeng
     sourceConversationId,
     sourceConversationTitle: "Forkable strategy chat",
     sourceMessageId: sourceMessageIds[1],
+  });
+
+  const forkAssistant = forkMessages.find((message) => message.body === "Middle branch point");
+  expect(forkAssistant).toBeTruthy();
+  const forkTranscriptResponse = await page.request.get(
+    `/api/chats/${forkedConversation.id}/messages/${forkAssistant.id}/transcript`,
+  );
+  expect(forkTranscriptResponse.ok()).toBe(true);
+  expect(await forkTranscriptResponse.json()).toMatchObject({
+    transcript: [{ text: "Fork must retain this transcript" }],
   });
 
   const sourceMessageLink = page.getByRole("link", { name: "Open source message" });
@@ -349,6 +366,16 @@ test("forks a chat from a selected message and groups the fork family in Messeng
     `chat:${forkedConversation.id}`,
     `chat:${sourceConversationId}`,
   ]));
+
+  const deleteSourceResponse = await page.request.delete(`/api/chats/${sourceConversationId}`);
+  expect(deleteSourceResponse.ok()).toBe(true);
+  const transcriptAfterSourceDelete = await page.request.get(
+    `/api/chats/${forkedConversation.id}/messages/${forkAssistant.id}/transcript`,
+  );
+  expect(transcriptAfterSourceDelete.ok()).toBe(true);
+  expect(await transcriptAfterSourceDelete.json()).toMatchObject({
+    transcript: [{ text: "Fork must retain this transcript" }],
+  });
 });
 
 test("forks from an earlier assistant message while a later reply is streaming", async ({ page }) => {

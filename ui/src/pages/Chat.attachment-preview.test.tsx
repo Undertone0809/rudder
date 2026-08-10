@@ -146,6 +146,17 @@ const mockState = vi.hoisted(() => ({
   savedViewPromotionEnabled: false,
   savedViewPromotionIsMoving: false,
   sitesEnabled: false,
+  chatGenerationScopes: new Map<string, {
+    epoch: number;
+    conversationId: string | null;
+    closeRequested: boolean;
+  }>(),
+  ChatGenerationCloseSupersededError: class ChatGenerationCloseSupersededError extends Error {
+    constructor() {
+      super("Side Chat close was superseded by a newer generation.");
+      this.name = "ChatGenerationCloseSupersededError";
+    }
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -549,6 +560,7 @@ vi.mock("@/plugins/launchers", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
+  ChatGenerationCloseSupersededError: mockState.ChatGenerationCloseSupersededError,
   useChatGenerations: () => ({
     abortChatStream: mockState.abortChatStream,
     sendInFlightByChatId: mockState.sendInFlightByChatId,
@@ -556,6 +568,45 @@ vi.mock("@/context/ChatGenerationContext", () => ({
     setStreamAbortController: vi.fn(),
     setStreamDraftForChat: mockState.setStreamDraftForChat,
     streamDrafts: mockState.streamDrafts,
+  }),
+  useChatGenerationActions: () => ({
+    abortChatStream: mockState.abortChatStream,
+    clearChatGenerationConversation: vi.fn(),
+    destroyChatGenerationConversation: vi.fn(async (_scopeKey: string, _conversationId: string, destroyer: () => Promise<void>) => {
+      await destroyer();
+    }),
+    isChatGenerationClosePending: (scopeKey: string, epoch?: number) => {
+      const scope = mockState.chatGenerationScopes.get(scopeKey);
+      return Boolean(scope?.closeRequested && (epoch === undefined || scope.epoch === epoch));
+    },
+    isChatGenerationCurrent: () => true,
+    rememberChatGenerationConversation: vi.fn(),
+    releaseChatGenerationScope: (scopeKey: string, epoch: number) => {
+      const scope = mockState.chatGenerationScopes.get(scopeKey);
+      if (scope?.epoch === epoch) scope.closeRequested = false;
+    },
+    requestChatGenerationClose: (scopeKey: string, conversationId?: string | null) => {
+      const previous = mockState.chatGenerationScopes.get(scopeKey);
+      const scope = {
+        epoch: (previous?.epoch ?? 0) + 1,
+        conversationId: conversationId ?? previous?.conversationId ?? null,
+        closeRequested: true,
+      };
+      mockState.chatGenerationScopes.set(scopeKey, scope);
+      return { epoch: scope.epoch, conversationId: scope.conversationId };
+    },
+    resetChatGenerationClose: (scopeKey: string, epoch: number) => {
+      const scope = mockState.chatGenerationScopes.get(scopeKey);
+      if (scope?.epoch === epoch) scope.closeRequested = false;
+    },
+    setChatGenerationConversation: () => true,
+    setChatSendInFlight: mockState.setChatSendInFlight,
+    setStreamAbortController: vi.fn(),
+    setStreamDraftForChat: mockState.setStreamDraftForChat,
+    tryBeginChatGeneration: (_scopeKey: string, conversationId: string | null) => ({
+      epoch: 1,
+      conversationId,
+    }),
   }),
 }));
 
@@ -1512,6 +1563,7 @@ async function renderPersistedSideChatPanel(conversationId: string) {
 }
 
 beforeEach(() => {
+  mockState.chatGenerationScopes.clear();
   mockState.sitesEnabled = false;
   installLocalStorageMock();
   Object.defineProperty(URL, "createObjectURL", {

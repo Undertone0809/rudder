@@ -105,6 +105,12 @@ async function waitForRun(page: Page, runId: string, status: string) {
   return await response.json() as AgentRun;
 }
 
+async function readRunEvents(page: Page, runId: string) {
+  const response = await page.request.get(`/api/agent-runs/${runId}/events?limit=200`);
+  if (!response.ok()) return [] as Array<{ eventType: string; message: string | null }>;
+  return await response.json() as Array<{ eventType: string; message: string | null }>;
+}
+
 async function sendTask(page: Page, task: string) {
   const composer = page.locator(".rudder-mdxeditor-content").first();
   const sendButton = page.getByRole("button", { name: "Send" });
@@ -139,12 +145,17 @@ async function assertRunEvidence(
     },
   });
 
-  const eventsResponse = await page.request.get(`/api/agent-runs/${run.id}/events?limit=200`);
-  expect(eventsResponse.ok()).toBe(true);
-  const events = await eventsResponse.json() as Array<{
-    eventType: string;
-    message: string | null;
-  }>;
+  await expect.poll(async () => {
+    const events = await readRunEvents(page, run.id);
+    return events.map((event) => event.eventType);
+  }, { timeout: WORK_LOOP_TIMEOUT }).toEqual(expect.arrayContaining([
+    "lifecycle",
+    "adapter.invoke",
+    "transcript.entry",
+    "chat.message_linked",
+  ]));
+
+  const events = await readRunEvents(page, run.id);
   expect(events.map((event) => event.eventType)).toEqual(expect.arrayContaining([
     "lifecycle",
     "adapter.invoke",

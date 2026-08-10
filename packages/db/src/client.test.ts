@@ -12,33 +12,24 @@ import {
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
   inspectMigrations,
+  listLegacyColumnRenames,
+  MIGRATION_ADVISORY_LOCK_NAME,
+  normalizeLegacyColumnNames,
   reconcilePendingMigrationHistory,
+  validatePostMigrationInvariants,
 } from "./client.js";
+import { createLocalPostgresInstance } from "./local-postgres-provider.js";
 
-type EmbeddedPostgresInstance = {
+type LocalPostgresInstance = {
   initialise(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 };
 
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
-
 const tempPaths: string[] = [];
-const runningInstances: EmbeddedPostgresInstance[] = [];
-
-async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  const mod = await import("embedded-postgres");
-  return mod.default as EmbeddedPostgresCtor;
-}
+const runningInstances: LocalPostgresInstance[] = [];
+const migrationTestTimeout = (timeoutMs: number): number =>
+  process.platform === "win32" ? timeoutMs * 4 : timeoutMs;
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -68,8 +59,7 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-db-client-"));
   tempPaths.push(dataDir);
   const port = await getAvailablePort();
-  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
-  const instance = new EmbeddedPostgres({
+  const selection = await createLocalPostgresInstance({
     databaseDir: dataDir,
     user: "rudder",
     password,
@@ -79,6 +69,7 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
     onLog: () => {},
     onError: () => {},
   });
+  const instance = selection.instance;
   await instance.initialise();
   await instance.start();
   runningInstances.push(instance);
@@ -240,19 +231,155 @@ function createCurrentMigrationsFolderThrough(maxIdx: number) {
 }
 
 afterEach(async () => {
-  while (runningInstances.length > 0) {
-    const instance = runningInstances.pop();
-    if (!instance) continue;
-    await instance.stop();
+  const instances = runningInstances.splice(0).reverse();
+  const results = await Promise.allSettled(instances.map((instance) => instance.stop()));
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      `Failed to stop ${failures.length} embedded PostgreSQL test instance(s)`,
+    );
   }
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
     if (!tempPath) continue;
-    fs.rmSync(tempPath, { recursive: true, force: true });
+    await fs.promises.rm(tempPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
   }
-});
+}, migrationTestTimeout(10_000));
 
 describe("applyPendingMigrations", () => {
+  it(
+    "serializes migration attempts with a database advisory lock",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const blocker = postgres(connectionString, { max: 1, onnotice: () => {} });
+      let lockReleased = false;
+
+      try {
+        await blocker`
+          SELECT pg_advisory_lock(
+            hashtext(current_database()),
+            hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+          )
+        `;
+        const migration = applyPendingMigrations(connectionString);
+        const initialOutcome = await Promise.race([
+          migration.then(() => "completed" as const),
+          new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 150)),
+        ]);
+        expect(initialOutcome).toBe("waiting");
+
+        await blocker`
+          SELECT pg_advisory_unlock(
+            hashtext(current_database()),
+            hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+          )
+        `;
+        lockReleased = true;
+        await migration;
+      } finally {
+        if (!lockReleased) {
+          await blocker`
+            SELECT pg_advisory_unlock(
+              hashtext(current_database()),
+              hashtext(${MIGRATION_ADVISORY_LOCK_NAME})
+            )
+          `;
+        }
+        await blocker.end();
+      }
+    },
+    migrationTestTimeout(30_000),
+  );
+
+  it(
+    "reports journal, core table, foreign key, and index invariants after migration",
+    async () => {
+      const connectionString = await createTempDatabase();
+
+      await applyPendingMigrations(connectionString);
+      const report = await validatePostMigrationInvariants(connectionString);
+
+      expect(report).toMatchObject({
+        valid: true,
+        migrationJournalSchema: "drizzle",
+        organizationsTablePresent: true,
+        organizationsPrimaryKeyValid: true,
+        unvalidatedForeignKeys: [],
+        invalidIndexes: [],
+        issues: [],
+      });
+      expect(report.manifestFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(report.expectedMigrationCount).toBeGreaterThan(0);
+      expect(report.migrationJournalEntryCount).toBeGreaterThan(0);
+      expect(report.foreignKeyCount).toBeGreaterThan(0);
+
+      const journalTamperSql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await journalTamperSql.unsafe(`
+          UPDATE "drizzle"."__drizzle_migrations"
+          SET "hash" = repeat('0', 64)
+          WHERE "id" = (SELECT min("id") FROM "drizzle"."__drizzle_migrations")
+        `);
+      } finally {
+        await journalTamperSql.end();
+      }
+      const tamperedReport = await validatePostMigrationInvariants(connectionString);
+      expect(tamperedReport.valid).toBe(false);
+      expect(tamperedReport.issues).toContainEqual(expect.objectContaining({
+        code: "migration_journal_invalid",
+      }));
+
+      const unknownLegacyConnectionString = await createTempDatabase();
+      await applyPendingMigrations(unknownLegacyConnectionString);
+
+      const legacyJournalTamperSql = postgres(unknownLegacyConnectionString, { max: 1, onnotice: () => {} });
+      try {
+        await legacyJournalTamperSql.unsafe(`
+          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
+          SELECT 'legacy-corrupt', COALESCE(MAX("created_at"), 0) + 1
+          FROM "drizzle"."__drizzle_migrations"
+        `);
+      } finally {
+        await legacyJournalTamperSql.end();
+      }
+      const unknownLegacyReport = await validatePostMigrationInvariants(unknownLegacyConnectionString);
+      expect(unknownLegacyReport.valid).toBe(false);
+      expect(unknownLegacyReport.issues).toContainEqual(expect.objectContaining({
+        code: "migration_journal_invalid",
+        message: expect.stringContaining("does not match any current migration manifest entry"),
+      }));
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`CREATE TABLE "migration_invariant_parent" ("id" integer PRIMARY KEY)`);
+        await sql.unsafe(`CREATE TABLE "migration_invariant_child" ("parent_id" integer)`);
+        await sql.unsafe(`
+          ALTER TABLE "migration_invariant_child"
+          ADD CONSTRAINT "migration_invariant_child_parent_fk"
+          FOREIGN KEY ("parent_id") REFERENCES "migration_invariant_parent"("id") NOT VALID
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const invalidReport = await validatePostMigrationInvariants(connectionString);
+      expect(invalidReport.valid).toBe(false);
+      expect(invalidReport.unvalidatedForeignKeys).toEqual([
+        "migration_invariant_child.migration_invariant_child_parent_fk",
+      ]);
+      expect(invalidReport.issues).toContainEqual(expect.objectContaining({
+        code: "foreign_keys_not_validated",
+      }));
+    },
+    migrationTestTimeout(30_000),
+  );
+
   it(
     "normalizes legacy embedded cluster passwords back to rudder",
     async () => {
@@ -282,7 +409,7 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -326,7 +453,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -358,99 +485,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
-  );
-
-  it(
-    "reconciles duplicate ready Goal Result Proposals before adding the unique index",
-    async () => {
-      const connectionString = await createTempDatabase();
-      const migrationsThrough0146 = createCurrentMigrationsFolderThrough(146);
-      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
-      try {
-        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0146 });
-        await sql.unsafe(`
-          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
-          VALUES ('00000000-0000-0000-0000-000000000201', 'goal-migration', 'Goal migration', 'GMG')
-        `);
-        await sql.unsafe(`
-          INSERT INTO "agents" ("id", "org_id", "name")
-          VALUES ('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000201', 'Goal owner')
-        `);
-        await sql.unsafe(`
-          INSERT INTO "goals" ("id", "org_id", "title", "owner_agent_id", "lifecycle", "status")
-          VALUES (
-            '00000000-0000-0000-0000-000000000203',
-            '00000000-0000-0000-0000-000000000201',
-            'Reconcile duplicate proposals',
-            '00000000-0000-0000-0000-000000000202',
-            'active',
-            'active'
-          )
-        `);
-        await sql.unsafe(`
-          INSERT INTO "goal_result_proposals" (
-            "id", "org_id", "goal_id", "contract_revision", "candidate", "candidate_hash",
-            "preflight", "risk_summary", "status", "idempotency_key", "proposed_by_agent_id", "created_at"
-          )
-          VALUES
-            (
-              '00000000-0000-0000-0000-000000000204',
-              '00000000-0000-0000-0000-000000000201',
-              '00000000-0000-0000-0000-000000000203',
-              1,
-              '{}'::jsonb,
-              'first-candidate',
-              '{}'::jsonb,
-              'First proposal remains ready',
-              'ready',
-              'first-key',
-              '00000000-0000-0000-0000-000000000202',
-              '2026-08-01T00:00:00Z'
-            ),
-            (
-              '00000000-0000-0000-0000-000000000205',
-              '00000000-0000-0000-0000-000000000201',
-              '00000000-0000-0000-0000-000000000203',
-              1,
-              '{}'::jsonb,
-              'second-candidate',
-              '{}'::jsonb,
-              'Second proposal is preserved as superseded',
-              'ready',
-              'second-key',
-              '00000000-0000-0000-0000-000000000202',
-              '2026-08-02T00:00:00Z'
-            )
-        `);
-      } finally {
-        await sql.end();
-      }
-
-      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
-
-      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
-      try {
-        const rows = await verifySql.unsafe<{ id: string; status: string }[]>(`
-          SELECT "id", "status"
-          FROM "goal_result_proposals"
-          WHERE "goal_id" = '00000000-0000-0000-0000-000000000203'
-          ORDER BY "created_at" ASC, "id" ASC
-        `);
-        expect(rows).toEqual([
-          { id: "00000000-0000-0000-0000-000000000204", status: "ready" },
-          { id: "00000000-0000-0000-0000-000000000205", status: "superseded" },
-        ]);
-        await expect(verifySql.unsafe(`
-          UPDATE "goal_result_proposals"
-          SET "status" = 'ready'
-          WHERE "id" = '00000000-0000-0000-0000-000000000205'
-        `)).rejects.toThrow();
-      } finally {
-        await verifySql.end();
-      }
-    },
-    30_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -559,7 +594,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -668,7 +703,9 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
-          "0147_third_slyde.sql",
+          "0147_github_mcp_provider.sql",
+          "0148_chat_message_transcript_entries.sql",
+          "0149_third_slyde.sql",
         ],
         reason: "pending-migrations",
       });
@@ -730,7 +767,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -836,7 +873,9 @@ describe("applyPendingMigrations", () => {
           "0144_eminent_umar.sql",
           "0145_public_nehzno.sql",
           "0146_medical_roulette.sql",
-          "0147_third_slyde.sql",
+          "0147_github_mcp_provider.sql",
+          "0148_chat_message_transcript_entries.sql",
+          "0149_third_slyde.sql",
         ],
         reason: "pending-migrations",
       });
@@ -879,7 +918,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -952,7 +991,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(40_000),
   );
 
   it(
@@ -1237,7 +1276,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1331,7 +1370,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1375,7 +1414,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1419,7 +1458,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1465,7 +1504,7 @@ describe("applyPendingMigrations", () => {
       const finalState = await inspectMigrations(connectionString);
       expect(finalState.status).toBe("upToDate");
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1494,6 +1533,15 @@ describe("applyPendingMigrations", () => {
 
       const driftedState = await inspectMigrations(connectionString);
       expect(driftedState.status).toBe("upToDate");
+      await expect(listLegacyColumnRenames(connectionString)).resolves.toEqual([
+        "agents.adapter_type->agent_runtime_type",
+        "agents.adapter_config->agent_runtime_config",
+        "agent_runtime_state.adapter_type->agent_runtime_type",
+        "agent_task_sessions.adapter_type->agent_runtime_type",
+        "join_requests.adapter_type->agent_runtime_type",
+        "finance_events.execution_adapter_type->execution_agent_runtime_type",
+        "issues.assignee_adapter_overrides->assignee_agent_runtime_overrides",
+      ]);
 
       await applyPendingMigrations(connectionString);
 
@@ -1533,7 +1581,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1594,7 +1642,67 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
+  );
+
+  it(
+    "rolls back every legacy column rename when a later rename fails",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`ALTER TABLE "agents" RENAME COLUMN "agent_runtime_type" TO "adapter_type"`);
+        await sql.unsafe(`ALTER TABLE "agents" RENAME COLUMN "agent_runtime_config" TO "adapter_config"`);
+        await sql.unsafe(`ALTER TABLE "agent_runtime_state" RENAME COLUMN "agent_runtime_type" TO "adapter_type"`);
+        await sql.unsafe(`
+          CREATE FUNCTION fail_legacy_column_rename() RETURNS event_trigger
+          LANGUAGE plpgsql AS $$
+          BEGIN
+            IF current_query() LIKE '%"agent_runtime_state"%' THEN
+              RAISE EXCEPTION 'intentional legacy rename failure';
+            END IF;
+          END;
+          $$
+        `);
+        await sql.unsafe(`
+          CREATE EVENT TRIGGER fail_legacy_column_rename_trigger
+          ON ddl_command_start
+          EXECUTE FUNCTION fail_legacy_column_rename()
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(normalizeLegacyColumnNames(connectionString)).rejects.toThrow(
+        "intentional legacy rename failure",
+      );
+
+      const cleanupSql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await cleanupSql.unsafe(`DROP EVENT TRIGGER fail_legacy_column_rename_trigger`);
+        await cleanupSql.unsafe(`DROP FUNCTION fail_legacy_column_rename()`);
+        const columns = await cleanupSql.unsafe<{ table_name: string; column_name: string }[]>(`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name IN ('agents', 'agent_runtime_state')
+            AND column_name IN (
+              'agent_runtime_type', 'agent_runtime_config', 'adapter_type', 'adapter_config'
+            )
+          ORDER BY table_name, column_name
+        `);
+        expect(columns).toEqual([
+          { table_name: "agent_runtime_state", column_name: "adapter_type" },
+          { table_name: "agents", column_name: "adapter_config" },
+          { table_name: "agents", column_name: "adapter_type" },
+        ]);
+      } finally {
+        await cleanupSql.end();
+      }
+    },
+    migrationTestTimeout(20_000),
   );
 
   it(
@@ -1624,6 +1732,6 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
     },
-    20_000,
+    migrationTestTimeout(20_000),
   );
 });

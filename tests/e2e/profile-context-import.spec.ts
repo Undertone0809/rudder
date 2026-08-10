@@ -84,4 +84,48 @@ test.describe("Profile context import", () => {
     await expect(activityRow).toContainText("created");
     await expect(activityRow).not.toContainText("You");
   });
+
+  test("uses the signed-in user's account avatar in activity", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Profile Avatar ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const accessRes = await page.request.get("/api/cli-auth/me");
+    expect(accessRes.ok()).toBe(true);
+    const access = await accessRes.json() as { user?: { id: string } | null; userId: string };
+    const userId = access.user?.id ?? access.userId;
+    const avatar = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgdmlld0JveD0iMCAwIDY0IDY0Ij48Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIzMiIgZmlsbD0iIzE0YjhhNiIvPjx0ZXh0IHg9IjMyIiB5PSI0MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjgiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiPkE8L3RleHQ+PC9zdmc+";
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Account avatar activity label",
+        description: "Activity should use the account avatar.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+
+    await page.addInitScript(({ accountId, image }) => {
+      const account = { id: accountId, email: "avatar@example.com", name: "Avatar User", image };
+      const state = { status: "signed-in", account, deviceId: "activity-avatar-device" };
+      Object.defineProperty(window, "desktopIdentity", {
+        configurable: true,
+        value: {
+          getState: async () => state,
+          getProfile: async () => account,
+          onStateChanged: () => () => undefined,
+        },
+      });
+    }, { accountId: userId, image: avatar });
+
+    await page.goto(`/${organization.issuePrefix}/activity`);
+
+    const activityRow = page.getByRole("link", { name: /created .*Account avatar activity label/ });
+    await expect(activityRow).toBeVisible({ timeout: 15_000 });
+    await expect(activityRow.locator(`img[src="${avatar}"]`)).toBeVisible();
+  });
 });
