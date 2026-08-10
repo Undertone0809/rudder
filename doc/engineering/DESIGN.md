@@ -93,6 +93,76 @@ On dense operator surfaces, explanatory copy should be on-demand by default.
 If text only explains a control or concept and is not required to complete the action safely, prefer tooltip, hover help, or another progressive-disclosure pattern over persistent helper text.
 Reserve always-visible helper copy for blocking, risky, or state-critical guidance.
 
+### 3.3.1 Cognitive Load Is a Budget
+
+Simple does not mean sparse, and dense does not have to mean difficult. Rudder
+may show substantial data when the user needs to compare or monitor it. What it
+must avoid is asking the user to understand several future decisions at once.
+
+Treat information density and decision density separately:
+
+- operational lists may be information-dense when the visible fields support
+  one scanning or comparison job
+- creation, configuration, and branching workflows should keep decision
+  density low
+- each state should have one primary decision and one clear focal action region
+- information for later decisions should appear only after the preceding
+  choice makes it relevant
+
+Count more than text. Controls, choices, badges, panels, competing emphasis,
+animations, and simultaneously visible workflow branches all consume the
+user's attention.
+
+Rules:
+
+- Start from the next question the user must answer, not from every field the
+  underlying object supports.
+- Sequence decisions in the order the user encounters them. Do not compress a
+  multi-step decision into one kitchen-sink surface merely to reduce clicks.
+- Make the common path immediately usable. Put uncommon modes, exceptions, and
+  advanced configuration behind an explicit secondary action.
+- Keep one visually prominent CTA per submit or continuation state. A routing
+  state may present a coherent set of peer choices without arbitrarily making
+  one route primary. Other actions should recede unless safety-critical.
+- A routing step should show only the short set of meaningful routes. Search,
+  browsing, forms, previews, and validation for the chosen route belong in the
+  focused next state.
+- Keep only one modal layer active. A choice may transition to a dedicated
+  follow-up dialog or replace the current dialog content, but dialogs must not
+  stack into an overlay maze.
+- In-flow Back navigation should preserve already entered work when it is safe
+  to do so. Define Cancel and Close semantics explicitly for the surface;
+  restore work after Reopen only when the product has an intentional draft
+  contract. Never silently persist sensitive values.
+- Keep consequences, destructive effects, permission boundaries, blocking
+  requirements, and current system state visible at the moment they matter.
+  Reducing cognitive load is not permission to hide risk.
+- When an element does not help the current decision, remove it before trying
+  to make it quieter with styling.
+
+Before implementation, write a short decision sequence:
+
+1. State the user's immediate job in one sentence.
+2. List the decisions required to complete the common path, in order.
+3. Assign each decision to one UI state.
+4. Classify information as `needed now`, `needed after a choice`, or `on demand`.
+5. Remove controls and explanation that do not support the current state.
+6. Add exception paths only after the common path is understandable on its own.
+
+For a non-trivial multi-state workflow, include a compact state inventory in
+the proposed acceptance packet. For each state, record:
+
+- the current decision
+- visible choices and controls
+- controls deferred until a later state
+- safety-critical context that remains visible
+- the primary affordance or coherent peer choice set
+- Back, Cancel, Close, Reopen, and draft-restoration semantics
+
+The five-second check: on opening any state, a target user should be able to say
+what they are deciding and identify the focal action region or peer choice set
+without first parsing the rest of the workflow.
+
 ### 3.4 Output First
 
 Rudder is about work and outcomes.
@@ -426,6 +496,27 @@ Guidelines:
 - only go beyond `280px` when the content is expected to be long at creation time
 - keep surrounding chrome minimal
 
+### 11.6 Multi-Step Dialog Flows
+
+Use multiple focused states when a workflow contains routing plus materially
+different follow-up tasks. The purpose is to reduce simultaneous decisions,
+not to turn every field into a wizard step.
+
+Rules:
+
+- the entry state presents the immediate routing decision only
+- each follow-up state has a title, content, and primary action specific to the
+  selected route
+- do not place the controls for every route beneath the route choices
+- show one dialog at a time; transition or replace instead of nesting overlays
+- provide a predictable back path when the user may reasonably reconsider the
+  route
+- preserve safe state across in-flow Back navigation; define Cancel and Close
+  behavior explicitly, and restore on Reopen only under a deliberate draft
+  contract
+- skip a separate step when the next action is trivial and introduces no new
+  information or decision
+
 ## 12. Tables, Lists, and Operational Surfaces
 
 Rudder is operational software. Lists and tables should be first-class, not treated as a fallback.
@@ -576,7 +667,7 @@ easing curves, or generic `transition: all` declarations.
 
 ## 15. Review Rubric
 
-Visible UI work should be reviewed against these six dimensions:
+Visible UI work should be reviewed against these nine dimensions:
 
 ### 15.1 Surface Ratio
 
@@ -606,7 +697,21 @@ Do spacing, alignment, and grouping repeat predictably?
 
 For desktop shell changes, do dark and light mode each preserve a clear shell tint, with glass restricted to shell-owned layers and paper-like readability preserved inside the work cards?
 
-If a surface fails two or more of these dimensions, it should be redesigned before polish work.
+### 15.8 Cognitive Load
+
+Can the user identify the current decision and focal action region or peer
+choice set within five seconds? Are visible controls, explanations, and
+emphasis limited to what that decision requires?
+
+### 15.9 Decision Sequencing
+
+Does the common path reveal later choices only when they become relevant? Can
+the user move Back without losing safe in-flow work, do Cancel and Close follow
+their declared semantics, does Reopen restore work only under an intentional
+draft contract, and does every state remain coherent on its own?
+
+If a surface fails cognitive load or decision sequencing, or fails two or more
+of the other dimensions, it should be redesigned before polish work.
 
 ## 16. Practical Good vs Bad
 
@@ -628,10 +733,15 @@ If a surface fails two or more of these dimensions, it should be redesigned befo
 
 When making visible UI changes:
 
-1. identify the surface type
-2. apply the relevant rules from this document
-3. review against the six-dimension rubric
-4. verify the result visually in a browser or desktop shell
+1. state the user's immediate job and entry point
+2. write the common-path decision sequence before drawing the full surface
+3. classify information as needed now, needed after a choice, or on demand
+4. give each state one primary decision and one focal action region or coherent
+   peer choice set
+5. apply the relevant surface rules from this document
+6. run a subtraction pass before visual polish
+7. review against the nine-dimension rubric
+8. verify the complete state sequence visually in a browser or desktop shell
 
 When a contributor wants to break one of these defaults, they should be able to explain why the product outcome is better, not just why the new version is more expressive.
 
