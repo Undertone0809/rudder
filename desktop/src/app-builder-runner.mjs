@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -85,6 +87,19 @@ function runPnpm(pnpmCli, args, appRoot, environment) {
   });
 }
 
+function installArgs(appRoot) {
+  const args = ["install", "--frozen-lockfile", "--prefer-offline"];
+  if (process.platform !== "win32") return args;
+
+  const appKey = createHash("sha256").update(appRoot).digest("hex").slice(0, 16);
+  const localDataRoot = process.env.LOCALAPPDATA || os.tmpdir();
+  return [
+    ...args,
+    "--virtual-store-dir",
+    path.join(localDataRoot, "Rudder", "app-builder-pnpm", appKey),
+  ];
+}
+
 async function main() {
   const [appRootInput, command = "preview", dataRootInput] = process.argv.slice(2);
   if (!appRootInput || !path.isAbsolute(appRootInput)) {
@@ -120,7 +135,7 @@ async function main() {
 
   await runPnpm(
     pnpmCli,
-    ["install", "--frozen-lockfile", "--prefer-offline"],
+    installArgs(appRoot),
     appRoot,
     environment,
   );
