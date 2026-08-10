@@ -187,6 +187,19 @@ export function buildOfficialPostgresInitdbArgs(options: LocalPostgresInstanceOp
   ];
 }
 
+export function buildOfficialPostgresStartArgs(options: LocalPostgresInstanceOptions): string[] {
+  return [
+    "-D",
+    options.databaseDir,
+    "-l",
+    path.join(options.databaseDir, "postgres.log"),
+    "-o",
+    `-h 127.0.0.1 -p ${options.port}`,
+    "-w",
+    "start",
+  ];
+}
+
 function buildOfficialPostgresInitdbArgsForBinDir(
   binDir: string,
   options: LocalPostgresInstanceOptions,
@@ -306,18 +319,7 @@ export function createOfficialPostgresInstance(
     },
     async start() {
       if (process.platform === "win32") {
-        await run(
-          binaries.pgCtl,
-          [
-            "-D",
-            options.databaseDir,
-            "-o",
-            `-h 127.0.0.1 -p ${options.port}`,
-            "-w",
-            "start",
-          ],
-          "start",
-        );
+        await run(binaries.pgCtl, buildOfficialPostgresStartArgs(options), "start");
         return;
       }
 
