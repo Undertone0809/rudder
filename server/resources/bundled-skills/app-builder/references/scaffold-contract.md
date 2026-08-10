@@ -25,6 +25,8 @@ definition through **Apps + > Add local web project** before anything runs.
 
 - Next.js App Router, React, and TypeScript
 - Tailwind CSS with shadcn-style component source owned by the project
+- a versioned Rudder UI preset with semantic light/dark tokens and compact
+  operator-tool primitives
 - SQLite with Drizzle ORM
 - Zod at API, import, and form boundaries
 - Vitest for unit tests and Playwright for browser tests
@@ -36,6 +38,8 @@ implementation detail and must not become a user decision.
 ## Required Files And Behaviors
 
 - `rudder.app.json` uses schema version 1 and a maintained template revision.
+- `rudder.ui.json` identifies the source-owned Rudder UI preset revision;
+  `components.json` keeps the project compatible with the normal shadcn CLI.
 - `/api/__rudder/health` returns readiness only after the app can open its
   selected database.
 - `RUDDER_APP_DATA_MODE=development|production` selects the database without
@@ -73,5 +77,7 @@ manifest.
 - `pnpm data:snapshot`: copy the selected SQLite database to `data/snapshots/`
   using SQLite's backup API.
 - `pnpm verify`: typecheck, tests, and build.
+- `pnpm ui:check`: validate the maintained Rudder UI preset files and semantic
+  token contract.
 
 Formal app start must not silently migrate real data. Promotion owns that step.

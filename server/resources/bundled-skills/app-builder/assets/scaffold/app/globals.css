@@ -1,32 +1,125 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --background: #f8fafc;
-  --foreground: #172033;
-  --card: #ffffff;
-  --card-foreground: #172033;
-  --muted: #eef2f7;
-  --muted-foreground: #64748b;
-  --primary: #2563eb;
-  --primary-foreground: #ffffff;
-  --destructive: #dc2626;
-  --border: #dbe3ee;
-  --ring: #3b82f6;
-  --radius: 0.75rem;
+  color-scheme: light;
+  --background: oklch(0.975 0.008 80);
+  --foreground: oklch(0.22 0.012 75);
+  --card: oklch(0.992 0.004 80);
+  --card-foreground: oklch(0.22 0.012 75);
+  --popover: oklch(0.992 0.004 80);
+  --popover-foreground: oklch(0.22 0.012 75);
+  --primary: oklch(0.53 0.135 162);
+  --primary-foreground: oklch(0.985 0.01 160);
+  --secondary: oklch(0.94 0.009 78);
+  --secondary-foreground: oklch(0.29 0.012 75);
+  --muted: oklch(0.945 0.008 78);
+  --muted-foreground: oklch(0.52 0.014 75);
+  --accent: oklch(0.925 0.025 162);
+  --accent-foreground: oklch(0.32 0.08 162);
+  --destructive: oklch(0.56 0.2 27);
+  --destructive-foreground: oklch(0.985 0.005 27);
+  --border: oklch(0.875 0.01 75);
+  --input: oklch(0.875 0.01 75);
+  --ring: oklch(0.58 0.12 162);
+  --radius: 0.375rem;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.18 0.012 75);
+  --foreground: oklch(0.93 0.008 75);
+  --card: oklch(0.215 0.012 75);
+  --card-foreground: oklch(0.93 0.008 75);
+  --popover: oklch(0.215 0.012 75);
+  --popover-foreground: oklch(0.93 0.008 75);
+  --primary: oklch(0.68 0.135 162);
+  --primary-foreground: oklch(0.17 0.03 162);
+  --secondary: oklch(0.27 0.012 75);
+  --secondary-foreground: oklch(0.91 0.008 75);
+  --muted: oklch(0.255 0.011 75);
+  --muted-foreground: oklch(0.69 0.012 75);
+  --accent: oklch(0.29 0.05 162);
+  --accent-foreground: oklch(0.88 0.06 162);
+  --destructive: oklch(0.66 0.18 27);
+  --destructive-foreground: oklch(0.98 0.005 27);
+  --border: oklch(0.34 0.012 75);
+  --input: oklch(0.34 0.012 75);
+  --ring: oklch(0.68 0.11 162);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+    --background: oklch(0.18 0.012 75);
+    --foreground: oklch(0.93 0.008 75);
+    --card: oklch(0.215 0.012 75);
+    --card-foreground: oklch(0.93 0.008 75);
+    --popover: oklch(0.215 0.012 75);
+    --popover-foreground: oklch(0.93 0.008 75);
+    --primary: oklch(0.68 0.135 162);
+    --primary-foreground: oklch(0.17 0.03 162);
+    --secondary: oklch(0.27 0.012 75);
+    --secondary-foreground: oklch(0.91 0.008 75);
+    --muted: oklch(0.255 0.011 75);
+    --muted-foreground: oklch(0.69 0.012 75);
+    --accent: oklch(0.29 0.05 162);
+    --accent-foreground: oklch(0.88 0.06 162);
+    --destructive: oklch(0.66 0.18 27);
+    --destructive-foreground: oklch(0.98 0.005 27);
+    --border: oklch(0.34 0.012 75);
+    --input: oklch(0.34 0.012 75);
+    --ring: oklch(0.68 0.11 162);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
 }
 
 * {
   border-color: var(--border);
 }
 
-body {
-  margin: 0;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-button,
-input {
-  font: inherit;
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }

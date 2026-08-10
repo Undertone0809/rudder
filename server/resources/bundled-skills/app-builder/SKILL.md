@@ -40,8 +40,14 @@ loopback attestation, and embedded opening.
    already has data, imports user data, changes its schema, or needs a real-data
    diagnosis.
 6. Follow [references/design-guidelines.md](references/design-guidelines.md)
-   for visible UI work. Prefer coherent workflow screens over a generic
-   dashboard assembled from decorative cards.
+   for visible UI work. For a new App, also read
+   [references/rudder-ui-preset.md](references/rudder-ui-preset.md) and start
+   from the versioned Rudder UI preset already present in the maintained
+   scaffold. Keep its semantic tokens and source-owned shadcn primitives unless
+   the brief explicitly requires a different product identity. For an existing
+   project, preserve its design system by default; align it to Rudder only when
+   the user asks for that change. Prefer coherent workflow screens over a
+   generic dashboard assembled from decorative cards.
 7. Run migrations against development or snapshot data, then run typecheck,
    unit tests, build, and relevant app E2E tests. Review the final source and
    rendered product for correctness, regressions, usability, data safety, and
@@ -121,6 +127,7 @@ Do not call the app complete until:
 - blocking code and product review findings are resolved;
 - the reviewed readiness path is ready on an attested loopback process;
 - Browser verification covers the primary workflow and a relevant edge case;
+- the versioned Rudder UI preset check passes for a new maintained App;
 - persistence behavior is verified against development or snapshot data;
 - current screenshot evidence is attached to the work;
 - user data was not modified without explicit intent; and

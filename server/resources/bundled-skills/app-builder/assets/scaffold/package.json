@@ -17,7 +17,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "data:snapshot": "tsx scripts/snapshot.ts",
-    "verify": "tsc --noEmit && vitest run && next build",
+    "ui:check": "node scripts/validate-rudder-ui.mjs",
+    "verify": "pnpm ui:check && tsc --noEmit && vitest run && next build",
     "predev": "tsx scripts/migrate.ts && tsx scripts/seed.ts"
   },
   "dependencies": {
