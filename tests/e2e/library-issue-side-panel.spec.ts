@@ -127,6 +127,14 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
   await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
   await expect(sidePanel.getByRole("heading", { name: issue.title })).toBeVisible();
   await expect.poll(() => new URL(page.url()).pathname + new URL(page.url()).search).toBe(routeBeforeOpen);
+  const librarySurfaceBackground = await sidePanel
+    .getByTestId("chat-side-panel-tabs")
+    .evaluate((element) => getComputedStyle(element.parentElement!).backgroundColor);
+  const librarySeamBackgrounds = await Promise.all([
+    page.getByTestId("workspace-column-resizer").evaluate((element) => getComputedStyle(element).backgroundColor),
+    page.getByTestId("side-panel-resizer").evaluate((element) => getComputedStyle(element).backgroundColor),
+  ]);
+  expect(librarySeamBackgrounds).toEqual([librarySurfaceBackground, librarySurfaceBackground]);
   await expect(
     page.getByTestId(`org-workspaces-editor-tab-${filePath}`).getByRole("tab"),
   ).toHaveAttribute("aria-selected", "true");
