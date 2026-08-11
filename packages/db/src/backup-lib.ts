@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -78,6 +78,7 @@ const DRIZZLE_SCHEMA = "drizzle";
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 
 const STATEMENT_BREAKPOINT = "-- rudder statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
+const BACKUP_ROW_BATCH_SIZE = 4;
 
 function sanitizeRestoreErrorMessage(error: unknown): string {
   if (error && typeof error === "object") {
@@ -265,6 +266,13 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
   const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
+  mkdirSync(opts.backupDir, { recursive: true });
+  const backupFile = resolve(
+    opts.backupDir,
+    `${filenamePrefix}-${timestamp()}-${process.pid}-${randomUUID()}.sql`,
+  );
+  const temporaryBackupFile = `${backupFile}.tmp-${randomUUID()}`;
+  const backupFileHandle = { current: null as Awaited<ReturnType<typeof open>> | null };
 
   try {
     await sql`SELECT 1`;
@@ -277,6 +285,13 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     };
     const emitStatementBoundary = () => {
       emit(STATEMENT_BREAKPOINT);
+    };
+    const flushLines = async () => {
+      if (lines.length === 0) return;
+      const chunk = `${lines.join("\n")}\n`;
+      lines.length = 0;
+      backupFileHandle.current ??= await open(temporaryBackupFile, "wx");
+      await backupFileHandle.current.writeFile(chunk, "utf8");
     };
 
     emit("-- Rudder database backup");
@@ -583,21 +598,24 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       const colNames = cols.map((c) => `"${c.column_name}"`).join(", ");
 
       emit(`-- Data for: ${schema_name}.${tablename} (${count[0]!.n} rows)`);
-
-      const rows = await sql.unsafe(`SELECT * FROM ${qualifiedTableName}`).values();
+      await flushLines();
       const nullifiedColumns = nullifiedColumnsByTable.get(tablename) ?? new Set<string>();
-      for (const row of rows) {
-        const values = row.map((rawValue: unknown, index) => {
-          const columnName = cols[index]?.column_name;
-          const val = columnName && nullifiedColumns.has(columnName) ? null : rawValue;
-          if (val === null || val === undefined) return "NULL";
-          if (typeof val === "boolean") return val ? "true" : "false";
-          if (typeof val === "number") return String(val);
-          if (val instanceof Date) return formatSqlLiteral(val.toISOString());
-          if (typeof val === "object") return formatSqlLiteral(JSON.stringify(val));
-          return formatSqlLiteral(String(val));
-        });
-        emitStatement(`INSERT INTO ${qualifiedTableName} (${colNames}) VALUES (${values.join(", ")});`);
+      const rowQuery = sql.unsafe(`SELECT * FROM ${qualifiedTableName}`).values();
+      for await (const rows of rowQuery.cursor(BACKUP_ROW_BATCH_SIZE)) {
+        for (const row of rows) {
+          const values = row.map((rawValue: unknown, index) => {
+            const columnName = cols[index]?.column_name;
+            const val = columnName && nullifiedColumns.has(columnName) ? null : rawValue;
+            if (val === null || val === undefined) return "NULL";
+            if (typeof val === "boolean") return val ? "true" : "false";
+            if (typeof val === "number") return String(val);
+            if (val instanceof Date) return formatSqlLiteral(val.toISOString());
+            if (typeof val === "object") return formatSqlLiteral(JSON.stringify(val));
+            return formatSqlLiteral(String(val));
+          });
+          emitStatement(`INSERT INTO ${qualifiedTableName} (${colNames}) VALUES (${values.join(", ")});`);
+          await flushLines();
+        }
       }
       emit("");
     }
@@ -623,19 +641,10 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     emitStatement("COMMIT;");
     emit("");
 
-    // Write the backup file
-    mkdirSync(opts.backupDir, { recursive: true });
-    const backupFile = resolve(
-      opts.backupDir,
-      `${filenamePrefix}-${timestamp()}-${process.pid}-${randomUUID()}.sql`,
-    );
-    const temporaryBackupFile = `${backupFile}.tmp-${randomUUID()}`;
-    try {
-      await writeFile(temporaryBackupFile, lines.join("\n"), "utf8");
-      await rename(temporaryBackupFile, backupFile);
-    } finally {
-      await rm(temporaryBackupFile, { force: true }).catch(() => undefined);
-    }
+    await flushLines();
+    await backupFileHandle.current?.close();
+    backupFileHandle.current = null;
+    await rename(temporaryBackupFile, backupFile);
 
     const sizeBytes = statSync(backupFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
@@ -646,6 +655,8 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       prunedCount,
     };
   } finally {
+    await backupFileHandle.current?.close().catch(() => undefined);
+    await rm(temporaryBackupFile, { force: true }).catch(() => undefined);
     await sql.end();
   }
 }

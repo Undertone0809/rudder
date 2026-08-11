@@ -681,12 +681,33 @@ function invalidateActivityQueries(
   }
 
   if (entityType === "chat") {
-    queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(orgId, "active") });
-    if (entityId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(orgId, entityId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(orgId, entityId) });
+    const action = readString(payload.action);
+    const details = readRecord(payload.details);
+    const isStreamingMessageUpdate = action === "chat.message_updated"
+      && readString(details?.status) === "streaming";
+
+    if (!isStreamingMessageUpdate) {
+      void queryClient.invalidateQueries(
+        { queryKey: queryKeys.chats.list(orgId, "active") },
+        { cancelRefetch: false },
+      );
     }
-    queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
+    if (entityId) {
+      void queryClient.invalidateQueries(
+        { queryKey: queryKeys.chats.detail(orgId, entityId) },
+        { cancelRefetch: false },
+      );
+      void queryClient.invalidateQueries(
+        { queryKey: queryKeys.chats.messages(orgId, entityId) },
+        { cancelRefetch: false },
+      );
+    }
+    if (!isStreamingMessageUpdate) {
+      void queryClient.invalidateQueries(
+        { queryKey: queryKeys.sidebarBadges(orgId) },
+        { cancelRefetch: false },
+      );
+    }
     const issueRefs = buildIssueRefsForPayload(payload);
     for (const ref of issueRefs) {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(ref) });

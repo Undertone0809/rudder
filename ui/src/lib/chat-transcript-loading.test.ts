@@ -1,9 +1,24 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import { resolveChatTranscriptLoadState } from "./chat-transcript-loading";
+import { resolveChatLoadError, resolveChatTranscriptLoadState } from "./chat-transcript-loading";
 
 describe("chat transcript loading", () => {
+  it("keeps cached chat data visible when a background refresh fails", () => {
+    expect(resolveChatLoadError([
+      { data: [{ id: "message-1" }], error: new TypeError("Failed to fetch") },
+      { data: { id: "chat-1" }, error: null },
+    ])).toBeNull();
+  });
+
+  it("surfaces an initial chat load failure when no cached data exists", () => {
+    const error = new TypeError("Failed to fetch");
+    expect(resolveChatLoadError([
+      { data: undefined, error },
+      { data: [], error: null },
+    ])).toBe(error);
+  });
+
   it("starts the message query from a valid organization route before conversation detail resolves", () => {
     expect(resolveChatTranscriptLoadState({
       selectedOrganizationId: "org-1",

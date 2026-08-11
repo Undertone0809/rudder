@@ -9,6 +9,8 @@
     "Agent Runs",
     "Agent default",
     "Agents",
+    "App Builder",
+    "Apply update",
     "Ask in side chat",
     "Assignee",
     "Automations",
@@ -20,6 +22,7 @@
     "Chat",
     "Claude Code (local)",
     "Codex (local)",
+    "Codex Marketplace",
     "Configuration",
     "Copy diagnostic",
     "Copy issue link",
@@ -34,8 +37,10 @@
     "Enable Plugins",
     "Feishu",
     "Feishu CN",
+    "Folder",
     "Gemini CLI (local)",
     "Getting Started",
+    "GitHub Marketplace",
     "Import",
     "Inbox",
     "Instance folder",
@@ -47,6 +52,7 @@
     "Library",
     "Linear",
     "Manage",
+    "Marketplace",
     "Messenger",
     "Model",
     "Move out of group",
@@ -92,8 +98,10 @@
     "Try again",
     "Try in Chat",
     "Update",
+    "Update review",
     "Update when idle",
     "Use latest",
-    "Yours"
+    "Yours",
+    "ZIP"
   ]
 }

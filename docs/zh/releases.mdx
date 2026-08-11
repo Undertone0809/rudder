@@ -18,17 +18,22 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
-<Update label="2026年8月11日" description="v0.7.3" tags={["改进"]}>
+<Update label="2026年8月11日" description="v0.7.3" tags={["改进","问题修复"]}>
 
 ## v0.7.3
 
 [GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.3)
 
-这个版本让每个 Issue 的 Agent 运行配置更容易找到和调整。
+这个版本让每个 Issue 的 Agent 运行配置更容易调整，并提升生产环境启动与 Messenger 连续性。
 
 ### 改进
 
 - 将每个 Issue 的模型与思考配置入口移到 Assignee 旁边的紧凑控件中，并从 Assignee 选择器和 More 菜单中移除；桌面端支持悬停或键盘聚焦，移动端也保持可用。
+
+### 问题修复
+
+- 修复大型本地数据库的生产环境启动问题：迁移备份改为流式写入，并兼容有效的历史迁移记录，同时继续阻止未知迁移。
+- 修复后台更新期间 Messenger 刷新闪烁和整页请求错误的问题，让已打开的 Chat 在短暂网络故障期间保持可见。
 
 </Update>
 

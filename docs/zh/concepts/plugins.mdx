@@ -1,6 +1,6 @@
 ---
 title: "插件"
-description: "安装由 Skill、MCP Server 和 App 组成的 Codex 兼容能力包。"
+description: "安装由技能、MCP Server 和应用组成的 Codex 兼容能力包。"
 icon: "plug"
 keywords:
   - "Rudder 插件"
@@ -26,16 +26,16 @@ Rudder 会先检查软件包，不执行其中内容，并显示身份、来源�
 警告和错误。安装后会为当前组织创建不可变快照。随后可以把软件包中的技能分配给
 Agent，并完成 MCP 的认证或访问设置。
 
-输入可以是目录、受大小限制的 ZIP、本地 Codex Marketplace，或使用完整 commit SHA
-固定的 HTTPS GitHub Marketplace。Marketplace 策略会作为来源信息保留，但不会绕过
+输入可以是目录、受大小限制的 `ZIP`、本地 `Codex Marketplace`，或使用完整 `commit SHA`
+固定的 `HTTPS` `GitHub Marketplace`。`Marketplace` 策略会作为来源信息保留，但不会绕过
 Rudder 的检查或触发静默安装。
 
-如果软件包中的 Skill 与组织 Skill 冲突，安装会暂停，直到操作者明确选择保留现有
-Skill、替换，或使用不同名称同时安装。
+如果软件包中的技能与组织技能冲突，安装会暂停，直到操作者明确选择保留现有
+技能、替换，或使用不同名称同时安装。
 
 本地应用也会作为只包含应用的插件出现在 **Plugins > Yours**。直接启动方式
-和原有 `/apps/...` 路由保持不变。App Builder 生成的新 revision 会成为待检查的不可变
-更新；当前 revision 会保持生效，直到用户检查并应用。
+和原有 `/apps/...` 路由保持不变。`App Builder` 生成的新 `revision` 会成为待检查的不可变
+更新；当前 `revision` 会保持生效，直到用户检查并应用。
 
 对软件包技能选择 **Customize** 会创建一个带软件包来源信息、但可独立编辑的
 组织技能。这个副本不再受插件更新、禁用或卸载控制。
