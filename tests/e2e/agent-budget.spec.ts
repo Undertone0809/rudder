@@ -29,7 +29,8 @@ test.describe("Agent budget configuration", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organizationRouteKey}/agents/${agentRouteKey}/configuration`, {
+    const configurationUrl = `/${organizationRouteKey}/agents/${agentRouteKey}/configuration`;
+    await page.goto(configurationUrl, {
       waitUntil: "domcontentloaded",
     });
 
@@ -37,11 +38,10 @@ test.describe("Agent budget configuration", () => {
     await expect(mainContent.getByRole("heading", { name: "Budget Config Agent", exact: true })).toBeVisible({
       timeout: 60_000,
     });
-    const budgetTab = mainContent.getByRole("tab", { name: "Budget", exact: true });
-    await expect(budgetTab).toBeVisible();
-    await budgetTab.click();
-    await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/agents/${agentRouteKey}/budget$`));
-    await expect(mainContent.getByText("Monthly UTC budget", { exact: true })).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Budget", exact: true })).toHaveCount(0);
+    const budgetHeading = mainContent.getByText("Monthly UTC budget", { exact: true });
+    await budgetHeading.scrollIntoViewIfNeeded();
+    await expect(budgetHeading).toBeVisible();
     await expect(mainContent.getByText("No cap configured", { exact: true })).toBeVisible();
 
     await mainContent.getByPlaceholder("0.00").fill("125.50");
@@ -52,6 +52,11 @@ test.describe("Agent budget configuration", () => {
     await mainContent.getByRole("button", { name: "Set budget", exact: true }).click();
     expect((await saveResponse).ok()).toBe(true);
 
+    await expect(mainContent.getByText("$125.50", { exact: true }).first()).toBeVisible();
+    await page.goto(`/${organizationRouteKey}/agents/${agentRouteKey}/budget`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page).toHaveURL(new RegExp(`${configurationUrl}$`));
     await expect(mainContent.getByText("$125.50", { exact: true }).first()).toBeVisible();
     const overviewRes = await page.request.get(`/api/orgs/${organization.id}/budgets/overview`);
     expect(overviewRes.ok()).toBe(true);
