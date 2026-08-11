@@ -27,6 +27,22 @@ export {
   resolveOrganizationStorageKey
 } from "./organization-storage.js";
 export {
+  RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY,
+  RUDDER_MCP_CLIENT_INFO_META_KEY,
+  RUDDER_MCP_LEGACY_PROTOCOL_VERSIONS,
+  RUDDER_MCP_MODERN_PROTOCOL_VERSION,
+  RUDDER_MCP_PROTOCOL_VERSION_META_KEY,
+  RUDDER_MCP_SERVER_INFO_META_KEY,
+  RUDDER_MCP_SUPPORTED_PROTOCOL_VERSIONS,
+  hasConflictingMcpProtocolVersions,
+  hasModernMcpRequestEnvelope,
+  isRudderMcpModernProtocolVersion,
+  modernMcpResult,
+  negotiateRudderMcpProtocolVersion,
+  protocolVersionFromMcpParams,
+  type RudderMcpProtocolVersion
+} from "./rudder-mcp-protocol.js";
+export {
   RUDDER_BROWSER_MCP_CONTRACT_HASH, RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_BROWSER_MCP_TOOL_CONTRACTS, RUDDER_BROWSER_MCP_TOOL_COUNT,
   RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_COMPUTER_MCP_SERVER_NAME, RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_CONTRACTS,

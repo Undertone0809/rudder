@@ -230,7 +230,7 @@ export async function createManagedMcpClient(
 ): Promise<ManagedMcpClient> {
   const sdkClient = new Client(
     { name: "rudder-managed-mcp", version: "1.0.0" },
-    { versionNegotiation: { mode: "legacy" } },
+    { versionNegotiation: { mode: "auto" } },
   );
   const maxOutputBytes = options.maxOutputBytes ?? 10 * 1024 * 1024;
   let stderrBytes = 0;

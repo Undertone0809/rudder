@@ -28,6 +28,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 async function startMockMcpServer(options: {
+  modern?: boolean;
   alwaysUnauthorized?: boolean;
   requiredBearer?: string;
   refreshBearer?: string;
@@ -35,6 +36,11 @@ async function startMockMcpServer(options: {
   rateLimitTools?: boolean;
 } = {}): Promise<MockMcpServer> {
   const requests: MockMcpServer["requests"] = [];
+  const modernResult = (result: Record<string, unknown>, cacheable = false) => ({
+    ...result,
+    resultType: "complete",
+    ...(cacheable ? { ttlMs: 300_000, cacheScope: "public" } : {}),
+  });
   const server = createServer(async (req, res) => {
     if (req.method === "GET") {
       res.writeHead(405);
@@ -74,6 +80,29 @@ async function startMockMcpServer(options: {
       res.end();
       return;
     }
+    if (message.method === "server/discover") {
+      if (!options.modern) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.setHeader("MCP-Protocol-Version", "2026-07-28");
+      json(res, 200, {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: modernResult({
+          supportedVersions: ["2026-07-28"],
+          capabilities: { tools: {} },
+          _meta: {
+            "io.modelcontextprotocol/serverInfo": {
+              name: "rudder-http-fixture",
+              version: "1.0.0",
+            },
+          },
+        }, true),
+      });
+      return;
+    }
     if (message.method === "initialize") {
       json(res, 200, {
         jsonrpc: "2.0",
@@ -90,7 +119,16 @@ async function startMockMcpServer(options: {
       json(res, 200, {
         jsonrpc: "2.0",
         id: message.id,
-        result: {
+        result: options.modern ? modernResult({
+          tools: [{
+            name: "echo",
+            description: "Echo an input",
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "string" } },
+            },
+          }],
+        }, true) : {
           tools: [{
             name: "echo",
             description: "Echo an input",
@@ -107,7 +145,10 @@ async function startMockMcpServer(options: {
       json(res, 200, {
         jsonrpc: "2.0",
         id: message.id,
-        result: {
+        result: options.modern ? modernResult({
+          content: [{ type: "text", text: message.params.arguments.value }],
+          structuredContent: { echoed: message.params.arguments.value },
+        }) : {
           content: [{ type: "text", text: message.params.arguments.value }],
           structuredContent: { echoed: message.params.arguments.value },
         },
@@ -138,8 +179,8 @@ afterEach(async () => {
 });
 
 describe("managed MCP Streamable HTTP client", () => {
-  it("performs initialize, tools/list, and tools/call without authentication", async () => {
-    const server = await startMockMcpServer();
+  it("negotiates the modern protocol and performs tools/list and tools/call", async () => {
+    const server = await startMockMcpServer({ modern: true });
     servers.push(server);
     const client = await createManagedMcpClient({
       transport: "streamable_http",
@@ -158,10 +199,33 @@ describe("managed MCP Streamable HTTP client", () => {
       structuredContent: { echoed: "hello" },
     });
     expect(server.requests.map((request) => request.method)).toEqual([
+      "server/discover",
+      "tools/list",
+      "tools/call",
+    ]);
+  });
+
+  it("falls back to the legacy initialize handshake when discovery is unavailable", async () => {
+    const server = await startMockMcpServer();
+    servers.push(server);
+    const client = await createManagedMcpClient({
+      transport: "streamable_http",
+      url: `${server.origin}/mcp`,
+      network: { allowedOrigins: [server.origin] },
+      credentials: resolveMcpHttpCredentials({}),
+      startupTimeoutMs: 1_000,
+      toolTimeoutMs: 1_000,
+    });
+    clients.push(client);
+
+    await expect(client.discoverTools()).resolves.toEqual([
+      expect.objectContaining({ name: "echo" }),
+    ]);
+    expect(server.requests.map((request) => request.method)).toEqual([
+      "server/discover",
       "initialize",
       "notifications/initialized",
       "tools/list",
-      "tools/call",
     ]);
   });
 
@@ -190,8 +254,10 @@ describe("managed MCP Streamable HTTP client", () => {
 
     await expect(client.discoverTools()).resolves.toHaveLength(1);
     expect(refreshes).toBe(1);
-    expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(2);
-    expect(server.requests.at(-1)?.authorization).toBe("Bearer fresh-token");
+    expect(server.requests.filter((request) => request.method === "server/discover")).toHaveLength(2);
+    expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(1);
+    expect(server.requests[0]?.authorization).toBe("Bearer expired-token");
+    expect(server.requests.slice(1).every((request) => request.authorization === "Bearer fresh-token")).toBe(true);
   });
 
   it("preserves the receiver for stateful OAuth credentials", async () => {
@@ -234,7 +300,8 @@ describe("managed MCP Streamable HTTP client", () => {
 
     expect(refreshes).toBe(1);
     expect(reauthorizationTransitions).toBe(1);
-    expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(2);
+    expect(server.requests.filter((request) => request.method === "server/discover")).toHaveLength(2);
+    expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(0);
   });
 
   it("follows only policy-validated redirects and surfaces rate limits safely", async () => {
@@ -276,7 +343,7 @@ describe("managed MCP Streamable HTTP client", () => {
 });
 
 describe("managed MCP STDIO client", () => {
-  it("uses canonical authenticated paths, selects environment, and force-reaps a stubborn child", async () => {
+  it("uses canonical authenticated paths, negotiates modern stdio, and force-reaps a stubborn child", { timeout: 12_000 }, async () => {
     const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-mcp-stdio-"));
     const canonicalCwd = path.join(fixtureRoot, "canonical-cwd");
     const cwdAlias = path.join(fixtureRoot, "cwd-alias");

@@ -24,6 +24,20 @@ lines.on("line", (line) => {
     });
     return;
   }
+  if (message.method === "server/discover") {
+    send(message.id, {
+      supportedVersions: ["2026-07-28"],
+      capabilities: { tools: {} },
+      resultType: "complete",
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": {
+          name: "rudder-stdio-fixture",
+          version: "1.0.0",
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "notifications/initialized") return;
   if (message.method === "tools/list") {
     send(message.id, {
@@ -50,6 +64,7 @@ lines.on("line", (line) => {
           },
         },
       ],
+      resultType: "complete",
     });
     return;
   }
@@ -58,6 +73,7 @@ lines.on("line", (line) => {
   if (message.params.name === "sleep") {
     setTimeout(() => send(message.id, {
       content: [{ type: "text", text: "awake" }],
+      resultType: "complete",
     }), message.params.arguments?.delayMs ?? 100);
     return;
   }
@@ -67,11 +83,13 @@ lines.on("line", (line) => {
         type: "text",
         text: "x".repeat(message.params.arguments?.bytes ?? 1024),
       }],
+      resultType: "complete",
     });
     return;
   }
   send(message.id, {
     content: [{ type: "text", text: "ok" }],
+    resultType: "complete",
     structuredContent: {
       pid: process.pid,
       argv0: process.argv0,

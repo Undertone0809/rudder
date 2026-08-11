@@ -775,7 +775,7 @@ describe("agent-v1 MCP server", () => {
     expect(result.tools.map((tool) => tool.name)).toContain("rudder_issue_review");
   });
 
-  it("echoes the client's initialize protocol version", async () => {
+  it("negotiates supported legacy initialize versions without echoing unknown versions", async () => {
     const response = await runAgentV1McpJsonRpcMessage(
       {
         jsonrpc: "2.0",
@@ -823,6 +823,149 @@ describe("agent-v1 MCP server", () => {
     );
     expect(response?.result).toMatchObject({ serverInfo: { name: "rudder-tools" } });
     expect(browserResponse?.result).toMatchObject({ serverInfo: { name: "rudder-browser" } });
+
+    const unsupported = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "initialize",
+      params: { protocolVersion: "2099-01-01" },
+    });
+    expect(unsupported).toMatchObject({
+      error: {
+        code: -32022,
+        data: {
+          requested: "2099-01-01",
+          supported: expect.arrayContaining(["2025-11-25", "2024-11-05"]),
+        },
+      },
+    });
+    expect(JSON.stringify(unsupported)).not.toContain("2099-01-01\",\"result");
+  });
+
+  it("serves modern discovery, annotations, cache hints, and stable tool pagination", async () => {
+    const params = {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": { name: "test-modern-client", version: "1" },
+      },
+    };
+    const discovery = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "discover",
+      method: "server/discover",
+      params,
+    });
+    expect(discovery).toMatchObject({
+      result: {
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        ttlMs: 300_000,
+        cacheScope: "public",
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": { name: "rudder-tools" },
+        },
+      },
+    });
+
+    const firstPage = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "tools-1",
+      method: "tools/list",
+      params,
+    });
+    const firstResult = firstPage?.result as {
+      tools: Array<{ name: string; annotations?: Record<string, unknown> }>;
+      nextCursor?: string;
+      resultType: string;
+    };
+    expect(firstResult.resultType).toBe("complete");
+    expect(firstResult.tools).toHaveLength(50);
+    expect(firstResult.nextCursor).toBeTruthy();
+    expect(firstResult.tools[0]?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+
+    const secondPage = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "tools-2",
+      method: "tools/list",
+      params: { ...params, cursor: firstResult.nextCursor },
+    });
+    const secondTools = (secondPage?.result as {
+      tools: Array<{ name: string; annotations?: Record<string, unknown> }>;
+    }).tools;
+    expect(secondTools.length).toBeGreaterThan(0);
+    expect(new Set([...firstResult.tools, ...secondTools].map((tool) => tool.name)).size)
+      .toBe(70);
+    const allTools = [...firstResult.tools, ...secondTools];
+    expect(allTools.every((tool) => tool.annotations)).toBe(true);
+    expect(allTools.find((tool) => tool.name === "rudder_agent_skills_sync")?.annotations)
+      .toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(allTools.find((tool) => tool.name === "rudder_automation_triggers_delete")?.annotations)
+      .toMatchObject({ readOnlyHint: false, destructiveHint: true });
+
+    const malformedModern = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "malformed-modern",
+      method: "tools/list",
+      params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+    });
+    expect(malformedModern).toMatchObject({ error: { code: -32602 } });
+
+    const conflictingModern = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "conflicting-modern",
+      method: "tools/list",
+      params: {
+        protocolVersion: "2025-06-18",
+        ...params,
+      },
+    });
+    expect(conflictingModern).toMatchObject({ error: { code: -32602 } });
+
+    const invalidCursor = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "invalid-cursor",
+      method: "tools/list",
+      params: { ...params, cursor: "not-an-opaque-cursor" },
+    });
+    expect(invalidCursor).toMatchObject({ error: { code: -32602 } });
+  });
+
+  it("serves Browser-specific modern annotations without changing the tool boundary", async () => {
+    const params = {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+      },
+    };
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "browser-tools",
+      method: "tools/list",
+      params,
+    }, buildMcpServerEnv({ RUDDER_BROWSER_ENABLED: "true" }), "browser");
+    const tools = (response?.result as {
+      tools: Array<{ name: string; annotations?: Record<string, unknown> }>;
+    }).tools;
+
+    expect(tools).toHaveLength(25);
+    expect(tools.find((tool) => tool.name === "rudder_browser_snapshot")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    });
+    expect(tools.find((tool) => tool.name === "rudder_browser_click")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+    expect(tools.find((tool) => tool.name === "rudder_browser_open")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      openWorldHint: true,
+    });
   });
 
   it("identifies the isolated Browser MCP server", async () => {
@@ -1067,6 +1210,41 @@ describe("agent-v1 MCP server", () => {
       structuredContent: {
         code: "rudder_mcp_response_too_large",
         details: { maxBytes: 1_000_000 },
+      },
+    });
+  });
+
+  it("keeps bounded oversized errors in the modern result envelope", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
+      JSON.stringify({ payload: "X".repeat(1_100_000) }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "modern-too-large",
+      method: "tools/call",
+      params: {
+        name: "rudder_agent_me",
+        arguments: {},
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+    }));
+
+    expect(response?.result).toMatchObject({
+      resultType: "complete",
+      isError: true,
+      structuredContent: {
+        code: "rudder_mcp_response_too_large",
+      },
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": { name: "rudder-tools" },
       },
     });
   });
