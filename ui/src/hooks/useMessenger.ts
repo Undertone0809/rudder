@@ -40,6 +40,40 @@ export interface MessengerModel {
   error: Error | null;
 }
 
+type MessengerQueryLoadState = {
+  data: unknown;
+  error: unknown;
+  isLoading: boolean;
+};
+
+export function resolveMessengerLoadState(
+  route: MessengerRouteState,
+  queries: {
+    threads: MessengerQueryLoadState;
+    issues: MessengerQueryLoadState;
+    approvals: MessengerQueryLoadState;
+    system: MessengerQueryLoadState;
+  },
+): Pick<MessengerModel, "isLoading" | "error"> {
+  const activeQuery = route.kind === "root"
+    ? queries.threads
+    : route.kind === "issues"
+      ? queries.issues
+      : route.kind === "approvals"
+        ? queries.approvals
+        : route.kind === "system"
+          ? queries.system
+          : null;
+
+  if (!activeQuery) return { isLoading: false, error: null };
+  return {
+    isLoading: activeQuery.isLoading && activeQuery.data === undefined,
+    error: activeQuery.data === undefined && activeQuery.error instanceof Error
+      ? activeQuery.error
+      : null,
+  };
+}
+
 const MESSENGER_THREAD_PAGE_SIZE = 40;
 
 export function resolveMessengerRoute(pathname: string): MessengerRouteState {
@@ -116,13 +150,12 @@ export function useMessengerModel(options: { splitIssues?: boolean } = {}) {
     enabled: !!selectedOrganizationId && route.kind === "system",
   });
 
-  const error = useMemo(() => {
-    if (threadsQuery.error instanceof Error) return threadsQuery.error;
-    if (issuesThreadQuery.error instanceof Error) return issuesThreadQuery.error;
-    if (approvalsThreadQuery.error instanceof Error) return approvalsThreadQuery.error;
-    if (systemThreadQuery.error instanceof Error) return systemThreadQuery.error;
-    return null;
-  }, [approvalsThreadQuery.error, issuesThreadQuery.error, systemThreadQuery.error, threadsQuery.error]);
+  const loadState = resolveMessengerLoadState(route, {
+    threads: threadsQuery,
+    issues: issuesThreadQuery,
+    approvals: approvalsThreadQuery,
+    system: systemThreadQuery,
+  });
   const threadSummaries = useMemo(
     () => threadsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [threadsQuery.data?.pages],
@@ -138,11 +171,6 @@ export function useMessengerModel(options: { splitIssues?: boolean } = {}) {
     issueThreadDetail: issuesThreadQuery.data?.detail ?? null,
     approvalThreadDetail: approvalsThreadQuery.data?.detail ?? null,
     systemThreadDetail: systemThreadQuery.data?.detail ?? null,
-    isLoading:
-      threadsQuery.isLoading ||
-      issuesThreadQuery.isLoading ||
-      approvalsThreadQuery.isLoading ||
-      systemThreadQuery.isLoading,
-    error,
+    ...loadState,
   } satisfies MessengerModel;
 }

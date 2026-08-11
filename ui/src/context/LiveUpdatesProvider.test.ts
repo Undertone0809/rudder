@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { queryKeys } from "../lib/queryKeys";
 import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 
@@ -582,5 +582,63 @@ describe("LiveUpdatesProvider notification preferences", () => {
     );
 
     expect(toasts).toEqual([]);
+  });
+});
+
+describe("LiveUpdatesProvider chat invalidation", () => {
+  it("does not restart chat-list requests for streaming progress updates", () => {
+    const invalidateQueries = vi.fn(() => Promise.resolve());
+    const queryClient = {
+      invalidateQueries,
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "chat",
+        entityId: "chat-1",
+        action: "chat.message_updated",
+        details: { messageId: "message-1", status: "streaming" },
+      },
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.detail("organization-1", "chat-1") },
+      { cancelRefetch: false },
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.messages("organization-1", "chat-1") },
+      { cancelRefetch: false },
+    );
+    expect(invalidateQueries).not.toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.list("organization-1", "active") },
+      expect.anything(),
+    );
+  });
+
+  it("refreshes chat lists once a progress update reaches a terminal state", () => {
+    const invalidateQueries = vi.fn(() => Promise.resolve());
+    const queryClient = {
+      invalidateQueries,
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "chat",
+        entityId: "chat-1",
+        action: "chat.message_updated",
+        details: { messageId: "message-1", status: "completed" },
+      },
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.list("organization-1", "active") },
+      { cancelRefetch: false },
+    );
   });
 });

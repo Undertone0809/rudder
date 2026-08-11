@@ -18,17 +18,22 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
-<Update label="August 11, 2026" description="v0.7.3" tags={["Improved"]}>
+<Update label="August 11, 2026" description="v0.7.3" tags={["Improved","Fixed"]}>
 
 ## v0.7.3
 
 [GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.3)
 
-This release makes per-issue Agent run-profile settings easier to find and adjust.
+This release makes per-issue Agent run-profile settings easier to adjust and improves production startup and Messenger continuity.
 
 ### Improved
 
 - Moved per-issue model and thinking controls into a compact control beside Assignee, removing them from the Assignee picker and More menu while keeping them accessible on desktop hover or keyboard focus and on mobile layouts.
+
+### Fixed
+
+- Fixed production startup for large local databases by streaming migration backups and accepting valid historical migration records while keeping unknown migrations blocked.
+- Fixed Messenger refresh flicker and full-page fetch errors during background updates so an open chat stays visible through transient network failures.
 
 </Update>
 

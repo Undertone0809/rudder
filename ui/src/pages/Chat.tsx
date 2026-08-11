@@ -140,7 +140,7 @@ import {
   shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
-import { resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
+import { resolveChatLoadError, resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
@@ -2367,7 +2367,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     nativeSteerMessagesByGenerationId,
     visibleMessages,
   ]);
-  const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
+  const loadError = resolveChatLoadError([
+    conversationsQuery,
+    { data: conversationSnapshot, error: conversationQuery.error },
+    messagesQuery,
+    { data: agents, error: agentsError },
+    { data: organizationSkills, error: organizationSkillsError },
+    { data: activeAgentSkillSnapshot, error: activeAgentSkillsError },
+    { data: projects, error: projectsError },
+    { data: issues, error: issuesError },
+  ]);
   const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const workManifestError = workManifestQuery.error instanceof Error ? workManifestQuery.error.message : workManifestQuery.error ? "Failed to load files and links." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
       await navigator.clipboard.writeText(chatReferenceMarkdown(selectedConversation));
