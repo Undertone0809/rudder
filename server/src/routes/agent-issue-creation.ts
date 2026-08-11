@@ -4,8 +4,8 @@ import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import type { agentIssueCreationService } from "../services/agent-issue-creation.js";
 import type { LogActivityInput } from "../services/activity-log.js";
+import type { agentIssueCreationService } from "../services/agent-issue-creation.js";
 import type { WakeupOptions } from "../services/runtime-kernel/heartbeat.core.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 

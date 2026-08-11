@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   E2E_AGENT_ISSUE_CREATION_STUB,
   E2E_BASE_URL,
-  E2E_CODEX_STUB,
   E2E_CODEX_ERROR_STUB,
+  E2E_CODEX_STUB,
 } from "./support/e2e-env";
 
 type Organization = { id: string; issuePrefix: string; urlKey?: string };
