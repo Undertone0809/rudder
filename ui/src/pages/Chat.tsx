@@ -58,6 +58,7 @@ import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import {
   NO_CHAT_AGENT_ID,
@@ -240,7 +241,8 @@ function localAppRecoveryDraftStorageScope(value: string | null): string | null 
     ? `local-app-recovery:${id}`
     : null;
 }
-function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+  const localizeChatProcessText = useCallback((text: string) => translateLegacyString(locale, text), [locale]);
   const macDesktopShell = typeof document !== "undefined"
     && document.documentElement.classList.contains("desktop-shell-macos");
   const { openImagePreview } = useImagePreview(); const {
@@ -3577,6 +3579,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       open={workManifestWideOpen}
                       count={workManifest?.totalCount ?? 0}
                       onToggle={() => setWorkManifestWideOpen((open) => !open)}
+                      localizeText={localizeChatProcessText}
                     />
                   ) : null}
                   {!sidePanelOpen ? (
@@ -3745,7 +3748,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   </DropdownMenu>
                 </div>
               </div>
-              <div className="pointer-events-none absolute right-4 top-12 z-20 md:right-5">
+              <div className="pointer-events-none absolute right-[7rem] top-12 z-20 md:right-5">
                 <ChatWorkManifest
                   manifest={workManifest}
                   loading={workManifestQuery.isPending}
@@ -3755,6 +3758,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   onOpenItem={openWorkManifestItem}
                   onOpenSubagents={openWorkManifestSubagents}
                   onJumpToMessage={jumpToChatMessage}
+                  localizeText={localizeChatProcessText}
                 />
               </div>
               {isMobile && conversations.length > 0 ? (
@@ -3871,6 +3875,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     state={activeStream.state}
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
+                                    localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     onOpenFile={openTranscriptFile}
                                     onOpenSkill={openTranscriptSkill}
@@ -3927,6 +3932,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}
                                     assistantMessageBody={message.body}
+                                    localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     open={openProcessMessageIds[message.id]} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
                                     onOpenFile={openTranscriptFile}
@@ -3966,9 +3972,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     state={message.status}
                                     generationTerminalReason={message.generationTerminalReason}
                                     loading={Boolean(loadingTranscriptMessageIds[message.id])}
+                                    localizeText={localizeChatProcessText}
                                     onLoad={() => void loadMessageTranscript(message.conversationId, message.id)}
                                   /> ) : null}
                                 <ChatMessageItem
+                                  localizeText={localizeChatProcessText}
                                   conversation={selectedConversation}
                                   message={message}
                                   agents={agents}

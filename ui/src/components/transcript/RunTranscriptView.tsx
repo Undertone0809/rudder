@@ -43,6 +43,7 @@ export function RunTranscriptView({
   showDeveloperDiagnostics = false,
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
+  localizeText,
   onOpenFile,
   onOpenSkill,
   canOpenSkill,
@@ -173,6 +174,7 @@ export function RunTranscriptView({
           thinkingClassName={thinkingClassName}
           hideAssistantMessages={hideAssistantMessages}
           hiddenAssistantMessageText={hiddenAssistantMessageText}
+          localizeText={localizeText}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
           onOpenFile={handleOpenFile}
