@@ -100,6 +100,8 @@
               "reference/workspace-boundaries",
               "reference/automation-output-routing",
               "reference/permissions-and-platforms",
+              "reference/code-signing-policy",
+              "reference/privacy",
               "reference/approvals-budgets-activity"
             ]
           },
@@ -175,6 +177,14 @@
                 {
                   "label": "Changelog",
                   "href": "/releases"
+                },
+                {
+                  "label": "Code signing",
+                  "href": "/reference/code-signing-policy"
+                },
+                {
+                  "label": "Privacy",
+                  "href": "/reference/privacy"
                 }
               ]
             }
@@ -236,6 +246,8 @@
               "zh/reference/workspace-boundaries",
               "zh/reference/automation-output-routing",
               "zh/reference/permissions-and-platforms",
+              "zh/reference/code-signing-policy",
+              "zh/reference/privacy",
               "zh/reference/approvals-budgets-activity"
             ]
           },
@@ -311,6 +323,14 @@
                 {
                   "label": "更新记录",
                   "href": "/zh/releases"
+                },
+                {
+                  "label": "代码签名",
+                  "href": "/zh/reference/code-signing-policy"
+                },
+                {
+                  "label": "隐私政策",
+                  "href": "/zh/reference/privacy"
                 }
               ]
             }

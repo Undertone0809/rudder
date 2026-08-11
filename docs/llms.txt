@@ -35,7 +35,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Review Agent Work](https://docs.rudderhq.dev/how-to/review-agent-work): Open the real result, compare it with the request, and record a decision the next person can understand.
 - [Give an Agent Project Files and Context](https://docs.rudderhq.dev/how-to/manage-workspaces-and-library): Connect a project folder, choose the source material an Agent should receive, and keep the final result.
 - [Move an Organization to Another Rudder Instance](https://docs.rudderhq.dev/how-to/export-import-organization): Export supported organization data, preview the import, and safely create a new copy.
-- [Install and Manage a Plugin](https://docs.rudderhq.dev/how-to/manage-plugins): Review a trusted Plugin, install it, test one action, and recover from a failed update.
+- [Install and Manage a Plugin](https://docs.rudderhq.dev/how-to/manage-plugins): Inspect a Codex Plugin package, install its supported capabilities, and configure Skills or MCP access.
 - [Connect an Agent to Feishu or Lark](https://docs.rudderhq.dev/how-to/configure-feishu-integration): Authorize a Feishu or Lark bot, send a test message, and find the same conversation in Rudder.
 - [Configure an Agent Runtime](https://docs.rudderhq.dev/how-to/configure-agent-runtime): Connect the program that performs an Agent's work, test it, and verify one real task.
 
@@ -45,6 +45,8 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Where Rudder Stores and Uses Files](https://docs.rudderhq.dev/reference/workspace-boundaries): Look up the right location for project files, reusable resources, Agent state, Run changes, and backups.
 - [Choose Where Automation Results Go](https://docs.rudderhq.dev/reference/automation-output-routing): Compare Chat and Issue output for an Automation, including what you see when a run fails.
 - [Permissions, Credentials, and Platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Understand local trust, where credentials stay, how external connections are limited, and what differs by platform.
+- [Code Signing Policy](https://docs.rudderhq.dev/reference/code-signing-policy): How Rudder builds, reviews, approves, and signs Windows Desktop release artifacts.
+- [Privacy Policy](https://docs.rudderhq.dev/reference/privacy): How Rudder handles local workspace data, accounts, optional analytics, and public-site data.
 - [Approvals, Budgets, Activity, and Attention](https://docs.rudderhq.dev/reference/approvals-budgets-activity): Know where to approve sensitive actions, check spending, review changes, inspect Runs, and find work waiting for you.
 
 ### Project
@@ -74,7 +76,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [技能](https://docs.rudderhq.dev/zh/concepts/skills): 把已经验证过、会反复出现的做法整理成 Agent 可以复用的指令。
 - [自动化](https://docs.rudderhq.dev/zh/concepts/automations): 按日程、Webhook 或手动触发，重复运行一项已经稳定的 Agent 任务。
 - [评审、反馈和改进](https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning): 判断结果，说明哪里应该改变，并把已经验证的经验用于未来的 Agent 工作。
-- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 为 Rudder 添加可选集成、工具、后台任务和界面面板。
+- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 安装由技能、MCP Server 和应用组成的 Codex 兼容能力包。
 
 ### How-to guides
 - [让 Issue 从开始走到完成](https://docs.rudderhq.dev/zh/how-to/issue-lifecycle): 写清任务，指定一个负责人，评审结果，并让重要信息留在完成记录里。
@@ -83,7 +85,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [评审 Agent 工作](https://docs.rudderhq.dev/zh/how-to/review-agent-work): 打开真实结果，对照任务要求，并记录下一位负责人也能理解的结论。
 - [给 Agent 提供项目文件和上下文](https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library): 连接项目文件夹，选择 Agent 应该收到的来源资料，并保存最终结果。
 - [把组织迁移到另一个 Rudder 实例](https://docs.rudderhq.dev/zh/how-to/export-import-organization): 导出受支持的组织数据，预览导入内容，再安全地创建一份新副本。
-- [安装和管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 检查可信插件，完成安装，测试一次真实操作，并从失败更新中恢复。
+- [安装和管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 检查 Codex Plugin 软件包，安装支持的能力，并配置技能或 MCP 访问。
 - [把 Agent 连接到飞书或 Lark](https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration): 授权飞书或 Lark 机器人，发送测试消息，再从 Rudder 找到同一段对话。
 - [配置 Agent 运行工具](https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime): 连接真正执行 Agent 工作的程序，完成测试，再用一件真实小任务验证。
 
@@ -93,6 +95,8 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Rudder 在哪里保存和使用文件](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查询项目文件、可复用资料、Agent 状态、运行改动和备份应该放在哪里。
 - [选择自动化结果去向](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 比较自动化的 Chat 与 Issue 结果，并了解运行失败时会看到什么。
 - [权限、凭据和平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 了解本地信任、凭据保存位置、外部连接限制，以及不同平台的差异。
+- [代码签名政策](https://docs.rudderhq.dev/zh/reference/code-signing-policy): Rudder 如何构建、审查、批准并签名 Windows Desktop 发布产物。
+- [隐私政策](https://docs.rudderhq.dev/zh/reference/privacy): Rudder 如何处理本地工作空间、账号、可选分析和公共网站数据。
 - [审批、预算、活动和待处理事项](https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity): 找到敏感操作审批、费用、变更记录、Agent 运行和等待处理工作的正确入口。
 
 ### Project

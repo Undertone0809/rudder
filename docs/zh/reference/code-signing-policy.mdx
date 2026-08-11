@@ -1,0 +1,49 @@
+---
+title: "代码签名政策"
+description: "Rudder 如何构建、审查、批准并签名 Windows Desktop 发布产物。"
+icon: "badge-check"
+canonical: "https://docs.rudderhq.dev/zh/reference/code-signing-policy"
+"og:url": "https://docs.rudderhq.dev/zh/reference/code-signing-policy"
+hreflang_en: "https://docs.rudderhq.dev/reference/code-signing-policy"
+hreflang_zh: "https://docs.rudderhq.dev/zh/reference/code-signing-policy"
+---
+
+最后更新：2026 年 8 月 12 日。
+
+Rudder 正在为 Windows Desktop 发布产物申请代码签名基金会项目资格。
+申请获批且发布流程完成配置前，现有发布产物不会被描述为已经由该服务签名。
+
+免费代码签名由[签名服务](https://about.signpath.io/)提供，证书由
+[签名基金会](https://signpath.org/)提供。
+
+## 适用范围
+
+- 源代码仓库：[Undertone0809/rudder](https://github.com/Undertone0809/rudder)
+- 许可证：项目级 Apache-2.0；第三方声明和组件许可证记录在仓库中
+- 构建系统：GitHub Actions
+- 签名范围：由公开仓库中经过审查的源代码和构建脚本，通过自动化发布流程生成的
+  Windows Desktop 产物
+- 不会把上游二进制文件当作 Rudder 自有源代码进行签名
+
+每次签名请求都需要人工批准。证书不会用于无关软件、本地开发构建，或无法追溯到
+公开源代码仓库与发布流程的产物。
+
+## 团队角色
+
+- Committer 和 Author：[Zeeland (@Undertone0809)](https://github.com/Undertone0809)
+- Reviewer：[Rudder 独立维护者账号 (@Rudderhq)](https://github.com/Rudderhq)，
+  包括通过 [CODEOWNERS](https://github.com/Undertone0809/rudder/blob/main/.github/CODEOWNERS)
+  分配的发布与产品契约路径
+- 签名 Approver：[Zeeland (@Undertone0809)](https://github.com/Undertone0809)
+
+拥有源代码或签名权限的项目成员必须启用多因素认证。没有直接提交权限的贡献者所做
+的变更在合并前必须经过审查；发布和签名相关变更遵守仓库所有权规则。
+
+## 用户隐私与安全
+
+Rudder 的[隐私政策](/zh/reference/privacy)说明本地工作空间数据、可选账号与分析数据，
+以及第三方运行工具的边界。Rudder 不会故意包含恶意软件、垃圾软件，或以发现、利用
+安全漏洞或绕过运行环境安全措施为目的的功能。
+
+下载路径同时提供安装与[卸载说明](/zh/get-started/installation#卸载-rudder)。安全或签名
+问题可以私下发送至 [zeeland4work@gmail.com](mailto:zeeland4work@gmail.com)。
