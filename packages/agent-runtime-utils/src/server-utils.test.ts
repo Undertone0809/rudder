@@ -80,7 +80,7 @@ describe("createRudderSkillDirectoryLink", () => {
         "# Windows-safe skill\n",
       );
       expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
-      expect(path.resolve(await fs.realpath(target))).toBe(path.resolve(source));
+      expect(await fs.realpath(target)).toBe(await fs.realpath(source));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -197,11 +197,7 @@ describe("App Builder managed runner", () => {
           ["run", "test"],
           ["exec", "next", "build", "--webpack"],
         ]
-      : [
-          ["run", "typecheck"],
-          ["run", "test"],
-          ["run", "build"],
-        ];
+      : [["run", "verify"]];
     expect(recorded.map((call) => call.argv)).toEqual([
       install,
       ...verification,

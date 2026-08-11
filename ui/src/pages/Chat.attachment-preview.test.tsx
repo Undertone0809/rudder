@@ -58,6 +58,13 @@ function makeLiveSurfaceAnchorsVisible() {
 const PREVIEW_IMAGE_SRC =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320' viewBox='0 0 480 320'%3E%3Crect width='480' height='320' fill='%232f80ed'/%3E%3Ctext x='240' y='168' fill='white' font-size='34' font-family='Arial' text-anchor='middle'%3EPreview%3C/text%3E%3C/svg%3E";
 
+vi.mock("@/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => <aside role="tooltip">{children}</aside>,
+}));
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -3389,7 +3396,7 @@ describe("Chat Side Panel link handling", () => {
     const fileToolbar = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-toolbar']");
     expect(sidePanel).not.toBeNull();
     expect(fileToolbar?.querySelector("nav")?.getAttribute("tabindex")).toBe("0");
-    expect(fileView?.textContent).not.toContain("reports/activity.md");
+    expect(fileView?.textContent).toContain("reports/activity.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
     expect(sidePanel?.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
       "# Activity report\n\nStable Library entry links should render inline.",
@@ -4935,7 +4942,8 @@ describe("Chat Side Panel link handling", () => {
     expect(activityScroller).toBeNull();
     expect(fixedComposer).not.toBeNull();
     expect(issueScroller?.className).toContain("overflow-y-auto");
-    expect(fixedComposer?.className).toContain("sticky bottom-0");
+    expect(fixedComposer?.className).toContain("sticky bottom-[calc(5rem+env(safe-area-inset-bottom))]");
+    expect(fixedComposer?.className).toContain("md:bottom-0");
     expect(sidePanelScrollBody?.className).toContain("overflow-hidden");
     expect(sidePanel?.className).toContain("fixed");
     expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
@@ -7235,19 +7243,14 @@ describe("Chat attachment previews", () => {
     expect(container.querySelector("main.workspace-main-card")).not.toBeNull();
   });
 
-  it("keeps load errors inside the main chat workspace card", () => {
+  it("keeps cached chat content visible when a background detail refresh fails", () => {
     mockState.failedChatDetailIds.add("chat-1");
     const { container } = renderChat();
 
     const mainCard = container.querySelector("main[data-testid='chat-main-workspace-card']");
-    const mobileClearance = container.querySelector("[data-testid='chat-load-error-mobile-clearance']");
-    const loadError = Array.from(container.querySelectorAll("div")).find(
-      (element) => element.textContent?.trim() === "Side Chat status failed to load",
-    );
-
-    expect(mobileClearance).not.toBeNull();
-    expect(loadError).toBeDefined();
-    expect(mainCard?.contains(loadError ?? null)).toBe(true);
+    expect(container.querySelector("[data-testid='chat-load-error-mobile-clearance']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-load-error']")).toBeNull();
+    expect(mainCard?.textContent).toContain("Please review this proposal.");
   });
 
   it("keeps a new-chat load error in the main card", () => {

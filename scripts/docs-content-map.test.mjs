@@ -40,6 +40,17 @@ const BATCH_2_HOW_TO_IDS = [
   "review-agent-work",
 ];
 
+const BATCH_2_ANCHOR_OVERRIDES = {
+  plugins: {
+    en: ["one-package-for-reusable-capabilities", "what-installation-does", "lifecycle-and-trust"],
+    zh: ["用一个软件包分发相关能力", "安装会发生什么", "生命周期和信任边界"],
+  },
+  "manage-plugins": {
+    en: ["what-you-will-do", "before-you-start", "install-and-set-up", "check-the-result", "update-or-roll-back", "disable-or-uninstall"],
+    zh: ["你将完成什么", "开始前", "安装和设置", "检查结果", "更新或回滚", "禁用或卸载"],
+  },
+};
+
 const BATCH_3_REFERENCE_IDS = [
   "issue-statuses",
   "runtime-types",
@@ -198,7 +209,9 @@ test("Batch 2 concepts and how-to guides keep their case-led retrieval structure
     assert.equal(page.example_ids.length, 1, `${pageId} must declare one continuing case`);
     assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
     assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
-    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, conceptAnchors, `${pageId} anchors`);
+    for (const [locale, anchors] of Object.entries(page.anchors)) {
+      assert.deepEqual(anchors, BATCH_2_ANCHOR_OVERRIDES[pageId]?.[locale] ?? conceptAnchors, `${pageId} anchors`);
+    }
   }
 
   for (const pageId of BATCH_2_HOW_TO_IDS) {
@@ -207,7 +220,9 @@ test("Batch 2 concepts and how-to guides keep their case-led retrieval structure
     assert.equal(page.example_ids.length, 1, `${pageId} must declare one case-backed procedure`);
     assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
     assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
-    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, howToAnchors, `${pageId} anchors`);
+    for (const [locale, anchors] of Object.entries(page.anchors)) {
+      assert.deepEqual(anchors, BATCH_2_ANCHOR_OVERRIDES[pageId]?.[locale] ?? howToAnchors, `${pageId} anchors`);
+    }
   }
 });
 
