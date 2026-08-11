@@ -826,7 +826,7 @@ const zhExactPhrases: Record<string, string> = {
   "Adapter skills": "适配器技能",
   "Enabled skills currently unavailable": "当前启用的技能暂不可用",
   "Recovery": "恢复",
-  "Transcript": "转录",
+  "Transcript": "执行过程",
   "Runtime:": "运行时：",
   "Command notes": "命令说明",
   "Prompt": "提示词",

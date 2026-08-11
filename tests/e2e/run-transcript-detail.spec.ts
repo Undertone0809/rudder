@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatConversations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
@@ -17,6 +17,17 @@ async function createOrganization(page: Page, name: string) {
   });
   expect(orgRes.ok()).toBe(true);
   return orgRes.json();
+}
+
+async function openVisibleRunList(page: Page): Promise<Locator> {
+  const wideList = page.getByTestId("agent-runs-list-pane");
+  if (await wideList.isVisible()) return wideList;
+  const historyTrigger = page.getByTestId("agent-runs-history-trigger");
+  await expect(historyTrigger).toBeVisible();
+  await historyTrigger.click();
+  const historyList = page.getByTestId("agent-runs-history-list");
+  await expect(historyList).toBeVisible();
+  return historyList;
 }
 
 async function installRunTranscriptFilePreviewStub(page: Page, expectedPaths: string[]) {
@@ -308,18 +319,17 @@ test.describe("Run transcript detail", () => {
     await expect(transcriptTab).toBeVisible({ timeout: 15_000 });
     await expect(invocationTab).toBeVisible({ timeout: 15_000 });
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    const listPane = page.getByTestId("agent-runs-list-pane");
+    const wideListPane = page.getByTestId("agent-runs-list-pane");
     await expect(detailPane).toBeVisible();
-    await expect(listPane).toBeVisible();
-    const detailBox = await detailPane.boundingBox();
-    const listBox = await listPane.boundingBox();
-    expect(detailBox).not.toBeNull();
-    expect(listBox).not.toBeNull();
-    if (Math.abs(detailBox!.y - listBox!.y) <= 2) {
+    if (await wideListPane.isVisible()) {
+      const detailBox = await detailPane.boundingBox();
+      const listBox = await wideListPane.boundingBox();
+      expect(detailBox).not.toBeNull();
+      expect(listBox).not.toBeNull();
+      expect(Math.abs(detailBox!.y - listBox!.y)).toBeLessThanOrEqual(2);
       expect(detailBox!.x).toBeLessThan(listBox!.x);
     } else {
-      expect(listBox!.y).toBeLessThan(detailBox!.y);
-      expect(Math.abs(detailBox!.width - listBox!.width)).toBeLessThan(2);
+      await expect(page.getByTestId("agent-runs-history-trigger")).toBeVisible();
     }
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
@@ -435,6 +445,19 @@ test.describe("Run transcript detail", () => {
     });
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json() as { id: string };
+    const reviewerAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Feedback Reviewer",
+        role: "researcher",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(reviewerAgentRes.ok()).toBe(true);
+    const reviewerAgent = await reviewerAgentRes.json() as { id: string };
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
         name: "Annotation Review Project",
@@ -595,7 +618,15 @@ test.describe("Run transcript detail", () => {
       element.getBoundingClientRect().width
     ))).toBe(0);
 
-    const projectSelector = feedbackPanel.getByRole("combobox", { name: "Project" });
+    const projectSelector = feedbackPanel.getByTestId("run-feedback-project-selector");
+    const agentSelector = feedbackPanel.getByTestId("chat-agent-selector");
+
+    await firstTrigger.click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Could not add annotation", { exact: true })).toBeVisible();
+    await expect(page.getByText("This excerpt is already included in the feedback.", { exact: true })).toBeVisible();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 1 annotation/ })).toBeVisible();
 
     const thinkingBlock = detailPane.locator('[data-run-transcript-block-type="thinking"]');
     await expect(thinkingBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
@@ -617,18 +648,34 @@ test.describe("Run transcript detail", () => {
     await annotationEditor.getByRole("button", { name: "Save" }).click();
     await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 2 annotations?/ })).toBeVisible();
 
-    await projectSelector.selectOption(project.id);
-    await expect(projectSelector).toHaveValue(project.id);
+    await projectSelector.click();
+    await page.getByTestId("run-feedback-project-menu")
+      .getByRole("menuitemradio", { name: "Annotation Review Project" })
+      .click();
+    await expect(projectSelector).toContainText("Annotation Review Project");
 
-    const secondRunRow = page.locator('[role="link"][aria-label^="Open run"]').filter({ hasText: runTwoId.slice(0, 8) });
+    await agentSelector.click();
+    await page.getByTestId(`chat-agent-option-${reviewerAgent.id}`)
+      .getByRole("menuitemradio")
+      .click();
+    await expect(agentSelector).toContainText("Feedback Reviewer");
+
+    const historyTrigger = page.getByTestId("agent-runs-history-trigger");
+    if (await historyTrigger.isVisible()) await historyTrigger.click();
+    const runHistory = await page.getByTestId("agent-runs-history-list").isVisible()
+      ? page.getByTestId("agent-runs-history-list")
+      : page.getByTestId("agent-runs-list-pane");
+    const secondRunRow = runHistory.locator('[role="link"][aria-label^="Open run"]').filter({ hasText: runTwoId.slice(0, 8) });
     await expect(secondRunRow).toBeVisible();
     await secondRunRow.click();
     // Agent detail routes canonicalize UUIDs to the stable agent ref slug.
     await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${runTwoId}$`));
     await expect(detailPane.getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel).toBeVisible();
-    await expect(projectSelector).toHaveValue(project.id);
+    await expect(projectSelector).toContainText("Annotation Review Project");
     await expect(projectSelector).toBeEnabled();
+    await expect(agentSelector).toContainText("Feedback Reviewer");
+    await expect(agentSelector).toBeEnabled();
 
     await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
     await expect(annotationEditor).toBeVisible();
@@ -665,13 +712,14 @@ test.describe("Run transcript detail", () => {
     ), { timeout: 15_000 }).toBeGreaterThan(0);
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(projectSelector).toBeDisabled();
+    await expect(agentSelector).toBeDisabled();
 
     let conversationId: string | null = null;
     await expect.poll(async () => {
       const response = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=100`);
       if (!response.ok()) return null;
       const candidates = await response.json() as Array<{ id: string; preferredAgentId?: string | null }>;
-      conversationId = candidates.find((chat) => chat.preferredAgentId === agent.id)?.id ?? null;
+      conversationId = candidates.find((chat) => chat.preferredAgentId === reviewerAgent.id)?.id ?? null;
       return conversationId;
     }, { timeout: 30_000 }).toBeTruthy();
     expect(conversationId).toBeTruthy();
@@ -681,12 +729,14 @@ test.describe("Run transcript detail", () => {
         conversationId?: string | null;
         projectId?: string | null;
         projectLocked?: boolean;
+        preferredAgentId?: string | null;
       } : null;
     }, { orgId: organization.id, agentId: agent.id });
     expect(persistedFeedbackTarget).toEqual(expect.objectContaining({
       conversationId,
       projectId: project.id,
       projectLocked: true,
+      preferredAgentId: reviewerAgent.id,
     }));
     const messagesResponse = await page.request.get(`/api/chats/${conversationId}/messages?orgId=${organization.id}`);
     expect(messagesResponse.ok()).toBe(true);
@@ -727,6 +777,7 @@ test.describe("Run transcript detail", () => {
 
     await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible();
     await expect(projectSelector).toBeDisabled();
+    await expect(agentSelector).toBeDisabled();
     await sidePanel.getByTestId("chat-side-panel-collapse").click();
     await expect(sidePanel).toBeHidden();
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -742,6 +793,7 @@ test.describe("Run transcript detail", () => {
     await expect(feedbackPanel.getByText("late output", { exact: false })).toHaveCount(0);
     await expect(feedbackPanel.getByText("late final", { exact: false })).toHaveCount(0);
     await expect(projectSelector).toBeDisabled();
+    await expect(agentSelector).toBeDisabled();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(sidePanel).toBeVisible();
@@ -989,7 +1041,7 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByRole("button", { name: "Raw" })).toBeVisible();
     await expect(detailPane.getByText("Failure details", { exact: true })).toHaveCount(0);
 
-    const listPane = page.getByTestId("agent-runs-list-pane");
+    const listPane = await openVisibleRunList(page);
     await expect(listPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible();
   });
 
@@ -1152,7 +1204,8 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
     const urlBeforeCopy = new URL(page.url());
 
-    const copyButton = page.getByRole("button", { name: `Copy run ID ${run.id.slice(0, 8)}` });
+    const runList = await openVisibleRunList(page);
+    const copyButton = runList.getByRole("button", { name: `Copy run ID ${run.id.slice(0, 8)}` });
     await expect(copyButton).toBeVisible({ timeout: 15_000 });
 
     await copyButton.click();
@@ -1235,8 +1288,7 @@ test.describe("Run transcript detail", () => {
 
     await page.goto(`/agents/${agent.id}/runs/${todayRunId}`, { waitUntil: "domcontentloaded" });
 
-    const listPane = page.getByTestId("agent-runs-list-pane");
-    await expect(listPane).toBeVisible({ timeout: 15_000 });
+    const listPane = await openVisibleRunList(page);
 
     const expectedTodayLabel = formatRunOccurrenceForTest(todayStartedAt, now);
     const expectedOlderLabel = formatRunOccurrenceForTest(olderStartedAt, now);
@@ -1271,17 +1323,26 @@ test.describe("Run transcript detail", () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/agents/${agent.id}/runs`, { waitUntil: "domcontentloaded" });
-    const mobileListPane = page.getByTestId("agent-runs-list-pane");
-    await expect(mobileListPane).toBeVisible();
-    const mobileTodayRow = mobileListPane.getByRole("link", {
+    const mobileDetailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(mobileDetailPane).toBeVisible();
+    await expect(mobileDetailPane).toContainText("succeeded");
+    await expect(mobileDetailPane).toContainText("1m 32s");
+    await expect(page.getByTestId("agent-runs-list-pane")).toBeHidden();
+
+    const mobileHistoryTrigger = page.getByTestId("agent-runs-history-trigger");
+    await expect(mobileHistoryTrigger).toBeVisible();
+    await mobileHistoryTrigger.click();
+    const mobileHistoryList = page.getByTestId("agent-runs-history-list");
+    await expect(mobileHistoryList).toBeVisible();
+    const mobileTodayRow = mobileHistoryList.getByRole("link", {
       name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
     });
-    const mobileOlderRow = mobileListPane.getByRole("link", {
+    const mobileOlderRow = mobileHistoryList.getByRole("link", {
       name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
     });
     await expect(mobileTodayRow).toBeVisible();
     await expect(mobileOlderRow).toBeVisible();
-    const mobileListBox = await mobileListPane.boundingBox();
+    const mobileListBox = await mobileHistoryList.boundingBox();
     const mobileOlderTimingBox = await mobileOlderRow.getByTestId("run-list-timing").boundingBox();
     expect(mobileListBox).not.toBeNull();
     expect(mobileOlderTimingBox).not.toBeNull();
@@ -1413,19 +1474,15 @@ test.describe("Run transcript detail", () => {
     await expect(localPreview.getByText("RunTranscriptView.tsx", { exact: true })).toBeVisible();
     await expect(localPreview.getByText("/workspace/rudder/ui/src/components/transcript", { exact: true })).toHaveCount(0);
 
-    const runListPane = page.getByTestId("agent-runs-list-pane");
-    const stackedLayout = await Promise.all([
-      runListPane.boundingBox(),
-      detailPane.boundingBox(),
-      page.getByTestId("run-filter-floating-toolbar").boundingBox(),
-      page.getByTestId("workspace-main-card").boundingBox(),
-    ]);
-    expect(stackedLayout.every(Boolean)).toBe(true);
-    const [listBox, detailBox, toolbarBox, mainBox] = stackedLayout;
-    expect(listBox!.y).toBeLessThan(detailBox!.y);
-    expect(Math.abs(listBox!.width - detailBox!.width)).toBeLessThan(2);
-    expect(toolbarBox!.x).toBeGreaterThanOrEqual(mainBox!.x);
-    expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(mainBox!.x + mainBox!.width + 1);
+    await expect(detailPane).toBeVisible();
+    await expect(page.getByTestId("agent-runs-list-pane")).toBeHidden();
+    const constrainedHistoryTrigger = page.getByTestId("agent-runs-history-trigger");
+    await expect(constrainedHistoryTrigger).toBeVisible();
+    await constrainedHistoryTrigger.click();
+    await expect(page.getByTestId("agent-runs-history-popover")).toBeVisible();
+    await expect(page.getByTestId("agent-runs-history-list")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("agent-runs-history-popover")).toBeHidden();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });

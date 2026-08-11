@@ -731,6 +731,7 @@ export function ChatAgentMenuContent(props: {
   modelSelectRef?: Ref<HTMLButtonElement>;
   onSelectAgent: (agentId: string) => void;
   onChangeRuntime: (overrides: ChatRuntimeOverrides) => void;
+  showRuntimeControls?: boolean;
 }) {
   return (
     <>
@@ -782,7 +783,7 @@ export function ChatAgentMenuContent(props: {
                 <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Unavailable after chat starts" />
               ) : null}
             </button>
-            {selected ? (
+            {selected && props.showRuntimeControls !== false ? (
               <ChatAgentRuntimeSelector
                 agent={agent}
                 adapterModels={props.adapterModels}

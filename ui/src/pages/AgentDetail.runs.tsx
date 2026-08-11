@@ -1,4 +1,9 @@
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import {
   toAgentRun,
@@ -9,10 +14,10 @@ import {
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   Bug,
   ChevronRight,
   Clock,
+  History,
   RotateCcw
 } from "lucide-react";
 import {
@@ -70,7 +75,22 @@ import {
 } from "./AgentDetail.run-filters";
 import { LogViewer } from "./AgentDetail.run-log";
 
-type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
+export type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
+
+export function runFeedbackTargetForContext(
+  cached: RunFeedbackTarget | null,
+  tabs: readonly SidePanelTarget[],
+  organizationId: string,
+  agentId: string,
+): RunFeedbackTarget | null {
+  const currentTab = tabs.find((candidate): candidate is RunFeedbackTarget => (
+    candidate.kind === "run_feedback_chat"
+    && candidate.agentId === agentId
+    && candidate.organizationId === organizationId
+  ));
+  if (currentTab) return currentTab;
+  return cached?.agentId === agentId && cached.organizationId === organizationId ? cached : null;
+}
 
 export function getRunListSummary(run: HeartbeatRun): string {
   const failureDisplay = getRunFailureDisplay(run);
@@ -206,7 +226,17 @@ export function buildRunRailEntries(
   return entries;
 }
 
-export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
+export function RunListItem({
+  run,
+  isSelected,
+  agentId,
+  onNavigate,
+}: {
+  run: HeartbeatRun;
+  isSelected: boolean;
+  agentId: string;
+  onNavigate?: () => void;
+}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { pushToast } = useToast();
@@ -227,6 +257,7 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
   const timingTitle = formatRunTimingTitle(run);
 
   const openRun = () => {
+    onNavigate?.();
     navigate(destination);
   };
 
@@ -322,9 +353,11 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
 export function RunConversationListItem({
   entry,
   agentId,
+  onNavigate,
 }: {
   entry: Extract<RunRailEntry, { kind: "conversation" }>;
   agentId: string;
+  onNavigate?: () => void;
 }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -349,7 +382,10 @@ export function RunConversationListItem({
   const occurrenceLabel = formatRunOccurrenceLabel(run, now);
   const timingTitle = formatRunTimingTitle(run);
 
-  const openRun = () => navigate(destination);
+  const openRun = () => {
+    onNavigate?.();
+    navigate(destination);
+  };
   const handleRowKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -414,12 +450,21 @@ export function RunConversationListItem({
   );
 }
 
-export function RunRailList({ entries, agentId }: { entries: RunRailEntry[]; agentId: string }) {
+export function RunRailList({
+  entries,
+  agentId,
+  onNavigate,
+}: {
+  entries: RunRailEntry[];
+  agentId: string;
+  onNavigate?: () => void;
+}) {
   return entries.map((entry) => entry.kind === "conversation" ? (
     <RunConversationListItem
       key={`conversation:${entry.conversationId}`}
       entry={entry}
       agentId={agentId}
+      onNavigate={onNavigate}
     />
   ) : (
     <RunListItem
@@ -427,6 +472,7 @@ export function RunRailList({ entries, agentId }: { entries: RunRailEntry[]; age
       run={entry.run}
       isSelected={entry.isSelected}
       agentId={agentId}
+      onNavigate={onNavigate}
     />
   ));
 }
@@ -446,23 +492,20 @@ export function RunsTab({
   selectedRunId: string | null;
   agentRuntimeType: string;
 }) {
-  const { isMobile, setSidebarOpen } = useSidebar();
+  const { setSidebarOpen } = useSidebar();
   const sidePanel = useSidePanel();
   const { pushToast } = useToast();
   const feedbackTargetRef = useRef<RunFeedbackTarget | null>(null);
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const contextKey = `agent-runs:${agentRouteId}`;
   useEffect(() => {
     sidePanel.setContextKey(contextKey);
   }, [contextKey, sidePanel]);
   useEffect(() => {
-    const existing = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
+    const existing = runFeedbackTargetForContext(null, sidePanel.tabs, orgId, agentId);
+    feedbackTargetRef.current = existing;
     if (existing) {
-      feedbackTargetRef.current = existing;
       return;
     }
     if (typeof window === "undefined") return;
@@ -480,6 +523,7 @@ export function RunsTab({
         projectLocked: parsed.projectLocked === true || typeof parsed.conversationId === "string",
         clientMutationId: typeof parsed.clientMutationId === "string" ? parsed.clientMutationId : crypto.randomUUID(),
         projectId: typeof parsed.projectId === "string" ? parsed.projectId : null,
+        preferredAgentId: typeof parsed.preferredAgentId === "string" ? parsed.preferredAgentId : agentId,
         body: typeof parsed.body === "string" ? parsed.body : "",
         inlineAnnotations: parsed.inlineAnnotations,
         label: "Run feedback",
@@ -493,22 +537,23 @@ export function RunsTab({
     }
   }, [agentId, contextKey, orgId, sidePanel]);
   useEffect(() => {
-    const current = sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
-    if (current) feedbackTargetRef.current = current;
+    feedbackTargetRef.current = runFeedbackTargetForContext(
+      feedbackTargetRef.current,
+      sidePanel.tabs,
+      orgId,
+      agentId,
+    );
   }, [agentId, orgId, sidePanel.tabs]);
 
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
     const annotationId = crypto.randomUUID();
-    const existing = feedbackTargetRef.current ?? sidePanel.tabs.find((candidate): candidate is RunFeedbackTarget => (
-      candidate.kind === "run_feedback_chat"
-      && candidate.agentId === agentId
-      && candidate.organizationId === orgId
-    ));
+    const existing = runFeedbackTargetForContext(
+      feedbackTargetRef.current,
+      sidePanel.tabs,
+      orgId,
+      agentId,
+    );
     const clientMutationId = existing?.clientMutationId ?? crypto.randomUUID();
     const pendingAnnotation: ChatInlineAnnotationInput = {
       id: annotationId,
@@ -546,6 +591,7 @@ export function RunsTab({
         projectLocked: false,
         clientMutationId,
         projectId: null,
+        preferredAgentId: agentId,
         body: "",
         inlineAnnotations: [pendingAnnotation],
         label: "Run feedback",
@@ -596,8 +642,8 @@ export function RunsTab({
     }), { replace: true });
   };
 
-  // On mobile, don't auto-select so the list shows first; on desktop, auto-select latest
-  const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? filtered[0]?.id ?? sorted[0]?.id ?? null);
+  // The current run is the primary narrow-screen surface; history stays available on demand.
+  const effectiveRunId = selectedRunId ?? filtered[0]?.id ?? sorted[0]?.id ?? null;
   const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
   const selectedRunOutsideFilters = Boolean(selectedRun && filtersActive && !filtered.some((run) => run.id === selectedRun.id));
   const railEntries = buildRunRailEntries(
@@ -617,40 +663,6 @@ export function RunsTab({
       onClear={clearRunFilters}
     />
   );
-
-  // Mobile: show either run list OR run detail with back button
-  if (isMobile) {
-    if (selectedRun) {
-      return (
-        <div className="space-y-3 min-w-0 overflow-x-hidden">
-          {toolbar}
-          <Link
-            to={appendRunSearchParams(`/agents/${agentRouteId}/runs`, searchParams)}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors no-underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back to runs
-          </Link>
-          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} onAnnotate={annotateRun} />
-        </div>
-      );
-    }
-    return (
-      <div className="space-y-3">
-        {toolbar}
-        {activeFilterChips.length > 0 && (
-          <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
-        )}
-        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
-          {railEntries.length > 0 ? (
-            <RunRailList entries={railEntries} agentId={agentRouteId} />
-          ) : (
-            <RunListEmptyState message={listEmptyMessage} />
-          )}
-        </div>
-      </div>
-    );
-  }
 
   if (!selectedRun) {
     return (
@@ -673,7 +685,7 @@ export function RunsTab({
   // Desktop: detail pane first, compact navigation rail on the right.
   return (
     <div className="agent-runs-layout-container agent-runs-layout min-w-0">
-      {toolbar}
+      <div className="agent-runs-wide-toolbar">{toolbar}</div>
       {activeFilterChips.length > 0 && (
         <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mb-3 justify-end" />
       )}
@@ -683,7 +695,7 @@ export function RunsTab({
         </div>
 
         <div
-          className="agent-runs-list-pane w-[clamp(14rem,24vw,24rem)] shrink-0 overflow-clip rounded-lg border border-border"
+          className="agent-runs-list-pane agent-runs-wide-list w-[clamp(14rem,24vw,24rem)] shrink-0 overflow-clip rounded-lg border border-border"
           data-testid="agent-runs-list-pane"
         >
           <div
@@ -702,6 +714,63 @@ export function RunsTab({
             )}
           </div>
         </div>
+      </div>
+      <div className="agent-runs-floating-history">
+        <Popover open={runHistoryOpen} onOpenChange={setRunHistoryOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="relative h-11 w-11 rounded-full border border-border bg-background shadow-lg"
+              aria-label={`Open run history, ${railEntries.length} entries`}
+              title="Run history"
+              data-testid="agent-runs-history-trigger"
+            >
+              <History className="h-5 w-5" />
+              <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-semibold leading-none text-background">
+                {railEntries.length > 99 ? "99+" : railEntries.length}
+              </span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            side="top"
+            sideOffset={10}
+            className="w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-[var(--radius-lg)] p-0 shadow-xl"
+            data-testid="agent-runs-history-popover"
+          >
+            <div className="border-b border-border px-3 py-2.5">
+              <div className="text-sm font-medium text-foreground">Run history</div>
+              <div className="text-xs text-muted-foreground">{filtered.length} of {sorted.length} runs</div>
+            </div>
+            <div className="border-b border-border p-2.5">
+              {toolbar}
+              {activeFilterChips.length > 0 ? (
+                <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mt-2" />
+              ) : null}
+            </div>
+            <div
+              className="scrollbar-auto-hide max-h-[min(60vh,34rem)] overflow-y-auto"
+              data-testid="agent-runs-history-list"
+            >
+              {selectedRunOutsideFilters ? (
+                <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  Selected run is outside the current filters.
+                </div>
+              ) : null}
+              {railEntries.length > 0 ? (
+                <RunRailList
+                  entries={railEntries}
+                  agentId={agentRouteId}
+                  onNavigate={() => setRunHistoryOpen(false)}
+                />
+              ) : (
+                <RunListEmptyState message={listEmptyMessage} />
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
     </div>
   );
