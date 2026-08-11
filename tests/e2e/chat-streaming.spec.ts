@@ -836,32 +836,46 @@ test.describe("Chat streaming", () => {
 
     const streamingBoundary = await composerSurface.evaluate((element) => {
       const before = getComputedStyle(element, "::before");
+      const after = getComputedStyle(element, "::after");
       return {
-        animationName: before.animationName,
-        animationDuration: before.animationDuration,
-        backgroundImage: before.backgroundImage,
+        beforeContent: before.content,
+        beforeFilter: before.filter,
+        afterContent: after.content,
+        afterFilter: after.filter,
       };
     });
-    expect(streamingBoundary.animationName).toBe("none");
-    expect(streamingBoundary.animationDuration).toBe("0s");
-    expect(streamingBoundary.backgroundImage).not.toContain("conic-gradient");
+    expect(streamingBoundary).toEqual({
+      beforeContent: "none",
+      beforeFilter: "none",
+      afterContent: "none",
+      afterFilter: "none",
+    });
 
     const frameSamples = await composerSurface.evaluate(async (element) => {
-      const samples: Array<{ animationName: string; backgroundImage: string }> = [];
+      const samples: Array<{ borderColor: string; boxShadow: string }> = [];
       for (let index = 0; index < 90; index += 1) {
-        const before = getComputedStyle(element, "::before");
+        const style = getComputedStyle(element);
         samples.push({
-          animationName: before.animationName,
-          backgroundImage: before.backgroundImage,
+          borderColor: style.borderColor,
+          boxShadow: style.boxShadow,
         });
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       }
       return samples;
     });
-    expect(new Set(frameSamples.map((sample) => sample.animationName))).toEqual(new Set(["none"]));
-    expect(new Set(frameSamples.map((sample) => sample.backgroundImage)).size).toBe(1);
+    expect(new Set(frameSamples.map((sample) => sample.borderColor)).size).toBe(1);
+    expect(new Set(frameSamples.map((sample) => sample.boxShadow)).size).toBe(1);
 
-    await composerSurface.screenshot({ path: testInfo.outputPath("chat-composer-streaming-light.png") });
+    await editor.blur();
+    const lightFrameA = await composerSurface.screenshot({
+      path: testInfo.outputPath("chat-composer-streaming-light.png"),
+    });
+    await page.waitForTimeout(800);
+    await expect(composerSurface).toHaveClass(/chat-composer--streaming/);
+    const lightFrameB = await composerSurface.screenshot({
+      path: testInfo.outputPath("chat-composer-streaming-light-after-refresh.png"),
+    });
+    expect(lightFrameB.equals(lightFrameA)).toBe(true);
 
     await page.evaluate(() => {
       window.localStorage.setItem("rudder.theme", "dark");
@@ -869,10 +883,11 @@ test.describe("Chat streaming", () => {
     });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await composerSurface.screenshot({ path: testInfo.outputPath("chat-composer-streaming-dark.png") });
-    const darkStreamingAnimation = await composerSurface.evaluate((element) =>
-      getComputedStyle(element, "::before").animationName,
-    );
-    expect(darkStreamingAnimation).toBe("none");
+    const darkStreamingLayers = await composerSurface.evaluate((element) => ({
+      before: getComputedStyle(element, "::before").content,
+      after: getComputedStyle(element, "::after").content,
+    }));
+    expect(darkStreamingLayers).toEqual({ before: "none", after: "none" });
 
     await page.getByRole("button", { name: "Stop streaming" }).click();
     await expect(page.getByText("Response stopped")).toBeVisible({ timeout: 15_000 });
