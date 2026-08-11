@@ -45,6 +45,8 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Where Rudder Stores and Uses Files](https://docs.rudderhq.dev/reference/workspace-boundaries): Look up the right location for project files, reusable resources, Agent state, Run changes, and backups.
 - [Choose Where Automation Results Go](https://docs.rudderhq.dev/reference/automation-output-routing): Compare Chat and Issue output for an Automation, including what you see when a run fails.
 - [Permissions, Credentials, and Platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Understand local trust, where credentials stay, how external connections are limited, and what differs by platform.
+- [Code Signing Policy](https://docs.rudderhq.dev/reference/code-signing-policy): How Rudder builds, reviews, approves, and signs Windows Desktop release artifacts.
+- [Privacy Policy](https://docs.rudderhq.dev/reference/privacy): How Rudder handles local workspace data, accounts, optional analytics, and public-site data.
 - [Approvals, Budgets, Activity, and Attention](https://docs.rudderhq.dev/reference/approvals-budgets-activity): Know where to approve sensitive actions, check spending, review changes, inspect Runs, and find work waiting for you.
 
 ### Project
@@ -93,6 +95,8 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Rudder 在哪里保存和使用文件](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查询项目文件、可复用资料、Agent 状态、运行改动和备份应该放在哪里。
 - [选择自动化结果去向](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 比较自动化的 Chat 与 Issue 结果，并了解运行失败时会看到什么。
 - [权限、凭据和平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 了解本地信任、凭据保存位置、外部连接限制，以及不同平台的差异。
+- [代码签名政策](https://docs.rudderhq.dev/zh/reference/code-signing-policy): Rudder 如何构建、审查、批准并签名 Windows Desktop 发布产物。
+- [隐私政策](https://docs.rudderhq.dev/zh/reference/privacy): Rudder 如何处理本地工作空间、账号、可选分析和公共网站数据。
 - [审批、预算、活动和待处理事项](https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity): 找到敏感操作审批、费用、变更记录、Agent 运行和等待处理工作的正确入口。
 
 ### Project

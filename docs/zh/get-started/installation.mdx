@@ -15,6 +15,16 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/installation"
 Rudder 可以在 macOS、Windows 和 Linux 上本地运行。安装命令会下载适合你电脑
 的桌面应用，并安装 `rudder` 命令，方便以后再次启动。
 
+## 代码签名政策
+
+Rudder 正在为 Windows Desktop 发布产物申请代码签名基金会项目资格。
+申请获批且发布流程完成配置前，现有发布产物不会被描述为已经由该服务签名。
+
+免费代码签名由[签名服务](https://about.signpath.io/)提供，证书由
+[签名基金会](https://signpath.org/)提供。详情见
+[代码签名政策](/zh/reference/code-signing-policy)和
+[隐私政策](/zh/reference/privacy)。
+
 开始前需要：
 
 - Node.js 20 或更高版本，它会提供 `npx` 命令
@@ -69,3 +79,17 @@ rudder start
 
 如果 Agent 仍在工作时出现更新，选择**空闲时更新**，让本次运行先完成。只有在
 确认可以取消当前任务时，才选择**停止运行并立即更新**。
+
+## 卸载 Rudder
+
+先退出 Rudder Desktop，并确认没有 Agent 运行正在执行。
+
+1. 删除默认位置中的便携版桌面应用：
+   - macOS：将 `~/Applications/Rudder.app` 移到废纸篓。
+   - Windows：删除 `%LOCALAPPDATA%\\Programs\\Rudder`。
+   - Linux：删除 `~/.local/share/rudder/Rudder.AppImage`。
+2. 运行 `npm uninstall --global @rudderhq/cli` 删除持久化 CLI。
+
+Rudder 默认将本地工作空间和运行时数据保存在 `~/.rudder`。删除桌面应用或 CLI
+不会删除这些数据。先备份需要保留的内容；只有在确实要清除全部本地 Rudder 状态
+时，才单独删除该目录。

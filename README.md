@@ -6,7 +6,7 @@
 
 Agents that think, build, play, and learn from real work.
 
-[Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev) | [Discord](https://discord.gg/ZcfWwPVkUz)
+[Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev) | [Code signing policy](docs/reference/code-signing-policy.mdx) | [Privacy](docs/reference/privacy.mdx) | [Discord](https://discord.gg/ZcfWwPVkUz)
 
 Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
@@ -153,3 +153,15 @@ You can also find Rudder on [LINUX DO](https://linux.do/).
 ## License
 
 Rudder is licensed at the project level under Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE),
+
+## Code signing policy
+
+Rudder is applying to the SignPath Foundation program for its Windows Desktop
+release artifacts. Until the application is accepted and the release pipeline
+is configured, released binaries are not represented as SignPath-signed.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
+
+See the full [code signing policy](docs/reference/code-signing-policy.mdx) and
+[privacy policy](docs/reference/privacy.mdx).

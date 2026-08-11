@@ -30,6 +30,8 @@
   <url><loc>https://docs.rudderhq.dev/reference/workspace-boundaries</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/automation-output-routing</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/permissions-and-platforms</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/reference/code-signing-policy</loc><lastmod>2026-08-12</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/reference/privacy</loc><lastmod>2026-08-12</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/approvals-budgets-activity</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/benchmarks/gdpval-harness</loc><lastmod>2026-07-20</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/contact</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
@@ -64,6 +66,8 @@
   <url><loc>https://docs.rudderhq.dev/zh/reference/workspace-boundaries</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/code-signing-policy</loc><lastmod>2026-08-12</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/privacy</loc><lastmod>2026-08-12</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness</loc><lastmod>2026-07-20</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/contact</loc><lastmod>2026-07-21</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
