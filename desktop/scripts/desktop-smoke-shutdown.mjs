@@ -130,8 +130,18 @@ async function closeElectronApplication(electronApp, input, terminateProcessTree
       `Timed out after ${input.closeTimeoutMs}ms waiting for the Desktop process to complete its graceful quit flow`,
     );
   } catch (error) {
-    errors.push(error);
     const child = typeof electronApp.process === "function" ? electronApp.process() : null;
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      // Playwright waits for the child stdio close event, which can remain open
+      // when a Windows grandchild inherited those handles. The owned Electron
+      // process has exited; release only its local pipe handles, then let the
+      // independent residue probes below prove the runtime is actually gone.
+      child.stdin?.destroy?.();
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
+      return errors;
+    }
+    errors.push(error);
     if (child && child.exitCode === null && child.signalCode === null) {
       try {
         await terminateProcessTree(child);

@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, copyFile, link, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   appBuilderInstallArgsForState,
@@ -39,15 +40,39 @@ async function resolvePnpmCli() {
 }
 
 async function resolveManagedNodeBin() {
+  if (/^node(?:\.exe)?$/i.test(path.basename(process.execPath))) {
+    return path.dirname(process.execPath);
+  }
+
+  if (process.platform === "win32") {
+    const executableDir = path.dirname(process.execPath);
+    const managedNode = path.join(executableDir, "node.exe");
+    try {
+      await link(process.execPath, managedNode);
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        try {
+          await copyFile(process.execPath, managedNode, constants.COPYFILE_EXCL);
+        } catch (copyError) {
+          if (copyError?.code !== "EEXIST") throw copyError;
+        }
+      }
+    }
+    const [sourceStats, managedStats] = await Promise.all([
+      stat(process.execPath),
+      stat(managedNode),
+    ]);
+    if (sourceStats.size !== managedStats.size) {
+      throw new Error("The managed Windows Node executable does not match Rudder");
+    }
+    return executableDir;
+  }
+
   const staged = fileURLToPath(
     new URL("./toolchain/node/bin", import.meta.url),
   );
   const stagedShim = path.join(staged, appBuilderNodeShimName());
   if (await exists(stagedShim)) return staged;
-
-  if (/^node(?:\.exe)?$/i.test(path.basename(process.execPath))) {
-    return path.dirname(process.execPath);
-  }
 
   throw new Error("The Rudder-managed Node runtime shim is unavailable");
 }
@@ -89,6 +114,18 @@ function runPnpm(pnpmCli, args, appRoot, environment) {
   });
 }
 
+async function verifyApp(pnpmCli, appRoot, environment) {
+  if (process.platform !== "win32") {
+    await runPnpm(pnpmCli, ["run", "verify"], appRoot, environment);
+    return;
+  }
+
+  await runPnpm(pnpmCli, ["run", "ui:check"], appRoot, environment);
+  await runPnpm(pnpmCli, ["run", "typecheck"], appRoot, environment);
+  await runPnpm(pnpmCli, ["run", "test"], appRoot, environment);
+  await runPnpm(pnpmCli, ["exec", "next", "build", "--webpack"], appRoot, environment);
+}
+
 async function main() {
   const [appRootInput, command = "preview", dataRootInput] = process.argv.slice(2);
   if (!appRootInput || !path.isAbsolute(appRootInput)) {
@@ -110,6 +147,10 @@ async function main() {
   await readManifest(appRoot);
   const pnpmCli = await resolvePnpmCli();
   const managedNodeBin = await resolveManagedNodeBin();
+  const nextCompatPreload = fileURLToPath(
+    new URL("./app-builder-next-compat.mjs", import.meta.url),
+  );
+  await access(nextCompatPreload);
   const installPlan = createAppBuilderInstallPlan({
     appRoot,
     environment: process.env,
@@ -124,6 +165,12 @@ async function main() {
     PATH: [managedNodeBin, process.env.PATH].filter(Boolean).join(path.delimiter),
     ...(command === "preview" ? { PORT: String(port) } : {}),
     NEXT_TELEMETRY_DISABLED: "1",
+    NODE_OPTIONS: [
+      process.env.NODE_OPTIONS,
+      `--import=${pathToFileURL(nextCompatPreload).href}`,
+    ].filter(Boolean).join(" "),
+    npm_config_registry: process.env.RUDDER_APP_BUILDER_REGISTRY || "https://registry.npmjs.org/",
+    RUDDER_APP_BUILDER_NEXT_COMPAT: "1",
     RUDDER_APP_BUILDER_NODE_EXECUTABLE: process.execPath,
     RUDDER_APP_DATA_MODE: "development",
   };
@@ -148,9 +195,7 @@ async function main() {
     if (!dataRootInput || !path.isAbsolute(dataRootInput)) {
       throw new Error("App Builder migration requires an absolute staged data root");
     }
-    await runPnpm(pnpmCli, ["run", "typecheck"], appRoot, environment);
-    await runPnpm(pnpmCli, ["run", "test"], appRoot, environment);
-    await runPnpm(pnpmCli, ["run", "build"], appRoot, environment);
+    await verifyApp(pnpmCli, appRoot, environment);
     await runPnpm(pnpmCli, ["run", "db:migrate"], appRoot, {
       ...environment,
       RUDDER_APP_DATA_DIR: path.resolve(dataRootInput),
@@ -158,8 +203,13 @@ async function main() {
     });
     return;
   }
-  await runPnpm(pnpmCli, ["run", "verify"], appRoot, environment);
-  await runPnpm(pnpmCli, ["run", "dev"], appRoot, environment);
+  await verifyApp(pnpmCli, appRoot, environment);
+  await runPnpm(
+    pnpmCli,
+    process.platform === "win32" ? ["run", "dev", "--webpack"] : ["run", "dev"],
+    appRoot,
+    environment,
+  );
 }
 
 void main().catch((error) => {

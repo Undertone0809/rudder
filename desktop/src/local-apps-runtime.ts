@@ -352,7 +352,10 @@ export class LocalAppRuntimeManager {
       1,
       options.listenerOwnershipRetryTimeoutMs ?? LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
     );
-    this.cleanupTimeoutMs = Math.max(1, options.cleanupTimeoutMs ?? 5_000);
+    this.cleanupTimeoutMs = Math.max(
+      1,
+      options.cleanupTimeoutMs ?? 5_000,
+    );
     this.probePersistedRuntimeLiveness = options.probePersistedRuntimeLiveness
       ?? this.processPlatform.probePersistedRuntime;
   }

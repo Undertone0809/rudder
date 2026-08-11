@@ -68,6 +68,12 @@ manifest.
 ## Commands
 
 - `pnpm dev`: migrate the development database, then run loopback development.
+- On Windows, Rudder's managed preview may select Next.js webpack while keeping
+  `node:*` built-ins external to the server bundle. This preserves the short
+  managed dependency layout required by native package executables without
+  changing the App's website output. The managed runtime supplies the same
+  compatibility to existing revision-1 Apps without rewriting their
+  `next.config.ts`, `next-env.d.ts`, or other App-owned source files.
 - `pnpm typecheck`: TypeScript validation.
 - `pnpm test`: unit and API-contract tests.
 - `pnpm build`: production build.

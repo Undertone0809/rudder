@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readFile, readdir, readlink } from "node:fs/promises";
+import { access, readdir, readFile, readlink } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -8,9 +8,14 @@ import {
   isLocalAppOwnerAlive,
   terminateLocalAppOwner,
 } from "./local-app-process-platform-shared.mjs";
+import {
+  parseWindowsProcessTable as parseWindowsProcessTableOutput,
+  snapshotWindowsProcesses as snapshotWindowsProcessTable,
+  terminateWindowsProcessInstances as terminateWindowsProcessHandles
+} from "./local-app-windows-processes.mjs";
 
 const defaultExecFile = promisify(execFile);
-const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 15_000;
+const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 30_000;
 
 export type LocalAppLivenessState = "alive" | "dead" | "unknown";
 
@@ -48,6 +53,8 @@ export interface LocalAppProcessPlatformOptions {
   killGroup?: (pgid: number, signal: NodeJS.Signals) => void;
   isGroupAlive?: (pgid: number) => boolean;
   isOwnerAlive?: (ownerId: number) => boolean;
+  snapshotWindowsProcesses?: (rootPid: number) => Promise<WindowsProcessRecord[]>;
+  terminateWindowsProcessInstances?: (processes: WindowsProcessRecord[]) => Promise<void>;
   delay?: (milliseconds: number) => Promise<void>;
   termTimeoutMs?: number;
   pollMs?: number;
@@ -58,6 +65,12 @@ export interface LocalAppProcessPlatformOptions {
 export type LsofListenerProcessRecord = {
   pid: number;
   addresses: string[];
+};
+
+export type WindowsProcessRecord = {
+  pid: number;
+  parentPid: number;
+  createdAt: string;
 };
 
 export function parseLsofListenerProcessRecords(
@@ -103,25 +116,8 @@ export function parseLsofListenerProcessRecords(
 
 export function parseWindowsProcessTable(
   output: string,
-): Array<{ pid: number; parentPid: number }> | null {
-  try {
-    const parsed = JSON.parse(output.trim()) as unknown;
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
-    const result = rows.flatMap((row) => {
-      if (!row || typeof row !== "object") throw new Error("invalid row");
-      const record = row as { ProcessId?: unknown; ParentProcessId?: unknown };
-      const pid = Number(record.ProcessId);
-      const parentPid = Number(record.ParentProcessId);
-      if (pid === 0 && parentPid === 0) return [];
-      if (!isSafeLocalAppProcessId(pid) || !Number.isSafeInteger(parentPid) || parentPid < 0) {
-        throw new Error("invalid process identity");
-      }
-      return [{ pid, parentPid }];
-    });
-    return result.length > 0 ? result : null;
-  } catch {
-    return null;
-  }
+): WindowsProcessRecord[] | null {
+  return parseWindowsProcessTableOutput(output) as WindowsProcessRecord[] | null;
 }
 
 export function descendantProcessIds(
@@ -225,6 +221,20 @@ export function createLocalAppProcessPlatform(
     ? [windowsSystem32, systemRoot]
     : ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const reportedWindowsOwnershipFailures = new Set<string>();
+  const verifiedWindowsOwnerCreationDates = new Map<number, string>();
+  const verifiedWindowsOwnedProcesses = new Map<number, WindowsProcessRecord[]>();
+  const snapshotWindowsProcesses = options.snapshotWindowsProcesses ?? ((rootPid: number) => (
+    snapshotWindowsProcessTable(rootPid, {
+      ...(options.execFileAsync ? { execFileAsync: execute } : {}),
+      systemRoot,
+      timeoutMs: WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS,
+    }) as Promise<WindowsProcessRecord[]>
+  ));
+  const terminateWindowsProcessInstances = options.terminateWindowsProcessInstances
+    ?? ((processes: WindowsProcessRecord[]) => terminateWindowsProcessHandles(processes, {
+      ...(options.execFileAsync ? { execFileAsync: execute } : {}),
+      systemRoot,
+    }));
 
   const verifyPosixListenerOwnership = async (input: {
     port: number;
@@ -359,21 +369,14 @@ export function createLocalAppProcessPlatform(
         1,
         Math.min(maximumMs, deadline - Date.now()),
       );
-      const processResult = await execute(path.win32.join(
-        windowsSystem32,
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      ), [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
-      ], { timeout: remainingTimeout(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS), maxBuffer: 2 * 1024 * 1024 });
+      const processTable = await snapshotWindowsProcessTable(input.pid, {
+        ...(options.execFileAsync ? { execFileAsync: execute } : {}),
+        systemRoot,
+        timeoutMs: remainingTimeout(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS),
+      }) as WindowsProcessRecord[];
       if (Date.now() >= deadline) return rejectOwnership("process snapshot exceeded deadline");
-      const processTable = parseWindowsProcessTable(String(processResult.stdout));
-      if (!processTable) return rejectOwnership("process snapshot was invalid");
-      if (!processTable.some((entry) => entry.pid === input.pid)) {
+      const managedRoot = processTable.find((entry) => entry.pid === input.pid);
+      if (!managedRoot) {
         return rejectOwnership("managed root was absent from process snapshot");
       }
       const ownedPids = descendantProcessIds(input.pid, processTable);
@@ -391,6 +394,11 @@ export function createLocalAppProcessPlatform(
       if (!listenerPids.every((pid) => ownedPids.has(pid))) {
         return rejectOwnership("listener was outside the managed process tree");
       }
+      verifiedWindowsOwnerCreationDates.set(input.pid, managedRoot.createdAt);
+      verifiedWindowsOwnedProcesses.set(
+        input.pid,
+        processTable.filter((entry) => ownedPids.has(entry.pid)),
+      );
       return true;
     } catch (error) {
       const reason = (error as NodeJS.ErrnoException).code === "ETIMEDOUT"
@@ -423,17 +431,21 @@ export function createLocalAppProcessPlatform(
         delay: options.delay,
         termTimeoutMs: options.termTimeoutMs,
         pollMs: options.pollMs,
-        runTaskkill: platform === "win32"
-          ? async (pid: number, force: boolean) => {
-            await execute(path.win32.join(windowsSystem32, "taskkill.exe"), [
-              "/PID",
-              String(pid),
-              "/T",
-              ...(force ? ["/F"] : []),
-            ], { timeout: 5_000, maxBuffer: 64 * 1024 });
-          }
+        expectedOwnerCreatedAt: platform === "win32" && ownerId !== null
+          ? verifiedWindowsOwnerCreationDates.get(ownerId)
+          : undefined,
+        expectedWindowsProcesses: platform === "win32" && ownerId !== null
+          ? verifiedWindowsOwnedProcesses.get(ownerId)
+          : undefined,
+        snapshotWindowsProcesses: platform === "win32" ? snapshotWindowsProcesses : undefined,
+        terminateWindowsProcessInstances: platform === "win32"
+          ? terminateWindowsProcessInstances
           : undefined,
       });
+      if (platform === "win32" && ownerId !== null) {
+        verifiedWindowsOwnerCreationDates.delete(ownerId);
+        verifiedWindowsOwnedProcesses.delete(ownerId);
+      }
     },
     async probePersistedRuntime(input) {
       return {

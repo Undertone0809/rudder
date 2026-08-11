@@ -116,7 +116,8 @@ async function findWorkspacePackageDir(appDir, packageName) {
 
   for (const root of directSearchRoots) {
     const candidate = path.join(root, ...packageParts);
-    if (await exists(candidate)) return candidate;
+    const resolvedCandidate = await resolveDirectory(candidate);
+    if (resolvedCandidate) return resolvedCandidate;
   }
 
   const pnpmStoreRoots = directSearchRoots.map((root) => path.join(root, ".pnpm"));
@@ -126,11 +127,24 @@ async function findWorkspacePackageDir(appDir, packageName) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const candidate = path.join(storeRoot, entry.name, "node_modules", ...packageParts);
-      if (await exists(candidate)) return candidate;
+      const resolvedCandidate = await resolveDirectory(candidate);
+      if (resolvedCandidate) return resolvedCandidate;
     }
   }
 
   return null;
+}
+
+async function resolveDirectory(targetPath) {
+  try {
+    const resolvedPath = await fs.realpath(targetPath);
+    return (await fs.stat(resolvedPath)).isDirectory() ? resolvedPath : null;
+  } catch {
+    // pnpm keeps dangling links for platform-specific optional dependencies on
+    // Windows. fs.access() reports those junctions as present even though they
+    // cannot be copied, so only accept paths that resolve to a real directory.
+    return null;
+  }
 }
 
 async function copyOptionalDependencies(appDir, nodeModulesDir) {
