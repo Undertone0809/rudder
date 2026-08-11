@@ -61,6 +61,7 @@ import {
 } from "../components/workspaces/WorkspaceLaunchControls";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
+import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
@@ -71,6 +72,7 @@ import { libraryCopy } from "../lib/library-copy";
 import { getCachedLibraryEntryMetadata } from "../lib/library-entry-cache";
 import { mentionChipNavigationPath, parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
+import { sidePanelTargetFromHref } from "../lib/side-panel-targets";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent } from "../lib/workspace-csv";
 import {
   countWorkspaceDocumentWords,
@@ -211,6 +213,7 @@ function OrganizationWorkspaceBrowserForOrganization({
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const { locale } = useI18n();
   const { pushToast } = useToast();
+  const { openTarget: openSidePanelTarget } = useSidePanel();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
@@ -1563,7 +1566,7 @@ function OrganizationWorkspaceBrowserForOrganization({
     updateSelectedResource(searchParams, setSearchParams, attachmentId);
   };
 
-  const handleLibraryInlineTokenClick = (token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
+  const handleLibraryInlineTokenClick = (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => {
     if (token.kind === "skill") {
       const detailsHref = token.element
         .closest<HTMLAnchorElement>("a[data-skill-token='true'][href]")
@@ -1577,6 +1580,19 @@ function OrganizationWorkspaceBrowserForOrganization({
     }
     const parsed = parseMentionChipHref(token.href);
     if (!parsed) return;
+    if (
+      parsed.kind === "issue"
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.shiftKey
+    ) {
+      const target = sidePanelTargetFromHref(token.href, token.label);
+      if (target?.kind === "issue") {
+        openSidePanelTarget(target);
+        return;
+      }
+    }
     if (parsed.kind === "library_file") {
       handleSelectFile(parsed.filePath);
       return;

@@ -6,6 +6,19 @@ import {
 } from "@rudderhq/agent-runtime-utils";
 import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
 import {
+  RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY,
+  RUDDER_MCP_MODERN_PROTOCOL_VERSION,
+  RUDDER_MCP_PROTOCOL_VERSION_META_KEY,
+  RUDDER_MCP_SERVER_INFO_META_KEY,
+  RUDDER_MCP_SUPPORTED_PROTOCOL_VERSIONS,
+  hasConflictingMcpProtocolVersions,
+  hasModernMcpRequestEnvelope,
+  isRudderMcpModernProtocolVersion,
+  modernMcpResult,
+  negotiateRudderMcpProtocolVersion,
+  protocolVersionFromMcpParams,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-protocol";
+import {
   COMPUTER_USE_MCP_SERVER_NAME,
   COMPUTER_USE_MCP_TOOLS,
   addIssueCommentSchema,
@@ -32,6 +45,7 @@ const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
 const RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES = 16_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
 const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 1_000;
+const RUDDER_MCP_TOOL_PAGE_SIZE = 50;
 
 type JsonRpcId = string | number | null;
 
@@ -215,19 +229,39 @@ export async function runAgentV1McpJsonRpcMessage(
   const isNotification = message.id === undefined;
   const id = message.id ?? null;
   try {
+    if (hasConflictingMcpProtocolVersions(message.params)) {
+      return rpcError(id, -32602, "Conflicting MCP protocol versions");
+    }
+    const requestProtocolVersion = protocolVersionFromMcpParams(message.params);
+    if (
+      isRudderMcpModernProtocolVersion(requestProtocolVersion)
+      && message.method !== "server/discover"
+      && !hasModernMcpRequestEnvelope(message.params)
+    ) {
+      return rpcError(id, -32602, `Invalid _meta envelope for protocol revision ${RUDDER_MCP_MODERN_PROTOCOL_VERSION}`, {
+        required: [RUDDER_MCP_PROTOCOL_VERSION_META_KEY, RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY],
+      });
+    }
     switch (message.method) {
       case "notifications/initialized":
         return isNotification ? null : rpcResult(id, {});
-      case "initialize":
+      case "initialize": {
         const coreContractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
-
           .map(rudderMcpSemanticToolContract);
         const browserContractManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "browser" }).tools
           .map(rudderMcpSemanticToolContract);
         const coreContractHash = fingerprintRudderMcpToolManifest(coreContractManifest);
         const browserContractHash = fingerprintRudderMcpToolManifest(browserContractManifest);
+        const requestedLegacyVersion = requestedProtocolVersion(message.params) ?? "2025-11-25";
+        const negotiatedLegacyVersion = negotiateRudderMcpProtocolVersion(requestedLegacyVersion);
+        if (!negotiatedLegacyVersion || isRudderMcpModernProtocolVersion(negotiatedLegacyVersion)) {
+          return rpcError(id, -32022, `Unsupported protocol version: ${requestedLegacyVersion}`, {
+            supported: RUDDER_MCP_SUPPORTED_PROTOCOL_VERSIONS.filter((version) => version !== RUDDER_MCP_MODERN_PROTOCOL_VERSION),
+            requested: requestedLegacyVersion,
+          });
+        }
         return rpcResult(id, {
-          protocolVersion: requestedProtocolVersion(message.params) ?? "2024-11-05",
+          protocolVersion: negotiatedLegacyVersion,
           capabilities: {
             tools: {},
             experimental: {
@@ -245,19 +279,67 @@ export async function runAgentV1McpJsonRpcMessage(
             version: resolveCliVersion(),
           },
         });
-      case "tools/list":
-        return rpcResult(id, {
-          tools: surface === "computer"
+      }
+      case "server/discover": {
+        const requestedVersion = protocolVersionFromMcpParams(message.params);
+        if (requestedVersion && !isRudderMcpModernProtocolVersion(requestedVersion)) {
+          return rpcError(id, -32022, `Unsupported protocol version: ${requestedVersion}`, {
+            supported: [RUDDER_MCP_MODERN_PROTOCOL_VERSION],
+            requested: requestedVersion,
+          });
+        }
+        if (!hasModernMcpRequestEnvelope(message.params)) {
+          return rpcError(id, -32602, `Invalid _meta envelope for protocol revision ${RUDDER_MCP_MODERN_PROTOCOL_VERSION}`, {
+            required: [RUDDER_MCP_PROTOCOL_VERSION_META_KEY, RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY],
+          });
+        }
+        const coreContractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
+          .map(rudderMcpSemanticToolContract);
+        const browserContractManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "browser" }).tools
+          .map(rudderMcpSemanticToolContract);
+        const serverInfo = mcpServerInfo(surface);
+        return rpcResult(id, modernMcpResult({
+          supportedVersions: [RUDDER_MCP_MODERN_PROTOCOL_VERSION],
+          capabilities: {
+            tools: { listChanged: false },
+            experimental: {
+              rudder: {
+                contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+                coreContractHash: fingerprintRudderMcpToolManifest(coreContractManifest),
+                browserContractHash: fingerprintRudderMcpToolManifest(browserContractManifest),
+              },
+            },
+          },
+          _meta: { [RUDDER_MCP_SERVER_INFO_META_KEY]: serverInfo },
+        }, { cacheable: true }));
+      }
+      case "tools/list": {
+        const tools = surface === "computer"
             ? computerCapabilityEnabled(env) ? COMPUTER_USE_MCP_TOOLS : []
             : surface === "browser" && !browserCapabilityEnabled(env)
               ? []
-              : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry),
-        });
+              : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry);
+        if (isModernMcpRequest(message.params)) {
+          const cursor = isRecord(message.params) ? message.params.cursor : undefined;
+          if (typeof cursor === "string" && parseMcpToolCursor(cursor) === null) {
+            return rpcError(id, -32602, "Invalid tools/list cursor");
+          }
+        }
+        return rpcResult(id, modernOrLegacyResult(message.params, paginateMcpTools(tools, message.params), {
+          cacheable: true,
+          serverInfo: mcpServerInfo(surface),
+        }));
+      }
+      case "ping":
+        return rpcResult(id, isModernMcpRequest(message.params)
+          ? modernMcpResult({}, { serverInfo: mcpServerInfo(surface) })
+          : {});
       case "tools/call":
         return boundedToolCallRpcResponse(
           id,
           await callToolSafely(message.params, env, surface, options.signal),
           surface,
+          isModernMcpRequest(message.params),
         );
 
       default:
@@ -860,14 +942,21 @@ function boundedToolCallRpcResponse(
   id: JsonRpcId,
   result: Record<string, unknown>,
   surface: RudderMcpServerSurface,
+  modern = false,
 ): Record<string, unknown> {
-  const response = rpcResult(id, result);
+  const responseResult = modern
+    ? modernMcpResult(result, { serverInfo: mcpServerInfo(surface) })
+    : result;
+  const response = rpcResult(id, responseResult);
   const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
   const maxBytes = surface === "browser"
     ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
     : RUDDER_MCP_MAX_TOOL_RESULT_BYTES;
   if (responseBytes <= maxBytes) return response;
-  return rpcResult(id, mcpResponseTooLarge(responseBytes, maxBytes));
+  const boundedError = mcpResponseTooLarge(responseBytes, maxBytes);
+  return rpcResult(id, modern
+    ? modernMcpResult(boundedError, { serverInfo: mcpServerInfo(surface) })
+    : boundedError);
 }
 
 function mcpResponseTooLarge(responseBytes: number, maxBytes = RUDDER_MCP_MAX_TOOL_RESULT_BYTES): Record<string, unknown> {
@@ -1404,6 +1493,59 @@ function toMcpToolListEntry(
   tool: AgentV1McpToolManifestEntry,
 ): ReturnType<typeof rudderMcpSemanticToolContract> {
   return rudderMcpSemanticToolContract(tool);
+}
+
+function mcpServerInfo(surface: RudderMcpServerSurface): Record<string, unknown> {
+  return {
+    name: surface === "browser"
+      ? RUDDER_BROWSER_MCP_SERVER_NAME
+      : surface === "computer" ? COMPUTER_USE_MCP_SERVER_NAME : RUDDER_MCP_SERVER_NAME,
+    version: resolveCliVersion(),
+  };
+}
+
+function isModernMcpRequest(params: unknown): boolean {
+  return isRudderMcpModernProtocolVersion(protocolVersionFromMcpParams(params))
+    && hasModernMcpRequestEnvelope(params);
+}
+
+function modernOrLegacyResult(
+  params: unknown,
+  result: Record<string, unknown>,
+  options: { cacheable?: boolean; serverInfo: Record<string, unknown> },
+): Record<string, unknown> {
+  if (!isModernMcpRequest(params)) return result;
+  return modernMcpResult(result, options);
+}
+
+function paginateMcpTools(
+  tools: ReadonlyArray<Record<string, unknown>>,
+  params: unknown,
+): Record<string, unknown> {
+  if (!isModernMcpRequest(params)) return { tools };
+  const record = isRecord(params) ? params : {};
+  const cursor = typeof record.cursor === "string" ? record.cursor : null;
+  const offset = cursor === null ? 0 : parseMcpToolCursor(cursor) ?? 0;
+  const page = tools.slice(offset, offset + RUDDER_MCP_TOOL_PAGE_SIZE);
+  const nextOffset = offset + page.length;
+  return {
+    tools: page,
+    ...(nextOffset < tools.length ? { nextCursor: encodeMcpToolCursor(nextOffset) } : {}),
+  };
+}
+
+function encodeMcpToolCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
+}
+
+function parseMcpToolCursor(cursor: string): number | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { offset?: unknown };
+    if (typeof decoded.offset === "number" && Number.isInteger(decoded.offset) && decoded.offset >= 0) return decoded.offset;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function requestedProtocolVersion(params: unknown): string | null {

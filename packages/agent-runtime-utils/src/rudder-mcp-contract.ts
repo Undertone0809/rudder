@@ -10,9 +10,17 @@ export interface RudderMcpSemanticToolContract {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 export interface RudderMcpToolContractSource extends RudderMcpSemanticToolContract {
+  capabilityId: string;
   mutating: boolean;
   requiresOrgId: boolean;
   requiresAgentId: boolean;
@@ -26,6 +34,27 @@ interface RudderMcpInputSchema extends Record<string, unknown> {
   required?: string[];
   anyOf?: Array<{ required: string[] }>;
 }
+
+const RUDDER_MCP_DESTRUCTIVE_CAPABILITY_IDS = new Set([
+  "agent.skills.sync",
+  "issue.block",
+  "issue.done",
+  "library.file.put",
+  "automation.triggers.delete",
+  "automation.triggers.rotate-secret",
+  "automation.disable",
+  "chat.archive",
+  "runs.cancel",
+  "browser.clipboard",
+  "browser.logs",
+]);
+
+const RUDDER_MCP_OPEN_WORLD_CAPABILITY_IDS = new Set([
+  "browser.open",
+  "browser.navigate",
+  "browser.download",
+  "browser.content",
+]);
 
 function browserMcpInputSchema(id: string): {
   type: "object";
@@ -649,6 +678,15 @@ export function rudderMcpSemanticToolContract(
     name: tool.name,
     description: `${tool.description} Mutating: ${tool.mutating ? "yes" : "no"}. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: ${tool.requiresOrgId ? "required from runtime env" : "not required by this tool"}. Agent context: ${tool.requiresAgentId ? "required from runtime env" : "runtime env when available"}. Run attribution: ${tool.attachesRunIdWhenAvailable ? "attached from runtime env when available" : "not attached"}.`,
     inputSchema: tool.inputSchema,
+    annotations: {
+      title: tool.description.split(/[.;]/u, 1)[0] || tool.name,
+      readOnlyHint: !tool.mutating,
+      destructiveHint: RUDDER_MCP_DESTRUCTIVE_CAPABILITY_IDS.has(tool.capabilityId),
+      idempotentHint: !tool.mutating
+        || tool.capabilityId === "browser.reload"
+        || tool.capabilityId === "browser.close",
+      ...(RUDDER_MCP_OPEN_WORLD_CAPABILITY_IDS.has(tool.capabilityId) ? { openWorldHint: true } : {}),
+    },
   };
 }
 

@@ -1,7 +1,4 @@
-import {
-  LATEST_PROTOCOL_VERSION,
-  SUPPORTED_PROTOCOL_VERSIONS,
-} from "@modelcontextprotocol/client";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/client";
 import express from "express";
 import { once } from "node:events";
 import type { Server } from "node:http";
@@ -121,11 +118,14 @@ describe("managed MCP run-scoped proxy route", () => {
           clientInfo: { name: "test", version: "1" },
         },
       });
-    expect(unsupported.body.result.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
-    expect(unsupported.headers["mcp-protocol-version"]).toBe(LATEST_PROTOCOL_VERSION);
-    expect(SUPPORTED_PROTOCOL_VERSIONS).toContain(
-      unsupported.body.result.protocolVersion,
-    );
+    expect(unsupported.body.error).toMatchObject({
+      code: -32022,
+      message: "Unsupported protocol version: 2099-01-01",
+      data: {
+        requested: "2099-01-01",
+        supported: SUPPORTED_PROTOCOL_VERSIONS,
+      },
+    });
 
     expect((await request(api)
       .post(`/api/mcp/runtime/bindings/${bindingId}`)
@@ -154,7 +154,7 @@ describe("managed MCP run-scoped proxy route", () => {
           arguments: { query: "hello" },
         },
       });
-    expect(called.body.result).toEqual({
+    expect(called.body.result).toMatchObject({
       content: [{ type: "text", text: "ok" }],
     });
     expect(runtime.callTool).toHaveBeenCalledWith(
@@ -232,7 +232,7 @@ describe("managed MCP run-scoped proxy route", () => {
     expect(runtime.callTool).not.toHaveBeenCalled();
   });
 
-  it("works end-to-end through the pinned Streamable HTTP SDK client", async () => {
+  it("works end-to-end through auto-negotiated modern Streamable HTTP", async () => {
     const server = await app(actor);
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing proxy port");
@@ -250,8 +250,13 @@ describe("managed MCP run-scoped proxy route", () => {
         expect.objectContaining({ name: "external.alpha.read" }),
       ]);
       await expect(client.callTool("external.alpha.read", { query: "sdk" }))
-        .resolves.toEqual({
+        .resolves.toMatchObject({
           content: [{ type: "text", text: "ok" }],
+          _meta: {
+            "io.modelcontextprotocol/serverInfo": {
+              name: "rudder-managed-mcp-proxy",
+            },
+          },
         });
       expect(runtime.callTool).toHaveBeenCalledWith(
         expect.objectContaining({ runId: actor.runId }),
@@ -259,6 +264,68 @@ describe("managed MCP run-scoped proxy route", () => {
         "external.alpha.read",
         { query: "sdk" },
       );
+      const modernList = await request(server)
+        .post(`/api/mcp/runtime/bindings/${bindingId}`)
+        .send({
+          jsonrpc: "2.0",
+          id: "modern-list",
+          method: "tools/list",
+          params: {
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        });
+      expect(modernList.body.result).toMatchObject({
+        resultType: "complete",
+        ttlMs: 300_000,
+        cacheScope: "private",
+      });
+
+      const malformedModernCursor = await request(server)
+        .post(`/api/mcp/runtime/bindings/${bindingId}`)
+        .send({
+          jsonrpc: "2.0",
+          id: "malformed-modern-cursor",
+          method: "tools/list",
+          params: {
+            cursor: "not-an-opaque-cursor",
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        });
+      expect(malformedModernCursor.body.error).toMatchObject({ code: -32602 });
+
+      const malformedModernList = await request(server)
+        .post(`/api/mcp/runtime/bindings/${bindingId}`)
+        .send({
+          jsonrpc: "2.0",
+          id: "malformed-modern-list",
+          method: "tools/list",
+          params: {
+            _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+          },
+        });
+      expect(malformedModernList.body.error).toMatchObject({ code: -32602 });
+
+      const conflictingModernList = await request(server)
+        .post(`/api/mcp/runtime/bindings/${bindingId}`)
+        .send({
+          jsonrpc: "2.0",
+          id: "conflicting-modern-list",
+          method: "tools/list",
+          params: {
+            protocolVersion: "2025-06-18",
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        });
+      expect(conflictingModernList.body.error).toMatchObject({ code: -32602 });
     } finally {
       await client.close();
       await new Promise<void>((resolve, reject) => {
