@@ -519,6 +519,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const sentinelStream = createSentinelStream(resultSentinel);
     const inlineVisualStream = createRudderInlineVisualStreamSuppressor();
+    const commentaryInlineVisualStream = createRudderInlineVisualStreamSuppressor();
     const transcriptInlineVisualStream = createRudderInlineVisualStreamSuppressor();
     let transcriptDeltaOpen = false;
     let transcriptDeltaCarry = "";
@@ -613,7 +614,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           }
           if (entry.kind === "assistant") {
             if (entry.phase === "commentary") {
-              const commentaryText = redactRudderInlineVisualSources(entry.text);
+              // Streaming deltas may begin or end with meaningful whitespace.
+              // Keep one suppressor for the whole commentary stream so private
+              // inline visuals stay filtered without trimming token boundaries.
+              const commentaryText = entry.delta === true
+                ? commentaryInlineVisualStream.push(entry.text)
+                : redactRudderInlineVisualSources(entry.text);
               if (!commentaryText) continue;
               const commentaryEntry: TranscriptEntry = {
                 kind: "assistant",

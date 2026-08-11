@@ -2786,26 +2786,28 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls)).not.toContain("PRIVATE_STOP_BYTES");
   });
 
-  it("keeps phased Codex commentary in Process instead of promoting it into a stopped reply body", async () => {
+  it("keeps phased Codex commentary whitespace in Process instead of promoting it into a stopped reply body", async () => {
     const svc = chatAssistantService({} as any);
     const abortController = new AbortController();
     const deltas: string[] = [];
     const entries: Array<{ kind: string; text?: string; phase?: string; segmentId?: string }> = [];
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog(
-        "stdout",
-        `${JSON.stringify({
-          type: "item.completed",
-          item: {
-            type: "agent_message",
-            id: "commentary-1",
-            text: "I am still checking the timeline.",
-            delta: true,
-            phase: "commentary",
-          },
-        })}\n`,
-      );
+      for (const text of ["I am", " still checking", " the timeline."]) {
+        await ctx.onLog(
+          "stdout",
+          `${JSON.stringify({
+            type: "item.completed",
+            item: {
+              type: "agent_message",
+              id: "commentary-1",
+              text,
+              delta: true,
+              phase: "commentary",
+            },
+          })}\n`,
+        );
+      }
       abortController.abort();
       return {
         summary: "",
@@ -2830,14 +2832,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
       partialBody: "",
     });
     expect(deltas).toEqual([]);
-    expect(entries).toEqual([
+    expect(entries.map((entry) => entry.text).join("")).toBe("I am still checking the timeline.");
+    expect(entries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: "assistant",
-        text: "I am still checking the timeline.",
         phase: "commentary",
         segmentId: "commentary-1",
       }),
-    ]);
+    ]));
+    expect(mockChatAgentRuns.appendTranscriptEntry.mock.calls
+      .map(([, entry]) => entry.text)
+      .join(""))
+      .toBe("I am still checking the timeline.");
   });
 
   it("forwards process transcript entries while streaming", async () => {

@@ -242,10 +242,16 @@ test.describe("Run transcript detail", () => {
       { kind: "assistant", text: "Progress update." },
       { kind: "system", text: "reasoning completed" },
       { kind: "system", text: "reasoning started" },
-      { kind: "assistant", text: "I read AG", delta: true },
+      { kind: "assistant", text: "I", delta: true },
+      { kind: "assistant", text: " read", delta: true },
+      { kind: "assistant", text: " AG", delta: true },
       { kind: "assistant", text: "ENTS", delta: true },
-      { kind: "assistant", text: ".md and added E", delta: true },
-      { kind: "assistant", text: "2E coverage.", delta: true },
+      { kind: "assistant", text: ".md", delta: true },
+      { kind: "assistant", text: " and", delta: true },
+      { kind: "assistant", text: " added", delta: true },
+      { kind: "assistant", text: " E", delta: true },
+      { kind: "assistant", text: "2E", delta: true },
+      { kind: "assistant", text: " coverage.", delta: true },
       { kind: "system", text: "reasoning completed" },
       {
         kind: "system",
@@ -342,8 +348,8 @@ test.describe("Run transcript detail", () => {
     });
 
     await page.getByRole("button", { name: "raw" }).click();
-    await expect(detailPane.getByText(/reasoning started/i).first()).toBeVisible();
-    await expect(detailPane.getByText(/reasoning completed/i).first()).toBeVisible();
+    await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
+    await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
     const coalescedRawMessage = detailPane.locator("pre").filter({ hasText: "I read AGENTS.md and added E2E coverage." });
     await expect(coalescedRawMessage).toHaveCount(1);
     await expect(detailPane.getByText("I read AG", { exact: true })).toHaveCount(0);
