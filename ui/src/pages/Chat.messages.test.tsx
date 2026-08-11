@@ -186,6 +186,7 @@ function renderChatMessageItem(
   messageToRender: ChatMessage,
   agents: Agent[] = [],
   conversationOverrides: Partial<ChatConversation> = {},
+  localizeText?: (text: string) => string,
 ) {
   const onForkMessage = vi.fn();
   return render(
@@ -258,12 +259,25 @@ function renderChatMessageItem(
         onRetryFailedMessage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
+        localizeText={localizeText}
       />
     </ThemeProvider>,
   );
 }
 
 describe("assistant attribution", () => {
+  it("localizes the active assistant status badge", () => {
+    const container = renderChatMessageItem(
+      message({ status: "tool_busy" as unknown as ChatMessage["status"], body: "正在处理。" }),
+      [],
+      {},
+      (text) => text === "Working" ? "运行中" : text,
+    );
+
+    expect(container.textContent).toContain("运行中");
+    expect(container.textContent).not.toContain("Working");
+  });
+
   it("uses the conversation-bound agent while a queued response projection has no message identity yet", () => {
     const noah = agent({
       name: "Noah",

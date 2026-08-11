@@ -279,6 +279,7 @@ const zhExactPhrases: Record<string, string> = {
   "Nothing here yet": "这里还没有内容",
   "Observed": "已观察",
   "Output": "输出",
+  "Outputs": "产出",
   "Tokens Used": "Token 消耗量",
   "Not available for this time window": "当前时间窗口暂无可用数据",
   "Select a start and end date": "请选择开始和结束日期",
@@ -494,6 +495,7 @@ const zhExactPhrases: Record<string, string> = {
   "Signing mode": "签名模式",
   "Skills": "技能",
   "Source": "来源",
+  "Sources": "来源",
   "Source comment on this issue": "这条任务上的原始评论",
   "Sort": "排序",
   "stderr excerpt": "stderr 摘要",
@@ -730,6 +732,7 @@ const zhExactPhrases: Record<string, string> = {
   "Choose": "选择",
   "Couldn't open path picker": "无法打开路径选择器",
   "Work": "工作",
+  "Working": "运行中",
   "Workspaces": "工作区",
   "Done": "已完成",
   "Board": "控制台",
@@ -792,6 +795,32 @@ const zhExactPhrases: Record<string, string> = {
   "Attached": "已附加",
   "Working Set": "工作集",
   "Reference": "参考资料",
+  "References": "引用",
+  "Subagents": "子智能体",
+  "Conversation items": "会话项目",
+  "Conversation files and links": "会话文件与链接",
+  "Show conversation files and links": "显示会话文件与链接",
+  "Hide conversation files and links": "隐藏会话文件与链接",
+  "Close conversation files and links": "关闭会话文件与链接",
+  "Show less": "收起",
+  "View all": "查看全部",
+  "Jump to source message": "跳转到来源消息",
+  "Jump to source message for": "跳转到来源消息：",
+  "Issue status": "任务状态",
+  "Open subagents": "打开子智能体",
+  "active": "运行中",
+  "Process details": "过程详情",
+  "Stopped": "已停止",
+  "Stopped with errors": "因错误停止",
+  "Tool details": "工具详情",
+  "Waiting for result...": "正在等待结果...",
+  "Use": "使用",
+  "skill": "技能",
+  "skills": "技能",
+  "Read": "读取",
+  "Edited": "编辑",
+  "Running": "运行中",
+  "Viewed an image": "查看了 1 张图片",
   "Attached resources": "已附加资源",
   "Project role": "项目角色",
   "Project note": "项目备注",
@@ -1049,6 +1078,47 @@ function translateThinkingEffort(value: string) {
   return translations[value.trim().toLowerCase()] ?? value;
 }
 
+function translateChatProcessDuration(value: string) {
+  if (value === "under 1s") return "不足 1 秒";
+  return value
+    .replace(/(\d+)m\b/g, "$1 分钟")
+    .replace(/(\d+)s\b/g, "$1 秒");
+}
+
+function translateTranscriptActivity(value: string) {
+  const translated = value
+    .replace(/\bUsed (\d+) skills?\b/gi, "使用了 $1 个技能")
+    .replace(/\bUsed (\d+) tools?\b/gi, "使用了 $1 个工具")
+    .replace(/\bRead (\d+) files?\b/gi, "读取了 $1 个文件")
+    .replace(/\bRan (\d+) commands?\b/gi, "运行了 $1 条命令")
+    .replace(/\bEdited (\d+) files?\b/gi, "编辑了 $1 个文件")
+    .replace(/\bEdited (\d+) items?\b/gi, "编辑了 $1 项")
+    .replace(/\bExplored (\d+) locations?\b/gi, "查看了 $1 处位置")
+    .replace(/\bExplored (\d+) files?\b/gi, "查看了 $1 个文件")
+    .replace(/\bExplored (\d+) items?\b/gi, "查看了 $1 项")
+    .replace(/\bSearched once\b/gi, "搜索了 1 次")
+    .replace(/\bSearched (\d+) times\b/gi, "搜索了 $1 次")
+    .replace(/\bViewed an image\b/gi, "查看了 1 张图片")
+    .replace(/\bViewed (\d+) images?\b/gi, "查看了 $1 张图片")
+    .replace(/\b(\d+) logs?\b/gi, "$1 条日志");
+
+  if (translated !== value) return translated.replaceAll(", ", "，");
+
+  const singleActivityPatterns: Array<[RegExp, string]> = [
+    [/^Use (.+) skill$/i, "使用 $1 技能"],
+    [/^Call (.+)$/i, "调用 $1"],
+    [/^Read (.+)$/i, "读取 $1"],
+    [/^Ran (.+)$/i, "运行 $1"],
+    [/^Searched (.+)$/i, "搜索 $1"],
+    [/^Edited (.+)$/i, "编辑 $1"],
+    [/^Explored (.+)$/i, "查看 $1"],
+  ];
+  for (const [pattern, replacement] of singleActivityPatterns) {
+    if (pattern.test(value)) return value.replace(pattern, replacement);
+  }
+  return value;
+}
+
 const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any[]) => string)]> = [
   [/\bboard UI\b/g, "控制台界面"],
   [/\bboard shell\b/g, "控制台外壳"],
@@ -1100,6 +1170,28 @@ const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any
   [/^in\s+(.+)\s+·\s+cache\s+(.+)\s+·\s+out\s+(.+)$/i, "输入 $1 · 缓存 $2 · 输出 $3"],
   [/^在\s*(.+?)\s*·\s*cache\s*(.+?)\s*·\s*out\s*(.+)$/i, "输入 $1 · 缓存 $2 · 输出 $3"],
   [/^Ran for\s+(\d+(?:\.\d+)?(?:ms|s|m|h|d|w|mo)(?:\s+\d+(?:\.\d+)?(?:ms|s|m|h|d|w|mo))?)$/i, "运行耗时 $1"],
+  [/^Worked for\s+(.+)$/i, (_match, duration: string) => `已完成，${translateChatProcessDuration(duration)}`],
+  [/^Working for\s+(.+)$/i, (_match, duration: string) => `正在思考，${translateChatProcessDuration(duration)}`],
+  [/^View all\s+(\d+)$/i, "查看全部 $1 项"],
+  [/^(\d+)\s+active\s+·\s+(\d+)\s+done$/i, "$1 个运行中 · $2 个已完成"],
+  [/^(\d+)\s+active$/i, "$1 个运行中"],
+  [/^(\d+)\s+done$/i, "$1 个已完成"],
+  [/^Open subagents,\s+(\d+)\s+active\s+·\s+(\d+)\s+done$/i, "打开子智能体，$1 个运行中 · $2 个已完成"],
+  [/^Open subagents,\s+(\d+)\s+active$/i, "打开子智能体，$1 个运行中"],
+  [/^Open subagents,\s+(\d+)\s+done$/i, "打开子智能体，$1 个已完成"],
+  [/^Jump to source message for\s+(.+)$/i, "跳转到 $1 的来源消息"],
+  [/^Issue status:\s+(.+)$/i, (_match, status: string) => `任务状态：${translateIssueStatus(status)}`],
+  [/^Open skill\s+(.+)$/i, "打开技能 $1"],
+  [/^Open file\s+(.+)$/i, "打开文件 $1"],
+  [/^Inspect agent\s+(.+)$/i, "查看子智能体 $1"],
+  [/^Expand tool details:$/i, "展开工具详情："],
+  [/^Collapse tool details:$/i, "收起工具详情："],
+  [/^Expand command details:$/i, "展开命令详情："],
+  [/^Collapse command details:$/i, "收起命令详情："],
+  [/^Preview image\s+(.+)$/i, "预览图片 $1"],
+  [/^Collapse image\s+(.+)$/i, "收起图片 $1"],
+  [/^Collapse tool activity(?: group (\d+))?$/i, (_match, group: string | undefined) => group ? `收起第 ${group} 组工具活动` : "收起工具活动"],
+  [/^Expand tool activity(?: group (\d+))?$/i, (_match, group: string | undefined) => group ? `展开第 ${group} 组工具活动` : "展开工具活动"],
   [/^([0-9][0-9.,]*(?:\s?[kmbt])?)\s+tokens$/i, "$1 Token"],
   [/^(.+)%\s+of\s+limit$/i, "已用上限的 $1%"],
   [/^Soft alert at\s+(.+)%$/i, "$1% 时软提醒"],
@@ -1137,7 +1229,7 @@ function preserveWhitespace(input: string, transform: (core: string) => string) 
 export function translateLegacyString(locale: InstanceLocale, text: string) {
   if (locale !== "zh-CN") return text;
   return preserveWhitespace(text, (core) => {
-    let translated = zhExactPhrases[core] ?? core;
+    let translated = zhExactPhrases[core] ?? translateTranscriptActivity(core);
     for (const [pattern, replacement] of zhSubstitutions) {
       translated = typeof replacement === "string"
         ? translated.replace(pattern, replacement)

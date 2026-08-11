@@ -1,0 +1,6 @@
+html:is([data-current-path="/releases"], [data-current-path="/zh/releases"])
+  [data-component-part="update-tag-list"],
+html:is([data-current-path="/releases"], [data-current-path="/zh/releases"])
+  [data-component-part="update-description"] {
+  display: none;
+}

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
@@ -13,6 +13,11 @@ import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
+const TranscriptTextContext = createContext<(text: string) => string>((text) => text);
+
+function useTranscriptText() {
+  return useContext(TranscriptTextContext);
+}
 
 function transcriptFileDisplayName(label: string) {
   const trimmed = label.replace(/[\\/]+$/, "");
@@ -338,8 +343,9 @@ export function TranscriptChatToolActionRow({
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
+  const localizeText = useTranscriptText();
   const semantic = describeToolSemanticInfo(block.name, block.input, block.result);
-  const displaySummary = formatChatToolActionSummary(block, semantic, density);
+  const displaySummary = localizeText(formatChatToolActionSummary(block, semantic, density));
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
@@ -351,7 +357,7 @@ export function TranscriptChatToolActionRow({
       : block.result
         ? formatNiceToolResponse(block.name, block.input, block.result)
         : block.status === "running"
-          ? "Waiting for result..."
+          ? localizeText("Waiting for result...")
           : null;
   const canExpand = semantic.category !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
@@ -361,9 +367,9 @@ export function TranscriptChatToolActionRow({
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
-      ? "Failed"
+      ? localizeText("Failed")
       : block.status === "running"
-        ? "Running"
+        ? localizeText("Running")
         : null;
   const rowTone = block.status === "error"
     ? "text-red-700 dark:text-red-300"
@@ -424,7 +430,7 @@ export function TranscriptChatToolActionRow({
     >
       {canExpand && !inline && !inspectAgent ? (
         <span id={detailStateLabelId} className="sr-only">
-          {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
+          {localizeText(`${open ? "Collapse" : "Expand"} ${isCommand ? "command" : "tool"} details:`)}
         </span>
       ) : null}
       {hasInspectableSkillTargets ? (
@@ -443,25 +449,25 @@ export function TranscriptChatToolActionRow({
               const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
               return openable ? (
                 <>
-                  <span>Use </span>
+                  <span>{localizeText("Use")} </span>
                   <button
                     type="button"
                     className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground focus-visible:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    aria-label={`Open skill ${target.name}`}
+                    aria-label={localizeText(`Open skill ${target.name}`)}
                     data-transcript-skill-target={target.name}
                     data-transcript-skill-path={target.path ?? undefined}
                     onClick={() => onOpenSkill?.(target)}
                   >
                     {target.name}
                   </button>
-                  <span> skill</span>
+                  <span> {localizeText("skill")}</span>
                 </>
               ) : (
                 <span data-transcript-skill-target={target.name}>{displaySummary}</span>
               );
             })() : (
               <>
-                <span>Use </span>
+                <span>{localizeText("Use")} </span>
                 {skillTargets.map((target, index) => {
                   const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
                   return (
@@ -471,7 +477,7 @@ export function TranscriptChatToolActionRow({
                         <button
                           type="button"
                           className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground focus-visible:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                          aria-label={`Open skill ${target.name}`}
+                          aria-label={localizeText(`Open skill ${target.name}`)}
                           data-transcript-skill-target={target.name}
                           data-transcript-skill-path={target.path ?? undefined}
                           onClick={() => onOpenSkill?.(target)}
@@ -484,7 +490,7 @@ export function TranscriptChatToolActionRow({
                     </Fragment>
                   );
                 })}
-                <span> skills</span>
+                <span> {localizeText("skills")}</span>
               </>
             )}
           </span>
@@ -505,11 +511,11 @@ export function TranscriptChatToolActionRow({
               className={cn("min-w-0 flex-1 rounded-sm text-left text-foreground/84 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", compact ? "text-xs leading-5" : "text-sm leading-6")}
               title={image.path}
               aria-expanded={imageOpen}
-              aria-label={`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`}
+              aria-label={localizeText(`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`)}
               data-transcript-image-target={image.path}
               onClick={() => setImageOpen((value) => !value)}
             >
-              Viewed an image
+              {localizeText("Viewed an image")}
             </button>
             <TranscriptChatActionTrailing
               duration={duration}
@@ -546,7 +552,7 @@ export function TranscriptChatToolActionRow({
               compact ? "text-xs leading-5" : "text-sm leading-6",
             )}
           >
-            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}{" "}</span>
+            <span className="shrink-0">{localizeText(semantic.category === "edit" ? "Edited" : "Read")}{" "}</span>
             <span className="min-w-0 flex-1">
               {fileTargets.map((target, index) => {
                 const displayName = transcriptFileDisplayName(target.label);
@@ -557,7 +563,7 @@ export function TranscriptChatToolActionRow({
                       <button
                         type="button"
                         className="inline-block max-w-full whitespace-normal break-words rounded-sm text-left align-top underline decoration-border underline-offset-4 transition-colors [overflow-wrap:anywhere] hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                        aria-label={`Open file ${displayName}`}
+                        aria-label={localizeText(`Open file ${displayName}`)}
                         data-transcript-file-target={target.path}
                         onClick={() => onOpenFile?.(target.path!, displayName)}
                       >
@@ -678,7 +684,7 @@ export function TranscriptChatToolActionRow({
           onClick={inspectAgent ?? toggleDetails}
           aria-expanded={!inspectAgent && canExpand && !inline ? open : undefined}
           aria-label={inspectAgent
-            ? `Inspect agent ${inspectableAgent?.threadId}`
+            ? localizeText(`Inspect agent ${inspectableAgent?.threadId}`)
             : undefined}
           aria-labelledby={!inspectAgent && canExpand && !inline
             ? `${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`
@@ -902,6 +908,7 @@ export function TranscriptChatActionGroup({
   annotationSource?: TranscriptAnnotationSourceContext;
   runAnnotationContext?: TranscriptRunAnnotationContext;
 }) {
+  const localizeText = useTranscriptText();
   const compact = density === "compact";
   const singleAction = actions[0];
   const hasSingleAction = actions.length === 1;
@@ -911,7 +918,7 @@ export function TranscriptChatActionGroup({
   const allToolsErrored = areAllToolEntriesErrored(toolEntries);
   const shouldInlineSingleStdoutAction = hasSingleAction && singleAction?.type === "stdout";
   const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool";
-  const summary = formatChatActionSummary(actions);
+  const summary = localizeText(formatChatActionSummary(actions));
   const highlightGroupError = allToolsErrored && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
   const summaryIcon = getChatActionIconInfo(actions[0]!);
@@ -995,9 +1002,9 @@ export function TranscriptChatActionGroup({
   }
 
   const labelSuffix = groupCount > 1 ? ` group ${groupIndex + 1}` : "";
-  const expandedLabel = detailsOpen
+  const expandedLabel = localizeText(detailsOpen
     ? `Collapse tool activity${labelSuffix}`
-    : `Expand tool activity${labelSuffix}`;
+    : `Expand tool activity${labelSuffix}`);
 
   return wrapAnnotation(
     <div>
@@ -1029,8 +1036,8 @@ export function TranscriptChatActionGroup({
           <span className={cn(
             "block truncate text-foreground/82",
             compact ? "text-xs" : "text-sm",
-          )} title={summary || "Tool details"}>
-            {summary || "Tool details"}
+          )} title={summary || localizeText("Tool details")}>
+            {summary || localizeText("Tool details")}
           </span>
         </span>
         <span
@@ -1375,6 +1382,7 @@ export function TranscriptChatTimeline({
   thinkingClassName,
   hideAssistantMessages,
   hiddenAssistantMessageText,
+  localizeText = (text) => text,
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
   onOpenFile,
@@ -1392,6 +1400,7 @@ export function TranscriptChatTimeline({
   thinkingClassName?: string;
   hideAssistantMessages: boolean;
   hiddenAssistantMessageText?: string | null;
+  localizeText?: (text: string) => string;
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
@@ -1417,7 +1426,8 @@ export function TranscriptChatTimeline({
   );
 
   return (
-    <div className="space-y-3">
+    <TranscriptTextContext.Provider value={localizeText}>
+      <div className="space-y-3">
       {preludeBlocks.map((block, index) => {
         const fullWidth = block.type === "message" && block.source === "steer";
         return (
@@ -1456,6 +1466,7 @@ export function TranscriptChatTimeline({
           sentAnnotationContext={sentAnnotationContext}
         />
       ))}
-    </div>
+      </div>
+    </TranscriptTextContext.Provider>
   );
 }

@@ -122,13 +122,13 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       route: "/releases",
       title: "Changelog",
       latestDate: "August 11, 2026",
-      fixedTag: "Fixed",
+      filterTag: "New",
     },
     {
       route: "/zh/releases",
       title: "更新日志",
       latestDate: "2026年8月11日",
-      fixedTag: "问题修复",
+      filterTag: "新功能",
     },
   ];
 
@@ -141,7 +141,11 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
 
-    await page.getByRole("button", { name: item.fixedTag, exact: true }).click();
+    const latestUpdate = page.locator("h2#v0-7-3").locator("xpath=ancestor::div[contains(@class, 'update-container')]");
+    await expect(latestUpdate.locator('[data-component-part="update-tag-list"]')).toBeHidden();
+    await expect(latestUpdate.locator('[data-component-part="update-description"]')).toBeHidden();
+
+    await page.getByRole("button", { name: item.filterTag, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
     await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
     await expect(page.locator("h2#v0-7-2")).toBeVisible();
