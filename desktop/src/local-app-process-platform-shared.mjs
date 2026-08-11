@@ -72,32 +72,108 @@ export async function terminateLocalAppOwner(
   const termTimeoutMs = Math.max(0, options.termTimeoutMs ?? 2_000);
   const pollMs = Math.max(1, options.pollMs ?? 50);
   const attempts = Math.max(1, Math.ceil(termTimeoutMs / pollMs));
-  const waitUntilDead = async () => {
+  const waitUntilDead = async (processIds = [ownerId]) => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (!isAlive(ownerId)) return true;
+      if (processIds.every((processId) => !isAlive(processId))) return true;
       await delay(pollMs);
     }
-    return !isAlive(ownerId);
+    return processIds.every((processId) => !isAlive(processId));
   };
   if (platform === "win32") {
-    if (typeof options.runTaskkill !== "function") {
-      throw new Error("Windows Local App termination requires taskkill");
+    if (typeof options.terminateWindowsProcessInstances !== "function") {
+      throw new Error("Windows Local App termination requires process-handle authority");
     }
-    let treeKillSucceeded = false;
+    if (typeof options.snapshotWindowsProcesses !== "function") {
+      throw new Error("Windows Local App termination requires an owned process snapshot");
+    }
+    if (typeof options.expectedOwnerCreatedAt !== "string"
+      || options.expectedOwnerCreatedAt.length === 0) {
+      throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
+    }
+    let initialProcessTable = [];
     try {
-      await options.runTaskkill(ownerId, false);
-      treeKillSucceeded = true;
+      initialProcessTable = await options.snapshotWindowsProcesses(ownerId);
     } catch {
-      // Escalate, but do not accept root PID disappearance as tree proof.
+      if (!Array.isArray(options.expectedWindowsProcesses)) {
+        throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
+      }
     }
-    if (treeKillSucceeded && await waitUntilDead()) return;
+    const isValidProcessRecord = (record) => record
+      && typeof record === "object"
+      && isSafeLocalAppProcessId(record.pid)
+      && Number.isSafeInteger(record.parentPid)
+      && record.parentPid >= 0
+      && typeof record.createdAt === "string"
+      && record.createdAt.length > 0;
+    if (!Array.isArray(initialProcessTable)
+      || initialProcessTable.some((record) => !isValidProcessRecord(record))) {
+      throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
+    }
+    const cachedProcesses = Array.isArray(options.expectedWindowsProcesses)
+      ? options.expectedWindowsProcesses
+      : [];
+    if (cachedProcesses.some((record) => !isValidProcessRecord(record))) {
+      throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
+    }
+    const cachedOwner = cachedProcesses.find((record) => record.pid === ownerId);
+    const currentOwner = initialProcessTable.find((record) => record.pid === ownerId);
+    if (cachedOwner?.createdAt !== options.expectedOwnerCreatedAt
+      && currentOwner?.createdAt !== options.expectedOwnerCreatedAt) {
+      throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
+    }
+    const ownedProcessIds = new Set([ownerId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const record of initialProcessTable) {
+        if (!ownedProcessIds.has(record.pid) && ownedProcessIds.has(record.parentPid)) {
+          ownedProcessIds.add(record.pid);
+          changed = true;
+        }
+      }
+    }
+    const currentOwnedProcesses = currentOwner?.createdAt === options.expectedOwnerCreatedAt
+      ? initialProcessTable.filter((record) => ownedProcessIds.has(record.pid))
+      : [];
+    const ownedProcesses = [...cachedProcesses];
+    for (const record of currentOwnedProcesses) {
+      if (!ownedProcesses.some((expected) => expected.pid === record.pid
+        && expected.createdAt === record.createdAt)) {
+        ownedProcesses.push(record);
+      }
+    }
+    const snapshotProcessInstances = async () => {
+      const currentProcessTable = await options.snapshotWindowsProcesses(ownerId);
+      if (!Array.isArray(currentProcessTable)
+        || currentProcessTable.some((record) => !isValidProcessRecord(record))) {
+        throw new Error("Invalid Windows process snapshot");
+      }
+      return currentProcessTable;
+    };
+    const processInstanceExists = (processTable, expected) => {
+      return processTable.some((record) => record.pid === expected.pid
+        && record.createdAt === expected.createdAt);
+    };
+    const waitUntilInstancesExit = async () => {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const processTable = await snapshotProcessInstances();
+        if (ownedProcesses.every((expected) => !processInstanceExists(processTable, expected))) {
+          return true;
+        }
+        await delay(pollMs);
+      }
+      const processTable = await snapshotProcessInstances();
+      return ownedProcesses.every((expected) => !processInstanceExists(processTable, expected));
+    };
     try {
-      await options.runTaskkill(ownerId, true);
-      treeKillSucceeded = true;
+      // The Windows helper opens every exact process instance, validates its
+      // full-precision creation token, and terminates through the retained OS
+      // handle. PID reuse after the snapshot therefore cannot redirect a kill.
+      await options.terminateWindowsProcessInstances(ownedProcesses);
     } catch {
-      // Fail closed below.
+      // Fail closed after the independent exact-instance death proof below.
     }
-    if (treeKillSucceeded && await waitUntilDead()) return;
+    if (await waitUntilInstancesExit()) return;
     throw new Error(`Local App process tree ${ownerId} could not be proven dead`);
   }
 

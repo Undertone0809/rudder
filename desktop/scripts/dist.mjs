@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { macPortableZipArgs } from "./archive.mjs";
@@ -15,7 +17,14 @@ const packagingNodeModulesDir = path.join(desktopRoot, "node_modules");
 const hiddenPackagingNodeModulesDir = path.join(desktopRoot, "node_modules-packaging-hidden");
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
+const { path7za } = createRequire(electronBuilderCliPath)("7zip-bin");
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+const WINDOWS_BUILDER_BINARIES_MIRROR =
+  "https://npmmirror.com/mirrors/electron-builder-binaries/";
+const WINDOWS_CODE_SIGN_RELEASE = "winCodeSign-2.6.0";
+const WINDOWS_CODE_SIGN_ARCHIVE = `${WINDOWS_CODE_SIGN_RELEASE}.7z`;
+const WINDOWS_CODE_SIGN_SHA512 =
+  "6LQI2d9BPC3Xs0ZoTQe1o3tPiA28c7+PY69Q9i/pD8lY45psMtHuLwv3vRckiVr3Zx1cbNyLlBR8STwCdcHwtA==";
 const desktopCliKeepFiles = new Set([
   "desktop-cli-runner.js",
   "desktop-cli.js",
@@ -50,6 +59,134 @@ function run(command, args, options = {}) {
       resolve();
     });
   });
+}
+
+export async function runElectronBuilderWithMirrorFallback(args, options = {}) {
+  const execute = options.execute ?? run;
+  const platform = options.platform ?? process.platform;
+  const environment = options.environment ?? process.env;
+  try {
+    await execute(process.execPath, args);
+    return;
+  } catch (primaryError) {
+    if (platform !== "win32" || environment.ELECTRON_BUILDER_BINARIES_MIRROR) {
+      throw primaryError;
+    }
+
+    console.warn(
+      "[desktop:dist] primary electron-builder binary download failed; retrying with the verified mirror",
+    );
+    try {
+      await execute(process.execPath, args, {
+        env: {
+          ELECTRON_BUILDER_BINARIES_MIRROR: WINDOWS_BUILDER_BINARIES_MIRROR,
+        },
+      });
+    } catch (mirrorError) {
+      throw new AggregateError(
+        [primaryError, mirrorError],
+        "electron-builder failed with both the primary binary source and fallback mirror",
+      );
+    }
+  }
+}
+
+function electronBuilderCacheRoot(environment = process.env) {
+  const configured = environment.ELECTRON_BUILDER_CACHE?.trim();
+  if (configured) return path.resolve(configured);
+  const localAppData = environment.LOCALAPPDATA?.trim();
+  if (localAppData) return path.join(localAppData, "electron-builder", "Cache");
+  return path.join(os.tmpdir(), "electron-builder-cache");
+}
+
+export function windowsCodeSignArtifactUrls(environment = process.env) {
+  const configuredMirror = environment.ELECTRON_BUILDER_BINARIES_MIRROR?.trim();
+  const mirrors = configuredMirror
+    ? [configuredMirror]
+    : [
+      "https://github.com/electron-userland/electron-builder-binaries/releases/download/",
+      WINDOWS_BUILDER_BINARIES_MIRROR,
+    ];
+  return [...new Set(mirrors)].map((mirror) =>
+    `${mirror.endsWith("/") ? mirror : `${mirror}/`}${WINDOWS_CODE_SIGN_RELEASE}/${WINDOWS_CODE_SIGN_ARCHIVE}`);
+}
+
+async function downloadVerifiedWindowsCodeSign(archivePath, environment) {
+  const failures = [];
+  for (const url of windowsCodeSignArtifactUrls(environment)) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      const archive = Buffer.from(await response.arrayBuffer());
+      const checksum = createHash("sha512").update(archive).digest("base64");
+      if (checksum !== WINDOWS_CODE_SIGN_SHA512) {
+        throw new Error(`SHA-512 mismatch for ${url}`);
+      }
+      await fs.writeFile(archivePath, archive);
+      return;
+    } catch (error) {
+      failures.push(new Error(
+        `Could not download ${url}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      ));
+    }
+  }
+  throw new AggregateError(failures, "Could not download a verified winCodeSign archive");
+}
+
+async function hasWindowsCodeSignTools(directory) {
+  return await exists(path.join(directory, "rcedit-x64.exe"))
+    && await exists(path.join(directory, "windows-10", "x64", "signtool.exe"));
+}
+
+export async function prepareWindowsCodeSignCache(environment = process.env) {
+  if (process.platform !== "win32") return null;
+
+  const cacheRoot = electronBuilderCacheRoot(environment);
+  const artifactRoot = path.join(cacheRoot, "winCodeSign");
+  const finalDirectory = path.join(artifactRoot, WINDOWS_CODE_SIGN_RELEASE);
+  if (await hasWindowsCodeSignTools(finalDirectory)) return finalDirectory;
+
+  await fs.rm(finalDirectory, { recursive: true, force: true });
+  await fs.mkdir(artifactRoot, { recursive: true });
+  const temporaryRoot = await fs.mkdtemp(path.join(artifactRoot, "rudder-win-codesign-"));
+  const archivePath = path.join(temporaryRoot, WINDOWS_CODE_SIGN_ARCHIVE);
+  const extractionDirectory = path.join(temporaryRoot, "extracted");
+  try {
+    await fs.mkdir(extractionDirectory, { recursive: true });
+    await downloadVerifiedWindowsCodeSign(archivePath, environment);
+    let extractionError = null;
+    try {
+      await run(path7za, ["x", "-bd", archivePath, `-o${extractionDirectory}`], {
+        cwd: artifactRoot,
+      });
+    } catch (error) {
+      extractionError = error;
+    }
+    if (!(await hasWindowsCodeSignTools(extractionDirectory))) {
+      throw new Error("The verified winCodeSign archive is missing required Windows tools", {
+        cause: extractionError,
+      });
+    }
+    if (extractionError) {
+      // The legacy archive contains two macOS-only symlinks. 7-Zip reports
+      // exit code 2 when an ordinary Windows token cannot create them, even
+      // though every Windows packaging tool was extracted successfully.
+      console.warn(
+        "[desktop:dist] ignored unavailable macOS symlinks after verifying the extracted Windows tools",
+      );
+    }
+    try {
+      await fs.rename(extractionDirectory, finalDirectory);
+    } catch (error) {
+      if (!(await hasWindowsCodeSignTools(finalDirectory))) throw error;
+    }
+    return finalDirectory;
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
 }
 
 async function stagePackagedRuntime() {
@@ -121,7 +258,7 @@ async function createPortableZip(platform, arch) {
   }
 
   if (platform === "windows") {
-    await run("7z", ["a", "-tzip", outputPath, path.basename(appDir)], {
+    await run(path7za, ["a", "-tzip", outputPath, path.basename(appDir)], {
       cwd: path.dirname(appDir),
     });
     return;
@@ -306,6 +443,7 @@ async function restorePackagingNodeModules(hidden) {
 
 async function main() {
   await stagePackagedRuntime();
+  await prepareWindowsCodeSignCache();
   const nodeModulesHidden = await hidePackagingNodeModules();
 
   try {
@@ -325,7 +463,7 @@ async function main() {
     if (process.platform === "linux") args.push("--linux");
     const archFlag = archFlagFor(targetArch);
     if (archFlag) args.push(archFlag);
-    await run(process.execPath, args);
+    await runElectronBuilderWithMirrorFallback(args);
     if (process.platform === "win32") {
       await createPortableZip("windows", targetArch);
       await createShellZip("windows", targetArch);
@@ -335,7 +473,9 @@ async function main() {
   }
 }
 
-void main().catch((error) => {
-  console.error("[desktop:dist] failed to build installer", error);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main().catch((error) => {
+    console.error("[desktop:dist] failed to build installer", error);
+    process.exit(1);
+  });
+}

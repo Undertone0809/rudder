@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 import {
   isValidLocalAppWatchdogConfig,
@@ -7,43 +6,42 @@ import {
   localAppUsesDetachedProcessGroup,
   terminateLocalAppOwner,
 } from "./local-app-process-platform-shared.mjs";
-import { runBoundedChildProcess } from "./local-app-watchdog-process.mjs";
+import {
+  captureManagedWindowsProcessIdentity,
+  snapshotWindowsProcesses,
+  terminateWindowsProcessInstances,
+} from "./local-app-windows-processes.mjs";
 
 const TERM_TIMEOUT_MS = 2_000;
 const POLL_MS = 50;
-const TASKKILL_TIMEOUT_MS = 5_000;
 
 let appProcess = null;
 let appOwnerId = null;
+let appOwnerCreatedAt = null;
+let appIdentityPromise = null;
 let cleanupPromise = null;
 
 function send(message) {
   if (typeof process.send === "function" && process.connected) process.send(message);
 }
 
-function runTaskkill(ownerId, force) {
-  const taskkillPath = path.win32.join(
-    process.env.SystemRoot ?? "C:\\Windows",
-    "System32",
-    "taskkill.exe",
-  );
-  return runBoundedChildProcess(taskkillPath, [
-    "/PID",
-    String(ownerId),
-    "/T",
-    ...(force ? ["/F"] : []),
-  ], {
-    timeoutMs: TASKKILL_TIMEOUT_MS,
-  });
-}
-
 async function terminateOwnedTree() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
     if (!isSafeLocalAppProcessId(appOwnerId)) return;
+    if (process.platform === "win32" && appIdentityPromise) {
+      await appIdentityPromise;
+    }
     await terminateLocalAppOwner(appOwnerId, {
       platform: process.platform,
-      runTaskkill,
+      expectedOwnerCreatedAt: process.platform === "win32" ? appOwnerCreatedAt : undefined,
+      expectedWindowsProcesses: process.platform === "win32" && appOwnerCreatedAt
+        ? [{ pid: appOwnerId, parentPid: 0, createdAt: appOwnerCreatedAt }]
+        : undefined,
+      snapshotWindowsProcesses: process.platform === "win32" ? snapshotWindowsProcesses : undefined,
+      terminateWindowsProcessInstances: process.platform === "win32"
+        ? terminateWindowsProcessInstances
+        : undefined,
       termTimeoutMs: TERM_TIMEOUT_MS,
       pollMs: POLL_MS,
     });
@@ -105,7 +103,19 @@ process.on("message", (message) => {
       send({ type: "app-exit", code, signal });
       void cleanupAndExit(code === 0 ? 0 : 1);
     });
-    send({ type: "spawned", pid: appProcess.pid, pgid: appOwnerId });
+    if (process.platform === "win32") {
+      const spawnedPid = appProcess.pid;
+      appIdentityPromise = captureManagedWindowsProcessIdentity(appProcess).then((identity) => {
+        appOwnerCreatedAt = identity.createdAt;
+        if (!cleanupPromise) send({ type: "spawned", pid: spawnedPid, pgid: appOwnerId });
+      });
+      void appIdentityPromise.catch((error) => {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+        void cleanupAndExit(1);
+      });
+    } else {
+      send({ type: "spawned", pid: appProcess.pid, pgid: appOwnerId });
+    }
   } catch (error) {
     send({ type: "error", message: error instanceof Error ? error.message : String(error) });
   }

@@ -22,6 +22,9 @@ const desktopPackageJson = fileURLToPath(
 const sourcePackageStore = fileURLToPath(
   new URL("./app-builder-package-store.mjs", import.meta.url),
 );
+const sourceNextCompat = fileURLToPath(
+  new URL("./app-builder-next-compat.mjs", import.meta.url),
+);
 const roots: string[] = [];
 
 async function fixture() {
@@ -31,14 +34,20 @@ async function fixture() {
   const appRoot = path.join(root, "app");
   const dataRoot = path.join(root, "staged-data");
   const logPath = path.join(root, "pnpm-calls.jsonl");
+  const cacheRoot = process.platform === "win32"
+    ? path.join(path.parse(root).root, `rab-${path.basename(root).slice(-6)}`)
+    : path.join(root, "cache");
+  if (process.platform === "win32") roots.push(cacheRoot);
   const runner = path.join(runtimeRoot, "app-builder-runner.mjs");
   const packageStore = path.join(runtimeRoot, "app-builder-package-store.mjs");
+  const nextCompat = path.join(runtimeRoot, "app-builder-next-compat.mjs");
   const pnpmCli = path.join(runtimeRoot, "toolchain", "pnpm", "bin", "pnpm.cjs");
   const nodeBin = path.join(runtimeRoot, "toolchain", "node", "bin");
   const nodeShim = path.join(nodeBin, process.platform === "win32" ? "node.cmd" : "node");
   await mkdir(runtimeRoot, { recursive: true });
   await Promise.all([
     copyFile(sourcePackageStore, packageStore),
+    copyFile(sourceNextCompat, nextCompat),
     mkdir(path.dirname(pnpmCli), { recursive: true }),
     mkdir(nodeBin, { recursive: true }),
     mkdir(appRoot, { recursive: true }),
@@ -49,7 +58,7 @@ async function fixture() {
     'const fs = require("node:fs");',
     'require("node:child_process").execFileSync("node", ["-e", "process.stdout.write(process.execPath)"]);',
     "fs.appendFileSync(process.env.APP_BUILDER_RUNNER_TEST_LOG,",
-    '  JSON.stringify({ argv: process.argv.slice(2), dataRoot: process.env.RUDDER_APP_DATA_DIR ?? null, nodeExecutable: process.env.RUDDER_APP_BUILDER_NODE_EXECUTABLE }) + "\\n");',
+    '  JSON.stringify({ argv: process.argv.slice(2), dataRoot: process.env.RUDDER_APP_DATA_DIR ?? null, nodeExecutable: process.env.RUDDER_APP_BUILDER_NODE_EXECUTABLE, nodeOptions: process.env.NODE_OPTIONS, registry: process.env.npm_config_registry }) + "\\n");',
   ].join("\n"));
   if (process.platform === "win32") {
     await writeFile(nodeShim, [
@@ -77,7 +86,7 @@ async function fixture() {
       },
     }),
   );
-  return { appRoot, dataRoot, logPath, runner };
+  return { appRoot, cacheRoot, dataRoot, logPath, runner };
 }
 
 async function run(
@@ -117,6 +126,8 @@ async function calls(logPath: string) {
       argv: string[];
       dataRoot: string | null;
       nodeExecutable: string;
+      nodeOptions: string;
+      registry: string;
     });
 }
 
@@ -147,11 +158,25 @@ describe("App Builder managed runner", () => {
       "--store-dir",
       expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
     );
+    const verification = process.platform === "win32"
+      ? [
+          ["run", "ui:check"],
+          ["run", "typecheck"],
+          ["run", "test"],
+          ["exec", "next", "build", "--webpack"],
+        ]
+      : [["run", "verify"]];
     expect((await calls(logPath)).map((call) => call.argv)).toEqual([
       install,
-      ["run", "verify"],
-      ["run", "dev"],
+      ...verification,
+      process.platform === "win32" ? ["run", "dev", "--webpack"] : ["run", "dev"],
     ]);
+    expect((await calls(logPath)).every(
+      (call) => call.registry === "https://registry.npmjs.org/",
+    )).toBe(true);
+    expect((await calls(logPath)).every(
+      (call) => call.nodeOptions.includes("app-builder-next-compat.mjs"),
+    )).toBe(true);
   }, 15_000);
 
   it("rehearses checks and migrations against only the staged data root", async () => {
@@ -165,11 +190,21 @@ describe("App Builder managed runner", () => {
       "--store-dir",
       expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
     );
+    const verification = process.platform === "win32"
+      ? [
+          ["run", "ui:check"],
+          ["run", "typecheck"],
+          ["run", "test"],
+          ["exec", "next", "build", "--webpack"],
+        ]
+      : [
+          ["run", "typecheck"],
+          ["run", "test"],
+          ["run", "build"],
+        ];
     expect(recorded.map((call) => call.argv)).toEqual([
       install,
-      ["run", "typecheck"],
-      ["run", "test"],
-      ["run", "build"],
+      ...verification,
       ["run", "db:migrate"],
     ]);
     expect(recorded.at(-1)?.dataRoot).toBe(dataRoot);
@@ -180,12 +215,12 @@ describe("App Builder managed runner", () => {
     "provides a managed node command when Electron hosts the runner",
     async () => {
       const { default: electronBinary } = await import("electron");
-      const { appRoot, logPath, runner } = await fixture();
+      const { appRoot, cacheRoot, logPath, runner } = await fixture();
       await run(
         runner,
         [appRoot, "preview"],
         logPath,
-        { PORT: "43124" },
+        { PORT: "43124", RUDDER_APP_BUILDER_CACHE_DIR: cacheRoot },
         electronBinary,
       );
       expect((await calls(logPath)).every(

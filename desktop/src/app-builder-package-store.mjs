@@ -7,6 +7,7 @@ export const APP_BUILDER_INHERITED_ENV_NAMES = [
   "ELECTRON_RUN_AS_NODE",
   "LOCALAPPDATA",
   "RUDDER_APP_BUILDER_CACHE_DIR",
+  "RUDDER_APP_BUILDER_REGISTRY",
 ];
 
 // Rudder packages pnpm 9.15.4, whose virtual-store directory segment is capped

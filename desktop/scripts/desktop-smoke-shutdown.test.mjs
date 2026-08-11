@@ -93,6 +93,37 @@ describe("Desktop smoke shutdown", () => {
     expect(isPortReachable).toHaveBeenCalledWith(shutdownInput.dbPort);
   });
 
+  it("accepts an exited Electron child when Playwright never settles its close promise", async () => {
+    const child = {
+      pid: 42,
+      exitCode: 0,
+      signalCode: null,
+      stdin: { destroy: vi.fn() },
+      stdout: { destroy: vi.fn() },
+      stderr: { destroy: vi.fn() },
+    };
+    const terminateProcessTree = vi.fn(async () => undefined);
+    await expect(closeDesktopAndAssertReleased({
+      ...shutdownInput,
+      electronApp: {
+        close: vi.fn(() => new Promise(() => {})),
+        process: vi.fn(() => child),
+      },
+      closeTimeoutMs: 1,
+    }, {
+      isPortReachable: vi.fn(async () => false),
+      isProcessAlive: vi.fn(() => false),
+      pathExists: vi.fn(async () => false),
+      readPositivePidFile: vi.fn(async () => null),
+      terminateProcessTree,
+    })).resolves.toEqual({ databasePid: null });
+
+    expect(terminateProcessTree).not.toHaveBeenCalled();
+    expect(child.stdin.destroy).toHaveBeenCalledOnce();
+    expect(child.stdout.destroy).toHaveBeenCalledOnce();
+    expect(child.stderr.destroy).toHaveBeenCalledOnce();
+  });
+
   it("drains launches that fail before a scenario receives their handle", async () => {
     const closeTarget = vi.fn(async () => undefined);
     const registry = createDesktopSmokeShutdownRegistry({ closeTarget });
