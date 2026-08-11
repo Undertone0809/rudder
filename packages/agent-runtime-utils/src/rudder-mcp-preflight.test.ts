@@ -35,6 +35,7 @@ const browserTools = canonicalTools.filter((tool) => tool.name.startsWith("rudde
 const coreTools = canonicalTools.filter((tool) => !tool.name.startsWith("rudder_browser_")).map((tool) => tool.name);
 const desktopCliEntryLeaked = Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY);
 const canonicalSchema = () => ({ type: "object", additionalProperties: false, properties: {} });
+let slowStartPending = mode === "slow-start";
 function advertisedName(name) {
   if (mode === "whitespace-core-name" && name === coreTools[0]) return " " + name + " ";
   if (mode === "whitespace-browser-name" && name === browserTools[0]) return " " + name + " ";
@@ -83,6 +84,10 @@ const lines = readline.createInterface({ input: process.stdin });
 for await (const line of lines) {
   const request = JSON.parse(line);
   if (request.id == null) continue;
+  if (slowStartPending) {
+    slowStartPending = false;
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+  }
   if (mode === "exit") process.exit(2);
   if (mode === "exit-stderr") {
     console.error("ignorable warning");
@@ -234,6 +239,18 @@ describe("preflightRudderMcpServer", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
     expect(result).not.toHaveProperty("browserAvailable");
     expect(result).not.toHaveProperty("contractHash");
+  });
+
+  it("allows a cold local MCP server more than three seconds to complete its first handshake", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("slow-start"),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      diagnosticCode: null,
+    });
   });
 
   it("accepts the recursive schema dialect emitted by the canonical registry", async () => {

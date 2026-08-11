@@ -13,7 +13,10 @@ import {
   resolveRudderComputerMcpCliCommand,
   resolveRudderMcpCliCommand,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
-import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
+import {
+  createRudderSkillDirectoryLink,
+  resolveLocalOperatorHome,
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -778,7 +781,7 @@ async function ensureManagedCodexSkillLink(target: string, source: string): Prom
   }
 
   await ensureParentDir(target);
-  await fs.symlink(source, target);
+  await createRudderSkillDirectoryLink(source, target);
 }
 
 async function syncManagedCodexSkillsHome(
