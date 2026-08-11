@@ -95,12 +95,16 @@ async function restoreSourcePackageManifests(snapshots) {
 async function restoreWorkspaceDependencyLinks() {
   const args = [
     "install",
-    "--offline",
     "--frozen-lockfile",
   ];
-  // pnpm's forced reinstall can delete packages while traversing the virtual
-  // store on Windows. A normal frozen install is sufficient to restore links.
-  if (process.platform !== "win32") args.push("--force");
+  // pnpm 9's forced reinstall traverses Darwin-only optional packages on
+  // Windows. A clean Windows install correctly omits dmg-license, so --force
+  // makes the restore fail while trying to read a package that cannot exist.
+  // Keep Windows online-capable as well: a freshly updated lockfile can need a
+  // tarball that is not present in the local store yet.
+  if (process.platform !== "win32") {
+    args.push("--offline", "--force");
+  }
   await run(pnpmBin, args, repoRoot);
 }
 

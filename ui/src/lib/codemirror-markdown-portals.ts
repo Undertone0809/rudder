@@ -269,7 +269,42 @@ export class MarkdownPortalWidget extends WidgetType {
   }
 
   eq(other: MarkdownPortalWidget) {
-    return other.registration.key === this.registration.key;
+    if (
+      other.registration.key !== this.registration.key
+      || other.registration.type !== this.registration.type
+    ) {
+      return false;
+    }
+    if (this.registration.type === "block" && other.registration.type === "block") {
+      const currentBlock = this.registration.block;
+      const nextBlock = other.registration.block;
+      return other.registration.previewMarkdown === this.registration.previewMarkdown
+        && nextBlock.from === currentBlock.from
+        && nextBlock.to === currentBlock.to
+        && nextBlock.startLine === currentBlock.startLine
+        && nextBlock.endLine === currentBlock.endLine
+        && nextBlock.kind === currentBlock.kind
+        && nextBlock.markdown === currentBlock.markdown;
+    }
+    if (this.registration.type === "atomic" && other.registration.type === "atomic") {
+      const currentReference = this.registration.reference;
+      const nextReference = other.registration.reference;
+      return nextReference.from === currentReference.from
+        && nextReference.to === currentReference.to
+        && nextReference.markdown === currentReference.markdown
+        && nextReference.label === currentReference.label
+        && nextReference.href === currentReference.href;
+    }
+    if (this.registration.type === "website" && other.registration.type === "website") {
+      const currentLink = this.registration.link;
+      const nextLink = other.registration.link;
+      return nextLink.from === currentLink.from
+        && nextLink.to === currentLink.to
+        && nextLink.labelFrom === currentLink.labelFrom
+        && nextLink.labelTo === currentLink.labelTo
+        && nextLink.href === currentLink.href;
+    }
+    return false;
   }
 
   toDOM(view: EditorView) {
@@ -306,6 +341,17 @@ export class MarkdownPortalWidget extends WidgetType {
           // click and open the global preview instead of revealing source.
           event.preventDefault();
           event.stopPropagation();
+          return;
+        }
+        const tableCell = target?.closest<HTMLElement>(
+          "th[data-markdown-source-start][data-markdown-source-end], td[data-markdown-source-start][data-markdown-source-end]",
+        );
+        if (tableCell) {
+          event.preventDefault();
+          event.stopPropagation();
+          tableCell.dispatchEvent(new CustomEvent("rudder:markdown-table-cell-edit", {
+            bubbles: true,
+          }));
           return;
         }
         if (!isPrimaryPlainMouseEvent(event)) return;

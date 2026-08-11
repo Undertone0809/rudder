@@ -4205,6 +4205,34 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   max-width: 100%;
 }
 
+.rudder-codemirror-markdown-rendered :where(th, td)[data-markdown-source-start] {
+  position: relative;
+  cursor: text;
+  outline: none;
+}
+
+.rudder-codemirror-markdown-rendered :where(th, td)[data-markdown-source-start]:hover,
+.rudder-codemirror-markdown-rendered :where(th, td)[data-markdown-source-start]:focus-visible {
+  background: color-mix(in oklab, var(--accent) 58%, transparent);
+}
+
+.rudder-markdown-table-cell-editor {
+  position: fixed;
+  z-index: 90;
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-radius: 2px;
+  outline: 2px solid color-mix(in oklab, var(--ring) 72%, transparent);
+  outline-offset: -1px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  letter-spacing: 0;
+}
+
 .rudder-codemirror-markdown-rendered > :first-child {
   margin-top: 0;
 }

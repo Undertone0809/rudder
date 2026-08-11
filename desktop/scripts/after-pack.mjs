@@ -163,6 +163,11 @@ async function copyOptionalDependencies(appDir, nodeModulesDir) {
 
       const sourceDir = await findWorkspacePackageDir(appDir, dependencyName);
       if (!sourceDir) continue;
+      // pnpm can leave junctions for optional packages that were filtered out
+      // for the current platform. On Windows those junction targets may exist
+      // as empty directories, so access() succeeds even though there is no
+      // package to copy. Only copy optional dependencies that were installed.
+      if (!(await exists(path.join(sourceDir, "package.json")))) continue;
 
       await fs.mkdir(path.dirname(destinationDir), { recursive: true });
       await fs.cp(sourceDir, destinationDir, { recursive: true, dereference: true });
