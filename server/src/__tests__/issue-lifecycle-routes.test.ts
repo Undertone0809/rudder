@@ -770,7 +770,7 @@ describe("issue lifecycle routes", () => {
       actionOrder.push("agent.issue_created_notification");
     });
 
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues")
       .send({ title: createdIssue.title, status: "todo", priority: "medium" });
 
@@ -808,7 +808,7 @@ describe("issue lifecycle routes", () => {
     });
     mockAgentIssueCreationService.resolveForRun.mockRejectedValue(new HttpError(status, message));
 
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues")
       .send({ title: "Must not be created", status: "todo", priority: "medium" });
 
@@ -840,7 +840,7 @@ describe("issue lifecycle routes", () => {
     mockAgentIssueCreationService.resolveForRun.mockResolvedValue({ id: requestId });
     mockIssueService.createWithResult.mockResolvedValue({ issue: existingIssue, created: false });
 
-    const res = await request(createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues")
       .send({ title: existingIssue.title, status: "todo", priority: "medium" });
 
