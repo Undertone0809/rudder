@@ -16,6 +16,8 @@ let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
+const queryErrors = new Set<string>();
+const queryRefetch = vi.fn(async () => undefined);
 
 const parentIssue = {
   id: "issue-parent",
@@ -169,13 +171,27 @@ vi.mock("@tanstack/react-query", () => ({
     queryKey: unknown[];
     enabled?: boolean;
   }) => {
+    const serializedKey = JSON.stringify(queryKey);
     if (enabled === false) {
-      return { data: undefined, isLoading: false, error: null };
+      return {
+        data: undefined,
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        isSuccess: false,
+        error: null,
+        refetch: queryRefetch,
+      };
     }
+    const isError = queryErrors.has(serializedKey);
     return {
-      data: queryData.get(JSON.stringify(queryKey)),
+      data: queryData.get(serializedKey),
+      isError,
+      isFetching: false,
       isLoading: false,
-      error: null,
+      isSuccess: !isError && queryData.has(serializedKey),
+      error: isError ? new Error("Timeline source failed") : null,
+      refetch: queryRefetch,
     };
   },
   useMutation: () => ({
@@ -437,6 +453,7 @@ vi.mock("lucide-react", () => {
   const Icon = () => <span />;
   const icons = {
     Activity: Icon,
+    AlertTriangle: Icon,
     Atom: Icon,
     BadgeDollarSign: Icon,
     Bot: Icon,
@@ -507,6 +524,7 @@ vi.mock("lucide-react", () => {
     Puzzle: Icon,
     Radar: Icon,
     Repeat: Icon,
+    RefreshCw: Icon,
     Rocket: Icon,
     Scale: Icon,
     Search: Icon,
@@ -652,6 +670,8 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     capturedInlineEditorProps = [];
     mockSourceBreadcrumb = null;
+    queryErrors.clear();
+    queryRefetch.mockClear();
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
@@ -889,6 +909,12 @@ describe("IssueDetail", () => {
     expect(capturedCommentThreadProps).toMatchObject({
       fixedComposer: true,
       fixedComposerTimelineScroll: false,
+      progressiveDisclosure: {
+        failOpen: false,
+        key: "ORG2-1",
+        mountAll: false,
+        ready: true,
+      },
     });
     expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
@@ -896,6 +922,22 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("xl:grid");
     expect(html).not.toContain("xl:sticky");
     expect(html).not.toContain('xl:overflow-y-auto');
+  });
+
+  it("fails open and exposes scoped recovery when an activity source errors", () => {
+    queryErrors.add(JSON.stringify(["issues", "activity", "ORG2-1"]));
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('data-testid="issue-timeline-load-warning"');
+    expect(html).toContain("Some activity history could not be loaded.");
+    expect(html).toContain(">Retry</button>");
+    expect(capturedCommentThreadProps).toMatchObject({
+      progressiveDisclosure: {
+        failOpen: true,
+        ready: false,
+      },
+    });
   });
 
   it("keeps an embedded issue detail in its own scroll flow", () => {
