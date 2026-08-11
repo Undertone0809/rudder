@@ -312,6 +312,46 @@
       "rationale": "Organization MCP settings currently combine connection lifecycle, OAuth state, bindings, and tool inspection in one route.",
       "target": "Extract connection and binding controllers and reduce the route below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "desktop/src/browser-agent-advanced.ts",
+      "lines": 1501,
+      "owner": "desktop-runtime",
+      "rationale": "Advanced browser-agent handling still combines protocol translation, observation, and interaction compatibility in one Desktop module.",
+      "target": "Extract protocol and interaction adapters and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/index.ts",
+      "lines": 1501,
+      "owner": "server-runtime",
+      "rationale": "Server bootstrap still coordinates database startup, runtime ownership, service registration, and shutdown compatibility.",
+      "target": "Move bootstrap phases behind focused lifecycle modules and reduce the entrypoint below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/goals.ts",
+      "lines": 1501,
+      "owner": "goals-server",
+      "rationale": "Goal persistence, lifecycle transitions, evidence, and acceptance coordination remain concentrated in one service.",
+      "target": "Extract goal lifecycle and evidence use cases and reduce the service below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/mcp/managed-connections.ts",
+      "lines": 1501,
+      "owner": "integrations-server",
+      "rationale": "Managed MCP connection lifecycle, capability discovery, and compatibility handling remain in one service.",
+      "target": "Separate lifecycle and discovery adapters and reduce the service below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/rudder-plugins.ts",
+      "lines": 1501,
+      "owner": "plugins-server",
+      "rationale": "Plugin installation, validation, activation, and compatibility behavior remain coordinated by one service.",
+      "target": "Extract installation and runtime lifecycle services and reduce the coordinator below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }

@@ -93,12 +93,15 @@ async function restoreSourcePackageManifests(snapshots) {
 }
 
 async function restoreWorkspaceDependencyLinks() {
-  await run(pnpmBin, [
+  const args = [
     "install",
     "--offline",
     "--frozen-lockfile",
-    "--force",
-  ], repoRoot);
+  ];
+  // pnpm's forced reinstall can delete packages while traversing the virtual
+  // store on Windows. A normal frozen install is sufficient to restore links.
+  if (process.platform !== "win32") args.push("--force");
+  await run(pnpmBin, args, repoRoot);
 }
 
 async function writeFileBreakingLinks(filePath, content) {
