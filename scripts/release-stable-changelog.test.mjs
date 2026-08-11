@@ -10,6 +10,36 @@ const english = readFileSync(path.join(repoRoot, "docs", "releases.mdx"), "utf8"
 const chinese = readFileSync(path.join(repoRoot, "docs", "zh", "releases.mdx"), "utf8");
 const releaseNotes = readFileSync(path.join(repoRoot, "releases", "v0.6.1.md"), "utf8");
 
+function changelogUpdates(markdown) {
+  return [...markdown.matchAll(/^<Update\b([^>]*)>\s*\n([\s\S]*?)\n<\/Update>$/gmu)].map(
+    (match) => ({ props: match[1], body: match[2] }),
+  );
+}
+
+function expectTimelineEntries(markdown, categories) {
+  const versions = [...markdown.matchAll(/^## v(\d+\.\d+\.\d+)$/gmu)].map(
+    (match) => match[1],
+  );
+  const updates = changelogUpdates(markdown);
+
+  expect(updates).toHaveLength(versions.length);
+  expect(markdown.match(/^<Update\b/gmu) ?? []).toHaveLength(versions.length);
+  expect(markdown.match(/^<\/Update>$/gmu) ?? []).toHaveLength(versions.length);
+
+  for (const [index, version] of versions.entries()) {
+    const update = updates[index];
+    expect(update.props).toMatch(/\blabel="[^"]+"/u);
+    expect(update.props).toContain(`description="v${version}"`);
+    expect(update.body).toMatch(new RegExp(`^## v${version.replaceAll(".", "\\.")}\\s*$`, "mu"));
+    expect(update.body).not.toMatch(/^Released:|^发布时间：/mu);
+
+    const expectedTags = categories.filter((category) =>
+      update.body.includes(`### ${category}`),
+    );
+    expect(update.props).toContain(`tags={${JSON.stringify(expectedTags)}}`);
+  }
+}
+
 describe("stable public changelog validation", () => {
   it("accepts the checked-in English and Chinese v0.6.1 changelog entries", () => {
     expect(
@@ -236,5 +266,10 @@ describe("stable public changelog validation", () => {
         }),
       ).toEqual([]);
     }
+  });
+
+  it("keeps every localized release inside the Mintlify changelog timeline", () => {
+    expectTimelineEntries(english, ["New", "Improved", "Fixed", "Upgrade notes"]);
+    expectTimelineEntries(chinese, ["新功能", "改进", "问题修复", "升级说明"]);
   });
 });

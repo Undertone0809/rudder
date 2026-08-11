@@ -115,3 +115,43 @@ test("renders representative English and Chinese pages on desktop and mobile", a
     expect(overflows, `${item.route} at ${item.width}px`).toBe(false);
   }
 });
+
+test("renders and filters the localized changelog timeline", async ({ page }) => {
+  const locales = [
+    {
+      route: "/releases",
+      title: "Changelog",
+      latestDate: "August 11, 2026",
+      fixedTag: "Fixed",
+    },
+    {
+      route: "/zh/releases",
+      title: "更新日志",
+      latestDate: "2026年8月11日",
+      fixedTag: "问题修复",
+    },
+  ];
+
+  for (const item of locales) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(item.route);
+
+    await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
+    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
+    await expect(page.locator("h2#v0-7-3")).toBeVisible();
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
+
+    await page.getByRole("button", { name: item.fixedTag, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
+    await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
+    await expect(page.locator("h2#v0-7-2")).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(item.route);
+    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
+    const overflows = await page.evaluate(() =>
+      document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(overflows, `${item.route} changelog at 390px`).toBe(false);
+  }
+});

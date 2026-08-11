@@ -394,15 +394,19 @@ This release helps users ...
 Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
 installation instructions. Omit any category that has no user-facing item.
 
-For public docs, keep `## vX.Y.Z` as the version heading and write each locale
-naturally. English uses `New`, `Improved`, `Fixed`, and optional
-`Upgrade notes`; Chinese uses `新功能`, `改进`, `问题修复`, and optional `升级说明`.
-Only include categories that contain meaningful user-facing changes:
+For public docs, wrap every release in Mintlify's `Update` component so the
+page retains its date-and-version timeline. Put the localized release date in
+`label`, the version in `description`, and the non-empty change categories in
+`tags`. Keep `## vX.Y.Z` inside the component because the release gate and
+stable links use that version heading. English uses `New`, `Improved`, `Fixed`,
+and optional `Upgrade notes`; Chinese uses `新功能`, `改进`, `问题修复`, and
+optional `升级说明`. Only include categories that contain meaningful
+user-facing changes:
 
-```md
+```mdx
+<Update label="Month D, YYYY" description="vX.Y.Z" tags={["New","Fixed"]}>
+
 ## vX.Y.Z
-
-Released: YYYY-MM-DD
 
 [GitHub Release](...)
 
@@ -415,12 +419,14 @@ One sentence describing the release's value to users.
 ### Fixed
 
 - ...
+
+</Update>
 ```
 
-```md
-## vX.Y.Z
+```mdx
+<Update label="YYYY年M月D日" description="vX.Y.Z" tags={["新功能","问题修复"]}>
 
-发布时间：YYYY-MM-DD
+## vX.Y.Z
 
 [GitHub Release](...)
 
@@ -433,6 +439,8 @@ One sentence describing the release's value to users.
 ### 问题修复
 
 - ...
+
+</Update>
 ```
 
 Write from the user's perspective: what they can now do, what became easier or
