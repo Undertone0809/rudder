@@ -11,7 +11,7 @@ import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { redactEventPayload } from "../redaction.js";
+import { redactApprovalPayload } from "../redaction.js";
 import {
   accessService,
   approvalService,
@@ -28,13 +28,6 @@ import {
   wakeIssueAssigneeAfterChatConversion,
   type ChatConvertedIssue,
 } from "./chat-issue-assignment-wakeup.js";
-
-function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
-  return {
-    ...approval,
-    payload: redactEventPayload(approval.payload) ?? {},
-  };
-}
 
 function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { identifier?: string | null } {
   return (

@@ -721,6 +721,7 @@ describe("applyPendingMigrations", () => {
           "0147_github_mcp_provider.sql",
           "0148_chat_message_transcript_entries.sql",
           "0149_app_builder_verified_source_ready.sql",
+          "0150_unified_requests_block_audit.sql",
         ],
         reason: "pending-migrations",
       });
@@ -891,6 +892,7 @@ describe("applyPendingMigrations", () => {
           "0147_github_mcp_provider.sql",
           "0148_chat_message_transcript_entries.sql",
           "0149_app_builder_verified_source_ready.sql",
+          "0150_unified_requests_block_audit.sql",
         ],
         reason: "pending-migrations",
       });

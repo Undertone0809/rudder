@@ -2,6 +2,7 @@
 
 import { ApiError } from "@/api/client";
 import { DesktopBrowserLinkBridge } from "@/components/DesktopBrowserLinkBridge";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
 import {
@@ -1341,18 +1342,20 @@ function renderChat({
   const render = (targetRoot: Root) => {
     const content = (
       <ThemeProvider>
-        <ImagePreviewProvider>
-          <SidePanelProvider>
-            <SidePanelTestContextBinder />
-            {stableRuntime ? <DesktopBrowserLinkBridge /> : null}
-            <Chat />
-            <ChatSidePanel
-              selectedOrganizationId="org-1"
-              expanded={expanded}
-              onToggleExpanded={toggleSidePanelExpanded}
-            />
-          </SidePanelProvider>
-        </ImagePreviewProvider>
+        <TooltipProvider>
+          <ImagePreviewProvider>
+            <SidePanelProvider>
+              <SidePanelTestContextBinder />
+              {stableRuntime ? <DesktopBrowserLinkBridge /> : null}
+              <Chat />
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                expanded={expanded}
+                onToggleExpanded={toggleSidePanelExpanded}
+              />
+            </SidePanelProvider>
+          </ImagePreviewProvider>
+        </TooltipProvider>
       </ThemeProvider>
     );
     targetRoot.render(

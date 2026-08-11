@@ -242,6 +242,14 @@ export {
 export {
   addApprovalCommentSchema, createApprovalSchema, requestApprovalRevisionSchema, resolveApprovalSchema, resubmitApprovalSchema, type AddApprovalComment, type CreateApproval, type RequestApprovalRevision, type ResolveApproval, type ResubmitApproval
 } from "./approval.js";
+export {
+  cancelAssistanceRequestSchema,
+  listRequestsQuerySchema,
+  resolveAssistanceRequestSchema,
+  type CancelAssistanceRequest,
+  type ListRequestsQuery,
+  type ResolveAssistanceRequest
+} from "./request.js";
 
 export {
   createSecretSchema, envBindingPlainSchema, envBindingSchema, envBindingSecretRefSchema, envConfigSchema, rotateSecretSchema,

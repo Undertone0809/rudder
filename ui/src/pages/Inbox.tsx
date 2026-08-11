@@ -9,6 +9,7 @@ import { chatsApi } from "../api/chats";
 import { ApiError } from "../api/client";
 import { dashboardApi } from "../api/dashboard";
 import { issuesApi } from "../api/issues";
+import { requestsApi } from "../api/requests";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -28,7 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs } from "@/components/ui/tabs";
-import type { Approval, ChatConversation, HeartbeatRun, Issue, JoinRequest } from "@rudderhq/shared";
+import type { Approval, AssistanceRequest, ChatConversation, HeartbeatRun, Issue, JoinRequest, RudderRequest } from "@rudderhq/shared";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -79,7 +80,7 @@ const CATEGORY_FILTER_OPTIONS = [
   { value: "issues_i_touched", label: "My recent issues", icon: CircleDot },
   { value: "chat_attention", label: "Chats needing attention", icon: MessageSquare },
   { value: "join_requests", label: "Join requests", icon: UserPlus },
-  { value: "approvals", label: "Approvals", icon: ShieldCheck },
+  { value: "approvals", label: "Requests", icon: ShieldCheck },
   { value: "failed_runs", label: "Failed runs", icon: XCircle },
   { value: "alerts", label: "Alerts", icon: AlertTriangle },
 ] as const satisfies ReadonlyArray<{
@@ -89,7 +90,7 @@ const CATEGORY_FILTER_OPTIONS = [
 }>;
 
 const APPROVAL_FILTER_OPTIONS = [
-  { value: "all", label: "All approvals", icon: ShieldCheck },
+  { value: "all", label: "All approval requests", icon: ShieldCheck },
   { value: "actionable", label: "Needs action", icon: CircleAlert },
   { value: "resolved", label: "Resolved", icon: CheckCircle2 },
 ] as const satisfies ReadonlyArray<{
@@ -315,6 +316,23 @@ function ApprovalInboxRow({
   );
 }
 
+function AssistanceInboxRow({ request }: { request: AssistanceRequest }) {
+  return (
+    <div className="border-b border-border px-3 py-3 last:border-b-0">
+      <Link to="/messenger/approvals" className="flex min-w-0 items-start gap-2.5 no-underline text-inherit">
+        <InboxRowLeading>
+          <MessageSquare className="h-4 w-4 text-muted-foreground" />
+        </InboxRowLeading>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{request.title}</span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">{request.prompt}</span>
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">updated {timeAgo(request.updatedAt)}</span>
+      </Link>
+    </div>
+  );
+}
+
 function ChatInboxRow({
   conversation,
 }: {
@@ -480,14 +498,23 @@ export function Inbox() {
   }, [tab]);
 
   const {
-    data: approvals,
+    data: requests,
     isLoading: isApprovalsLoading,
     error: approvalsError,
   } = useQuery({
-    queryKey: queryKeys.approvals.list(selectedOrganizationId!),
-    queryFn: () => approvalsApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.requests.list(selectedOrganizationId!),
+    queryFn: () => requestsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const approvals = useMemo(
+    () => (requests ?? []).filter((request): request is Extract<RudderRequest, { kind: "approval" }> => request.kind === "approval"),
+    [requests],
+  );
+  const assistanceRequests = useMemo(
+    () => (requests ?? []).filter((request): request is AssistanceRequest => request.kind === "assistance")
+      .filter((request) => tab === "all" ? true : request.status === "open"),
+    [requests, tab],
+  );
 
   const {
     data: joinRequests = [],
@@ -772,7 +799,7 @@ export function Inbox() {
     !dismissed.has("alert:budget");
   const hasAlerts = showAggregateAgentError || showBudgetAlert;
   const hasJoinRequests = joinRequests.length > 0;
-  const showWorkItemsSection = workItemsToRender.length > 0;
+  const showWorkItemsSection = workItemsToRender.length > 0 || (showApprovalsCategory && assistanceRequests.length > 0);
   const showJoinRequestsSection =
     tab === "all" ? showJoinRequestsCategory && hasJoinRequests : tab === "unread" && hasJoinRequests;
   const showAlertsSection = shouldShowInboxSection({
@@ -864,7 +891,7 @@ export function Inbox() {
               >
                 <SelectTrigger size="sm" className="w-[180px] text-xs">
                   <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
-                  <SelectValue placeholder="All approvals" />
+                  <SelectValue placeholder="All approval requests" />
                 </SelectTrigger>
                 <SelectContent className="min-w-[220px]">
                   {APPROVAL_FILTER_OPTIONS.map((option) => (
@@ -908,6 +935,9 @@ export function Inbox() {
           {showSeparatorBefore("work_items") && <Separator />}
           <div>
             <div className="overflow-hidden rounded-xl border border-border bg-card">
+              {showApprovalsCategory && assistanceRequests.map((request) => (
+                <AssistanceInboxRow key={`assistance:${request.id}`} request={request} />
+              ))}
               {workItemsToRender.map((item) => {
                 if (item.kind === "approval") {
                   return (

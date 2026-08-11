@@ -991,7 +991,7 @@ export function buildPassiveFollowupContextSnapshot(input: {
             reviewerAgentId: input.issue.reviewerAgentId,
             reviewerUserId: input.issue.reviewerUserId,
             closeOutRequirement:
-              "Move the issue to in_review when work is ready, or to blocked/cancelled if it cannot proceed.",
+              "Move the issue to in_review when work is ready. If it still cannot proceed after bounded recovery, submit a blocker claim so Rudder can audit the Assistance Request; cancel only when cancellation is the true outcome.",
           },
         }
       : {}),

@@ -46,6 +46,7 @@ const zhExactPhrases: Record<string, string> = {
   "All providers": "全部提供商",
   "All types": "全部类型",
   "Approvals": "审批",
+  "Requests": "请求",
   "Approve": "批准",
   "Approval confirmed": "审批已确认",
   "Approval note": "审批说明",

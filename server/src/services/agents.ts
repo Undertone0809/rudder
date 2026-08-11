@@ -17,6 +17,7 @@ import {
   costEvents,
   heartbeatRunEvents,
   heartbeatRuns,
+  issueBlockAuditAttempts,
   productAnalyticsEvents,
 } from "@rudderhq/db";
 import {
@@ -686,6 +687,7 @@ export function agentService(db: Db) {
       if (!existing) return null;
 
       return db.transaction(async (tx) => {
+        await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.agentId, id));
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.agentId, id));
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.agentId, id));
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.agentId, id));

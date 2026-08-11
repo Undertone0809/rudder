@@ -1599,7 +1599,10 @@ export function heartbeatService(
     return withHeartbeatRecoveryLock(() => reapTimedOutRunsLocked(opts));
   }
 
+  let recoverPendingWakeups: (() => Promise<void>) | null = null;
+
   async function resumeQueuedRuns() {
+    await recoverPendingWakeups?.();
     const queuedRuns = await db
       .select({ agentId: heartbeatRuns.agentId })
       .from(heartbeatRuns)
@@ -1938,6 +1941,7 @@ export function heartbeatService(
     startNextQueuedRunForAgent,
     afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
   });
+  recoverPendingWakeups = wakeupHandlers.recoverPendingWakeups;
   const releaseHandlers = createHeartbeatReleaseHandlers({
     ...baseContext,
     ...recoveryHandlers,

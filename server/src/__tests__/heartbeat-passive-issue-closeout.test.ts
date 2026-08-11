@@ -15,6 +15,7 @@ import {
   issues,
   organizationSkills,
   organizations,
+  requests,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -1005,6 +1006,75 @@ describe("heartbeat passive issue closeout", () => {
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     expect(runs).toHaveLength(1);
+  });
+
+  it("queues passive follow-up when the run comment is a pending Block Audit claim", async () => {
+    const { orgId, agentId, issueId } = await seedFixture({
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 400)"],
+        timeoutSec: 5,
+      },
+    });
+    const run = await wakeIssueRun({ agentId, issueId });
+    await waitFor(async () => (await getRun(run.id))?.status === "running");
+
+    const commentId = randomUUID();
+    const [assistanceRequest] = await db.insert(requests).values({
+      orgId,
+      kind: "assistance",
+      subtype: "issue_blocker",
+      status: "open",
+      issueId,
+      requestedByAgentId: agentId,
+      originRunId: run.id,
+      assigneeAgentId: agentId,
+      blockerFingerprint: "pending-block-audit-test",
+      title: "Input needed",
+      prompt: "Complete the external action.",
+    }).returning();
+    await db.insert(issueComments).values({
+      id: commentId,
+      orgId,
+      issueId,
+      authorAgentId: agentId,
+      body: "The same external blocker remains after a bounded recovery attempt.",
+    });
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.comment_added",
+        entityType: "issue",
+        entityId: issueId,
+        agentId,
+        runId: run.id,
+        details: { commentId },
+      },
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.block_audit_attempted",
+        entityType: "issue",
+        entityId: issueId,
+        agentId,
+        runId: run.id,
+        details: { requestId: assistanceRequest!.id, attempt: 1, requiredAttempts: 3, blocked: false },
+      },
+    ]);
+
+    const followup = await waitFor(async () => {
+      const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+      return runs.find((candidate) =>
+        candidate.id !== run.id &&
+        (candidate.contextSnapshot as Record<string, unknown>)?.wakeReason === "issue_passive_followup") ?? null;
+    });
+    expect(followup.contextSnapshot).toMatchObject({
+      issueId,
+      passiveFollowup: { originRunId: run.id, previousRunId: run.id, attempt: 1 },
+    });
   });
 
   it("does not queue passive follow-up when the run moves the issue out of trigger statuses", async () => {

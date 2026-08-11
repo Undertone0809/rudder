@@ -4,7 +4,8 @@ import {
   agents,
   agentWakeupRequests,
   heartbeatRuns,
-  issues
+  issues,
+  requests
 } from "@rudderhq/db";
 import type {
   HeartbeatRecoveryTrigger,
@@ -459,6 +460,30 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     return Boolean(decisionActivity);
   }
 
+  async function runHasPendingBlockAuditAttempt(tx: any, run: typeof heartbeatRuns.$inferSelect, issueId: string) {
+    const attemptActivity = await tx
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.orgId, run.orgId),
+          eq(activityLog.action, "issue.block_audit_attempted"),
+          eq(activityLog.entityType, "issue"),
+          eq(activityLog.entityId, issueId),
+          eq(activityLog.runId, run.id),
+          sql`COALESCE(${activityLog.details} ->> 'blocked', 'false') = 'false'`,
+          sql`exists (
+            select 1 from ${requests}
+            where ${requests.id}::text = ${activityLog.details} ->> 'requestId'
+              and ${requests.status} = 'open'
+          )`,
+        ),
+      )
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    return Boolean(attemptActivity);
+  }
+
   async function issueHasDeferredWake(tx: any, orgId: string, issueId: string) {
     const deferred = await tx
       .select({ id: agentWakeupRequests.id })
@@ -637,7 +662,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       return { kind: "none", reason: "issue_no_longer_assigned_to_run_agent" };
     }
 
-    if (!issueHasReviewer(issue) && await runHasIssueClosureComment(tx, run, issue.id)) {
+    const pendingBlockAudit = await runHasPendingBlockAuditAttempt(tx, run, issue.id);
+    if (!pendingBlockAudit && !issueHasReviewer(issue) && await runHasIssueClosureComment(tx, run, issue.id)) {
       return { kind: "none", reason: "run_authored_issue_comment" };
     }
     if (await issueHasDeferredWake(tx, issue.orgId, issue.id)) {
@@ -770,5 +796,5 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     };
   }
 
-  return { enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue };
+  return { enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, runHasPendingBlockAuditAttempt, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue };
 }

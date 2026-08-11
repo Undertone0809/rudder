@@ -22,7 +22,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -58,6 +58,7 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { pluginsApi } from "../api/plugins";
 import { projectsApi } from "../api/projects";
+import { requestsApi } from "../api/requests";
 import { AgentIdentity } from "../components/AgentAvatar";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { isAgentWakeEligible } from "../components/CommentThread.submit";
@@ -1148,6 +1149,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issuePinUnavailable = issuePinPending || issueFollowsLoading || !issue;
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
+  const { data: assistanceRequests } = useQuery({
+    queryKey: queryKeys.requests.list(resolvedCompanyId ?? "__none__", undefined, "assistance"),
+    queryFn: () => requestsApi.list(resolvedCompanyId!, { kind: "assistance" }),
+    enabled: Boolean(resolvedCompanyId && issue?.id),
+  });
+  const latestAssistanceRequest = assistanceRequests?.find((request): request is AssistanceRequest =>
+    request.kind === "assistance" && request.issueId === issue?.id) ?? null;
+
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
     recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
@@ -2184,6 +2193,26 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                     Properties
                   </p>
                 </div>
+                {latestAssistanceRequest ? (
+                  <div
+                    className="mb-3 flex items-center justify-between gap-3 border-b border-border pb-3 text-xs"
+                    data-testid="issue-request-attention"
+                    title={latestAssistanceRequest.response ?? latestAssistanceRequest.prompt}
+                  >
+                    <span className="font-medium text-foreground">
+                      {latestAssistanceRequest.status === "open"
+                        ? `${issue.status === "blocked" ? "Blocked" : "In progress"} · Waiting on you`
+                        : `Request ${latestAssistanceRequest.status}${latestAssistanceRequest.resolution ? ` · ${latestAssistanceRequest.resolution.replace("_", " ")}` : ""}`}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                      Attempt {Number(latestAssistanceRequest.metadata.attempt ?? 1)}/3
+                      <Link to="/messenger/approvals" className="inline-flex items-center gap-1 text-foreground hover:underline">
+                        Open request
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </span>
+                  </div>
+                ) : null}
                 <IssueProperties
                   issue={issue}
                   onUpdate={(data) => updateIssue.mutate(data)}

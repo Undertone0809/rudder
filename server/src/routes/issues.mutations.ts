@@ -8,15 +8,18 @@ import {
 } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
 import { Router } from "express";
-import { forbidden, HttpError, unprocessable } from "../errors.js";
+import { forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { redactSensitiveText } from "../redaction.js";
 import {
   completeProductAnalyticsWorkCycle,
   ensureProductAnalyticsWorkCycle,
   invalidateProductAnalyticsWorkCycle,
+  issueService,
   logActivity,
   recordProductAnalyticsEvent,
+  requestService,
 } from "../services/index.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
@@ -206,6 +209,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     statusAcceptsReviewerDecision,
     commitSubject,
   } = ctx;
+  const requestsSvc = requestService(db);
   router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
@@ -350,22 +354,132 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       updateFields.status = "in_review";
       reviewedCompletionNormalized = true;
     }
+    let blockAudit = null;
+    const isAssigneeAgentBlockClaim =
+      actor.actorType === "agent" &&
+      actor.agentId === existing.assigneeAgentId &&
+      reviewDecision === undefined &&
+      updateFields.status === "blocked";
     let issue;
+    let comment = null;
+    let blockMutationPersisted = false;
+    const shouldAtomicallySupersedeAssistance = !blockAudit && (
+      assigneeWillChange || hasMaterialIssueUpdateFields(updateFields) || Boolean(commentBody)
+    );
+    const updateAuthorization =
+      req.actor.type === "agent" && req.actor.agentId
+        ? {
+            agentId: req.actor.agentId,
+            runId: req.actor.runId ?? null,
+            relationship: reviewDecision !== undefined
+              ? "reviewer" as const
+              : "assignee_or_reviewer" as const,
+            requireReviewableStatus: reviewDecision !== undefined,
+          }
+        : null;
     try {
-      const updateAuthorization =
-        req.actor.type === "agent" && req.actor.agentId
-          ? {
-              agentId: req.actor.agentId,
-              runId: req.actor.runId ?? null,
-              relationship: reviewDecision !== undefined
-                ? "reviewer" as const
-                : "assignee_or_reviewer" as const,
-              requireReviewableStatus: reviewDecision !== undefined,
-            }
-          : null;
-      issue = updateAuthorization
-        ? await svc.update(id, updateFields, updateAuthorization)
-        : await svc.update(id, updateFields);
+      if (isAssigneeAgentBlockClaim) {
+        if (!actor.runId) throw unprocessable("Block Audit requires an Agent Run id");
+        if (!commentBody?.trim()) {
+          throw unprocessable("A blocked claim must explain the blocker and exact human input or action required");
+        }
+        const safeBlockerBody = redactSensitiveText(commentBody);
+        const committed = await db.transaction(async (tx) => {
+          const transactionalIssueSvc = issueService(tx as unknown as Db);
+          const audit = await requestService(tx as unknown as Db).claimIssueBlock({
+            orgId: existing.orgId,
+            issueId: existing.id,
+            runId: actor.runId!,
+            agentId: actor.agentId!,
+            reason: safeBlockerBody,
+            requestedAction: safeBlockerBody,
+          });
+          if (!audit.applied) {
+            return { audit, updatedIssue: existing, addedComment: null };
+          }
+          updateFields.status = audit.blocked ? "blocked" : existing.status;
+          const updatedIssue = updateAuthorization
+            ? await transactionalIssueSvc.update(id, updateFields, updateAuthorization)
+            : await transactionalIssueSvc.update(id, updateFields);
+          if (!updatedIssue) throw notFound("Issue not found");
+          const addedComment = await transactionalIssueSvc.addComment(id, safeBlockerBody, {
+            agentId: actor.agentId ?? undefined,
+            userId: undefined,
+          });
+          const activity = buildIssueUpdateActivityDetails(
+            existing as Record<string, unknown>,
+            updatedIssue as Record<string, unknown>,
+            { identifier: updatedIssue.identifier, source: "comment" },
+          );
+          if (activity.hasMaterialFieldChanges) {
+            const references = await buildIssueUpdateActivityReferences(
+              transactionalIssueSvc,
+              updatedIssue.orgId,
+              activity.details,
+            );
+            await logActivity(tx as unknown as Db, {
+              orgId: updatedIssue.orgId,
+              actorType: actor.actorType,
+              actorId: actor.actorId,
+              agentId: actor.agentId,
+              runId: actor.runId,
+              action: "issue.updated",
+              entityType: "issue",
+              entityId: updatedIssue.id,
+              details: { ...activity.details, ...references },
+            });
+          }
+          await logActivity(tx as unknown as Db, {
+            orgId: updatedIssue.orgId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "issue.comment_added",
+            entityType: "issue",
+            entityId: updatedIssue.id,
+            details: {
+              commentId: addedComment.id,
+              bodySnippet: addedComment.body.slice(0, 120),
+              identifier: updatedIssue.identifier,
+              issueTitle: updatedIssue.title,
+              ...(activity.hasFieldChanges ? { updated: true } : {}),
+            },
+          });
+          return { audit, updatedIssue, addedComment };
+        });
+        blockAudit = committed.audit;
+        issue = committed.updatedIssue;
+        comment = committed.addedComment;
+        blockMutationPersisted = true;
+      } else if (shouldAtomicallySupersedeAssistance) {
+        const committed = await db.transaction(async (tx) => {
+          const transactionalIssueSvc = issueService(tx as unknown as Db);
+          const updatedIssue = updateAuthorization
+            ? await transactionalIssueSvc.update(id, updateFields, updateAuthorization)
+            : await transactionalIssueSvc.update(id, updateFields);
+          if (updatedIssue) {
+            await requestService(tx as unknown as Db).supersedeOpenAssistance(
+              updatedIssue.orgId,
+              updatedIssue.id,
+              assigneeWillChange ? "reassigned" : "material_progress",
+            );
+          }
+          const addedComment = updatedIssue && commentBody
+            ? await transactionalIssueSvc.addComment(id, commentBody, {
+                agentId: actor.agentId ?? undefined,
+                userId: actor.actorType === "user" ? actor.actorId : undefined,
+              })
+            : null;
+          return { updatedIssue, addedComment };
+        });
+        issue = committed.updatedIssue;
+        comment = committed.addedComment;
+      } else {
+        issue = updateAuthorization
+          ? await svc.update(id, updateFields, updateAuthorization)
+          : await svc.update(id, updateFields);
+      }
     } catch (err) {
       if (err instanceof HttpError && err.status === 422) {
         logger.warn(
@@ -430,7 +544,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       (issueUpdateActivity.details._previous as Record<string, unknown> | undefined)?.status !== undefined &&
       issue.status === "todo";
     const reopenFromStatus = reopened ? existing.status : null;
-    if (hasMaterialFieldChanges || reopened || reviewedCompletionNormalized) {
+    if ((hasMaterialFieldChanges || reopened || reviewedCompletionNormalized) && !blockMutationPersisted) {
       const relationshipReferences = await buildIssueUpdateActivityReferences(
         svc,
         issue.orgId,
@@ -467,13 +581,14 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       });
     }
 
-    let comment = null;
-    if (commentBody) {
+    if (commentBody && !comment && !blockMutationPersisted) {
       comment = await svc.addComment(id, commentBody, {
         agentId: actor.agentId ?? undefined,
         userId: actor.actorType === "user" ? actor.actorId : undefined,
       });
+    }
 
+    if (commentBody && comment && !blockMutationPersisted) {
       await logActivity(db, {
         orgId: issue.orgId,
         actorType: actor.actorType,
@@ -492,7 +607,6 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
           ...(hasFieldChanges ? { updated: true } : {}),
         },
       });
-
     }
     if (reviewDecision !== undefined) {
       const reviewActivity = await logActivity(db, {
@@ -700,7 +814,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         });
       }
 
-      if ((statusChangedToInReview || statusChangedToBlocked || reviewerChangedInReviewableStatus) && issue.reviewerAgentId) {
+      if ((statusChangedToInReview || (statusChangedToBlocked && !blockAudit) || reviewerChangedInReviewableStatus) && issue.reviewerAgentId) {
         const mutation = statusChangedToInReview
           ? "status_to_in_review"
           : statusChangedToBlocked
@@ -749,7 +863,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       }
     })();
 
-    res.json({ ...issue, comment });
+    res.json({ ...issue, comment, ...(blockAudit ? { blockAudit } : {}) });
   });
 
   router.delete("/issues/:id", async (req, res) => {

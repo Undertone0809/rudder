@@ -824,6 +824,15 @@ export const APPROVAL_STATUSES = [
 ] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
+export const REQUEST_KINDS = ["approval", "assistance"] as const;
+export type RequestKind = (typeof REQUEST_KINDS)[number];
+
+export const REQUEST_STATUSES = ["open", "resolved", "cancelled", "superseded"] as const;
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export const ASSISTANCE_REQUEST_RESOLUTIONS = ["answered", "action_completed", "cannot_help"] as const;
+export type AssistanceRequestResolution = (typeof ASSISTANCE_REQUEST_RESOLUTIONS)[number];
+
 export const SECRET_PROVIDERS = [
   "local_encrypted",
   "aws_secrets_manager",

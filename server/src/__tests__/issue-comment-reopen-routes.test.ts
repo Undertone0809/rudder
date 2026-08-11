@@ -30,6 +30,10 @@ const mockAgentService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockRequestService = vi.hoisted(() => ({
+  claimIssueBlock: vi.fn(),
+  supersedeOpenAssistance: vi.fn(async () => []),
+}));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -51,6 +55,7 @@ vi.mock("../services/index.js", () => ({
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   logActivity: mockLogActivity,
   projectService: () => ({}),
+  requestService: () => mockRequestService,
   automationService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
@@ -60,6 +65,7 @@ vi.mock("../services/index.js", () => ({
 function createApp() {
   const app = express();
   const db = {
+    transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(db),
     select: () => ({
       from: () => ({
         where: () => ({

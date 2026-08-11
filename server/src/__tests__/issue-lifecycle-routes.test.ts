@@ -47,6 +47,11 @@ const mockMessengerService = vi.hoisted(() => ({
   setThreadRead: vi.fn(async () => undefined),
 }));
 
+const mockRequestService = vi.hoisted(() => ({
+  claimIssueBlock: vi.fn(),
+  supersedeOpenAssistance: vi.fn(),
+}));
+
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -88,6 +93,7 @@ vi.mock("../services/index.js", () => ({
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
   messengerService: () => mockMessengerService,
+  requestService: () => mockRequestService,
   organizationIntelligenceProfileService: () => ({
     list: vi.fn(),
     getByPurpose: vi.fn(),
@@ -129,12 +135,14 @@ function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RU
 
 async function createApp(actor = createBoardActor()) {
   const app = express();
+  const db = {} as { transaction: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown> };
+  db.transaction = async (callback) => callback(db);
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any));
+  app.use("/api", issueRoutes(db as any, {} as any));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -232,6 +240,8 @@ describe("issue lifecycle routes", () => {
         : null,
     );
     mockHeartbeatService.wakeup.mockResolvedValue(undefined);
+    mockRequestService.claimIssueBlock.mockResolvedValue({ blocked: true });
+    mockRequestService.supersedeOpenAssistance.mockResolvedValue([]);
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.findMentionedProjectIds.mockResolvedValue([]);
     mockIssueService.getAncestors.mockResolvedValue([]);
@@ -1192,7 +1202,7 @@ describe("issue lifecycle routes", () => {
     );
   });
 
-  it("queues a reviewer wakeup when an assignee blocks a reviewed issue", async () => {
+  it("keeps a Block Audit Assistance separate from reviewer workflow", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
         status: "in_progress",
@@ -1213,22 +1223,17 @@ describe("issue lifecycle routes", () => {
       .send({ status: "blocked", comment: "Blocked by missing credentials." });
 
     expect(res.status).toBe(200);
+    expect(res.body.blockAudit).toMatchObject({ blocked: true });
+    expect(mockRequestService.claimIssueBlock).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      runId: RUN_ID,
+      agentId: ASSIGNEE_AGENT_ID,
+    }));
     await flushAsyncWork();
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
       REVIEWER_AGENT_ID,
-      expect.objectContaining({
-        source: "review",
-        reason: "issue_review_requested",
-        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "status_to_blocked" },
-        contextSnapshot: expect.objectContaining({
-          source: "issue.status_change",
-          wakeSource: "review",
-          wakeReason: "issue_review_requested",
-          role: "reviewer",
-          issue: expect.objectContaining({ status: "blocked" }),
-          reviewInstructions: expect.stringContaining("human/external blocker"),
-        }),
-      }),
+      expect.anything(),
     );
   });
 

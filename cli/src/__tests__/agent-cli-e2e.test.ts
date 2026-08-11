@@ -6,6 +6,7 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRuns,
   issueAttachments,
   issueComments,
   issues,
@@ -514,7 +515,7 @@ describe("agent CLI e2e", () => {
         ${agentId},
         ${"on_demand"},
         ${"test"},
-        ${"started"},
+        ${"running"},
         now(),
         now(),
         now()
@@ -1188,11 +1189,15 @@ describe("agent CLI e2e", () => {
       configPath,
       env,
     });
+    await db
+      .update(heartbeatRuns)
+      .set({ contextSnapshot: { issueId: blockIssueId, operationClass: "cli_input_test" } })
+      .where(eq(heartbeatRuns.id, runId));
 
     const blockCommentFile = path.join(tempRoot, "issue-block-comment.md");
     const blockBody = "Blocked with `command` evidence and $(literal) shell text.";
     writeFileSync(blockCommentFile, blockBody, "utf8");
-    const blocked = await runCliJson<Issue & { comment?: IssueComment | null }>(
+    const assistance = await runCliJson<Issue & { comment?: IssueComment | null }>(
       ["issue", "block", blockIssueId, "--comment-file", blockCommentFile],
       {
         apiBase,
@@ -1200,8 +1205,8 @@ describe("agent CLI e2e", () => {
         env,
       },
     );
-    expect(blocked.status).toBe("blocked");
-    expect(blocked.comment?.body).toBe(blockBody);
+    expect(assistance.status).toBe("in_progress");
+    expect(assistance.comment?.body).toBe(blockBody);
 
     const reviewIssueId = randomUUID();
     await db.insert(issues).values({
@@ -1520,13 +1525,17 @@ describe("agent CLI e2e", () => {
       configPath,
       env,
     });
+    await db
+      .update(heartbeatRuns)
+      .set({ contextSnapshot: { issueId: blockIssueId, operationClass: "cli_image_test" } })
+      .where(eq(heartbeatRuns.id, runId));
 
     const blockImagePath = path.join(tempRoot, "block-proof.png");
     writeFileSync(blockImagePath, Buffer.from(tinyPngBase64, "base64"));
 
     const blockImageCommentFile = path.join(tempRoot, "block-image-comment.md");
     writeFileSync(blockImageCommentFile, "Blocked with image.", "utf8");
-    const blocked = await runCliJson<Issue & { comment?: IssueComment | null }>(
+    const assistance = await runCliJson<Issue & { comment?: IssueComment | null }>(
       ["issue", "block", blockIssueId, "--comment-file", blockImageCommentFile, "--image", blockImagePath],
       {
         apiBase,
@@ -1535,9 +1544,9 @@ describe("agent CLI e2e", () => {
       },
     );
 
-    expect(blocked.status).toBe("blocked");
-    expect(blocked.comment?.body).toContain("Blocked with image.");
-    expect(blocked.comment?.body).toContain("![block-proof.png](/api/attachments/");
+    expect(assistance.status).toBe("in_progress");
+    expect(assistance.comment?.body).toContain("Blocked with image.");
+    expect(assistance.comment?.body).toContain("![block-proof.png](/api/attachments/");
 
     const blockAttachments = await db
       .select()
