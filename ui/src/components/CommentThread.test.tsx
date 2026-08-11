@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommentThread,
@@ -615,6 +615,7 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
     expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeNull();
+    expect(container.querySelector("[role='region'][aria-label='Issue activity timeline']")).toBeNull();
 
     cleanupFn?.();
     cleanupFn = null;
@@ -625,6 +626,163 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
     expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeTruthy();
+  });
+
+  it("progressively reveals a long Issue timeline while preserving its ends", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const comments = Array.from({ length: 80 }, (_, index) => ({
+      id: `comment-${String(index).padStart(3, "0")}`,
+      issueId: "issue-1",
+      orgId: "org-1",
+      authorUserId: "user-1",
+      authorAgentId: null,
+      body: `Timeline comment ${index}`,
+      createdAt: new Date(1_720_000_000_000 + index * 1_000),
+      updatedAt: new Date(1_720_000_000_000 + index * 1_000),
+    }));
+    const scrollRef = { current: null as HTMLElement | null };
+    const container = renderInteractive(
+      <MemoryRouter>
+        <div
+          ref={(element) => { scrollRef.current = element; }}
+          style={{ height: 800, overflowY: "auto", width: 600 }}
+        >
+          <CommentThread
+            comments={comments}
+            onAdd={async () => undefined}
+            timelineScrollElementRef={scrollRef}
+            progressiveDisclosure={{ key: "issue-1", ready: true, failOpen: false }}
+          />
+        </div>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='issue-timeline-disclosure']")).toBeTruthy();
+    });
+    expect(container.querySelector("[role='region'][aria-label='Issue activity timeline']")).toBeTruthy();
+    expect(container.textContent).toContain("Timeline comment 0");
+    expect(container.textContent).toContain("Timeline comment 79");
+    const beforeLabel = container.querySelector("[data-testid='issue-timeline-disclosure']")?.textContent ?? "";
+    const beforeCount = Number(beforeLabel.match(/(\d+) hidden/u)?.[1]);
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Load more") ?? null);
+
+    const afterLabel = container.querySelector("[data-testid='issue-timeline-disclosure']")?.textContent ?? "";
+    const afterCount = Number(afterLabel.match(/(\d+) hidden/u)?.[1]);
+    expect(afterCount).toBeLessThan(beforeCount);
+    expect(container.querySelectorAll("[data-testid='issue-timeline-disclosure']")).toHaveLength(1);
+  });
+
+  it("reveals a hidden hash target and fails open after an initial source error", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const comments = Array.from({ length: 80 }, (_, index) => ({
+      id: `comment-${String(index).padStart(3, "0")}`,
+      issueId: "issue-1",
+      orgId: "org-1",
+      authorUserId: "user-1",
+      authorAgentId: null,
+      body: `Hash timeline comment ${index}`,
+      createdAt: new Date(1_720_000_000_000 + index * 1_000),
+      updatedAt: new Date(1_720_000_000_000 + index * 1_000),
+    }));
+    const scrollRef = { current: null as HTMLElement | null };
+    const container = renderInteractive(
+      <MemoryRouter initialEntries={["/issues/issue-1#comment-comment-060"]}>
+        <div
+          ref={(element) => { scrollRef.current = element; }}
+          style={{ height: 800, overflowY: "auto", width: 600 }}
+        >
+          <CommentThread
+            comments={comments}
+            onAdd={async () => undefined}
+            timelineScrollElementRef={scrollRef}
+            progressiveDisclosure={{ key: "issue-1", ready: true, failOpen: false }}
+          />
+        </div>
+      </MemoryRouter>,
+    );
+
+    await vi.waitFor(() => {
+      expect(container.querySelector("#comment-comment-060")).toBeTruthy();
+    });
+
+    cleanupFn?.();
+    cleanupFn = null;
+    const failOpen = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={comments}
+          onAdd={async () => undefined}
+          progressiveDisclosure={{ key: "issue-1", ready: false, failOpen: true }}
+        />
+      </MemoryRouter>,
+    );
+    expect(failOpen.querySelector("[data-testid='issue-timeline-disclosure']")).toBeNull();
+    expect(failOpen.querySelector("#comment-comment-040")).toBeTruthy();
+    expect(failOpen.querySelector("[role='region'][aria-label='Issue activity timeline']")).toBeTruthy();
+  });
+
+  it("scrolls to a revealed hash target when height disclosure does not require virtualization", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const comments = Array.from({ length: 40 }, (_, index) => ({
+      id: `comment-${String(index).padStart(3, "0")}`,
+      issueId: "issue-1",
+      orgId: "org-1",
+      authorUserId: "user-1",
+      authorAgentId: null,
+      body: `Long timeline comment ${index}\n${"x".repeat(12_000)}`,
+      createdAt: new Date(1_720_000_000_000 + index * 1_000),
+      updatedAt: new Date(1_720_000_000_000 + index * 1_000),
+    }));
+    const scrollRef = { current: null as HTMLElement | null };
+    const container = renderInteractive(
+      <MemoryRouter initialEntries={["/issues/issue-1"]}>
+        <Link data-testid="hidden-comment-link" to="#comment-comment-020">Target comment</Link>
+        <div
+          ref={(element) => { scrollRef.current = element; }}
+          style={{ height: 800, overflowY: "auto", width: 600 }}
+        >
+          <CommentThread
+            comments={comments}
+            onAdd={async () => undefined}
+            timelineScrollElementRef={scrollRef}
+            progressiveDisclosure={{ key: "issue-1", ready: true, failOpen: false }}
+          />
+        </div>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='issue-timeline-disclosure']")).toBeTruthy();
+      expect(container.querySelector("#comment-comment-020")).toBeNull();
+    });
+    expect(container.querySelector("[data-testid='comment-thread-virtual-timeline']")).toBeNull();
+
+    scrollIntoView.mockClear();
+    const hiddenCommentLink = container.querySelector("[data-testid='hidden-comment-link']");
+    expect(hiddenCommentLink).toBeTruthy();
+    await act(async () => {
+      hiddenCommentLink!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    });
+    expect(container.querySelector("#comment-comment-020")).toBeTruthy();
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='issue-timeline-disclosure']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='comment-thread-virtual-timeline']")).toBeNull();
+    HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
   });
 
   beforeEach(() => {

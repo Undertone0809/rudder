@@ -46,6 +46,18 @@ Behavior:
   transitions clearly through disabled states or server errors.
 - Issue detail may show run evidence, comments, review state, and activity, but
   those semantics remain owned by their domains.
+- Full Issue Detail may replace one continuous middle range of a long unified
+  Activity timeline with an exact-count disclosure. The earliest context and
+  latest evidence remain visible, and each reveal extends chronologically from
+  the older side using a viewport- and content-height budget. Disclosure is
+  monotonic for the current Issue mount: polling, live updates, edits, deletes,
+  and resize must not re-hide visible evidence. Compact Messenger side-panel
+  comment timelines remain fully rendered by this rule.
+- Initial Activity disclosure waits for comments, activity, linked runs, live
+  runs, and the active run to settle successfully. An initial error in any
+  source fails open for that mount, keeps available evidence fully expanded,
+  and exposes scoped retry without allowing a later successful retry to
+  introduce a new hidden range.
 - Issue Detail chooses one- versus two-column layout from the width of the issue
   work surface, not the browser viewport. In compact desktop/tablet mode,
   operational properties join the primary issue scroll after issue
@@ -129,6 +141,14 @@ Related code:
 - `ui/src/components/InspectableImage.tsx`
 - `ui/src/context/ImagePreviewContext.tsx`
 - `ui/src/components/InlineEditor.tsx`
+- `ui/src/components/CommentThread.tsx`
+- `ui/src/components/CommentThread.timeline.ts`
+- `ui/src/components/CommentThreadTimelineRows.tsx`
+- `ui/src/components/IssueTimelineDisclosure.tsx`
+- `ui/src/components/IssueDetailFind.tsx`
+- `ui/src/components/issue-timeline-disclosure.ts`
+- `ui/src/hooks/useIssueTimelineQueries.ts`
+- `ui/src/hooks/issue-timeline-readiness.ts`
 - `ui/src/components/NewIssueDialog.tsx`
 - `ui/src/lib/new-issue-dialog.ts`
 - `ui/src/index.css`
@@ -138,11 +158,15 @@ Related code:
 Related tests:
 
 - `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/components/CommentThread.test.tsx`
+- `ui/src/components/issue-timeline-disclosure.test.ts`
+- `ui/src/hooks/issue-timeline-readiness.test.ts`
 - `ui/src/lib/index-css.test.ts`
 - `ui/src/lib/new-issue-dialog.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-properties-layout.spec.ts`
+- `tests/e2e/thread-pressure.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-description-image-preview.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`

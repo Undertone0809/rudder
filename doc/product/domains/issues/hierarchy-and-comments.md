@@ -122,6 +122,12 @@ Flow:
 5. Routing decides which agents, if any, should wake and with what source.
 6. Issue Detail and Messenger issue-thread surfaces show the comment in the
    work timeline.
+   In full Issue Detail, a long unified timeline may temporarily hide one
+   continuous middle range while keeping earliest and latest evidence visible.
+   Comment order remains canonical. A comment hash reveals through its hidden
+   target before scrolling; opening Issue Find fully expands and mounts the
+   timeline before DOM indexing, then restores virtualization without
+   re-collapsing when Find closes.
 7. When the human author edits a comment, Rudder records
    `issue.comment_updated`, compares directed wake mentions before and after
    the edit, and routes only agents newly mentioned by that edit.
@@ -143,6 +149,9 @@ Invariants:
   request and may wake that agent again.
 - Reopen-via-comment is explicit state/workflow evidence, not a hidden status
   mutation.
+- Timeline disclosure must not make collaboration evidence unreachable. An
+  initial timeline-source error fails open, and a successful retry cannot hide
+  comments already shown during that Issue mount.
 
 Evidence:
 
@@ -156,9 +165,20 @@ Related code:
 
 - `server/src/routes/issues.comments-attachments.ts`
 - `ui/src/components/CommentThread.tsx`
+- `ui/src/components/CommentThread.timeline.ts`
+- `ui/src/components/CommentThreadTimelineRows.tsx`
+- `ui/src/components/IssueTimelineDisclosure.tsx`
+- `ui/src/components/IssueDetailFind.tsx`
+- `ui/src/components/issue-timeline-disclosure.ts`
+- `ui/src/hooks/useIssueTimelineQueries.ts`
+- `ui/src/hooks/issue-timeline-readiness.ts`
 
 Related tests:
 
 - `server/src/__tests__/issue-comment-reopen-routes.test.ts`
 - `tests/e2e/issue-comment-mentions.spec.ts`
 - `tests/e2e/issue-comment-mention-boundary.spec.ts`
+- `tests/e2e/thread-pressure.spec.ts`
+- `ui/src/components/CommentThread.test.tsx`
+- `ui/src/components/issue-timeline-disclosure.test.ts`
+- `ui/src/hooks/issue-timeline-readiness.test.ts`
