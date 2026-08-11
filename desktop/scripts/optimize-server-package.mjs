@@ -118,6 +118,14 @@ function embeddedPostgresPlatformPackage(platform, arch) {
   return null;
 }
 
+function isForbiddenProductionPackage(packageName) {
+  return FORBIDDEN_PRODUCTION_PACKAGES.has(packageName)
+    || packageName.startsWith("@esbuild/")
+    || packageName.startsWith("@rollup/")
+    || packageName.startsWith("@vitest/")
+    || packageName.startsWith("lightningcss-");
+}
+
 function packageNodeModulesDir(packageRoot, packageName) {
   return packageName.startsWith("@")
     ? path.dirname(path.dirname(packageRoot))
@@ -128,13 +136,28 @@ function packagePath(nodeModulesDir, packageName) {
   return path.join(nodeModulesDir, ...packageName.split("/"));
 }
 
-async function resolveInstalledPackage(packageRoot, packageName, dependencyName) {
-  const direct = packagePath(packageNodeModulesDir(packageRoot, packageName), dependencyName);
-  try {
-    return await fs.realpath(direct);
-  } catch {
-    return null;
+async function resolveInstalledPackage(serverPackageDir, packageRoot, packageName, dependencyName) {
+  const candidates = new Set([
+    packagePath(path.join(packageRoot, "node_modules"), dependencyName),
+    packagePath(packageNodeModulesDir(packageRoot, packageName), dependencyName),
+    packagePath(path.join(serverPackageDir, "node_modules"), dependencyName),
+  ]);
+  let ancestor = path.dirname(packageRoot);
+  while (ancestor === serverPackageDir || ancestor.startsWith(`${serverPackageDir}${path.sep}`)) {
+    if (path.basename(ancestor) === "node_modules") {
+      candidates.add(packagePath(ancestor, dependencyName));
+    }
+    if (ancestor === serverPackageDir) break;
+    ancestor = path.dirname(ancestor);
   }
+  for (const candidate of candidates) {
+    try {
+      return await fs.realpath(candidate);
+    } catch {
+      // Try the next supported node_modules layout.
+    }
+  }
+  return null;
 }
 
 function virtualStoreEntry(pnpmDir, packageRoot) {
@@ -154,7 +177,8 @@ function virtualStoreEntry(pnpmDir, packageRoot) {
 async function collectReachablePackages(serverPackageDir, options) {
   const nodeModulesDir = path.join(serverPackageDir, "node_modules");
   const pnpmDir = path.join(nodeModulesDir, ".pnpm");
-  const realPnpmDir = await fs.realpath(pnpmDir);
+  const realServerPackageDir = await fs.realpath(serverPackageDir);
+  const realPnpmDir = await exists(pnpmDir) ? await fs.realpath(pnpmDir) : null;
   const serverManifest = await readJson(path.join(serverPackageDir, "package.json"));
   const omittedPackages = new Set(options.omittedPackages ?? []);
   const visitedRoots = new Set();
@@ -174,7 +198,7 @@ async function collectReachablePackages(serverPackageDir, options) {
     }
     reachablePackages.push({ name: packageName, root: realRoot });
 
-    const storeEntry = virtualStoreEntry(realPnpmDir, realRoot);
+    const storeEntry = realPnpmDir ? virtualStoreEntry(realPnpmDir, realRoot) : null;
     if (storeEntry) reachableStoreEntries.add(storeEntry);
 
     const dependencies = {
@@ -185,7 +209,7 @@ async function collectReachablePackages(serverPackageDir, options) {
       const optionalPeer = manifest.peerDependenciesMeta?.[peerName]?.optional === true;
       if (
         optionalPeer
-        && (FORBIDDEN_PRODUCTION_PACKAGES.has(peerName) || omittedPackages.has(peerName))
+        && (isForbiddenProductionPackage(peerName) || omittedPackages.has(peerName))
       ) {
         continue;
       }
@@ -193,8 +217,15 @@ async function collectReachablePackages(serverPackageDir, options) {
     }
 
     for (const dependencyName of Object.keys(dependencies)) {
-      if (omittedPackages.has(dependencyName)) continue;
-      const dependencyRoot = await resolveInstalledPackage(realRoot, packageName, dependencyName);
+      if (omittedPackages.has(dependencyName) || isForbiddenProductionPackage(dependencyName)) {
+        continue;
+      }
+      const dependencyRoot = await resolveInstalledPackage(
+        realServerPackageDir,
+        realRoot,
+        packageName,
+        dependencyName,
+      );
       if (!dependencyRoot) {
         if (manifest.optionalDependencies?.[dependencyName] !== undefined) continue;
         if (manifest.peerDependencies?.[dependencyName] !== undefined) continue;
@@ -209,7 +240,9 @@ async function collectReachablePackages(serverPackageDir, options) {
     ...(serverManifest.optionalDependencies ?? {}),
   };
   for (const dependencyName of Object.keys(directDependencies)) {
-    if (omittedPackages.has(dependencyName)) continue;
+    if (omittedPackages.has(dependencyName) || isForbiddenProductionPackage(dependencyName)) {
+      continue;
+    }
     const dependencyRoot = packagePath(nodeModulesDir, dependencyName);
     if (!(await exists(dependencyRoot))) {
       if (serverManifest.optionalDependencies?.[dependencyName] !== undefined) continue;
@@ -223,6 +256,66 @@ async function collectReachablePackages(serverPackageDir, options) {
     reachableStoreEntries,
     pnpmDir,
   };
+}
+
+async function pruneInstalledPackages(serverPackageDir, shouldRemove) {
+  const removedPackages = [];
+  const visitedNodeModules = new Set();
+
+  async function removePackage(packageRoot, packageName) {
+    const packageStats = await fs.lstat(packageRoot);
+    const removed = packageStats.isSymbolicLink()
+      ? { bytes: 0, files: 0 }
+      : await treeStats(packageRoot);
+    await fs.rm(packageRoot, { recursive: true, force: true });
+    removedPackages.push({
+      name: packageName,
+      bytes: removed.bytes,
+      files: removed.files,
+      path: path.relative(serverPackageDir, packageRoot),
+    });
+  }
+
+  async function inspectPackage(packageRoot) {
+    const manifestPath = path.join(packageRoot, "package.json");
+    if (!(await exists(manifestPath))) return;
+    const manifest = await readJson(manifestPath);
+    if (manifest.name && shouldRemove(manifest.name)) {
+      await removePackage(packageRoot, manifest.name);
+      return;
+    }
+    const packageStats = await fs.lstat(packageRoot);
+    if (!packageStats.isSymbolicLink()) {
+      await walkNodeModules(path.join(packageRoot, "node_modules"));
+    }
+  }
+
+  async function walkNodeModules(nodeModulesDir) {
+    if (!(await exists(nodeModulesDir))) return;
+    const realNodeModulesDir = await fs.realpath(nodeModulesDir);
+    if (visitedNodeModules.has(realNodeModulesDir)) return;
+    visitedNodeModules.add(realNodeModulesDir);
+
+    for (const entry of await fs.readdir(nodeModulesDir, { withFileTypes: true })) {
+      if (entry.name === ".bin" || entry.name === ".pnpm") continue;
+      const entryPath = path.join(nodeModulesDir, entry.name);
+      if (entry.name.startsWith("@") && entry.isDirectory()) {
+        for (const scopedEntry of await fs.readdir(entryPath, { withFileTypes: true })) {
+          if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) continue;
+          await inspectPackage(path.join(entryPath, scopedEntry.name));
+        }
+        const remaining = await fs.readdir(entryPath);
+        if (remaining.length === 0) await fs.rm(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      if (entry.isDirectory() || entry.isSymbolicLink()) {
+        await inspectPackage(entryPath);
+      }
+    }
+  }
+
+  await walkNodeModules(path.join(serverPackageDir, "node_modules"));
+  return removedPackages.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 async function removeBrokenSymlinks(rootPath) {
@@ -311,6 +404,15 @@ async function compactTitleTokenizer(serverPackageDir) {
 
   const packageRoot = await fs.realpath(topLevelPackage);
   const manifest = await readJson(path.join(packageRoot, "package.json"));
+  const bundledEntry = path.join(packageRoot, "o200k-base.cjs");
+  if (await exists(bundledEntry)) {
+    const optimized = await treeStats(packageRoot);
+    return {
+      status: "already-optimized",
+      originalBytes: optimized.bytes,
+      optimizedBytes: optimized.bytes,
+    };
+  }
   const entryCandidates = [
     path.join(packageRoot, "cjs", "encoding", "o200k_base.js"),
     path.join(packageRoot, "esm", "encoding", "o200k_base.js"),
@@ -326,7 +428,7 @@ async function compactTitleTokenizer(serverPackageDir) {
   const temporaryRoot = `${packageRoot}.compact-${process.pid}-${Date.now()}`;
   await fs.rm(temporaryRoot, { recursive: true, force: true });
   await fs.mkdir(temporaryRoot, { recursive: true });
-  const bundledEntry = path.join(temporaryRoot, "o200k-base.cjs");
+  const temporaryBundledEntry = path.join(temporaryRoot, "o200k-base.cjs");
 
   try {
     const { build } = await import("esbuild");
@@ -336,7 +438,7 @@ async function compactTitleTokenizer(serverPackageDir) {
       format: "cjs",
       legalComments: "none",
       minify: true,
-      outfile: bundledEntry,
+      outfile: temporaryBundledEntry,
       platform: "node",
       sourcemap: false,
       target: "node20",
@@ -455,6 +557,7 @@ async function prunePackageTypeMetadata(serverPackageDir, reachablePackages) {
 
   let rewrittenManifests = 0;
   for (const manifestPath of manifestPaths) {
+    if (!(await exists(manifestPath))) continue;
     rewrittenManifests += Number(await stripPackageTypeMetadata(manifestPath));
   }
   return { rewrittenManifests };
@@ -495,6 +598,10 @@ export async function optimizeServerPackage({
   const virtualStore = await pruneUnreachableVirtualStore(serverPackageDir, {
     omittedPackages,
   });
+  const removedInstalledPackages = await pruneInstalledPackages(
+    serverPackageDir,
+    (packageName) => omittedPackages.has(packageName) || isForbiddenProductionPackage(packageName),
+  );
   const packageTypeMetadata = await prunePackageTypeMetadata(
     serverPackageDir,
     virtualStore.reachablePackages,
@@ -514,6 +621,7 @@ export async function optimizeServerPackage({
     forbiddenProductionPackages: [...FORBIDDEN_PRODUCTION_PACKAGES].sort(),
     retainedVirtualStoreEntries: [...virtualStore.reachableStoreEntries].sort(),
     removedVirtualStoreEntries: virtualStore.removedStoreEntries.sort(),
+    removedInstalledPackages,
     removedBrokenSymlinks: virtualStore.removedBrokenSymlinks + postPruneBrokenSymlinks,
     postPruneBrokenSymlinks,
     tokenizer,
@@ -534,6 +642,7 @@ export {
   FORBIDDEN_PRODUCTION_PACKAGES,
   OPTIMIZATION_MANIFEST,
   embeddedPostgresPlatformPackage,
+  isForbiddenProductionPackage,
   packageHasTypeMetadata,
   stripPackageTypeMetadata
 };

@@ -1,12 +1,12 @@
-import { access, lstat, readFile, readdir } from "node:fs/promises";
+import { access, lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
-  FORBIDDEN_PRODUCTION_PACKAGES,
   OPTIMIZATION_MANIFEST,
   embeddedPostgresPlatformPackage,
+  isForbiddenProductionPackage,
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
@@ -166,14 +166,6 @@ async function verifyModuleResolution(serverPackageDir) {
   }
 }
 
-function isForbiddenProductionPackage(packageName) {
-  return FORBIDDEN_PRODUCTION_PACKAGES.has(packageName)
-    || packageName.startsWith("@esbuild/")
-    || packageName.startsWith("@rollup/")
-    || packageName.startsWith("@vitest/")
-    || packageName.startsWith("lightningcss-");
-}
-
 async function listVirtualStorePackageNames(serverPackageDir) {
   const pnpmDir = path.join(serverPackageDir, "node_modules", ".pnpm");
   if (!(await exists(pnpmDir))) return new Set();
@@ -201,6 +193,46 @@ async function listVirtualStorePackageNames(serverPackageDir) {
       if (manifest.name) packageNames.add(manifest.name);
     }
   }
+  return packageNames;
+}
+
+async function listInstalledPackageNames(serverPackageDir) {
+  const packageNames = await listVirtualStorePackageNames(serverPackageDir);
+  const visitedNodeModules = new Set();
+
+  async function inspectPackage(packageRoot) {
+    const manifestPath = path.join(packageRoot, "package.json");
+    if (!(await exists(manifestPath))) return;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (manifest.name) packageNames.add(manifest.name);
+    const packageStats = await lstat(packageRoot);
+    if (!packageStats.isSymbolicLink()) {
+      await walkNodeModules(path.join(packageRoot, "node_modules"));
+    }
+  }
+
+  async function walkNodeModules(nodeModulesDir) {
+    if (!(await exists(nodeModulesDir))) return;
+    const realNodeModulesDir = await realpath(nodeModulesDir);
+    if (visitedNodeModules.has(realNodeModulesDir)) return;
+    visitedNodeModules.add(realNodeModulesDir);
+
+    for (const entry of await readdir(nodeModulesDir, { withFileTypes: true })) {
+      if (entry.name === ".bin" || entry.name === ".pnpm") continue;
+      const entryPath = path.join(nodeModulesDir, entry.name);
+      if (entry.name.startsWith("@") && entry.isDirectory()) {
+        for (const scopedEntry of await readdir(entryPath, { withFileTypes: true })) {
+          if (scopedEntry.isDirectory() || scopedEntry.isSymbolicLink()) {
+            await inspectPackage(path.join(entryPath, scopedEntry.name));
+          }
+        }
+      } else if (entry.isDirectory() || entry.isSymbolicLink()) {
+        await inspectPackage(entryPath);
+      }
+    }
+  }
+
+  await walkNodeModules(path.join(serverPackageDir, "node_modules"));
   return packageNames;
 }
 
@@ -271,7 +303,7 @@ async function verifyOptimizedProductionPackage(serverPackageDir) {
     error(`unsupported production optimization manifest version: ${optimization.version}`);
   }
 
-  const installedPackageNames = await listVirtualStorePackageNames(serverPackageDir);
+  const installedPackageNames = await listInstalledPackageNames(serverPackageDir);
   const forbiddenPackages = [...installedPackageNames].filter(isForbiddenProductionPackage).sort();
   if (forbiddenPackages.length > 0) {
     for (const packageName of forbiddenPackages) {
