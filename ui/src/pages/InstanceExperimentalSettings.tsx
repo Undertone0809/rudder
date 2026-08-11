@@ -98,7 +98,10 @@ export function InstanceExperimentalSettings() {
   const computerUseUpdateMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
       if (enabled && desktopComputerUse?.supported) {
-        await desktopComputerUse.requestPermissions();
+        const readiness = computerReadinessQuery.data ?? await desktopComputerUse.readiness();
+        if (readiness.permissionPromptAvailable && !readiness.actionReady) {
+          await desktopComputerUse.requestPermissions();
+        }
       }
       return instanceSettingsApi.updateGeneral({ experimentalComputerUseEnabled: enabled });
     },
@@ -132,7 +135,9 @@ export function InstanceExperimentalSettings() {
   const goalsEnabled = settingsQuery.data?.experimentalGoalsEnabled === true;
   const computerUseEnabled = settingsQuery.data?.experimentalComputerUseEnabled === true;
   const computerReadiness = computerReadinessQuery.data;
-  const computerUseSupported = desktopComputerUse?.supported === true;
+  const computerUseSupported = desktopComputerUse?.supported === true
+    && computerReadiness?.supported !== false
+    && computerReadiness?.driverAvailable !== false;
   const computerUseDescription = !computerUseSupported
     ? t("experimental.computerUse.desktopRequired")
     : computerReadiness?.actionReady
@@ -232,7 +237,7 @@ export function InstanceExperimentalSettings() {
               >
                 {t("experimental.computerUse.requestPermissions")}
               </Button>
-              {!computerReadiness.screenRecording ? (
+              {computerReadiness.screenRecordingSettingsAvailable ? (
                 <Button
                   variant="outline"
                   size="sm"

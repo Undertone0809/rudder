@@ -56,10 +56,7 @@ import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLin
 import { runDesktopCliMode } from "./cli-runner.js";
 import {
   allocateComputerBrokerGeneration,
-  isDesktopComputerRunActive,
-  readDesktopComputerSettings,
-  registerDesktopComputerBroker,
-  unregisterDesktopComputerBroker,
+  createDesktopComputerApiClient,
 } from "./computer-broker-registration.js";
 import { startComputerBrokerServer } from "./computer-broker-server.js";
 import {
@@ -1161,16 +1158,22 @@ function replaceBrowserRuntimeLifecycle(): void {
 
 function replaceComputerRuntimeLifecycle(): void {
   const runtime = createComputerRuntime({ createDriver: createCuaComputerDriver });
+  const computerApi = createDesktopComputerApiClient(
+    (input, init) => session.defaultSession.fetch(
+      input instanceof URL ? input.toString() : input,
+      init,
+    ),
+  );
   computerRuntimeLifecycle = createDesktopComputerRuntimeLifecycle({
     runtime,
-    readSettings: (apiUrl) => readDesktopComputerSettings(apiUrl),
+    readSettings: computerApi.readSettings,
     readReadiness: () => readComputerUseReadiness(),
-    isRunActive: (apiUrl, identity) => isDesktopComputerRunActive(apiUrl, identity),
+    isRunActive: computerApi.isRunActive,
     startBroker: startComputerBrokerServer,
     allocateGeneration: allocateComputerBrokerGeneration,
     registerBroker: (apiUrl, broker, generation, refresh) =>
-      registerDesktopComputerBroker(apiUrl, broker, generation, refresh),
-    unregisterBroker: unregisterDesktopComputerBroker,
+      computerApi.registerBroker(apiUrl, broker, generation, refresh),
+    unregisterBroker: computerApi.unregisterBroker,
     pollIntervalMs: 5_000,
     onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
   });

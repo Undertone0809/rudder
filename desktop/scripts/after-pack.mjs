@@ -177,12 +177,14 @@ async function copyOptionalDependencies(appDir, nodeModulesDir) {
 
 async function copyStagedComputerUseDependencies(projectDir, nodeModulesDir) {
   const stagedNodeModulesDir = path.join(projectDir, ".packaged", "app", "node_modules");
-  const packageNames = ["@rudderhq/shared", "zod"];
+  if (!(await exists(stagedNodeModulesDir))) return;
+  const packageDirs = await listTopLevelPackages(stagedNodeModulesDir);
 
-  for (const packageName of packageNames) {
-    const sourceDir = path.join(stagedNodeModulesDir, ...packageName.split("/"));
-    if (!(await exists(sourceDir))) {
-      throw new Error(`staged Computer Use dependency is missing: ${sourceDir}`);
+  for (const sourceDir of packageDirs) {
+    const manifest = JSON.parse(await fs.readFile(path.join(sourceDir, "package.json"), "utf8"));
+    const packageName = manifest.name;
+    if (typeof packageName !== "string" || !packageName.trim()) {
+      throw new Error(`staged Computer Use dependency has no package name: ${sourceDir}`);
     }
     const destinationDir = path.join(nodeModulesDir, ...packageName.split("/"));
     await fs.rm(destinationDir, { recursive: true, force: true });
@@ -262,9 +264,7 @@ export default async function afterPack(context) {
   ];
 
   await copyOptionalDependencies(appDir, appNodeModulesDir);
-  if (context.electronPlatformName === "darwin") {
-    await copyStagedComputerUseDependencies(projectDir, appNodeModulesDir);
-  }
+  await copyStagedComputerUseDependencies(projectDir, appNodeModulesDir);
   await copyPackagedServerBundle(projectDir, resourcesDir);
   await copyPostgresRuntimePayload(projectDir, resourcesDir);
 

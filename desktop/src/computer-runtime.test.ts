@@ -70,6 +70,43 @@ describe("Computer runtime", () => {
     }, undefined);
   });
 
+  it("launches an installed app through the Driver and preserves the returned target", async () => {
+    const driver = createDriver();
+    vi.mocked(driver.callTool).mockResolvedValueOnce({
+      text: "launched",
+      structured: { pid: 73, bundle_id: "com.apple.calculator", windows: [{ window_id: 91 }] },
+      images: [],
+    });
+    const runtime = createComputerRuntime({ createDriver: async () => driver });
+
+    await expect(runtime.execute(command("launch_app", { bundleId: "com.apple.calculator" })))
+      .resolves.toMatchObject({ pid: 73, windows: [{ window_id: 91 }] });
+    expect(driver.callTool).toHaveBeenLastCalledWith("launch_app", {
+      bundle_id: "com.apple.calculator",
+    }, undefined);
+  });
+
+  it("maps modified key presses to the Driver hotkey contract", async () => {
+    const driver = createDriver();
+    const runtime = createComputerRuntime({ createDriver: async () => driver });
+    const observed = await runtime.execute(command("get_app_state", { pid: 42, windowId: 7 })) as { observationId: string };
+
+    await runtime.execute(command("press_key", {
+      observationId: observed.observationId,
+      key: "space",
+      modifiers: ["cmd"],
+      deliveryMode: "foreground",
+    }));
+
+    expect(driver.callTool).toHaveBeenLastCalledWith("hotkey", {
+      session: "run-1",
+      pid: 42,
+      window_id: 7,
+      delivery_mode: "foreground",
+      keys: ["cmd", "space"],
+    }, undefined);
+  });
+
   it("rejects expired observations and Stop invalidates the Run session", async () => {
     let now = 1_000;
     const driver = createDriver();
