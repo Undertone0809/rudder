@@ -720,7 +720,7 @@ describe("IssueDetail", () => {
       assigneeAgentId: "agent-1",
       blockerFingerprint: "fingerprint",
       supersededByRequestId: null,
-      title: "GitHub confirmation required",
+      title: "Input needed for ORG2-1",
       prompt: "Approve the mobile confirmation before token creation can continue.",
       resolution: null,
       response: null,
@@ -740,7 +740,7 @@ describe("IssueDetail", () => {
     expect(html).toContain('aria-label="Assistance request"');
     expect(html).toContain('aria-label="Answer or describe what changed"');
     expect(html).toContain("Blocked · Waiting on you");
-    expect(html).toContain("Attempt 3/3");
+    expect(html).not.toContain("Attempt 3/3");
     expect(html).toContain("Send answer");
     expect(html).toContain("Mark action complete");
     expect(html).toContain("Cannot help");
@@ -763,7 +763,7 @@ describe("IssueDetail", () => {
       assigneeAgentId: "agent-1",
       blockerFingerprint: "fingerprint",
       supersededByRequestId: null,
-      title: "GitHub confirmation required",
+      title: "Input needed for ORG2-1",
       prompt: "Approve the mobile confirmation before token creation can continue.",
       resolution: "action_completed",
       response: "GitHub mobile confirmation approved.",
@@ -776,8 +776,10 @@ describe("IssueDetail", () => {
 
     const html = renderToStaticMarkup(<IssueDetail />);
 
-    expect(html).toContain("Action completed");
+    expect(html).toContain("Action completed for ORG2-1");
     expect(html).toContain("GitHub mobile confirmation approved.");
+    expect(html).not.toContain("Input needed");
+    expect(html).not.toContain("Attempt 3/3");
     expect(html).toContain("Open in Requests");
     expect(html).not.toContain("Send answer");
     expect(html).not.toContain("Cancel request");

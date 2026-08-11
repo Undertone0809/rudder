@@ -21,6 +21,7 @@ export function VirtualizedActivityTimeline<T>({
   getItemKey,
   items,
   itemGap = 20,
+  leadingOverscan = 0,
   overscan = 3,
   preventScrollBlanking = false,
   onTargetMounted,
@@ -33,6 +34,7 @@ export function VirtualizedActivityTimeline<T>({
   getItemKey: (item: T, index: number) => string;
   items: T[];
   itemGap?: number;
+  leadingOverscan?: number;
   overscan?: number;
   preventScrollBlanking?: boolean;
   onTargetMounted?: (key: string) => void;
@@ -65,7 +67,10 @@ export function VirtualizedActivityTimeline<T>({
     // buffer behind the viewport so those reversal frames remain painted
     // without making every scroll frame maintain a nearly symmetric window.
     const trailingOverscan = Math.max(8, Math.ceil(overscan / 2));
-    const before = direction === "backward" ? overscan : trailingOverscan;
+    const before = Math.max(
+      leadingOverscan,
+      direction === "backward" ? overscan : trailingOverscan,
+    );
     const after = direction === "backward" ? trailingOverscan : overscan;
     const rawStart = Math.max(0, range.startIndex - before);
     const rawEnd = Math.min(range.count - 1, range.endIndex + after);
@@ -77,7 +82,7 @@ export function VirtualizedActivityTimeline<T>({
         * SCROLL_RANGE_CHUNK_ROWS - 1,
     );
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
-  }, [overscan]);
+  }, [leadingOverscan, overscan]);
   const virtualizer = useVirtualizer({
     enabled: !baselineMode,
     count: items.length,
@@ -94,7 +99,7 @@ export function VirtualizedActivityTimeline<T>({
     directDomUpdates: preventScrollBlanking && !baselineMode,
     directDomUpdatesMode: "transform",
     directDomPrepaintRows: preventScrollBlanking && !baselineMode
-      ? SCROLL_PREPAINT_RUNWAY_ROWS
+      ? Math.max(SCROLL_PREPAINT_RUNWAY_ROWS, leadingOverscan)
       : 0,
     useFlushSync: false,
   });

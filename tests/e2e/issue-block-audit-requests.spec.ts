@@ -118,7 +118,7 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   expect(first.blockAudit).toMatchObject({ attempt: 1, requiredAttempts: 3, blocked: false });
   await page.goto(`/issues/${fixture.issue.identifier}`);
   await expect(page.getByTestId("issue-request-attention")).toContainText("In progress · Waiting on you");
-  await expect(page.getByTestId("issue-request-attention")).toContainText("Attempt 1/3");
+  await expect(page.getByTestId("issue-request-attention")).not.toContainText("Attempt");
   await expect(page.getByLabel("Comment composer")).toHaveCount(0);
 
   const duplicateJwt = createLocalAgentJwt(fixture.agent.id, fixture.org.id, "codex_local", run1);
@@ -146,7 +146,7 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   await page.goto(`/issues/${fixture.issue.identifier}`);
   const issueRequestPanel = page.getByTestId("issue-request-attention");
   await expect(issueRequestPanel).toContainText("Blocked · Waiting on you");
-  await expect(issueRequestPanel).toContainText("Attempt 3/3");
+  await expect(issueRequestPanel).not.toContainText("Attempt");
   await expect(issueRequestPanel.getByRole("button", { name: "Send answer" })).toBeDisabled();
 
   const requestRows = await e2eDb.select().from(requests).where(and(
@@ -177,6 +177,9 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   await expect(page.getByTestId("issue-request-attention")).toHaveCount(0);
   await expect(page.getByLabel("Comment composer")).toBeVisible();
   const terminalIssueRequest = page.getByTestId(`assistance-request-panel-${requestRows[0]!.id}`);
+  await expect(terminalIssueRequest.getByRole("heading", { name: `Response received for ${fixture.issue.identifier}` })).toBeVisible();
+  await expect(terminalIssueRequest).not.toContainText("Input needed");
+  await expect(terminalIssueRequest).not.toContainText("Attempt");
   await expect(terminalIssueRequest).toContainText("Answered");
   await expect(terminalIssueRequest).toContainText("GitHub mobile confirmation approved.");
 
@@ -185,7 +188,7 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   await expect(page.getByLabel("Comment composer")).toBeVisible();
   await expect(page.getByTestId(`assistance-request-panel-${requestRows[0]!.id}`)).toContainText("Answered");
 
-  await page.goto("/messenger/approvals");
+  await page.goto(`/${fixture.org.urlKey}/messenger/approvals`);
   await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   const card = page.getByTestId(`messenger-assistance-card-${requestRows[0]!.id}`);
   await expect(card).toBeVisible();
@@ -213,6 +216,67 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
     resolution: "answered",
     wakeIntentQueued: true,
   });
+});
+
+test("keeps a leading render runway around deep-linked Issue activity", async ({ page }) => {
+  await page.goto("/");
+  const fixture = await createFixture(page);
+  const anchor = Date.now() - 90 * 60_000;
+  const commentIds = Array.from({ length: 84 }, () => randomUUID());
+  await e2eDb.insert(issueComments).values(commentIds.map((id, index) => {
+    const createdAt = new Date(anchor + index * 30_000);
+    return {
+      id,
+      orgId: fixture.org.id,
+      issueId: fixture.issue.id,
+      authorAgentId: fixture.agent.id,
+      body: `Activity note ${index + 1}: retain surrounding context when opening a deep link.`,
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }));
+
+  const targetIndex = 72;
+  const targetId = commentIds[targetIndex]!;
+  await page.setViewportSize({ width: 760, height: 1_000 });
+  await page.goto(`/${fixture.org.urlKey}/messenger/issues/${fixture.issue.identifier}#comment-${targetId}`);
+  const target = page.locator(`#comment-${targetId}`);
+  await expect(target).toBeVisible();
+  await page.reload();
+  await expect(target).toBeVisible();
+  await target.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await expect(target).toBeInViewport();
+  await expect.poll(() => page.getByTestId("issue-detail-main-scroll").evaluate((element) => Math.max(
+    element.scrollTop,
+    window.scrollY,
+    document.scrollingElement?.scrollTop ?? 0,
+  ))).toBeGreaterThan(1_000);
+
+  const runway = await page.evaluate(({ ids, targetCommentId }) => {
+    const scroller = document.querySelector<HTMLElement>('[data-testid="issue-detail-main-scroll"]');
+    const mounted = Array.from(document.querySelectorAll<HTMLElement>('[data-virtualized-activity-key^="comment:"]'));
+    if (!scroller || mounted.length === 0) return null;
+    const scrollerTop = Math.max(0, scroller.getBoundingClientRect().top);
+    const intersecting = mounted
+      .map((element) => ({
+        id: element.dataset.virtualizedActivityKey?.slice("comment:".length) ?? "",
+        rect: element.getBoundingClientRect(),
+      }))
+      .filter((item) => item.rect.bottom > scrollerTop)
+      .sort((left, right) => left.rect.top - right.rect.top);
+    const mountedIndexes = mounted
+      .map((element) => ids.indexOf(element.dataset.virtualizedActivityKey?.slice("comment:".length) ?? ""))
+      .filter((index) => index >= 0);
+    return {
+      leadingGap: Math.max(0, (intersecting[0]?.rect.top ?? scrollerTop) - scrollerTop),
+      mountedBeforeTarget: mountedIndexes.filter((index) => index < ids.indexOf(targetCommentId)).length,
+    };
+  }, { ids: commentIds, targetCommentId: targetId });
+
+  await page.screenshot({ path: "/tmp/rudder-issue-timeline-leading-runway.png", fullPage: false });
+  expect(runway).not.toBeNull();
+  expect(runway!.leadingGap).toBeLessThanOrEqual(120);
+  expect(runway!.mountedBeforeTarget).toBeGreaterThanOrEqual(24);
 });
 
 test("resets the audit when the blocker materially changes", async ({ page }) => {

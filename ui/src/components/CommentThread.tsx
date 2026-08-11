@@ -1002,7 +1002,9 @@ const TimelineList = memo(function TimelineList({
         if (item?.kind === "activity") return 48;
         return 168;
       }}
-      overscan={5}
+      leadingOverscan={32}
+      overscan={12}
+      preventScrollBlanking
       scrollElementRef={scrollElementRef}
       targetKey={highlightCommentId ? `comment:${highlightCommentId}` : null}
       onTargetMounted={onVirtualTargetMounted}
