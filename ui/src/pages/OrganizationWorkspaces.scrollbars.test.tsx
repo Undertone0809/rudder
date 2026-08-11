@@ -16,6 +16,7 @@ const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   setHeaderActions: vi.fn(),
   navigate: vi.fn(),
+  openSidePanelTarget: vi.fn(),
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
   uploadImage: vi.fn(),
@@ -566,6 +567,12 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("../context/SidePanelContext", () => ({
+  useSidePanel: () => ({
+    openTarget: mockState.openSidePanelTarget,
+  }),
+}));
+
 vi.mock("../hooks/useViewedOrganization", () => ({
   useViewedOrganization: () => ({
     viewedOrganizationId: mockState.viewedOrganizationId,
@@ -629,6 +636,21 @@ vi.mock("../components/MarkdownEditor", () => ({
           )}
         >
           README.md
+        </button>
+        <button
+          type="button"
+          data-testid="mock-library-issue-token"
+          onClick={(event) => onInlineTokenClick?.(
+            {
+              element: event.currentTarget,
+              href: "issue://issue-1?ref=RUD-1",
+              kind: "mention",
+              label: "RUD-1",
+            },
+            event,
+          )}
+        >
+          RUD-1
         </button>
         <button
           type="button"
@@ -1591,6 +1613,39 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(statusBar?.textContent).toContain("Markdown");
     expect(statusBar?.textContent).toMatch(/\d+ words?/);
     expect(statusBar?.textContent).toContain("Saved");
+  });
+
+  it("opens Issue references in the Side Panel without leaving Library", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    renderWorkspacesPage();
+
+    act(() => {
+      document.querySelector<HTMLButtonElement>("[data-testid='mock-library-issue-token']")?.click();
+    });
+
+    expect(mockState.openSidePanelTarget).toHaveBeenCalledWith({
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "RUD-1",
+      commentId: null,
+      label: "RUD-1",
+    });
+    expect(mockState.navigate).not.toHaveBeenCalled();
+    expect(mockState.setSearchParams).not.toHaveBeenCalled();
+  });
+
+  it("keeps modified Issue reference activation on the full-page navigation path", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    renderWorkspacesPage();
+
+    act(() => {
+      document.querySelector<HTMLButtonElement>("[data-testid='mock-library-issue-token']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }),
+      );
+    });
+
+    expect(mockState.openSidePanelTarget).not.toHaveBeenCalled();
+    expect(mockState.navigate).toHaveBeenCalledWith("/issues/issue-1");
   });
 
   it("renders common code and data files with a syntax-highlighted editor", () => {
