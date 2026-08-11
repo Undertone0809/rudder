@@ -121,6 +121,7 @@ export { projectGoals } from "./project_goals.js";
 export { projectResourceAttachments } from "./project_resource_attachments.js";
 export { projectWorkspaces } from "./project_workspaces.js";
 export { projects } from "./projects.js";
+export { issueBlockAuditAttempts, requests } from "./requests.js";
 export {
   installedPlugins,
   pluginComponentLinks,
@@ -128,7 +129,6 @@ export {
   pluginPackages,
   pluginSources
 } from "./rudder_plugins.js";
-export { issueBlockAuditAttempts, requests } from "./requests.js";
 export { workspaceBackups } from "./workspace_backups.js";
 export { workspaceOperations } from "./workspace_operations.js";
 export { workspaceRuntimeServices } from "./workspace_runtime_services.js";
