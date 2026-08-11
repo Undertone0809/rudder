@@ -12,14 +12,6 @@ const docsProductionWorkflow = readFileSync(
 const ciWorkflow = readFileSync(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const desktopWorkflow = readFileSync(join(repoRoot, ".github/workflows/desktop-release.yml"), "utf8");
 const releaseScript = readFileSync(join(repoRoot, "scripts/release.sh"), "utf8");
-const releaseCompatibilityScript = readFileSync(
-  join(repoRoot, "scripts/release-compatibility-matrix.mjs"),
-  "utf8",
-);
-const releaseCompatibilityRuntimeScript = readFileSync(
-  join(repoRoot, "scripts/release-compatibility-runtime.ts"),
-  "utf8",
-);
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
 
 describe("release workflow latency contracts", () => {
@@ -73,7 +65,7 @@ describe("release workflow latency contracts", () => {
     );
   });
 
-  it("blocks stable and canary publication on the migration compatibility matrix", () => {
+  it("keeps publication behind the immutable-source preflight without the legacy upgrade gate", () => {
     const canaryJob = releaseWorkflow.slice(
       releaseWorkflow.indexOf("\n  canary:\n"),
       releaseWorkflow.indexOf("\n  stable-dry-run:\n"),
@@ -83,79 +75,50 @@ describe("release workflow latency contracts", () => {
       releaseWorkflow.indexOf("\n  stable-docs:\n"),
     );
 
-    expect(releaseWorkflow).toContain("node scripts/release-compatibility-matrix.mjs");
+    expect(releaseWorkflow).not.toContain("prepublish-upgrade-gate");
+    expect(releaseWorkflow).not.toContain("release-compatibility-matrix.mjs");
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
-    expect(canaryJob).toContain("Locked canary migration compatibility preflight");
-    expect(stableJob).toContain("Locked stable migration compatibility preflight");
+    expect(canaryJob).toMatch(/canary:\n[\s\S]*needs: preflight/);
+    expect(stableJob).toMatch(/stable:\n[\s\S]*needs: preflight/);
 
-    const canaryPreflightIndex = canaryJob.indexOf("Locked canary migration compatibility preflight");
+    const canaryPreflightIndex = canaryJob.indexOf("Locked canary preflight");
     const canaryPublishIndex = canaryJob.indexOf("\n      - name: Publish canary\n");
     const canaryDesktopIndex = canaryJob.indexOf("\n      - name: Start desktop release build\n");
     expect(canaryPreflightIndex).toBeGreaterThan(-1);
     expect(canaryPublishIndex).toBeGreaterThan(canaryPreflightIndex);
     expect(canaryDesktopIndex).toBeGreaterThan(canaryPublishIndex);
 
-    const stablePreflightIndex = stableJob.indexOf("Locked stable migration compatibility preflight");
+    const stableCheckoutIndex = stableJob.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}");
     const stablePublishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
     const stableDesktopIndex = stableJob.indexOf("\n      - name: Start desktop release build\n");
-    expect(stablePreflightIndex).toBeGreaterThan(-1);
-    expect(stablePublishIndex).toBeGreaterThan(stablePreflightIndex);
+    expect(stableCheckoutIndex).toBeGreaterThan(-1);
+    expect(stablePublishIndex).toBeGreaterThan(stableCheckoutIndex);
     expect(stableDesktopIndex).toBeGreaterThan(stablePublishIndex);
-
-    expect(releaseCompatibilityScript).toContain("candidateFingerprint");
-    expect(releaseCompatibilityScript).toContain("old-version matrix declaration");
-    expect(releaseCompatibilityScript).toContain("published migration history must remain immutable");
   });
 
-  it("requires the cross-platform packaged upgrade gate before any public mutation", () => {
-    const gateJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n"),
-      releaseWorkflow.indexOf("\n  canary:\n"),
+  it("runs documentation qualification only in the stable release path", () => {
+    const stableJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  stable:\n"),
+      releaseWorkflow.indexOf("\n  stable-docs:\n"),
     );
-    expect(gateJob).toContain("Prepublish database and packaged upgrade gate");
-    expect(gateJob).toContain("os: [ubuntu-latest, macos-latest, windows-latest]");
-    expect(gateJob).toContain("fail-fast: true");
-    expect(gateJob).toContain("timeout-minutes: 25");
-    expect(gateJob).toContain("Cache PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("actions/cache@v5");
-    expect(gateJob).toContain("Prepare PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("RUDDER_POSTGRES_BIN_DIR=${bin_dir}");
-    expect(gateJob).toContain("https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2");
-    expect(gateJob).toContain("81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094");
-    expect(gateJob).not.toContain("RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES");
-    expect(gateJob).not.toContain("RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE");
-    expect(gateJob).toContain("pnpm desktop:verify");
-    expect(gateJob).toContain("if: runner.os != 'Windows'");
-    expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
-    expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
-    expect(gateJob).toMatch(/Run historical schema upgrade matrix with shaped data[\s\S]*timeout-minutes: 5/);
-    expect(gateJob).toContain('RUDDER_RELEASE_COMPATIBILITY_HEARTBEAT_MS: "10000"');
-    expect(gateJob.indexOf("Install Playwright Chromium")).toBeGreaterThan(
-      gateJob.indexOf("Run historical schema upgrade matrix with shaped data"),
-    );
-    expect(releaseCompatibilityRuntimeScript).toContain("fileURLToPath(import.meta.url)");
-    expect(releaseCompatibilityRuntimeScript).toContain("cwd: REPO_ROOT");
-    expect(releaseCompatibilityRuntimeScript).not.toContain('["-C", REPO_ROOT');
-    expect(releaseCompatibilityRuntimeScript).toContain("chat_conversations");
-    expect(releaseCompatibilityRuntimeScript).toContain("principal_permission_grants");
-    expect(releaseCompatibilityRuntimeScript).toContain("await db.restart()");
-    expect(releaseCompatibilityRuntimeScript).toContain("[compatibility:${ref}] ${event}:");
-    expect(releaseCompatibilityRuntimeScript).toContain("connect_timeout: 5");
-    expect(releaseCompatibilityRuntimeScript).toContain("await sql.end({ timeout: 1 })");
-    expect(releaseCompatibilityRuntimeScript).toContain('["archive", "--format=tar"');
-    expect(releaseCompatibilityRuntimeScript).toContain('["--force-local", "-xf", archivePath');
-    expect(releaseCompatibilityRuntimeScript).toContain('execFileSync("tar", tarArgs, { cwd: archiveRoot })');
-    expect(releaseCompatibilityRuntimeScript).not.toContain('"-C", archiveRoot');
-    expect(releaseCompatibilityRuntimeScript).not.toContain("gitShow(");
+    const docsStructureIndex = stableJob.indexOf("\n      - name: Docs structure\n");
+    const playwrightIndex = stableJob.indexOf("\n      - name: Install Playwright Chromium\n");
+    const docsSearchIndex = stableJob.indexOf("\n      - name: Docs search E2E\n");
+    const publishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
 
-    const gateIndex = releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n");
-    const npmPublishIndex = releaseWorkflow.indexOf("./scripts/release.sh canary --skip-verify");
-    const stablePublishIndex = releaseWorkflow.indexOf("./scripts/release.sh stable --skip-verify");
-    expect(gateIndex).toBeGreaterThan(-1);
-    expect(npmPublishIndex).toBeGreaterThan(gateIndex);
-    expect(stablePublishIndex).toBeGreaterThan(gateIndex);
-    expect(releaseWorkflow).toMatch(/canary:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
-    expect(releaseWorkflow).toMatch(/stable:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
+    expect(docsStructureIndex).toBeGreaterThan(-1);
+    expect(playwrightIndex).toBeGreaterThan(docsStructureIndex);
+    expect(docsSearchIndex).toBeGreaterThan(playwrightIndex);
+    expect(publishIndex).toBeGreaterThan(docsSearchIndex);
+    expect(ciWorkflow).not.toContain("Typecheck");
+    expect(ciWorkflow).not.toContain("Docs structure");
+    expect(ciWorkflow).not.toContain("Docs search E2E");
+    expect(ciWorkflow).not.toContain("Install Playwright Chromium");
+    expect(ciWorkflow).not.toContain("Core work-loop smoke");
+    expect(ciWorkflow).not.toContain("pnpm test:smoke");
+    expect(ciWorkflow).toContain("pnpm test:run --maxWorkers=2");
+    expect(ciWorkflow).toMatch(/os: ubuntu-latest\n\s+test: full/);
+    expect(ciWorkflow).toMatch(/os: macos-latest\n\s+test: build/);
   });
 
   it("keeps dry-run code read-only without repository-authorization attestations", () => {

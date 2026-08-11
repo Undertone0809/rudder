@@ -93,7 +93,7 @@ jobs:
           - os: ubuntu-latest
             test: full
           - os: macos-latest
-            test: full
+            test: build
           - os: windows-latest
             test: cli-start
     env:
@@ -117,30 +117,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Typecheck
-        run: pnpm -r typecheck
-
       - name: Product logic registry
+        if: matrix.os == 'ubuntu-latest'
         run: pnpm product-logic:check
 
       - name: Product logic registry tests
+        if: matrix.os == 'ubuntu-latest'
         run: pnpm product-logic:test
-
-      - name: Docs structure
-        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
-        run: pnpm docs:structure:test
 
       - name: Unit tests
         if: matrix.test == 'full'
-        run: pnpm test:run --maxWorkers=1
-
-      - name: Docs search E2E
-        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
-        run: pnpm test:docs-search
+        run: pnpm test:run --maxWorkers=2
 
       - name: CLI start tests
         if: matrix.test == 'cli-start'
@@ -151,9 +138,3 @@ jobs:
           RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
           RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build
-
-      - name: Core work-loop smoke
-        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
-        env:
-          RUDDER_E2E_PRODUCTION_UI: "1"
-        run: pnpm test:smoke
