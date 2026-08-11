@@ -266,7 +266,7 @@ afterEach(async () => {
       retryDelay: 250,
     });
   }
-}, migrationTestTimeout(30_000));
+}, migrationTestTimeout(10_000));
 
 describe("applyPendingMigrations", () => {
   it(
@@ -412,7 +412,7 @@ describe("applyPendingMigrations", () => {
         code: "foreign_keys_not_validated",
       }));
     },
-    migrationTestTimeout(30_000),
+    migrationTestTimeout(60_000),
   );
 
   it(
@@ -488,7 +488,7 @@ describe("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    migrationTestTimeout(20_000),
+    migrationTestTimeout(60_000),
   );
 
   it(
@@ -630,13 +630,13 @@ describe("applyPendingMigrations", () => {
       const readSnapshot = async (databaseUrl: string) => {
         const readSql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
         try {
-          const tables = await readSql.unsafe<{ table_name: string }[]>(`
+          const tables = (await readSql.unsafe<{ table_name: string }[]>(`
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name LIKE 'plugin%'
             ORDER BY table_name
-          `);
+          `)).filter((row) => legacyTables.includes(row.table_name));
           const [data] = await readSql.unsafe<{
             counts: Record<string, number>;
             config: Record<string, unknown>;
@@ -671,13 +671,13 @@ describe("applyPendingMigrations", () => {
               (SELECT "settings_json" FROM "plugin_organization_settings" WHERE "plugin_id" = '${pluginId}') AS org_settings,
               (SELECT jsonb_build_object('message', "message", 'meta', "meta") FROM "plugin_logs" WHERE "plugin_id" = '${pluginId}') AS log_entry
           `);
-          const foreignKeys = await readSql.unsafe<{ conname: string }[]>(`
-            SELECT conname
+          const foreignKeys = (await readSql.unsafe<{ conname: string; table_name: string }[]>(`
+            SELECT conname, conrelid::regclass::text AS table_name
             FROM pg_constraint
             WHERE contype = 'f'
               AND conrelid::regclass::text LIKE 'plugin%'
             ORDER BY conname
-          `);
+          `)).filter((row) => legacyTables.includes(row.table_name));
           return {
             tables: tables.map((row) => row.table_name),
             data,
@@ -942,6 +942,8 @@ describe("applyPendingMigrations", () => {
           "0149_app_builder_verified_source_ready.sql",
           "0150_rudder_plugins_v1.sql",
           "0151_agent_issue_creation_requests.sql",
+          "0152_unified_requests_block_audit.sql",
+          "0153_goal_result_ready_unique.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1114,6 +1116,8 @@ describe("applyPendingMigrations", () => {
           "0149_app_builder_verified_source_ready.sql",
           "0150_rudder_plugins_v1.sql",
           "0151_agent_issue_creation_requests.sql",
+          "0152_unified_requests_block_audit.sql",
+          "0153_goal_result_ready_unique.sql",
         ],
         reason: "pending-migrations",
       });

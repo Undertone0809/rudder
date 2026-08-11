@@ -58,7 +58,10 @@ function dependencyLabel(blocker: string) {
   }
 }
 
-function descendantIds(goal: Goal, allGoals: Goal[]) {
+function descendantIds(
+  goal: Pick<Goal, "id">,
+  allGoals: Array<{ id: string; parentId?: string | null }>,
+) {
   const result = new Set<string>();
   const visit = (parentId: string) => {
     for (const child of allGoals) {

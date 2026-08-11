@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveComputerUsePackageTarget } from "./computer-use-package-target.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -48,22 +49,18 @@ async function copyInstalledPackage(packageName, resolveFrom = requireFromDeskto
 }
 
 async function stageComputerUseRuntime(desktopPackage) {
-  if (process.platform !== "darwin") return {};
   const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
-  if (targetArch !== "arm64" && targetArch !== "x64") {
-    throw new Error(`Unsupported macOS Computer Use architecture: ${targetArch}.`);
-  }
+  const target = resolveComputerUsePackageTarget(process.platform, targetArch);
+  if (!target) return {};
 
   const driverSourceRoot = await fs.realpath(path.join(desktopRoot, "node_modules", "@trycua", "cua-driver"));
   const driver = await copyPackageRoot("@trycua/cua-driver", driverSourceRoot);
   const requireFromDriver = createRequire(path.join(driver.sourceRoot, "package.json"));
   await copyInstalledPackage("@ubjs/core", requireFromDriver);
   await copyInstalledPackage("@ubjs/node", requireFromDriver);
-  const nativePackage = `@trycua/cua-driver-darwin-${targetArch}`;
-  const native = await copyInstalledPackage(nativePackage, requireFromDriver);
+  const native = await copyInstalledPackage(target.driverPackage, requireFromDriver);
 
-  const requiredNativeFiles = ["libcua_driver_sdk.dylib", "cua_driver_node_runtime.node"];
-  for (const fileName of requiredNativeFiles) {
+  for (const fileName of target.driverFiles) {
     await fs.access(path.join(native.destinationRoot, fileName));
   }
 

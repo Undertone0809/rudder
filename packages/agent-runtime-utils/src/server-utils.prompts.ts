@@ -26,6 +26,275 @@ Interpret the user's instruction and create exactly one real Rudder Issue. Gener
 
 Carry the project, goal, and parent issue context into the created Issue when it is valid and relevant. The request record is already durable; do not create an Issue for the request itself, do not create duplicates, and do not modify unrelated Issues or files. Do not invent an assignee or notification target. After the single Issue is created, report its identifier and stop.`;
 
+const RUDDER_GOAL_RUNTIME_BOUNDARY = `This is a Rudder product Goal, not a Codex internal goal. Do not call Codex \`create_goal\`, \`update_goal\`, or \`get_goal\` for it; those tools do not manage Rudder Goals. If the Goal packet names an exact managed Rudder tool, call that typed tool directly. Do not load \`rudder-docs\`, inspect skill files, or run discovery commands merely to confirm a tool that the packet already names. If the Rudder Goal context is missing or stale, report the named blocker and request refreshed context instead of using shell, Bash, curl, or the \`rudder\` CLI to retrieve it.
+
+Record meaningful evidence-backed advancement with \`rudder_goal_progress\`; the tool automatically attributes progress to this Run. If evidence shows the Goal contract itself must change, use \`rudder_goal_change_propose\` so a human can review the exact delta; never silently redefine the outcome or boundaries. When the outcome is ready for review, use \`rudder_goal_result_propose\` with the current contract revision and supporting evidence. Do not use shell, Bash, curl, or the \`rudder\` CLI for these actions.
+
+A human must accept every terminal Goal result. A Result Proposal requests acceptance; it does not let the runtime mark, close, or claim the Goal complete.`;
+
+export const GOAL_STARTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A Goal has started and you are responsible for advancing it.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+${RUDDER_GOAL_RUNTIME_BOUNDARY}
+
+## Goal Runtime Context
+
+**Goal:** {{context.goalRuntime.goalTitle}}
+**Goal ID:** {{context.goalRuntime.goalId}}
+
+**Goal outcome:**
+{{context.goalRuntime.goalOutcome}}
+
+**Current contract:**
+{{context.goalRuntime.currentContract}}
+
+**Continuation:**
+{{context.goalRuntime.continuation}}
+
+Advance this Goal from the current contract and continuation. Preserve the stated outcome and contract boundaries; do not silently redefine them.`;
+
+export const GOAL_FEEDBACK_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). New feedback requires your review on a Goal you own.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+${RUDDER_GOAL_RUNTIME_BOUNDARY}
+
+## Goal Runtime Context
+
+**Goal:** {{context.goalRuntime.goalTitle}}
+**Goal ID:** {{context.goalRuntime.goalId}}
+
+**Goal outcome:**
+{{context.goalRuntime.goalOutcome}}
+
+**Current contract:**
+{{context.goalRuntime.currentContract}}
+
+**Continuation:**
+{{context.goalRuntime.continuation}}
+
+## Goal Feedback
+
+**Feedback ID:** {{context.goalRuntime.feedbackId}}
+
+**Feedback body:**
+{{context.goalRuntime.feedbackBody}}
+
+Review the feedback against the current Goal contract, then continue from the recorded continuation. Treat any outcome or contract change as an explicit proposal instead of silently changing the Goal.`;
+
+export const GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A human decided a proposed change to a Goal you own.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+${RUDDER_GOAL_RUNTIME_BOUNDARY}
+
+## Goal Runtime Context
+
+**Goal:** {{context.goalRuntime.goalTitle}}
+**Goal ID:** {{context.goalRuntime.goalId}}
+
+**Goal outcome:**
+{{context.goalRuntime.goalOutcome}}
+
+**Current contract:**
+{{context.goalRuntime.currentContract}}
+
+**Continuation:**
+{{context.goalRuntime.continuation}}
+
+## Goal Change Decision
+
+**Decision:** {{context.goalRuntime.decision}}
+**Decision status:** {{context.goalRuntime.decisionStatus}}
+
+**Decision note:**
+{{context.goalRuntime.decisionNote}}
+
+Continue from the current Goal contract and this human decision. Do not apply a rejected change or silently reinterpret the decision.`;
+
+type GoalWakeKind = "goal_started" | "goal_feedback" | "goal_change_decided";
+
+const GOAL_WAKE_KINDS = new Set<GoalWakeKind>(["goal_started", "goal_feedback", "goal_change_decided"]);
+const GOAL_RUNTIME_PLACEHOLDER_PREFIX = "context.goalRuntime.";
+const GOAL_CONTEXT_PREFIXES = ["", "payload.", "wakePayload.", "wakeup.payload.", "heartbeat.payload."];
+
+function asPromptRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function promptValueAtPath(root: Record<string, unknown>, path: string): unknown {
+  let current: unknown = root;
+  for (const segment of path.split(".")) {
+    const record = asPromptRecord(current);
+    if (!record) return undefined;
+    current = record[segment];
+  }
+  return current;
+}
+
+function hasPromptValue(value: unknown): boolean {
+  return value !== undefined && value !== null && (typeof value !== "string" || value.trim().length > 0);
+}
+
+function firstPromptPath(context: Record<string, unknown>, paths: string[]): string | null {
+  return paths.find((path) => hasPromptValue(promptValueAtPath(context, path))) ?? null;
+}
+
+function prefixedGoalPaths(...suffixes: string[]): string[] {
+  return GOAL_CONTEXT_PREFIXES.flatMap((prefix) =>
+    suffixes.flatMap((suffix) => [`${prefix}goal.${suffix}`, `${prefix}${suffix}`]));
+}
+
+function goalWakeIndicator(value: unknown): GoalWakeKind | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  for (const kind of GOAL_WAKE_KINDS) {
+    if (
+      normalized === kind ||
+      normalized.startsWith(`${kind}_`) ||
+      normalized.endsWith(`_${kind}`) ||
+      normalized.includes(`_${kind}_`)
+    ) {
+      return kind;
+    }
+  }
+  return null;
+}
+
+function detectGoalWakeKind(context: Record<string, unknown>): GoalWakeKind | null {
+  const wakeup = asPromptRecord(context.wakeup);
+  const heartbeat = asPromptRecord(context.heartbeat);
+  const payloads = [
+    asPromptRecord(context.payload),
+    asPromptRecord(context.wakePayload),
+    asPromptRecord(wakeup?.payload),
+    asPromptRecord(heartbeat?.payload),
+  ].filter((value): value is Record<string, unknown> => Boolean(value));
+  const records = [context, wakeup, heartbeat, ...payloads]
+    .filter((value): value is Record<string, unknown> => Boolean(value));
+
+  for (const record of records) {
+    for (const key of ["wakeReason", "wakeSource", "wakeTriggerDetail", "triggerDetail", "reason", "event", "eventType", "type", "kind"]) {
+      const detected = goalWakeIndicator(record[key]);
+      if (detected) return detected;
+    }
+    if (record.goal_started === true || record.goalStarted === true) return "goal_started";
+    if (record.goal_feedback === true || record.goalFeedback === true) return "goal_feedback";
+    if (record.goal_change_decided === true || record.goalChangeDecided === true) return "goal_change_decided";
+  }
+
+  for (const value of [context.payload, context.wakePayload, wakeup?.payload, heartbeat?.payload]) {
+    const detected = goalWakeIndicator(value);
+    if (detected) return detected;
+  }
+  return null;
+}
+
+function promptPlaceholder(path: string | null, fallback: string): string {
+  return path ? `{{context.${path}}}` : fallback;
+}
+
+function continuationPromptValue(context: Record<string, unknown>): string {
+  const kindPath = firstPromptPath(context, prefixedGoalPaths(
+    "goalContinuation.kind",
+    "continuation.kind",
+    "currentContinuation.kind",
+    "continuationKind",
+  ));
+  const summaryPath = firstPromptPath(context, prefixedGoalPaths(
+    "goalContinuation.summary",
+    "continuation.summary",
+    "currentContinuation.summary",
+    "continuationSummary",
+    "nextStepSummary",
+  ));
+  if (kindPath && summaryPath) {
+    return `${promptPlaceholder(kindPath, "")}: ${promptPlaceholder(summaryPath, "")}`;
+  }
+
+  const continuationPath = firstPromptPath(context, prefixedGoalPaths(
+    "goalContinuation",
+    "continuation",
+    "currentContinuation",
+    "nextStep",
+  ));
+  if (continuationPath) return promptPlaceholder(continuationPath, "");
+
+  return promptPlaceholder(
+    summaryPath ?? kindPath,
+    "Not provided in the wake context; report the missing continuation as a named blocker and request refreshed context.",
+  );
+}
+
+function buildGoalPromptTemplate(context: Record<string, unknown>, kind: GoalWakeKind): string {
+  const goalIdPath = firstPromptPath(context, prefixedGoalPaths("id", "goalId"));
+  const goalTitlePath = firstPromptPath(context, prefixedGoalPaths("title", "goalTitle"));
+  const goalOutcomePath = firstPromptPath(context, prefixedGoalPaths(
+    "outcomeStatement",
+    "goalOutcome",
+    "outcome",
+    "currentGoal.summary",
+    "currentContract.outcomeStatement",
+    "contract.outcomeStatement",
+  ));
+  const currentContractPath = firstPromptPath(context, prefixedGoalPaths(
+    "currentContract",
+    "goalContract",
+    "contract",
+  )) ?? firstPromptPath(context, GOAL_CONTEXT_PREFIXES.map((prefix) => `${prefix}goal`));
+  const feedbackIdPath = firstPromptPath(context, prefixedGoalPaths(
+    "feedback.id",
+    "goalFeedback.id",
+    "feedbackId",
+  ));
+  const feedbackBodyPath = firstPromptPath(context, prefixedGoalPaths(
+    "feedback.body",
+    "goalFeedback.body",
+    "feedbackBody",
+    "body",
+  ));
+  const decisionPath = firstPromptPath(context, prefixedGoalPaths("decision.decision", "goalDecision.decision"));
+  const decisionStatusPath = firstPromptPath(context, prefixedGoalPaths("decision.status", "goalDecision.status"));
+  const decisionNotePath = firstPromptPath(context, prefixedGoalPaths("decision.note", "goalDecision.note"));
+  const replacements: Record<string, string> = {
+    goalTitle: promptPlaceholder(goalTitlePath, "Untitled Goal"),
+    goalId: promptPlaceholder(goalIdPath, "Not provided in the wake context"),
+    goalOutcome: promptPlaceholder(
+      goalOutcomePath,
+      "Not provided in the wake context; report the missing outcome as a named blocker and request refreshed context.",
+    ),
+    currentContract: promptPlaceholder(
+      currentContractPath,
+      "Not provided in the wake context; report the missing contract as a named blocker and request refreshed context.",
+    ),
+    continuation: continuationPromptValue(context),
+    feedbackId: promptPlaceholder(
+      feedbackIdPath,
+      "Not provided in the wake context; report the missing feedback id as a named blocker and request refreshed context.",
+    ),
+    feedbackBody: promptPlaceholder(
+      feedbackBodyPath,
+      "Not provided in the wake context; report the missing feedback body as a named blocker and request refreshed context.",
+    ),
+    decision: promptPlaceholder(decisionPath, "Not provided in the wake context"),
+    decisionStatus: promptPlaceholder(decisionStatusPath, "Not provided in the wake context"),
+    decisionNote: promptPlaceholder(decisionNotePath, "No decision note was provided."),
+  };
+
+  let template = kind === "goal_feedback"
+    ? GOAL_FEEDBACK_PROMPT_TEMPLATE
+    : kind === "goal_change_decided"
+      ? GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE
+      : GOAL_STARTED_PROMPT_TEMPLATE;
+  for (const [name, replacement] of Object.entries(replacements)) {
+    template = template.replace(`{{${GOAL_RUNTIME_PLACEHOLDER_PREFIX}${name}}}`, replacement);
+  }
+  return template;
+}
+
 export const COMMENT_TRIGGERED_ISSUE_WAKE_REASONS = new Set([
   "issue_commented",
   "issue_comment_mentioned",
@@ -301,12 +570,11 @@ ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
  *   "This is a recovery run, not a fresh task ..."
  *   Includes original run id, failure metadata, and a continue-preferred instruction to
  *   inspect prior progress/side effects before resuming.
- * - Agent Issue creation:
- *   "A Rudder user explicitly asked you to create one issue in the background."
- *   Includes the authoritative request id, instruction, and validated context.
  * - passive issue follow-up:
  *   "This is a passive issue follow-up, not a fresh assignment ..."
  *   Includes close-out lineage and tells the agent to comment, finish, block, or hand off.
+ * - Goal start / feedback:
+ *   Includes the Goal outcome, current contract, continuation, and triggering feedback when present.
  * - fallback:
  *   Generic "Continue your Rudder work."
  *
@@ -316,9 +584,8 @@ ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
  *  Comment: @agent please check timeout handling in retry path."
  *
  * Reasoning:
- * - Keep backward compatibility: custom configured templates win for ordinary wakes.
- *   The platform-owned Agent Issue creation rail intentionally takes precedence so
- *   a request cannot be changed into an unrelated runtime task by a custom prompt.
+ * - Keep backward compatibility: custom configured templates define the agent persona.
+ * - Keep platform-owned Issue and Goal execution rails attached to custom personas.
  * - Keep first-turn latency low: include the minimum task context directly in prompt text.
  * - Keep behavior deterministic across runtimes: template selection is centralized here.
  *
@@ -332,14 +599,9 @@ export function selectPromptTemplate(
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
-  const agentIssueCreationRequest = context.agentIssueCreationRequest;
-  const agentIssueCreationRequestRecord =
-    typeof agentIssueCreationRequest === "object" &&
-    agentIssueCreationRequest !== null &&
-    !Array.isArray(agentIssueCreationRequest)
-      ? (agentIssueCreationRequest as Record<string, unknown>)
-      : null;
-  const rawAgentIssueCreationRequestId = agentIssueCreationRequestRecord?.id;
+  const goalWakeKind = detectGoalWakeKind(context);
+  const agentIssueCreationRequest = asPromptRecord(context.agentIssueCreationRequest);
+  const rawAgentIssueCreationRequestId = agentIssueCreationRequest?.id;
   const agentIssueCreationRequestId =
     typeof rawAgentIssueCreationRequestId === "string"
       ? rawAgentIssueCreationRequestId.trim()
@@ -384,8 +646,12 @@ export function selectPromptTemplate(
 
   if (hasAgentIssueCreationRequest) return AGENT_ISSUE_CREATION_PROMPT_TEMPLATE;
 
-  // Custom prompt bodies still win, but platform-owned issue execution rails do not.
+  // Custom prompt bodies define the persona, but platform-owned execution rails still apply.
   if (configuredTemplate?.trim()) {
+    if (goalWakeKind) {
+      const goalRuntimeTemplate = buildGoalPromptTemplate(context, goalWakeKind);
+      return `${configuredTemplate}\n\n${goalRuntimeTemplate}`;
+    }
     if (explicitRelationshipRail && !configuredTemplate.includes(explicitRelationshipRail)) {
       return `${configuredTemplate}\n\n${explicitRelationshipRail}`;
     }
@@ -398,6 +664,9 @@ export function selectPromptTemplate(
     return configuredTemplate;
   }
 
+  if (goalWakeKind) {
+    return buildGoalPromptTemplate(context, goalWakeKind);
+  }
   if (isRecovery) {
     if (!hasIssueContext) return RECOVERY_PROMPT_TEMPLATE;
     return reviewerContext ? ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE : ISSUE_RECOVERY_PROMPT_TEMPLATE;
@@ -516,7 +785,7 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "4. Inspect your Rudder inbox. Prioritize reviewer rows in `in_review` or `blocked`, then assignee `in_progress`, then assignee `todo`. Do not look for unassigned work.",
   "5. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so. If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, respond to the comment itself instead of executing the whole issue.",
   "6. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
-  "7. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
+  "7. Complete the real task. When an action fails, investigate and try a bounded materially different recovery path before requesting human help. Before exiting active work, leave exactly one durable signal: progress, done, a blocker claim with the exact human input/action required, explicit handoff, or structured review decision. Rudder audits repeated blocker claims; the first claim does not directly establish a blocked Issue.",
   "8. Treat passive follow-up as issue follow-up, not a fresh assignment.",
   "9. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
   "",

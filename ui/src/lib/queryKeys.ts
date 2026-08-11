@@ -193,6 +193,10 @@ export const queryKeys = {
     detail: (approvalId: string) => ["approvals", "detail", approvalId] as const,
     issues: (approvalId: string) => ["approvals", "issues", approvalId] as const,
   },
+  requests: {
+    list: (orgId: string, status?: string, kind?: string) => ["requests", orgId, status, kind] as const,
+    detail: (requestId: string) => ["requests", "detail", requestId] as const,
+  },
   access: {
     joinRequests: (orgId: string, status: string = "pending_approval") =>
       ["access", "join-requests", orgId, status] as const,

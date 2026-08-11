@@ -36,6 +36,7 @@ const facets: Array<{
 }> = [
   { id: "agent_advancing", label: "Agent advancing", empty: "No Agent-owned next action." },
   { id: "needs_attention", label: "Needs your attention", empty: "Nothing needs your input." },
+  { id: "waiting_focus", label: "Ready for Agent work", empty: "No Goals are ready for Agent work." },
   { id: "waiting_external", label: "Waiting for external result", empty: "No Goals are waiting externally." },
   { id: "ready_for_acceptance", label: "Ready for acceptance", empty: "No results are ready for review." },
 ];
@@ -45,9 +46,10 @@ const historyFacet = { id: "closed" as const, label: "History", empty: "No accep
 const mobileFacetOrder: Record<BoardFacet, number> = {
   ready_for_acceptance: 0,
   needs_attention: 1,
-  waiting_external: 2,
-  agent_advancing: 3,
-  closed: 4,
+  waiting_focus: 2,
+  waiting_external: 3,
+  agent_advancing: 4,
+  closed: 5,
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -69,6 +71,7 @@ function normalizeFacet(value: unknown): BoardFacet | null {
   if (value === "closed") return "closed";
   if (value === "ready_for_acceptance") return value;
   if (value === "needs_attention" || value === "needs_your_attention") return "needs_attention";
+  if (value === "waiting_focus") return value;
   if (value === "waiting_external" || value === "waiting_for_external_result") return "waiting_external";
   return "agent_advancing";
 }
@@ -118,6 +121,7 @@ function FacetLabel({ facet }: { facet: BoardFacet }) {
       "inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium",
       facet === "ready_for_acceptance" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
       facet === "needs_attention" && "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      facet === "waiting_focus" && "border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200",
       facet === "waiting_external" && "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-200",
       facet === "agent_advancing" && "border-border bg-muted/35 text-muted-foreground",
     )}>
@@ -166,8 +170,21 @@ function GoalCard({ card, ownerName, mobile = false }: { card: GoalCardView; own
 export function Goals() {
   const { selectedOrganizationId } = useOrganization();
   const { openNewGoal } = useDialog();
-  const { setBreadcrumbs } = useBreadcrumbs();
+  const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   useEffect(() => setBreadcrumbs([{ label: "Goals" }]), [setBreadcrumbs]);
+  useEffect(() => {
+    if (!selectedOrganizationId) {
+      setHeaderActions(null);
+      return;
+    }
+    setHeaderActions(
+      <Button type="button" size="sm" onClick={() => openNewGoal()} className="shrink-0 px-4">
+        <Plus className="mr-1.5 h-3.5 w-3.5" />
+        New Goal
+      </Button>,
+    );
+    return () => setHeaderActions(null);
+  }, [openNewGoal, selectedOrganizationId, setHeaderActions]);
 
   const workspaceQuery = useQuery({
     queryKey: ["goals", "workspace", selectedOrganizationId],
@@ -196,21 +213,10 @@ export function Goals() {
   if (workspaceQuery.isLoading) return <PageSkeleton variant="list" />;
 
   const ownerNameFor = (card: GoalCardView) => card.ownerName
-    ?? (card.ownerAgentId ? ownerNames.get(card.ownerAgentId) ?? `Agent ${card.ownerAgentId.slice(0, 8)}` : "Unassigned");
+    ?? (card.ownerAgentId ? ownerNames.get(card.ownerAgentId) ?? "Owner unavailable" : "Unassigned");
 
   return (
-    <div className="min-w-0 space-y-4 overflow-x-hidden pb-6">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-lg font-semibold">Goals</h1>
-          <p className="text-sm text-muted-foreground">Work grouped by who or what acts next.</p>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => openNewGoal()} className="shrink-0">
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          New Goal
-        </Button>
-      </div>
-
+    <div className="min-w-0 space-y-4 overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6">
       {workspaceQuery.error ? (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
           <span>{workspaceQuery.error.message}</span>
@@ -222,7 +228,7 @@ export function Goals() {
         <EmptyState icon={Target} message="No Goals yet." action="New Goal" onAction={() => openNewGoal()} />
       ) : (
         <>
-          <div data-testid="goal-derived-board" className="hidden min-w-0 grid-cols-2 gap-3 md:grid lg:grid-cols-4">
+          <div data-testid="goal-derived-board" className="hidden min-w-0 grid-cols-2 gap-3 md:grid xl:grid-cols-5">
             {facets.map((facet) => {
               const facetCards = cards.filter((card) => card.facet === facet.id);
               return (

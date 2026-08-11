@@ -3,6 +3,7 @@ import { AGENT_CLI_CAPABILITIES } from "./agent-v1-capabilities.js";
 
 export type AgentCliCapabilityCategory =
   | "agent"
+  | "goal"
   | "issue"
   | "project"
   | "automation"
@@ -67,6 +68,7 @@ export type AgentV1McpSurface = "core" | "browser" | "all";
 
 const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   agent: "Agent",
+  goal: "Goal",
   issue: "Issue",
   project: "Project",
   automation: "Automation",
@@ -228,7 +230,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "- progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`",
     "- done: `rudder issue done <issue> --comment-file <path> [--image <path>]`",
-    "- blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`",
+    "- assistance/block audit: `rudder issue block <issue> --comment-file <path> [--image <path>]`",
     "",
     "Issue comment and close-out commands accept comment bodies only from files or stdin. For multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.",
     "",

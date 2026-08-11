@@ -20,6 +20,7 @@ import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
 import { formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
+import { CommentComposer } from "./CommentComposer";
 import { commentThreadTranscriptRuns, type LinkedRunItem } from "./CommentThread.runs";
 import { useCommentSubmit } from "./CommentThread.submit";
 import { Identity } from "./Identity";
@@ -36,9 +37,6 @@ const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markd
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
 const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
 const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-const MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX = 30;
-const MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX = 160;
-const MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO = 0.24;
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -80,6 +78,7 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
   fixedComposerTimelineScroll?: boolean;
+  composerReplacement?: ReactNode;
   timelineScrollElementRef?: RefObject<HTMLElement | null>;
 }
 
@@ -105,21 +104,6 @@ function saveDraft(draftKey: string, value: string) {
   } catch {
     // Ignore localStorage failures.
   }
-}
-
-function shouldForwardComposerFocus(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  return !target.closest([
-    "a",
-    "button",
-    "input",
-    "textarea",
-    "select",
-    "[contenteditable='true']",
-    "[role='button']",
-    "[role='menuitem']",
-    "[data-chat-composer-menu-item]",
-  ].join(","));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1028,19 +1012,17 @@ export function CommentThread({
   escapeBackWhenEmpty = false,
   fixedComposer = false,
   fixedComposerTimelineScroll = true,
+  composerReplacement,
   timelineScrollElementRef,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
-  const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
   const [reserveHashScrollEndSpace, setReserveHashScrollEndSpace] = useState(false);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const [composerEditorScrollElement, setComposerEditorScrollElement] = useState<HTMLDivElement | null>(null);
-  const attachInputRef = useRef<HTMLInputElement | null>(null);
   const internalTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTimelineScrollRef = timelineScrollElementRef
     ?? (fixedComposer && fixedComposerTimelineScroll ? internalTimelineScrollRef : undefined);
@@ -1055,57 +1037,6 @@ export function CommentThread({
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
   const commentPlaceholder = translateLegacyString(locale, "Leave a comment...");
-
-  useEffect(() => {
-    const scrollElement = composerEditorScrollElement;
-    if (!scrollElement || typeof ResizeObserver === "undefined") return;
-
-    let animationFrame: number | null = null;
-    let observedContent: HTMLElement | null = null;
-
-    const syncHeight = () => {
-      if (!observedContent) return;
-      const maxHeight = Math.min(
-        window.innerHeight * MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO,
-        MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX,
-      );
-      const nextHeight = Math.max(
-        MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX,
-        Math.min(Math.ceil(observedContent.scrollHeight), maxHeight),
-      );
-      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-      animationFrame = requestAnimationFrame(() => {
-        scrollElement.style.setProperty("--comment-composer-editor-height", `${nextHeight}px`);
-        animationFrame = null;
-      });
-    };
-
-    const resizeObserver = new ResizeObserver(syncHeight);
-    const observeEditorContent = () => {
-      const nextContent = scrollElement.querySelector<HTMLElement>(
-        ".rudder-milkdown-content, .rudder-mdxeditor-content, .rudder-codemirror-markdown-content",
-      );
-      if (nextContent === observedContent) return;
-      resizeObserver.disconnect();
-      observedContent = nextContent;
-      if (observedContent) {
-        resizeObserver.observe(observedContent);
-        syncHeight();
-      }
-    };
-
-    const mutationObserver = new MutationObserver(observeEditorContent);
-    mutationObserver.observe(scrollElement, { childList: true, subtree: true });
-    window.addEventListener("resize", syncHeight, { passive: true });
-    observeEditorContent();
-
-    return () => {
-      mutationObserver.disconnect();
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", syncHeight);
-      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-    };
-  }, [composerEditorScrollElement]);
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
@@ -1413,43 +1344,6 @@ export function CommentThread({
     setReserveHashScrollEndSpace(false);
   }, [location.hash, location.key, scrollToComment]);
 
-  async function handleAttachFile(evt: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(evt.target.files ?? []);
-    if (files.length === 0) return;
-    setAttaching(true);
-    try {
-      if (imageUploadHandler) {
-        const snippets: string[] = [];
-        for (const file of files) {
-          const url = await imageUploadHandler(file);
-          const safeName = file.name.replace(/[[\]]/g, "\\$&");
-          snippets.push(file.type.startsWith("image/")
-            ? `![${safeName}](${url})`
-            : `[${safeName}](${url})`);
-        }
-        const markdown = snippets.join("\n\n");
-        setBody((prev) => {
-          const nextBody = prev ? `${prev}\n\n${markdown}` : markdown;
-          if (draftKey) saveDraft(draftKey, nextBody);
-          return nextBody;
-        });
-      } else if (onAttachImage) {
-        for (const file of files) {
-          await onAttachImage(file);
-        }
-      }
-    } finally {
-      setAttaching(false);
-      if (attachInputRef.current) attachInputRef.current.value = "";
-    }
-  }
-
-  const focusComposerEditor = (event: MouseEvent<HTMLDivElement>) => {
-    if (!shouldForwardComposerFocus(event.target)) return;
-    event.preventDefault();
-    editorRef.current?.focus();
-  };
-
   const timelineNode = (
     <TimelineList
       timeline={timeline}
@@ -1478,101 +1372,48 @@ export function CommentThread({
   );
 
   const composerNode = (
-    <div
-      ref={composerSurfaceRef}
-      aria-label="Comment composer"
-      className="chat-composer grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-end gap-x-1.5 rounded-[var(--radius-lg)] p-2 md:block md:p-3"
-      data-composer-state={body.trim() ? "composing" : "empty"}
-      data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
-      onMouseDown={focusComposerEditor}
-      tabIndex={-1}
-    >
-      <div
-        ref={setComposerEditorScrollElement}
-        data-testid="issue-comment-composer-editor-scroll"
-        className="motion-comment-composer-height scrollbar-auto-hide relative col-start-2 row-start-1 h-[var(--comment-composer-editor-height)] min-w-0 max-h-[min(24dvh,10rem)] overflow-y-auto overscroll-contain pr-1 md:h-auto md:max-h-[min(38dvh,22rem)]"
-        style={{ "--comment-composer-editor-height": "1.875rem" } as CSSProperties}
-      >
-        {!body.trim() ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-start pt-px text-sm text-muted-foreground md:hidden"
-          >
-            {commentPlaceholder}
-          </span>
-        ) : null}
-        <MarkdownEditor
-          ref={editorRef}
-          engine="milkdown"
-          value={body}
-          onChange={updateBody}
-          placeholder={commentPlaceholder}
-          mentions={mentions}
-          agentMentionIntent="wake"
-          onMentionQueryChange={onMentionQueryChange}
-          mentionMenuAnchorRef={composerSurfaceRef}
-          mentionMenuPlacement="container"
-          onSubmit={() => handleSubmit()}
-          imageUploadHandler={imageUploadHandler}
-          className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-7 bg-transparent text-sm leading-6 text-foreground md:min-h-16"
-          bordered={false}
-        />
-      </div>
-      <div className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3">
-        {(imageUploadHandler || onAttachImage) && (
-          <div className="col-start-1 row-start-1 flex items-center self-end md:mr-auto md:gap-3">
-            <input
-              ref={attachInputRef}
-              type="file"
-              accept={COMMENT_ATTACHMENT_ACCEPT}
-              multiple
-              className="hidden"
-              onChange={handleAttachFile}
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => attachInputRef.current?.click()}
-              disabled={attaching}
-              title="Attach file"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-        {canReopen ? (
-          <label className="col-span-3 row-start-2 mt-2 flex cursor-pointer select-none items-center gap-1.5 justify-self-end text-xs text-muted-foreground md:mt-0">
-            <input
-              type="checkbox"
-              checked={reopen}
-              onChange={(e) => setReopen(e.target.checked)}
-              className="rounded border-border"
-            />
-            Re-open
-          </label>
-        ) : null}
-        <div className="col-start-3 row-start-1 flex items-center gap-1.5 self-end">
-          {steerRunId ? (
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="issue-comment-steer"
-              disabled={!canSubmit}
-              onClick={() => handleSubmit("steer")}
-              title="Interrupt the active run and continue with this feedback"
-            >
-              <CornerDownRight className="mr-1.5 h-3.5 w-3.5" />
-              Steer
-            </Button>
-          ) : null}
-          <Button size="sm" disabled={!canSubmit} onClick={() => handleSubmit()}>
-            {submitting ? "Posting..." : "Comment"}
-          </Button>
-        </div>
-      </div>
-    </div>
+    <CommentComposer
+      body={body}
+      onBodyChange={updateBody}
+      onSubmit={() => handleSubmit()}
+      canSubmit={canSubmit}
+      submitting={submitting}
+      editorRef={editorRef}
+      surfaceRef={composerSurfaceRef}
+      placeholder={commentPlaceholder}
+      mentions={mentions}
+      onMentionQueryChange={onMentionQueryChange}
+      imageUploadHandler={imageUploadHandler}
+      onAttachFile={onAttachImage}
+      attachmentAccept={COMMENT_ATTACHMENT_ACCEPT}
+      escapeBackWhenEmpty={escapeBackWhenEmpty}
+      beforeSubmit={canReopen ? (
+        <label className="col-span-3 row-start-2 mt-2 flex cursor-pointer select-none items-center gap-1.5 justify-self-end text-xs text-muted-foreground md:mt-0">
+          <input
+            type="checkbox"
+            checked={reopen}
+            onChange={(event) => setReopen(event.target.checked)}
+            className="rounded border-border"
+          />
+          Re-open
+        </label>
+      ) : null}
+      secondaryAction={steerRunId ? (
+        <Button
+          size="sm"
+          variant="outline"
+          data-testid="issue-comment-steer"
+          disabled={!canSubmit}
+          onClick={() => handleSubmit("steer")}
+          title="Interrupt the active run and continue with this feedback"
+        >
+          <CornerDownRight className="mr-1.5 h-3.5 w-3.5" />
+          Steer
+        </Button>
+      ) : null}
+    />
   );
+  const activeComposerNode = composerReplacement ?? composerNode;
 
   if (fixedComposer) {
     if (!fixedComposerTimelineScroll) {
@@ -1593,7 +1434,7 @@ export function CommentThread({
             className="comment-thread-fixed-composer sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 shrink-0 px-4 pb-4 pt-1 md:bottom-0"
             data-testid="comment-thread-fixed-composer"
           >
-            {composerNode}
+            {activeComposerNode}
           </div>
         </div>
       );
@@ -1620,7 +1461,7 @@ export function CommentThread({
           className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 px-4 pb-4 pt-3"
           data-testid="comment-thread-fixed-composer"
         >
-          {composerNode}
+          {activeComposerNode}
         </div>
       </div>
     );
@@ -1636,7 +1477,7 @@ export function CommentThread({
 
       {liveRunSlot}
 
-      {composerNode}
+      {activeComposerNode}
     </div>
   );
 }

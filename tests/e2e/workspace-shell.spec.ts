@@ -975,7 +975,7 @@ test.describe("Workspace shell", () => {
     await expect(sidebar.getByRole("link", { name: "Library" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
-    await expect(sidebar.getByRole("link", { name: "Goals" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Goals" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Skills" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Costs" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Activity" })).toBeVisible();
@@ -1515,7 +1515,11 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
   });
 
-  test("renders goals inside the org workspace shell", async ({ page }, testInfo) => {
+  test("renders Goals from the primary rail without an organization context sidebar", async ({ page }, testInfo) => {
+    const goalsSetting = await page.request.patch("/api/instance/settings/general", {
+      data: { experimentalGoalsEnabled: true },
+    });
+    expect(goalsSetting.ok()).toBe(true);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Goals-${Date.now()}`,
@@ -1527,23 +1531,26 @@ test.describe("Workspace shell", () => {
     await gotoOrganizationPath(page, organization, "/goals");
 
     const shell = page.getByTestId("workspace-shell");
-    const sidebar = page.getByTestId("workspace-sidebar");
-    const contextCard = page.getByTestId("workspace-context-card");
     const mainCard = page.getByTestId("workspace-main-card");
+    const primaryRailGoal = page.getByTestId("primary-rail").getByRole("link", { name: "Goals", exact: true });
 
     await expect(shell).toBeVisible();
-    await expect(sidebar).toBeVisible();
-    await expect(contextCard).toBeVisible();
     await expect(mainCard).toBeVisible();
     await expect(page.getByRole("heading", { name: "Goals" })).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Goals" })).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Goals" })).toHaveClass(/font-medium/);
-    await expectDualCardWorkspace(page);
+    await expect(primaryRailGoal).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("workspace-sidebar")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
+    await expectBackdropOnlyShell(page);
 
     await page.screenshot({
       path: testInfo.outputPath("workspace-shell-goals.png"),
       fullPage: true,
     });
+
+    const resetGoalsSetting = await page.request.patch("/api/instance/settings/general", {
+      data: { experimentalGoalsEnabled: false },
+    });
+    expect(resetGoalsSetting.ok()).toBe(true);
   });
 
   test("renders compact, status-tinted issue board lanes", async ({ page }, testInfo) => {

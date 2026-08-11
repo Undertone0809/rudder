@@ -29,7 +29,6 @@
         "packages/agent-runtime-utils/src/index.ts",
         "packages/agent-runtime-utils/src/git-identity.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
-        "packages/agent-runtime-utils/src/rudder-mcp-protocol.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-server.ts",
         "packages/agent-runtime-utils/src/server-utils.ts"
@@ -42,7 +41,6 @@
         "@rudderhq/agent-runtime-utils": "packages/agent-runtime-utils/src/index.ts",
         "@rudderhq/agent-runtime-utils/git-identity": "packages/agent-runtime-utils/src/git-identity.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint": "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
-        "@rudderhq/agent-runtime-utils/rudder-mcp-protocol": "packages/agent-runtime-utils/src/rudder-mcp-protocol.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-preflight": "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-server": "packages/agent-runtime-utils/src/rudder-mcp-server.ts",
         "@rudderhq/agent-runtime-utils/server-utils": "packages/agent-runtime-utils/src/server-utils.ts"

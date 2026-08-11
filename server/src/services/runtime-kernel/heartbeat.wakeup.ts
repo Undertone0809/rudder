@@ -2,10 +2,11 @@
 import {
   agents,
   agentWakeupRequests,
+  goals,
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -41,6 +42,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
       triggerDetail,
       payload,
     });
+    const goalContext = enrichedContextSnapshot.goal && typeof enrichedContextSnapshot.goal === "object"
+      ? enrichedContextSnapshot.goal as Record<string, unknown>
+      : null;
+    const goalId = readNonEmptyString(enrichedContextSnapshot.goalId)
+      ?? readNonEmptyString(goalContext?.id)
+      ?? readNonEmptyString(payload?.goalId);
+    const isGoalWake = Boolean(
+      existingWakeupRequestId
+      && goalId
+      && ["goal_started", "goal_feedback", "goal_change_decided"].includes(reason ?? ""),
+    );
     heartbeatSessions.writeSessionReuseSuppression(
       enrichedContextSnapshot,
       heartbeatSessions.readSessionReuseSuppression(enrichedContextSnapshot),
@@ -214,8 +226,59 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }).onConflictDoNothing();
     };
 
+    const deferGoalRequest = async (
+      status: "deferred_goal_focus" | "deferred_goal_blocked",
+      blockReason: string,
+    ) => {
+      if (!isGoalWake || !existingWakeupRequestId) return false;
+      await setWakeupStatus(existingWakeupRequestId, status, {
+        reason,
+        payload: buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId),
+        finishedAt: null,
+        runId: null,
+        claimedAt: null,
+        error: blockReason,
+      });
+      return true;
+    };
+
+    if (isGoalWake && goalId) {
+      const focusedGoal = await db.select({ id: goals.id }).from(goals).where(and(
+        eq(goals.orgId, agent.orgId),
+        eq(goals.lifecycle, "active"),
+        eq(goals.focus, true),
+      )).limit(1).then((rows) => rows[0] ?? null);
+      if (focusedGoal && focusedGoal.id !== goalId) {
+        await deferGoalRequest("deferred_goal_focus", "goal.focused_elsewhere");
+        return null;
+      }
+    }
+
     if (agent.status === "terminated" || agent.status === "pending_approval") {
+      if (await deferGoalRequest("deferred_goal_blocked", "agent.unavailable")) return null;
+      if (existingWakeupRequestId) await writeSkippedRequest("agent.unavailable");
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
+    }
+
+    const expectedAssigneeAgentId = readNonEmptyString(payload?.expectedAssigneeAgentId);
+    const expectedIssueStatus = readNonEmptyString(payload?.expectedIssueStatus);
+    if (issueId && (expectedAssigneeAgentId || expectedIssueStatus)) {
+      const currentIssue = await db
+        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+        .then((rows) => rows[0] ?? null);
+      const skipReason = !currentIssue
+        ? "issue_execution_issue_not_found"
+        : expectedAssigneeAgentId && currentIssue.assigneeAgentId !== expectedAssigneeAgentId
+          ? "issue_assignee_changed"
+          : expectedIssueStatus && currentIssue.status !== expectedIssueStatus
+            ? "issue_status_changed"
+            : null;
+      if (skipReason) {
+        await writeSkippedRequest(skipReason);
+        return null;
+      }
     }
 
     let projectId = readNonEmptyString(enrichedContextSnapshot.projectId);
@@ -232,6 +295,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       projectId,
     });
     if (budgetBlock) {
+      if (await deferGoalRequest("deferred_goal_blocked", "budget.blocked")) return null;
       await writeSkippedRequest("budget.blocked");
       throw conflict(budgetBlock.reason, {
         scopeType: budgetBlock.scopeType,
@@ -317,6 +381,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return null;
     }
     if (source !== "timer" && !policy.wakeOnDemand) {
+      if (await deferGoalRequest("deferred_goal_blocked", "heartbeat.wakeOnDemand.disabled")) return null;
       await writeSkippedRequest("heartbeat.wakeOnDemand.disabled");
       return null;
     }
@@ -914,6 +979,28 @@ export function createHeartbeatWakeupHandlers(context: any) {
       .limit(25);
 
     for (const pendingWakeup of pendingWakeups) {
+      const linkedRun = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.wakeupRequestId, pendingWakeup.id),
+          eq(heartbeatRuns.orgId, agent.orgId),
+          eq(heartbeatRuns.agentId, agent.id),
+          inArray(heartbeatRuns.status, ["queued", "running"]),
+        ))
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (linkedRun) {
+        await updateWakeupRequestRecord(db, pendingWakeup.id, {
+          status: "queued",
+          runId: linkedRun.id,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+        continue;
+      }
       const pendingPayload = readDeferredWakePayload(pendingWakeup.payload);
       const pendingContext = readDeferredWakeContext(pendingWakeup.payload);
       const pendingIssueId =
@@ -1132,5 +1219,22 @@ export function createHeartbeatWakeupHandlers(context: any) {
     return null;
   }
 
-  return { enqueueWakeup };
+  async function recoverPendingWakeups() {
+    const pendingAgents = await db
+      .select({ agentId: agentWakeupRequests.agentId })
+      .from(agentWakeupRequests)
+      .leftJoin(heartbeatRuns, eq(heartbeatRuns.wakeupRequestId, agentWakeupRequests.id))
+      .where(and(
+        inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+        sql`${agentWakeupRequests.runId} is null`,
+        isNull(heartbeatRuns.id),
+        lte(agentWakeupRequests.requestedAt, new Date()),
+      ));
+    for (const agentId of [...new Set(pendingAgents.map((row) => row.agentId))]) {
+      const agent = await getAgent(agentId);
+      if (agent) await recoverPendingWakeupForTimer(agent);
+    }
+  }
+
+  return { enqueueWakeup, recoverPendingWakeups };
 }

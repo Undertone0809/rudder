@@ -80,7 +80,7 @@ Sensitive data includes contact information, personal or professional details, p
 Transmission includes messages, forms, posts, uploads, document sharing, access changes, typing sensitive data into a form, and visiting a URL that embeds sensitive data. Obtain informed, narrow, specific consent before transmission unless the initial prompt already grants it.`;
 
 export const COMPUTER_USE_ACTIONS = [
-  "list_apps", "list_windows", "get_app_state", "click", "drag", "type_text",
+  "list_apps", "launch_app", "list_windows", "get_app_state", "click", "drag", "type_text",
   "press_key", "scroll", "set_value", "select_text", "perform_secondary_action", "stop",
 ] as const;
 
@@ -128,6 +128,14 @@ const tool = (
 
 export const COMPUTER_USE_MCP_TOOLS: readonly ComputerUseMcpTool[] = [
   tool("list_apps", "List running macOS applications. Use this to identify the exact target before observing it.", objectSchema({})),
+  tool("launch_app", "Launch an installed application without taking focus. Use the returned pid and window ID to observe it directly.", {
+    ...objectSchema({
+      name: { type: "string", description: "Exact installed application name." },
+      bundleId: { type: "string", description: "Exact application bundle identifier." },
+      newInstance: { type: "boolean", description: "Request a separate application instance when the platform supports it." },
+    }),
+    anyOf: [{ required: ["name"] }, { required: ["bundleId"] }],
+  }),
   tool("list_windows", "List windows for a running application.", objectSchema({
     ...targetProperties,
     onScreenOnly: { type: "boolean" },
@@ -244,6 +252,14 @@ const observationTargetSchema = z.object({
 
 export const computerUseActionSchemas = {
   list_apps: z.object({}).strict(),
+  launch_app: z.object({
+    name: z.string().trim().min(1).max(300).optional(),
+    bundleId: z.string().trim().min(1).max(300).optional(),
+    newInstance: z.boolean().optional(),
+  }).strict().refine(
+    (value) => value.name !== undefined || value.bundleId !== undefined,
+    { message: "Launch app requires a name or bundle ID." },
+  ),
   list_windows: appTargetSchema.extend({ onScreenOnly: z.boolean().optional() }).strict(),
   get_app_state: appTargetSchema.extend({
     includeScreenshot: z.boolean().optional(),

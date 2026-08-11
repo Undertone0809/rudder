@@ -89,6 +89,7 @@ export function BreadcrumbBar({
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isIssueDetailRoute = useMemo(() => /^\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isMessengerIssueDetailRoute = useMemo(() => /^\/messenger\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
+  const isGoalDetailRoute = useMemo(() => /^\/goals\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isAutomationDetailRoute = useMemo(() => /^\/automations\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
   const isPrimaryRailPage = useMemo(
@@ -302,7 +303,8 @@ export function BreadcrumbBar({
 
   if (threeColumnTitle) {
     const showIssueDetailBreadcrumbs = ((isIssuesRoute && isIssueDetailRoute) || isMessengerIssueDetailRoute) && breadcrumbs.length > 1;
-    const showPrimaryDetailBreadcrumbs = showIssueDetailBreadcrumbs || (isAutomationDetailRoute && breadcrumbs.length > 1);
+    const showPrimaryDetailBreadcrumbs = showIssueDetailBreadcrumbs
+      || ((isGoalDetailRoute || isAutomationDetailRoute) && breadcrumbs.length > 1);
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
     const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);

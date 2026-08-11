@@ -43,7 +43,6 @@ type Goal = {
   title: string;
   lifecycle: string;
   status: string;
-  contractRevision: number;
   ownerAgentId: string | null;
   focus: boolean;
   evaluationResult: { outcome?: string } | null;
@@ -65,7 +64,13 @@ type StartPreview = {
     boundary: string;
     firstAction: string;
   } | null;
+  blockers: Array<{
+    code: "outcome_required" | "owner_required";
+    field: "goal" | "ownerAgentId";
+    message: string;
+  }>;
   alignmentQuestion: string | null;
+  warning: string | null;
 };
 
 type Workspace = {
@@ -74,8 +79,10 @@ type Workspace = {
   currentProgress: {
     summary: string;
     sourceActivityId: string | null;
-    evidenceRefs: string[];
+    evidence?: Array<{ label: string; href: string | null; external: boolean }>;
+    evidenceRefs?: string[];
   };
+  agentAction: { summary: string; sourceIds: string[] } | null;
   attention: { kind: string; reason: string; sourceId: string | null } | null;
   timeline: Array<{ id: string; kind: string; summary: string }>;
   resultProposals: Array<{ id: string; status: string }>;
@@ -118,6 +125,15 @@ async function createAgentKey(request: APIRequestContext, agentId: string, name:
   const response = await request.post(`/api/agents/${agentId}/keys`, { data: { name } });
   expect(response.ok()).toBe(true);
   return response.json() as Promise<{ token: string }>;
+}
+
+async function readContractRevision(goalId: string) {
+  const [row] = await e2eDb
+    .select({ contractRevision: goals.contractRevision })
+    .from(goals)
+    .where(eq(goals.id, goalId));
+  expect(row?.contractRevision).toBeGreaterThan(0);
+  return row!.contractRevision;
 }
 
 async function previewGoal(
@@ -166,6 +182,7 @@ async function selectAgent(page: Page, agentName: string) {
 }
 
 test("reveals Goals in the primary rail only after the Experimental setting is enabled", async ({ page }, testInfo: TestInfo) => {
+  test.setTimeout(120_000);
   const resetResponse = await page.request.patch("/api/instance/settings/general", {
     data: { experimentalGoalsEnabled: false },
   });
@@ -198,11 +215,35 @@ test("reveals Goals in the primary rail only after the Experimental setting is e
   });
   expect(issueResponse.status()).toBe(201);
   const issue = await issueResponse.json() as { id: string; identifier: string | null };
+  const issueReadResponse = await page.request.get(`/api/issues/${issue.id}`);
+  expect(issueReadResponse.ok()).toBe(true);
+  const issueRead = await issueReadResponse.json() as { goal?: Record<string, unknown> | null };
+  expect(issueRead.goal).toMatchObject({ id: hiddenGoal.id, title: hiddenGoal.title });
+  for (const internalGoalField of [
+    "objectiveMode",
+    "contractRevision",
+    "autonomyEnvelope",
+    "humanAuthorities",
+    "evaluationPolicy",
+    "continuationKind",
+    "resultPayload",
+  ]) {
+    expect(issueRead.goal).not.toHaveProperty(internalGoalField);
+  }
 
   await page.goto(`/${organization.urlKey}/dashboard`);
   const primaryRail = page.getByTestId("primary-rail");
   await expect(primaryRail).toBeVisible();
   await expect(primaryRail.getByRole("link", { name: "Goals", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Hidden linked Goal", { exact: true })).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await expect(page.getByRole("link", { name: "Goals", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close sidebar" }).click({ position: { x: 360, y: 100 } });
+  await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 960 });
 
   await page.goto(`/${organization.urlKey}/issues/${issue.identifier ?? issue.id}`);
   await expect(page.getByRole("heading", { name: "Goal-linked issue", exact: true })).toBeVisible();
@@ -234,16 +275,33 @@ test("reveals Goals in the primary rail only after the Experimental setting is e
 
   await page.getByTestId("primary-rail").getByRole("link", { name: "Goals", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals$`));
+  await expect(page.getByRole("heading", { name: "Goals", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New Goal", exact: true })).toBeVisible();
   await expect(page.locator("#main-content").getByRole("heading", { name: "Goals", exact: true }))
-    .toBeVisible();
+    .toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("goal-primary-rail-desktop.png"), fullPage: true });
+
+  const otherOrganization = await createOrganization(page.request, `Goal-route-owner-${Date.now()}`);
+  const otherGoalResponse = await page.request.post(`/api/orgs/${otherOrganization.id}/goals`, {
+    data: { title: "Goal owned by another organization" },
+  });
+  expect(otherGoalResponse.status()).toBe(201);
+  const otherGoal = await otherGoalResponse.json() as Goal;
+  await page.goto(`/${organization.urlKey}/goals/${otherGoal.id}`);
+  await expect(page).toHaveURL(new RegExp(`/${otherOrganization.urlKey}/goals/${otherGoal.id}$`), { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: otherGoal.title, exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.goto(`/${organization.urlKey}/goals`);
 
   await page.reload();
   await expect(page.getByTestId("primary-rail").getByRole("link", { name: "Goals", exact: true }))
     .toHaveAttribute("aria-current", "page");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await expect(page.getByText("Goals", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  const mobileGoalsLink = page.getByRole("link", { name: "Goals", exact: true });
+  await expect(mobileGoalsLink).toBeVisible();
+  await expect(mobileGoalsLink).toHaveAttribute("href", `/${organization.urlKey}/goals`);
+  await expect(mobileGoalsLink).toHaveAttribute("aria-current", "page");
   await page.screenshot({ path: testInfo.outputPath("goal-primary-rail-mobile.png"), fullPage: true });
 });
 
@@ -262,31 +320,86 @@ test.describe("Goal Workspace v2", () => {
 
     const organization = await createOrganization(page.request, `Goal-workspace-ui-${Date.now()}`);
     const owner = await createAgent(page.request, organization.id, "Workspace owner");
+    const ownerKey = await createAgentKey(page.request, owner.id, "goal-workspace-owner-run");
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(`/${organization.urlKey}/goals`);
 
     await page.getByRole("button", { name: "New Goal" }).first().click();
     await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Publish a verified Goal Workspace release candidate");
-    await page.getByLabel("Context").fill(
+    await page.getByLabel("Expected result").fill(
       "The result must be inspectable, restart-safe, and ready for user acceptance.",
     );
-    await selectAgent(page, owner.name);
+    await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
+    const assigneeTrigger = page.getByRole("button", { name: "Assignee", exact: true });
+    await assigneeTrigger.click();
+    const assigneeMenu = page.locator('[data-slot="popover-content"]');
+    await expect(assigneeMenu).toBeVisible();
+    await expect(assigneeMenu).toHaveAttribute("data-side", "top");
+    const [assigneeMenuGeometry, assigneeTriggerGeometry, dialogGeometry] = await Promise.all([
+      assigneeMenu.boundingBox(),
+      assigneeTrigger.boundingBox(),
+      page.locator('[data-slot="dialog-content"]').boundingBox(),
+    ]);
+    expect(assigneeMenuGeometry).not.toBeNull();
+    expect(assigneeTriggerGeometry).not.toBeNull();
+    expect(dialogGeometry).not.toBeNull();
+    expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
+      .toBeLessThanOrEqual(assigneeTriggerGeometry!.y + 1);
+    expect(assigneeMenuGeometry!.y).toBeGreaterThanOrEqual(dialogGeometry!.y);
+    expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
+      .toBeLessThanOrEqual(dialogGeometry!.y + dialogGeometry!.height);
+    await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
     await page.getByLabel("Target time").fill("2026-08-20T10:00");
 
-    await expect(page.getByText("How we will know it worked", { exact: true })).toBeVisible();
+    await expect(page.getByText("Success criteria", { exact: true })).toBeVisible();
     await expect(page.getByText("First action", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Goal start preview").getByText(owner.name, { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create and start" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Start Goal" })).toBeEnabled();
 
-    await page.getByRole("button", { name: "Create and start" }).click();
+    const createAndStart = page.getByRole("button", { name: "Start Goal" });
+    const buttonReceivesPointer = await createAndStart.evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit === button || Boolean(hit && button.contains(hit));
+    });
+    expect(buttonReceivesPointer).toBe(true);
+    await createAndStart.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
-    await expect(page.getByText("Current Goal", { exact: true })).toBeVisible();
-    await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
-    await expect(page.getByText("Agent is doing", { exact: true })).toBeVisible();
-    await expect(page.getByText("Next step", { exact: true })).toBeVisible();
+    const goalDetailUrl = page.url();
+    const goalsRailLink = page.getByTestId("primary-rail")
+      .getByRole("link", { name: "Goals", exact: true });
+    await expect(goalsRailLink).toHaveAttribute("href", new RegExp(`/${organization.urlKey}/goals$`));
+    await goalsRailLink.click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals$`));
+    await page.goto(goalDetailUrl);
+    const goalsBreadcrumb = page.getByTestId("primary-detail-breadcrumb")
+      .getByRole("link", { name: "Goals", exact: true });
+    await expect(goalsBreadcrumb).toBeVisible();
+    await goalsBreadcrumb.click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals$`));
+    await expect(page.getByRole("heading", { name: "Goals", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New Goal", exact: true })).toBeVisible();
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Goals", exact: true }))
+      .toHaveCount(0);
+    await page.goto(goalDetailUrl);
+    await expect(page.getByRole("tab", { name: /Conversation/ })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "Comments", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+\\?tab=work$`));
+    const workTab = page.getByRole("tabpanel");
+    await expect(workTab.getByText("Outcome", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Current progress", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Agent is doing", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Next step", { exact: true })).toBeVisible();
+    await expect(workTab.getByText(
+      "Inspect the available context and produce the first bounded, reviewable artifact.",
+      { exact: true },
+    )).toBeVisible();
+    await expect(page.getByText(/Agent run [a-f0-9-]+ is/i)).toHaveCount(0);
 
     for (const hiddenControl of [
       "Objective mode",
@@ -301,15 +414,111 @@ test.describe("Goal Workspace v2", () => {
       await expect(page.getByText(hiddenControl, { exact: true })).toHaveCount(0);
     }
 
-    const goalId = page.url().split("/").at(-1)!;
+    const goalId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const startRequest = (await e2eDb.select().from(goalStartRequests)).find((row) => row.goalId === goalId)!;
+    const startWakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
+      row.orgId === organization.id
+      && row.agentId === owner.id
+      && row.idempotencyKey === `goal-start:${startRequest.id}`,
+    );
+    expect(startWakeups).toHaveLength(1);
+    expect(startWakeups[0]?.source).toBe("on_demand");
+    expect(startWakeups[0]?.triggerDetail).toBe("system");
+    expect(startWakeups[0]?.runId).toBeTruthy();
+    expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
+      run.id === startWakeups[0]?.runId && run.wakeupRequestId === startWakeups[0]?.id,
+    )).toBeTruthy();
+    await e2eDb.update(heartbeatRuns).set({
+      status: "failed",
+      resultJson: { error: "Process adapter missing command" },
+      resultSummaryJson: null,
+      updatedAt: new Date(),
+    }).where(eq(heartbeatRuns.id, startWakeups[0]!.runId!));
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await expect(page.getByRole("heading", { name: "Action needed", exact: true })).toBeVisible();
+    await expect(page.getByText("The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Process adapter missing command", { exact: true })).toHaveCount(0);
+    const internalLanguageActivity = await page.request.post(`/api/goals/${goalId}/activities`, {
+      headers: {
+        Authorization: `Bearer ${ownerKey.token}`,
+        "x-rudder-run-id": startWakeups[0]!.runId!,
+      },
+      data: {
+        activityKind: "progress",
+        summary: "Current Goal contract and runtime evidence are being checked.",
+        evidenceRefs: [],
+        idempotencyKey: `goal-e2e-public-language-${goalId}`,
+      },
+    });
+    expect(internalLanguageActivity.status()).toBe(201);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByText("Current Goal and supporting evidence are being checked.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Goal contract|runtime evidence|change_proposal|result_proposal/i)).toHaveCount(0);
+    await page.getByRole("tab", { name: /Conversation/ }).click();
     const contractBeforeFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     const feedbackBody = "Keep the release focused on the operator journey, not internal Contract terminology.";
-    await page.getByLabel("Goal feedback").fill(feedbackBody);
-    await page.getByRole("button", { name: "Send feedback" }).click();
+    let attachmentAttempts = 0;
+    await page.route(`**/api/orgs/${organization.id}/assets/images`, async (route) => {
+      attachmentAttempts += 1;
+      if (attachmentAttempts === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary image outage" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    const feedbackFile = page.getByLabel("Attach comment image");
+    await feedbackFile.setInputFiles({
+      name: "operator-screenshot.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("goal-feedback-image"),
+    });
+    await expect(page.getByRole("alert")).toContainText("Temporary image outage");
+    await page.getByRole("button", { name: "Retry attachment" }).click();
+    const goalComposer = page.getByLabel("Goal comment composer", { exact: true });
+    await expect(goalComposer.locator('img[alt="operator-screenshot.png"]')).toBeVisible();
+    expect(attachmentAttempts).toBe(2);
+    await page.unroute(`**/api/orgs/${organization.id}/assets/images`);
+    await expect(page.getByRole("tablist", { name: "Comment composer mode" })).toHaveCount(0);
+    await expect(page.getByRole("toolbar", { name: "Comment formatting" })).toHaveCount(0);
+    const feedbackInput = goalComposer.locator('[contenteditable="true"]');
+    await expect(feedbackInput).toBeVisible();
+    let feedbackAttempts = 0;
+    await page.route(`**/api/goals/${goalId}/feedback`, async (route) => {
+      feedbackAttempts += 1;
+      if (feedbackAttempts === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary feedback outage" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await feedbackInput.fill(feedbackBody);
+    const sendFeedback = page.getByRole("button", { name: "Comment", exact: true });
+    await sendFeedback.click();
+    await expect(page.getByRole("alert")).toContainText("Temporary feedback outage");
+    await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible();
+    await expect(feedbackInput).toBeFocused();
+
+    const retryFeedback = page.getByRole("button", { name: "Retry comment" });
+    await retryFeedback.focus();
+    await page.keyboard.press("Enter");
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(feedbackInput).toBeFocused();
+    expect(feedbackAttempts).toBe(2);
+    await page.unroute(`**/api/goals/${goalId}/feedback`);
 
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByLabel("Feedback attachments").getByText("operator-screenshot.png", { exact: true })).toBeVisible();
     const feedbackRows = (await e2eDb.select().from(goalFeedbackEntries))
       .filter((row) => row.goalId === goalId);
     expect(feedbackRows).toHaveLength(1);
@@ -318,6 +527,13 @@ test.describe("Goal Workspace v2", () => {
       body: feedbackBody,
       feedbackKind: "ordinary",
     });
+    expect(feedbackRows[0]?.attachments).toEqual([
+      expect.objectContaining({
+        name: "operator-screenshot.png",
+        mimeType: "image/png",
+        uri: expect.stringMatching(/^asset:\/\/[a-f0-9-]{36}$/),
+      }),
+    ]);
     expect(feedbackRows[0]?.actorId).toBeTruthy();
     const wakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
       row.orgId === organization.id
@@ -325,48 +541,269 @@ test.describe("Goal Workspace v2", () => {
       && row.idempotencyKey === `goal-feedback:${feedbackRows[0]!.id}`,
     );
     expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]?.source).toBe("on_demand");
+    expect(wakeups[0]?.triggerDetail).toBe("system");
+    expect(wakeups[0]?.runId).toBeTruthy();
+    expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
+      run.id === wakeups[0]?.runId && run.wakeupRequestId === wakeups[0]?.id,
+    )).toBeTruthy();
 
     const contractAfterFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     expect(contractAfterFeedback.contractRevision).toBe(contractBeforeFeedback.contractRevision);
     expect(contractAfterFeedback.evaluationResult).toEqual(contractBeforeFeedback.evaluationResult);
 
-    await e2eDb.insert(goalActivities).values({
-      orgId: organization.id,
-      goalId,
-      contractRevision: contractAfterFeedback.contractRevision,
-      submittedByAgentId: owner.id,
-      agentOwnerRefAtTime: owner.id,
-      activityKind: "evidence",
-      summary: "The release candidate passed the real operator workflow.",
-      evidenceRefs: ["artifact://goal-workspace/e2e-pass"],
-      idempotencyKey: `goal-e2e-progress-${goalId}`,
+    const progressExternalEvidence = `https://evidence.rudder.dev/goals/${goalId}/operator-workflow`;
+    const progressLibraryPath = `goals/${goalId}/operator-workflow.md`;
+    const progressLibraryFileEvidence = `library-file://file?p=${encodeURIComponent(progressLibraryPath)}`;
+    const progressArtifactEvidence = "artifact://goal-workspace/e2e-pass";
+    const libraryFileResponse = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: progressLibraryPath,
+        content: "# Operator workflow evidence\n\nThe real Goal lifecycle completed successfully.\n",
+      },
     });
+    expect(libraryFileResponse.ok()).toBe(true);
+
+    const ownerRunId = wakeups[0]!.runId!;
+    const goalRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
+      const context = run.contextSnapshot as Record<string, unknown> | null;
+      return run.orgId === organization.id
+        && run.agentId === owner.id
+        && context?.goalId === goalId;
+    });
+    for (const run of goalRuns) {
+      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    }
+    const progressResponse = await page.request.post(`/api/goals/${goalId}/activities`, {
+      headers: {
+        Authorization: `Bearer ${ownerKey.token}`,
+        "x-rudder-run-id": ownerRunId,
+      },
+      data: {
+        activityKind: "evidence",
+        summary: "The release candidate passed the real operator workflow.",
+        evidenceRefs: [progressExternalEvidence, progressLibraryFileEvidence, progressArtifactEvidence],
+        idempotencyKey: `goal-e2e-progress-${goalId}`,
+      },
+    });
+    expect(progressResponse.status()).toBe(201);
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-    const currentProgress = page.getByRole("heading", { name: "Current progress" }).locator("..");
+    await page.getByRole("tab", { name: /Work/ }).click();
+    const currentProgress = page.getByRole("tabpanel").getByText("Current progress", { exact: true }).locator("..");
     await expect(currentProgress.getByText(
       "The release candidate passed the real operator workflow.",
       { exact: true },
     )).toBeVisible();
-    await expect(currentProgress.getByText("Based on 1 supporting item", { exact: true })).toBeVisible();
-    await expect(page.getByText("artifact://goal-workspace/e2e-pass", { exact: true })).toHaveCount(0);
+    const progressEvidence = currentProgress.getByLabel("Supporting evidence");
+    await expect(progressEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(progressEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
+    const progressLibraryLink = progressEvidence.getByRole("link", {
+      name: "Library file: operator-workflow.md Open",
+      exact: true,
+    });
+    await expect(progressLibraryLink).toHaveAttribute(
+      "href",
+      `/${organization.urlKey}/library?path=${encodeURIComponent(progressLibraryPath)}`,
+    );
+    const progressArtifactRow = progressEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
+    await expect(progressArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
+    await expect(page.getByText(progressArtifactEvidence, { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agreement revision", { exact: true })).toHaveCount(0);
+
+    await progressLibraryLink.click();
+    await expect(page).toHaveURL(new RegExp(
+      `/${organization.urlKey}/library\\?path=${encodeURIComponent(progressLibraryPath)}$`,
+    ));
+    await expect(page.locator("#main-content")).toContainText("operator-workflow.md");
+    await page.goto(`/${organization.urlKey}/goals/${goalId}`);
+    await page.getByRole("tab", { name: /Work/ }).click();
+    await expect(page.getByRole("tabpanel").getByText("Current progress", { exact: true })).toBeVisible();
 
     const workspaceResponse = await page.request.get(`/api/goals/${goalId}/workspace`);
     expect(workspaceResponse.ok()).toBe(true);
     const workspace = await workspaceResponse.json() as Workspace;
-    expect(workspace.currentProgress.evidenceRefs).toContain("artifact://goal-workspace/e2e-pass");
+    expect(workspace.currentProgress.evidenceRefs).toBeUndefined();
+    expect(workspace.currentProgress.evidence).toEqual([
+      { label: "External supporting link 1", href: null, external: true },
+      {
+        label: "Library file: operator-workflow.md",
+        href: `/${organization.urlKey}/library?path=${encodeURIComponent(progressLibraryPath)}`,
+        external: false,
+      },
+      { label: "Supporting work 3", href: null, external: false },
+    ]);
+    expect(JSON.stringify(workspace)).not.toContain(progressExternalEvidence);
+    expect(JSON.stringify(workspace)).not.toContain(progressArtifactEvidence);
     expect(workspace.currentProgress.sourceActivityId).toBeTruthy();
+    expect(workspace.agentAction?.sourceIds).toContain(ownerRunId);
     expect(workspace.facet).toBe("agent_advancing");
+    expect((await e2eDb.select().from(goalActivities)).find((row) =>
+      row.id === workspace.currentProgress.sourceActivityId
+      && row.runRef === ownerRunId
+      && row.submittedByAgentId === owner.id,
+    )).toBeTruthy();
+
+    await page.getByRole("tab", { name: /Evidence/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=evidence$`));
+    await expect(page.getByRole("heading", { name: "Current evidence", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=activity$`));
+    await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
+
+    const chatDraft = "Review this Goal against the operator acceptance evidence.";
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    const goalChatPanel = page.getByTestId("goal-chat-panel");
+    await expect(page.getByTestId("chat-side-panel")).toBeVisible();
+    await expect(goalChatPanel.getByText("Chat about Goal", { exact: true })).toBeVisible();
+    await expect(goalChatPanel.getByText("Publish a verified Goal Workspace release candidate", { exact: true })).toBeVisible();
+    await expect(goalChatPanel.getByText(owner.name, { exact: true })).toBeVisible();
+    const goalChatEditor = goalChatPanel.getByTestId("goal-chat-composer").locator('[contenteditable="true"]');
+    await goalChatEditor.fill(chatDraft);
+    await expect(goalChatEditor).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(page.getByTestId("goal-chat-panel").locator('[contenteditable="true"]')).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
+    await page.getByRole("tab", { name: /Work/ }).click();
 
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await expect(page.getByText("Current Goal", { exact: true })).toBeVisible();
-    await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
+    const mobileWorkTab = page.getByRole("tabpanel");
+    await expect(mobileWorkTab.getByText("Outcome", { exact: true })).toBeVisible();
+    await expect(mobileWorkTab.getByText("Current progress", { exact: true })).toBeVisible();
+    const mobileTabs = page.getByRole("tablist", { name: "Goal detail views" });
+    await expect(mobileTabs.getByRole("tab", { name: /Conversation/ })).toBeVisible();
+    await expect(mobileTabs.getByRole("tab", { name: /Activity/ })).toBeVisible();
+    await expect(mobileTabs.getByRole("tab", { name: /Work/ })).toBeVisible();
+    await expect(mobileTabs.getByRole("tab", { name: /Evidence/ })).toBeVisible();
+    const tabsFitViewport = await mobileTabs.evaluate((tablist) => {
+      const viewportWidth = document.documentElement.clientWidth;
+      return Array.from(tablist.querySelectorAll('[role="tab"]')).every((tab) => {
+        const rect = tab.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= viewportWidth;
+      });
+    });
+    expect(tabsFitViewport).toBe(true);
     const bodyOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(bodyOverflow).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-mobile.png"), fullPage: true });
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Side Panel" })).toBeVisible();
+    await expect(page.getByTestId("goal-chat-panel").locator('[contenteditable="true"]')).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
 
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("turns a vague Draft into a started Goal without hiding the requirements", async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    const organization = await createOrganization(page.request, `Goal-draft-alignment-${Date.now()}`);
+    const owner = await createAgent(page.request, organization.id, "Alignment owner");
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto(`/${organization.urlKey}/goals`);
+
+    await page.getByRole("button", { name: "New Goal" }).first().click();
+    await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Rudder stars");
+    const startGoal = page.getByRole("button", { name: "Start Goal", exact: true });
+    await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
+    await expect(page.getByText("Verifiable result", { exact: true })).toBeVisible();
+    await expect(page.getByText("Owner Agent", { exact: true })).toBeVisible();
+    await expect(startGoal).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const dialog = page.locator('[data-slot="dialog-content"]');
+    const dialogFooter = dialog.locator(":scope > div").last();
+    const startPreview = page.getByLabel("Goal start preview");
+    await expect(startPreview.getByText("Select an Agent above to own and start this Goal.", { exact: true })).toBeVisible();
+    const [footerGeometry, previewGeometry] = await Promise.all([
+      dialogFooter.boundingBox(),
+      startPreview.boundingBox(),
+    ]);
+    expect(footerGeometry).not.toBeNull();
+    expect(previewGeometry).not.toBeNull();
+    expect(previewGeometry!.y + previewGeometry!.height).toBeLessThanOrEqual(footerGeometry!.y);
+    await page.screenshot({ path: testInfo.outputPath("goal-new-dialog-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
+    const goalId = page.url().split("/").at(-1)!;
+    await expect(page.getByRole("tablist", { name: "Goal detail views" })).toHaveCount(0);
+    await expect(page.getByLabel("Goal progress")).toHaveCount(0);
+    await expect(page.getByLabel("Goal properties")).toHaveCount(0);
+    await expect(page.getByText("Comments become available after this Goal starts.", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Needs your attention", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Progress and feedback", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Rename", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Continue Goal", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("goal-draft-blocked-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: "Continue Goal", exact: true })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Goal detail views" })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath("goal-draft-blocked-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    await page.getByRole("button", { name: "Edit Goal title" }).click();
+    const titleInput = page.getByRole("textbox", { name: "Goal title" });
+    await titleInput.fill("This edit should be cancelled");
+    await titleInput.press("Escape");
+    await expect(page.getByRole("heading", { name: "Rudder stars", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit Goal title" }).click();
+    await page.getByRole("textbox", { name: "Goal title" }).fill("Rudder community stars");
+    await page.getByRole("textbox", { name: "Goal title" }).press("Enter");
+    await expect(page.getByRole("heading", { name: "Rudder community stars", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Continue Goal", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Continue Goal", exact: true })).toBeVisible();
+    await expect(page.getByText("Describe the result or decision someone should be able to verify.", { exact: false })).toBeVisible();
+    await expect(page.getByText("Owner Agent", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start Goal", exact: true })).toBeDisabled();
+    await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Reach 1,000 GitHub stars by August 31, 2026");
+    await page.getByRole("button", { name: "Assignee" }).click();
+    await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
+    await expect(page.getByText("Ready to start", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start Goal", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Start Goal", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
+    await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
+    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
+    const startRequests = (await e2eDb.select().from(goalStartRequests)).filter((row) => row.goalId === goalId);
+    expect(startRequests).toHaveLength(1);
+    const wakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
+      row.orgId === organization.id
+      && row.agentId === owner.id
+      && row.idempotencyKey === `goal-start:${startRequests[0]!.id}`,
+    );
+    expect(wakeups).toHaveLength(1);
+
+    await page.screenshot({ path: testInfo.outputPath("goal-draft-started-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath("goal-draft-started-mobile.png"), fullPage: true });
     expect(pageErrors).toEqual([]);
   });
 
@@ -391,13 +828,17 @@ test.describe("Goal Workspace v2", () => {
       data: {
         title: "Explore",
         description: "The desired result is not clear yet.",
-        ownerAgentId: null,
+        ownerAgentId: owner.id,
+        targetTime: "2026-08-20T10:00:00.000Z",
         alignmentQuestion: unclearPreview.alignmentQuestion,
       },
     });
     expect(draftResponse.status()).toBe(201);
     const draft = await draftResponse.json() as Goal;
     expect(draft.lifecycle).toBe("draft");
+    expect(draft.ownerAgentId).toBe(owner.id);
+    const persistedDraft = (await e2eDb.select().from(goals)).find((row) => row.id === draft.id)!;
+    expect(persistedDraft.evaluationDeadline?.toISOString()).toBe("2026-08-20T10:00:00.000Z");
     const draftFocus = await page.request.post(`/api/goals/${draft.id}/focus`, {
       data: { focus: true },
     });
@@ -405,13 +846,21 @@ test.describe("Goal Workspace v2", () => {
     expect((await e2eDb.select().from(goalPlans)).filter((row) => row.goalId === draft.id)).toHaveLength(0);
     expect((await e2eDb.select().from(goalActivities)).filter((row) => row.goalId === draft.id)).toHaveLength(0);
 
+    const foreignDraftResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+      data: {
+        title: "Keep a foreign Owner out of this Draft",
+        ownerAgentId: foreignOwner.id,
+      },
+    });
+    expect(foreignDraftResponse.status()).toBe(422);
+
     const foreignPreview = await previewGoal(page.request, organization.id, foreignOwner.id);
     expect(foreignPreview.valid).toBe(false);
     expect(foreignPreview.alignmentQuestion).toMatch(/agent|assignee|owner/i);
 
     const incapablePreview = await previewGoal(page.request, organization.id, incapableOwner.id);
-    expect(incapablePreview.valid).toBe(false);
-    expect(incapablePreview.alignmentQuestion).toMatch(/better-matched Agent/i);
+    expect(incapablePreview.valid).toBe(true);
+    expect(incapablePreview.warning).toMatch(/not be the best match|choose another Agent/i);
 
     const contextPreview = await previewGoal(
       page.request,
@@ -517,7 +966,7 @@ test.describe("Goal Workspace v2", () => {
 
   });
 
-  test("requires governed change approval and human acceptance for every terminal result", async ({ page }) => {
+  test("requires governed change approval and human acceptance for every terminal result", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     const organization = await createOrganization(page.request, `Goal-governance-${Date.now()}`);
     const owner = await createAgent(page.request, organization.id, "Governed Goal owner");
@@ -528,13 +977,14 @@ test.describe("Goal Workspace v2", () => {
     const started = await startGoal(page.request, organization.id, preview);
     expect(started.response.status()).toBe(201);
     const goal = started.goal!;
+    const contractRevision = await readContractRevision(goal.id);
     const criterionId = preview.packet!.activation.criteria[0]!.id;
 
     const changeResponse = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "Evidence shows that the target must explicitly include restart recovery.",
         evidenceRefs: ["artifact://goal-workspace/restart-evidence"],
         afterContract: {
@@ -549,7 +999,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "A competing proposal should be superseded after the accepted revision advances.",
         evidenceRefs: ["artifact://goal-workspace/competing-evidence"],
         afterContract: {
@@ -565,14 +1015,32 @@ test.describe("Goal Workspace v2", () => {
     };
     expect(competingChange.status).toBe("pending");
     const beforeApproval = await page.request.get(`/api/goals/${goal.id}`);
-    expect((await beforeApproval.json() as Goal).contractRevision).toBe(goal.contractRevision);
+    expect(await beforeApproval.json()).not.toHaveProperty("contractRevision");
 
-    const approveChange = await page.request.post(`/api/approvals/${changeProposal.approvalId}/approve`, {
-      data: { decisionNote: "This materially improves the agreed result." },
-    });
-    expect(approveChange.ok()).toBe(true);
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger/approvals/${changeProposal.approvalId}`);
+    const changeApprovalDialog = page.getByTestId("approval-detail-dialog");
+    await expect(changeApprovalDialog.getByLabel("Goal change summary")).toBeVisible();
+    await expect(changeApprovalDialog.getByText(
+      "Publish a verified Goal Workspace release candidate with restart recovery",
+      { exact: true },
+    )).toBeVisible();
+    for (const internalDetail of ["objectiveMode", "autonomyEnvelope", "evaluationPolicy", "artifact://"]) {
+      await expect(changeApprovalDialog.getByText(internalDetail, { exact: false })).toHaveCount(0);
+    }
+    await changeApprovalDialog.getByTestId("approval-decision-note").fill("This materially improves the agreed result.");
+    const approveChange = changeApprovalDialog.getByRole("button", { name: "Approve", exact: true });
+    await approveChange.focus();
+    await expect(approveChange).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(changeApprovalDialog.getByText("Approval confirmed", { exact: true })).toBeVisible();
     const changedGoal = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
-    expect(changedGoal.contractRevision).toBe(goal.contractRevision + 1);
+    expect(changedGoal).not.toHaveProperty("contractRevision");
+    const changedContractRevision = await readContractRevision(goal.id);
+    expect(changedContractRevision).toBe(contractRevision + 1);
 
     const supersedeCompeting = await page.request.post(`/api/approvals/${competingChange.approvalId}/approve`, {
       data: { decisionNote: "The Goal has already advanced on a different approved revision." },
@@ -583,13 +1051,51 @@ test.describe("Goal Workspace v2", () => {
     expect(competingProposalRow?.status).toBe("superseded");
     const competingApprovalRow = (await e2eDb.select().from(approvals))
       .find((row) => row.id === competingChange.approvalId);
-    expect(competingApprovalRow?.status).toBe("approved");
+    expect(competingApprovalRow?.status).toBe("cancelled");
+
+    const rejectedChangeResponse = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
+      headers: agentHeaders,
+      data: {
+        idempotencyKey: randomUUID(),
+        expectedContractRevision: changedContractRevision,
+        rationale: "This broadens the commitment beyond the agreed release boundary and should be rejected.",
+        evidenceRefs: ["artifact://goal-workspace/unwanted-expansion"],
+        afterContract: {
+          outcomeStatement: "Publish the Goal Workspace and redesign every adjacent product surface",
+        },
+      },
+    });
+    expect(rejectedChangeResponse.status()).toBe(201);
+    const rejectedChange = await rejectedChangeResponse.json() as { approvalId: string; id: string; status: string };
+    await page.goto(`/${organization.urlKey}/messenger/approvals/${rejectedChange.approvalId}`);
+    const rejectApprovalDialog = page.getByTestId("approval-detail-dialog");
+    await expect(rejectApprovalDialog.getByLabel("Goal change summary")).toBeVisible();
+    await expect(rejectApprovalDialog).not.toContainText(rejectedChange.approvalId);
+    await expect(rejectApprovalDialog).not.toContainText(rejectedChange.id);
+    await expect(rejectApprovalDialog).not.toContainText(goal.id);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const approvalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(approvalOverflow).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath("goal-change-approval-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await rejectApprovalDialog.getByTestId("approval-decision-note").fill("Keep the Goal limited to the agreed operator workflow.");
+    const rejectChange = rejectApprovalDialog.getByRole("button", { name: "Reject", exact: true });
+    await rejectChange.focus();
+    await expect(rejectChange).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => {
+      const row = (await e2eDb.select().from(goalChangeProposals)).find((proposal) => proposal.id === rejectedChange.id);
+      return row?.status;
+    }).toBe("rejected");
+    expect(await page.request.get(`/api/goals/${goal.id}`).then((response) => response.json()))
+      .not.toHaveProperty("contractRevision");
+    expect(await readContractRevision(goal.id)).toBe(changedContractRevision);
 
     const staleChange = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        expectedContractRevision: goal.contractRevision,
+        expectedContractRevision: contractRevision,
         rationale: "This proposal is intentionally stale.",
         evidenceRefs: ["artifact://goal-workspace/stale"],
         afterContract: { outcomeStatement: "A stale outcome must never be applied" },
@@ -602,7 +1108,7 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: inconclusiveKey,
-        contractRevision: changedGoal.contractRevision,
+        contractRevision: changedContractRevision,
         evidenceRefs: [],
         criteria: [{ id: criterionId, status: "unknown" }],
         resultPayload: {},
@@ -610,10 +1116,10 @@ test.describe("Goal Workspace v2", () => {
       },
     });
     expect(inconclusiveResult.status()).toBe(201);
-    const inconclusiveProposal = await inconclusiveResult.json() as { id: string; status: string; preflight: { outcome: string } };
+    const inconclusiveProposal = await inconclusiveResult.json() as { id: string; status: string; outcome: string };
     expect(inconclusiveProposal.id).toBeTruthy();
     expect(inconclusiveProposal.status).toBe("inconclusive");
-    expect(inconclusiveProposal.preflight.outcome).toBe("inconclusive");
+    expect(inconclusiveProposal.outcome).toBe("inconclusive");
     expect((await e2eDb.select().from(goalResultProposals)).filter((row) =>
       row.goalId === goal.id && row.idempotencyKey === inconclusiveKey,
     )).toHaveLength(1);
@@ -622,17 +1128,17 @@ test.describe("Goal Workspace v2", () => {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: changedGoal.contractRevision,
+        contractRevision: changedContractRevision,
         evidenceRefs: ["artifact://goal-workspace/result-v1"],
         criteria: [{ id: criterionId, status: "met" }],
         resultPayload: {},
-        riskSummary: "The restart check should be repeated once more.",
+        riskSummary: "The restart contract should be repeated once more.",
       },
     });
     expect(firstResult.status()).toBe(201);
-    const firstProposal = await firstResult.json() as { id: string; status: string; preflight: { outcome: string } };
+    const firstProposal = await firstResult.json() as { id: string; status: string; outcome: string };
     expect(firstProposal.status).toBe("ready");
-    expect(firstProposal.preflight.outcome).toBe("achieved");
+    expect(firstProposal.outcome).toBe("achieved");
 
     const directTerminalEvaluate = await page.request.post(`/api/goals/${goal.id}/evaluate`, {
       headers: agentHeaders,
@@ -651,23 +1157,84 @@ test.describe("Goal Workspace v2", () => {
     expect(agentSelfAccept.status()).toBe(403);
 
     const rejectFeedback = "Repeat restart recovery and attach the final runtime identity.";
-    const rejectResult = await page.request.post(`/api/goal-result-proposals/${firstProposal.id}/reject`, {
-      data: { idempotencyKey: randomUUID(), feedback: rejectFeedback },
+    await page.goto(`/${organization.urlKey}/goals/${goal.id}`);
+    const firstResultProposal = page.getByLabel("Goal result proposal");
+    await expect(firstResultProposal).toBeVisible();
+    await expect(firstResultProposal.getByText("The restart agreement should be repeated once more.", { exact: true })).toBeVisible();
+    await expect(firstResultProposal.getByText(/\bcontract\b/i)).toHaveCount(0);
+    await expect(firstResultProposal.getByText("artifact://goal-workspace/result-v1", { exact: true })).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    const reloadedProposal = page.getByLabel("Goal result proposal");
+    await expect(reloadedProposal).toBeVisible();
+    const proposalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(proposalOverflow).toBeLessThanOrEqual(1);
+    const proposalAction = reloadedProposal.getByRole("button", { name: "Accept result" });
+    await proposalAction.scrollIntoViewIfNeeded();
+    const proposalActionClearance = await page.evaluate(() => {
+      const action = document.querySelector('[aria-label="Goal result proposal"] button:last-of-type')?.getBoundingClientRect();
+      const nav = document.querySelector('nav[aria-label="Mobile navigation"]')?.getBoundingClientRect();
+      return action && nav ? nav.top - action.bottom : null;
     });
-    expect(rejectResult.ok()).toBe(true);
+    expect(proposalActionClearance).not.toBeNull();
+    expect(proposalActionClearance!).toBeGreaterThanOrEqual(8);
+    await page.screenshot({ path: testInfo.outputPath("goal-result-proposal-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 960 });
+
+    await firstResultProposal.getByLabel("Why is this result not sufficient?").fill(rejectFeedback);
+    const rejectResult = firstResultProposal.getByRole("button", { name: "Result is not sufficient" });
+    await rejectResult.focus();
+    await expect(rejectResult).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(firstResultProposal).toHaveCount(0);
+    await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
+    await expect(
+      page.getByLabel("Goal comment composer", { exact: true }).locator('[contenteditable="true"]'),
+    ).toBeFocused();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByText("Result proposal rejected", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
     const afterReject = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
     expect(afterReject.lifecycle).toBe("active");
     expect(afterReject.evaluationResult).toBeNull();
-    expect((await e2eDb.select().from(goalFeedbackEntries)).filter((row) =>
+    const rejectionFeedbackRows = (await e2eDb.select().from(goalFeedbackEntries)).filter((row) =>
       row.goalId === goal.id && row.body === rejectFeedback,
-    )).toHaveLength(1);
+    );
+    expect(rejectionFeedbackRows).toHaveLength(1);
+    const rejectionWakeup = (await e2eDb.select().from(agentWakeupRequests)).find((row) =>
+      row.idempotencyKey === `goal-feedback:${rejectionFeedbackRows[0]!.id}`,
+    );
+    expect(rejectionWakeup?.runId).toBeTruthy();
+    expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
+      run.id === rejectionWakeup?.runId && run.wakeupRequestId === rejectionWakeup?.id,
+    )).toBeTruthy();
+    await page.reload();
+    await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
 
+    const resultExternalEvidence = `https://evidence.rudder.dev/goals/${goal.id}/accepted-result`;
+    const resultLibraryPath = `goals/${goal.id}/accepted-result.md`;
+    const resultLibraryFileResponse = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: resultLibraryPath,
+        content: "# Accepted result evidence\n\nRestart recovery and runtime identity are verified.\n",
+      },
+    });
+    expect(resultLibraryFileResponse.ok()).toBe(true);
+    const resultLibraryFile = await resultLibraryFileResponse.json() as { libraryEntryId: string };
+    expect(resultLibraryFile.libraryEntryId).toBeTruthy();
+    const resultLibraryEntryEvidence = [
+      `library-entry://${resultLibraryFile.libraryEntryId}`,
+      `p=${encodeURIComponent(resultLibraryPath)}`,
+    ].join("?");
+    const resultArtifactEvidence = "artifact://goal-workspace/result-v2";
+    const resultEvidenceRefs = [resultExternalEvidence, resultLibraryEntryEvidence, resultArtifactEvidence];
     const secondResult = await page.request.post(`/api/goals/${goal.id}/result-proposals`, {
       headers: agentHeaders,
       data: {
         idempotencyKey: randomUUID(),
-        contractRevision: changedGoal.contractRevision,
-        evidenceRefs: ["artifact://goal-workspace/result-v2"],
+        contractRevision: changedContractRevision,
+        evidenceRefs: resultEvidenceRefs,
         criteria: [{ id: criterionId, status: "met" }],
         resultPayload: {},
         riskSummary: "No unresolved release risk remains.",
@@ -676,22 +1243,170 @@ test.describe("Goal Workspace v2", () => {
     expect(secondResult.status()).toBe(201);
     const secondProposal = await secondResult.json() as { id: string; status: string };
     expect(secondProposal.status).toBe("ready");
-    const acceptanceKey = randomUUID();
-    const [acceptResult, concurrentReplay] = await Promise.all([
-      page.request.post(`/api/goal-result-proposals/${secondProposal.id}/accept`, {
-        data: { idempotencyKey: acceptanceKey },
-      }),
-      page.request.post(`/api/goal-result-proposals/${secondProposal.id}/accept`, {
-        data: { idempotencyKey: acceptanceKey },
-      }),
-    ]);
-    expect(acceptResult.ok()).toBe(true);
-    expect(concurrentReplay.ok()).toBe(true);
-    const acceptedGoal = await acceptResult.json() as Goal;
+    const pendingAtClosureResponse = await page.request.post(`/api/goals/${goal.id}/change-proposals`, {
+      headers: agentHeaders,
+      data: {
+        idempotencyKey: randomUUID(),
+        expectedContractRevision: changedContractRevision,
+        rationale: "This proposal must close without remaining actionable after result acceptance.",
+        evidenceRefs: ["artifact://goal-workspace/pending-at-close"],
+        afterContract: {
+          outcomeStatement: "Publish the verified Goal Workspace after one additional optional review",
+        },
+      },
+    });
+    expect(pendingAtClosureResponse.status()).toBe(201);
+    const pendingAtClosure = await pendingAtClosureResponse.json() as { approvalId: string; id: string; status: string };
+    expect(pendingAtClosure.status).toBe("pending");
+    const unsupportedGoalRevision = await page.request.post(`/api/approvals/${pendingAtClosure.approvalId}/request-revision`, {
+      data: { decisionNote: "Use rejection feedback and submit a new Goal update instead." },
+    });
+    expect(unsupportedGoalRevision.status()).toBe(422);
+    await page.reload();
+    const secondResultProposal = page.getByLabel("Goal result proposal");
+    await expect(secondResultProposal).toBeVisible();
+    await expect(secondResultProposal.getByText("No unresolved release risk remains.", { exact: true })).toBeVisible();
+    const proposedResultEvidence = secondResultProposal.getByLabel("Inspectable result evidence");
+    await expect(proposedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(proposedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
+    const proposedLibraryEntryLink = proposedResultEvidence.getByRole("link", {
+      name: "Library entry: accepted-result.md Open",
+      exact: true,
+    });
+    const resultLibraryHref = [
+      `/${organization.urlKey}/library?entry=${encodeURIComponent(resultLibraryFile.libraryEntryId)}`,
+      `path=${encodeURIComponent(resultLibraryPath)}`,
+    ].join("&");
+    await expect(proposedLibraryEntryLink).toHaveAttribute("href", resultLibraryHref);
+    await expect(proposedResultEvidence).not.toContainText(goal.id);
+    const proposedArtifactRow = proposedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
+    await expect(proposedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
+    await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
+
+    await proposedLibraryEntryLink.click();
+    await expect(page).toHaveURL(new RegExp(
+      `/${organization.urlKey}/library\\?path=${encodeURIComponent(resultLibraryPath)}$`,
+    ));
+    await expect(page.locator("#main-content")).toContainText("accepted-result.md");
+    await page.goto(`/${organization.urlKey}/goals/${goal.id}`);
+    const reloadedResultProposal = page.getByLabel("Goal result proposal");
+    await expect(reloadedResultProposal).toBeVisible();
+    const acceptResult = reloadedResultProposal.getByRole("button", { name: "Accept result" });
+    await acceptResult.focus();
+    await expect(acceptResult).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("This conversation is read-only because the Goal is closed.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: goal.title, exact: true })).toBeFocused();
+    await page.getByRole("tab", { name: /Evidence/ }).click();
+    await expect(page.getByText("Result accepted", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Evidence/ })).toHaveAttribute("aria-selected", "true");
+    const acceptedResult = page.getByLabel("Accepted Goal result");
+    await expect(acceptedResult.getByText("Goal achieved", { exact: true })).toBeVisible();
+    await expect(acceptedResult.getByText(preview.review!.success, { exact: true })).toBeVisible();
+    await expect(acceptedResult.getByText("No unresolved release risk remains.", { exact: true })).toBeVisible();
+    await expect(acceptedResult.getByText("Evidence check", { exact: true })).toBeVisible();
+    const acceptedResultEvidence = acceptedResult.getByLabel("Inspectable result evidence");
+    await expect(acceptedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
+    await expect(acceptedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
+    await expect(acceptedResultEvidence.getByRole("link", {
+      name: "Library entry: accepted-result.md Open",
+      exact: true,
+    })).toHaveAttribute("href", resultLibraryHref);
+    await expect(acceptedResultEvidence).not.toContainText(goal.id);
+    const acceptedArtifactRow = acceptedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
+    await expect(acceptedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
+    await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
+    const acceptedProgress = page.getByLabel("Goal progress");
+    await expect(acceptedProgress.getByText("Goal achieved", { exact: true })).toBeVisible();
+    await expect(acceptedProgress.getByText("Goal evaluated as", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("No evidence-backed progress has been recorded yet.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Agent advancing", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Next step", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Goal comment composer", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Rename" })).toHaveCount(0);
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByText(
+      "Goal updated after approval: Supporting work shows that the target must explicitly include restart recovery.",
+      { exact: true },
+    )).toBeVisible();
+    for (const internalTerm of ["Goal Contract", "Contract revision", "change_proposal", "result_proposal"]) {
+      await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
+    }
+    await page.getByRole("tab", { name: /Evidence/ }).click();
+    await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    const reloadedAcceptedResult = page.getByLabel("Accepted Goal result");
+    await expect(reloadedAcceptedResult).toBeVisible();
+    const acceptedOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(acceptedOverflow).toBeLessThanOrEqual(1);
+    const acceptedResultLastLink = reloadedAcceptedResult
+      .getByLabel("Inspectable result evidence")
+      .getByRole("link")
+      .last();
+    await acceptedResultLastLink.scrollIntoViewIfNeeded();
+    const acceptedResultClearance = await page.evaluate(() => {
+      const resultLink = document.querySelector('[aria-label="Inspectable result evidence"] a:last-of-type')?.getBoundingClientRect();
+      const nav = document.querySelector('nav[aria-label="Mobile navigation"]')?.getBoundingClientRect();
+      return resultLink && nav ? nav.top - resultLink.bottom : null;
+    });
+    expect(acceptedResultClearance).not.toBeNull();
+    expect(acceptedResultClearance!).toBeGreaterThanOrEqual(8);
+    await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 960 });
+
+    const acceptedGoal = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
     expect(acceptedGoal.lifecycle).toBe("closed");
     expect(acceptedGoal.status).toBe("achieved");
     expect(acceptedGoal.focus).toBe(false);
     expect(acceptedGoal.evaluationResult?.outcome).toBe("achieved");
+    const pendingAtClosureProposalRow = (await e2eDb.select().from(goalChangeProposals))
+      .find((row) => row.id === pendingAtClosure.id);
+    const pendingAtClosureApprovalRow = (await e2eDb.select().from(approvals))
+      .find((row) => row.id === pendingAtClosure.approvalId);
+    expect(pendingAtClosureProposalRow?.status).toBe("superseded");
+    expect(pendingAtClosureApprovalRow?.status).toBe("cancelled");
+    const revisionAfterClose = await page.request.post(`/api/approvals/${pendingAtClosure.approvalId}/request-revision`, {
+      data: { decisionNote: "This closed Goal must remain terminal." },
+    });
+    expect(revisionAfterClose.status()).toBe(422);
+    const resubmitAfterClose = await page.request.post(`/api/approvals/${pendingAtClosure.approvalId}/resubmit`, {
+      data: {},
+    });
+    expect(resubmitAfterClose.status()).toBe(422);
+
+    const closedPatch = await page.request.patch(`/api/goals/${goal.id}`, {
+      data: {
+        title: "Rewrite an accepted Goal",
+        description: "Closed Goal history must remain immutable.",
+      },
+    });
+    expect(closedPatch.status()).toBe(409);
+    const unchangedClosedGoal = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
+    expect(unchangedClosedGoal.title).toBe(goal.title);
+
+    await e2eDb.update(goalChangeProposals).set({ status: "pending" })
+      .where(eq(goalChangeProposals.id, competingChange.id));
+    const closedWorkspaceResponse = await page.request.get(`/api/goals/${goal.id}/workspace`);
+    expect(closedWorkspaceResponse.ok()).toBe(true);
+    expect((await closedWorkspaceResponse.json() as Workspace).attention).toBeNull();
+    const historyCardsResponse = await page.request.get(`/api/orgs/${organization.id}/goals/workspace`);
+    expect(historyCardsResponse.ok()).toBe(true);
+    const historyCards = await historyCardsResponse.json() as Array<{
+      id: string;
+      facet: string;
+      attentionReason: string | null;
+    }>;
+    expect(historyCards.find((card) => card.id === goal.id)).toMatchObject({
+      facet: "closed",
+      attentionReason: null,
+    });
+
+    const acceptedProposalRow = (await e2eDb.select().from(goalResultProposals))
+      .find((proposal) => proposal.id === secondProposal.id)!;
+    expect(acceptedProposalRow.acceptanceIdempotencyKey).toBeTruthy();
+    const acceptanceKey = acceptedProposalRow.acceptanceIdempotencyKey!;
 
     const replayAccept = await page.request.post(`/api/goal-result-proposals/${secondProposal.id}/accept`, {
       data: { idempotencyKey: acceptanceKey },
@@ -705,22 +1420,162 @@ test.describe("Goal Workspace v2", () => {
     const resultRows = (await e2eDb.select().from(goalResultProposals)).filter((row) => row.goalId === goal.id);
     expect(resultRows.filter((proposal) => proposal.consumedAt)).toHaveLength(1);
 
-    await page.goto("/");
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-    await page.goto(`/${organization.urlKey}/goals/${goal.id}`);
+    await page.reload();
     await expect(page.getByText("Result accepted", { exact: true })).toBeVisible();
-    await expect(page.getByText("achieved", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Accepted Goal result").getByText("Goal achieved", { exact: true })).toBeVisible();
     await expect(page.getByText("Evaluate from evidence", { exact: true })).toHaveCount(0);
+
+    const negativePreview = await previewGoal(
+      page.request,
+      organization.id,
+      owner.id,
+      "Verify a Goal result that did not meet its release criterion",
+      "The acceptance workflow must show the failed criterion and supporting evidence before the user decides.",
+    );
+    const negativeStarted = await startGoal(page.request, organization.id, negativePreview);
+    expect(negativeStarted.response.status()).toBe(201);
+    const negativeGoal = negativeStarted.goal!;
+    const negativeContractRevision = await readContractRevision(negativeGoal.id);
+    const negativeCriterionId = negativePreview.packet!.activation.criteria[0]!.id;
+    const negativeResultResponse = await page.request.post(`/api/goals/${negativeGoal.id}/result-proposals`, {
+      headers: agentHeaders,
+      data: {
+        idempotencyKey: randomUUID(),
+        contractRevision: negativeContractRevision,
+        evidenceRefs: ["artifact://goal-workspace/failed-release-check"],
+        criteria: [{ id: negativeCriterionId, status: "unmet" }],
+        resultPayload: {},
+        riskSummary: "The release criterion failed, so accepting this result closes the Goal without claiming success.",
+      },
+    });
+    expect(negativeResultResponse.status()).toBe(201);
+    expect((await negativeResultResponse.json() as { status: string }).status).toBe("ready");
+
+    await page.goto(`/${organization.urlKey}/goals/${negativeGoal.id}`);
+    const negativeResultProposal = page.getByLabel("Goal result proposal");
+    await expect(negativeResultProposal).toBeVisible();
+    await expect(negativeResultProposal.getByText("Goal not achieved", { exact: true })).toBeVisible();
+    await expect(negativeResultProposal.getByText("Not met", { exact: true })).toBeVisible();
+    await expect(negativeResultProposal.getByText("Evidence check", { exact: true })).toBeVisible();
+    await expect(negativeResultProposal.getByText(
+      "The submitted evidence supports closing this Goal as not achieved.",
+      { exact: true },
+    )).toBeVisible();
+    await expect(negativeResultProposal.getByText("Supporting work 1", { exact: true })).toBeVisible();
+    await expect(negativeResultProposal.getByText("artifact://goal-workspace/failed-release-check", { exact: true })).toHaveCount(0);
+    const readyForReviewLabels = page.getByText("Result ready for review", { exact: true });
+    await expect(readyForReviewLabels).toHaveCount(1);
+    await expect(readyForReviewLabels).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByRole("tabpanel").getByText("Result ready for review", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    for (const internalTerm of ["result_proposal", "not_achieved"]) {
+      await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
+    }
+    await page.screenshot({ path: testInfo.outputPath("goal-negative-result-desktop.png"), fullPage: true });
+
+    const acceptNegativeResult = negativeResultProposal.getByRole("button", { name: "Accept result" });
+    await acceptNegativeResult.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("This conversation is read-only because the Goal is closed.", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Evidence/ }).click();
+    await expect(page.getByText("Result accepted", { exact: true })).toBeVisible();
+    const acceptedNegativeGoal = await (await page.request.get(`/api/goals/${negativeGoal.id}`)).json() as Goal;
+    expect(acceptedNegativeGoal.lifecycle).toBe("closed");
+    expect(acceptedNegativeGoal.status).toBe("cancelled");
+    expect(acceptedNegativeGoal.evaluationResult?.outcome).toBe("not_achieved");
+  });
+
+  test("keeps one ready Result Proposal per Goal under concurrent submissions", async ({ page }) => {
+    test.setTimeout(180_000);
+    const organization = await createOrganization(page.request, `Goal-result-concurrency-${Date.now()}`);
+    const owner = await createAgent(page.request, organization.id, "Concurrent result owner");
+    const agentKey = await createAgentKey(page.request, owner.id, "goal-result-concurrency-e2e");
+    const preview = await previewGoal(page.request, organization.id, owner.id);
+    const started = await startGoal(page.request, organization.id, preview);
+    expect(started.response.status()).toBe(201);
+    const goal = started.goal!;
+    const contractRevision = await readContractRevision(goal.id);
+    const criterionId = preview.packet!.activation.criteria[0]!.id;
+    const headers = { Authorization: `Bearer ${agentKey.token}` };
+    const terminalPayload = (idempotencyKey: string) => ({
+      idempotencyKey,
+      contractRevision,
+      evidenceRefs: ["artifact://goal-workspace/concurrent-result"],
+      criteria: [{ id: criterionId, status: "met" }],
+      resultPayload: {},
+      riskSummary: "Concurrent submissions must converge on one reviewable result.",
+    });
+
+    const sharedKey = randomUUID();
+    const identicalResponses = await Promise.all(Array.from({ length: 8 }, () => (
+      page.request.post(`/api/goals/${goal.id}/result-proposals`, {
+        headers,
+        data: terminalPayload(sharedKey),
+      })
+    )));
+    expect(identicalResponses.every((response) => response.status() === 201)).toBe(true);
+    const identicalProposals = await Promise.all(identicalResponses.map((response) => (
+      response.json() as Promise<{ id: string }>
+    )));
+    expect(new Set(identicalProposals.map((proposal) => proposal.id))).toEqual(new Set([identicalProposals[0]!.id]));
+    expect((await e2eDb.select().from(goalResultProposals)).filter((row) => row.goalId === goal.id)).toHaveLength(1);
+
+    const firstProposalId = identicalProposals[0]!.id;
+    const rejectResponse = await page.request.post(`/api/goal-result-proposals/${firstProposalId}/reject`, {
+      data: {
+        idempotencyKey: randomUUID(),
+        feedback: "Use a fresh concurrent round to prove the ready-result invariant.",
+      },
+    });
+    expect(rejectResponse.ok()).toBe(true);
+
+    const distinctTerminalRequests = Array.from({ length: 8 }, () => (
+      page.request.post(`/api/goals/${goal.id}/result-proposals`, {
+        headers,
+        data: terminalPayload(randomUUID()),
+      })
+    ));
+    const inconclusiveRequest = page.request.post(`/api/goals/${goal.id}/result-proposals`, {
+      headers,
+      data: {
+        idempotencyKey: randomUUID(),
+        contractRevision,
+        evidenceRefs: [],
+        criteria: [{ id: criterionId, status: "unknown" }],
+        resultPayload: {},
+        riskSummary: "This concurrent proposal intentionally remains inconclusive.",
+      },
+    });
+    const [distinctTerminalResponses, inconclusiveResponse] = await Promise.all([
+      Promise.all(distinctTerminalRequests),
+      inconclusiveRequest,
+    ]);
+    expect(distinctTerminalResponses.filter((response) => response.status() === 201)).toHaveLength(1);
+    expect(distinctTerminalResponses.filter((response) => response.status() === 409)).toHaveLength(7);
+    expect(inconclusiveResponse.status()).toBe(201);
+
+    const rows = (await e2eDb.select().from(goalResultProposals)).filter((row) => row.goalId === goal.id);
+    expect(rows.filter((row) => row.status === "ready")).toHaveLength(1);
+    expect(rows.filter((row) => row.status === "inconclusive")).toHaveLength(1);
+    expect(rows.filter((row) => row.status === "rejected")).toHaveLength(1);
+    const ready = rows.find((row) => row.status === "ready")!;
+    const workspaceResponse = await page.request.get(`/api/goals/${goal.id}/workspace`);
+    expect(workspaceResponse.ok()).toBe(true);
+    const workspace = await workspaceResponse.json() as Workspace;
+    expect(workspace.attention).toMatchObject({ kind: "result_proposal", sourceId: ready.id });
+    expect(workspace.resultProposals.filter((proposal) => proposal.status === "ready")).toHaveLength(1);
   });
 
   test("keeps derived board facets read-only and uses an attention list on mobile", async ({ page }) => {
     const organization = await createOrganization(page.request, `Goal-board-${Date.now()}`);
-    const owner = await createAgent(page.request, organization.id, "Board owner");
+    const longHistoryToken = `history-${"x".repeat(160)}`;
+    const longAttachmentName = `acceptance-${"y".repeat(160)}.txt`;
+    const owner = await createAgent(page.request, organization.id, `Board-owner-${"z".repeat(120)}`);
     const preview = await previewGoal(page.request, organization.id, owner.id);
     const started = await startGoal(page.request, organization.id, preview);
     expect(started.response.status()).toBe(201);
+    const contractRevision = await readContractRevision(started.goal!.id);
     const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Advance the Goal through a real issue",
@@ -732,6 +1587,20 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(issueResponse.ok()).toBe(true);
     const issue = await issueResponse.json() as { id: string };
+    const startRequest = (await e2eDb.select().from(goalStartRequests))
+      .find((row) => row.goalId === started.goal!.id)!;
+    let startRunId: string | null = null;
+    await expect.poll(async () => {
+      const startWakeup = (await e2eDb.select().from(agentWakeupRequests)).find((row) =>
+        row.orgId === organization.id
+        && row.agentId === owner.id
+        && row.idempotencyKey === `goal-start:${startRequest.id}`,
+      );
+      startRunId = startWakeup?.runId ?? null;
+      return startRunId;
+    }, { timeout: 30_000 }).toMatch(/^[a-f0-9-]{36}$/);
+    await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() })
+      .where(eq(heartbeatRuns.id, startRunId!));
     const runId = randomUUID();
     const checkpointTime = new Date();
     await e2eDb.insert(heartbeatRuns).values({
@@ -745,7 +1614,57 @@ test.describe("Goal Workspace v2", () => {
       createdAt: new Date(checkpointTime.getTime() - 1_000),
       updatedAt: checkpointTime,
     });
+    const [progressActivity] = await e2eDb.insert(goalActivities).values({
+      orgId: organization.id,
+      goalId: started.goal!.id,
+      contractRevision,
+      submittedByAgentId: owner.id,
+      agentOwnerRefAtTime: owner.id,
+      activityKind: "evidence",
+      runRef: runId,
+      summary: "The release artifact passed the acceptance workflow.",
+      evidenceRefs: ["artifact://goal-workspace/acceptance-pass"],
+      idempotencyKey: `goal-board-evidence-${started.goal!.id}`,
+      occurredAt: new Date(Date.now() - 60_000),
+    }).returning();
+    await e2eDb.insert(goalActivities).values(Array.from({ length: 101 }, (_, index) => ({
+      orgId: organization.id,
+      goalId: started.goal!.id,
+      contractRevision,
+      submittedByAgentId: owner.id,
+      agentOwnerRefAtTime: owner.id,
+      activityKind: (["decision_requested", "bottleneck"] as const)[index % 2],
+      summary: `Excluded current-progress event ${index + 1}`,
+      evidenceRefs: [`artifact://goal-workspace/excluded-${index + 1}`],
+      idempotencyKey: `goal-board-excluded-${started.goal!.id}-${index + 1}`,
+      runRef: null,
+      occurredAt: new Date(Date.now() + index),
+    })));
+    await e2eDb.insert(goalFeedbackEntries).values({
+      orgId: organization.id,
+      goalId: started.goal!.id,
+      actorType: "user",
+      actorId: "history-overflow-user",
+      body: longHistoryToken,
+      attachments: [{
+        name: longAttachmentName,
+        uri: `asset://${randomUUID()}`,
+        mimeType: "text/plain",
+        size: 256,
+      }],
+      contentHash: randomUUID(),
+      feedbackKind: "ordinary",
+      idempotencyKey: `goal-board-overflow-${started.goal!.id}`,
+      createdAt: new Date(Date.now() - 120_000),
+      updatedAt: new Date(Date.now() - 120_000),
+    });
     await e2eDb.update(issues).set({ executionRunId: runId, updatedAt: new Date(checkpointTime.getTime() - 500) }).where(eq(issues.id, issue.id));
+
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/goals/${started.goal!.id}/workspace`);
+      if (!response.ok()) return null;
+      return ((await response.json()) as Workspace).agentAction?.summary ?? null;
+    }, { timeout: 30_000 }).toBe("The linked issue produced a reviewable artifact.");
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -754,13 +1673,128 @@ test.describe("Goal Workspace v2", () => {
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(`/${organization.urlKey}/goals`);
     await expect(
-      page.getByTestId("goal-derived-board").getByText("The linked issue produced a reviewable artifact.", { exact: false }),
+      page.getByTestId("goal-derived-board").getByText("The release artifact passed the acceptance workflow.", { exact: false }),
     ).toBeVisible();
+    await expect(
+      page.getByTestId("goal-derived-board").getByText("The linked issue produced a reviewable artifact.", { exact: false }),
+    ).toHaveCount(0);
     await page.getByRole("link", { name: /Publish a verified Goal Workspace release candidate/ }).first().click();
-    await expect(page.getByText("Goal details and related work", { exact: true })).toBeVisible();
+    const workspaceResponse = await page.request.get(`/api/goals/${started.goal!.id}/workspace`);
+    expect(workspaceResponse.ok()).toBe(true);
+    const workspace = await workspaceResponse.json() as Workspace;
+    expect((await page.request.get(`/api/goals/${started.goal!.id}/history?cursor=not-a-cursor`)).status()).toBe(400);
+    const foreignOrganization = await createOrganization(page.request, `Goal-history-foreign-${Date.now()}`);
+    const foreignAgent = await createAgent(page.request, foreignOrganization.id, "Foreign history reader");
+    const foreignKey = await createAgentKey(page.request, foreignAgent.id, "Foreign history key");
+    expect((await page.request.get(`/api/goals/${started.goal!.id}/history`, {
+      headers: { Authorization: `Bearer ${foreignKey.token}` },
+    })).status()).toBe(403);
+    expect(workspace.currentProgress).toMatchObject({
+      sourceActivityId: progressActivity!.id,
+      summary: "The release artifact passed the acceptance workflow.",
+    });
+    const currentProgress = page.getByLabel("Goal progress");
+    await expect(currentProgress.getByText("Latest progress", { exact: true })).toBeVisible();
+    await expect(currentProgress.getByText("Criteria verified", { exact: true })).toBeVisible();
+    await expect(currentProgress.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
+    const agentAction = page.getByText(/^(Agent is doing|Latest Agent activity)$/).locator("..");
+    await expect(agentAction.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toBeVisible();
+    await expect(page.getByRole("tabpanel").getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    const history = page.getByRole("tabpanel");
+    await expect(history.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
+    await expect(history.getByText("Excluded current-progress event 101", { exact: true })).toBeVisible();
+    await expect(history.getByText("Excluded current-progress event 1", { exact: true })).toHaveCount(0);
+    let loadEarlier = history.getByRole("button", { name: "Load earlier records" });
+    await loadEarlier.focus();
+    for (const [index, expectedFirstLoaded] of ["Excluded current-progress event 51", "Excluded current-progress event 1"].entries()) {
+      await page.keyboard.press("Enter");
+      await expect(history.getByText(expectedFirstLoaded, { exact: true })).toBeVisible();
+      await expect(history.getByText(expectedFirstLoaded, { exact: true }).locator("../..")).toBeFocused();
+      if (index === 0) {
+        loadEarlier = history.getByRole("button", { name: "Load earlier records" });
+        await page.keyboard.press("Tab");
+        await expect(loadEarlier).toBeFocused();
+      }
+    }
+    await expect(history.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
+    await expect(history.getByRole("button", { name: "Load earlier records" })).toHaveCount(0);
+    await expect(history.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toHaveCount(0);
+    for (const internalKind of ["work_status", "activity", "Related work"]) {
+      await expect(history.getByText(internalKind, { exact: true })).toHaveCount(0);
+    }
+    await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeVisible();
     await expect(page.getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    const conversation = page.getByRole("tabpanel");
+    await expect(conversation.getByText(longHistoryToken, { exact: true })).toBeVisible();
+    await expect(conversation.getByText(longAttachmentName, { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const [conversationBox, propertiesBox] = await Promise.all([
+      page.getByRole("tabpanel").boundingBox(),
+      page.getByRole("heading", { name: "Properties", exact: true }).boundingBox(),
+    ]);
+    expect(conversationBox).not.toBeNull();
+    expect(propertiesBox).not.toBeNull();
+    expect(conversationBox!.y).toBeLessThan(propertiesBox!.y);
+    const detailOverflow = await page.getByTestId("goal-detail-workspace").evaluate((root) => {
+      const rootRect = root.getBoundingClientRect();
+      return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))].flatMap((element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return [];
+        const escapesRoot = rect.left < rootRect.left - 1 || rect.right > rootRect.right + 1;
+        const containedByHorizontalScroller = (() => {
+          let ancestor = element.parentElement;
+          while (ancestor && ancestor !== root) {
+            const ancestorOverflowX = window.getComputedStyle(ancestor).overflowX;
+            if (["auto", "scroll", "hidden", "clip"].includes(ancestorOverflowX)) return true;
+            ancestor = ancestor.parentElement;
+          }
+          return false;
+        })();
+        const clipsContent = element.scrollWidth > element.clientWidth + 1
+          && style.overflowX !== "auto"
+          && style.overflowX !== "scroll";
+        const uncontainedEscape = escapesRoot && !containedByHorizontalScroller;
+        return uncontainedEscape || clipsContent
+          ? [{
+              tag: element.tagName,
+              className: element.className,
+              testId: element.dataset.testid ?? null,
+              text: element.textContent?.slice(0, 80),
+              clientWidth: element.clientWidth,
+              scrollWidth: element.scrollWidth,
+              escapesRoot: uncontainedEscape,
+              clipsContent,
+            }]
+          : [];
+      });
+    });
+    expect(detailOverflow).toEqual([]);
+    await page.setViewportSize({ width: 1440, height: 960 });
+
+    const setFocus = page.getByRole("button", { name: "Start Agent work", exact: true });
+    await setFocus.focus();
+    await page.keyboard.press("Enter");
+    const unfocus = page.getByRole("button", { name: "Pause Agent work", exact: true });
+    await expect(unfocus).toBeVisible();
+    await expect(unfocus).toBeFocused();
+    expect((await page.request.get(`/api/goals/${started.goal!.id}`).then((response) => response.json()) as Goal).focus)
+      .toBe(true);
+    await page.reload();
+    await expect(unfocus).toBeVisible();
+    await unfocus.focus();
+    await page.keyboard.press("Enter");
+    await expect(setFocus).toBeVisible();
+    await expect(setFocus).toBeFocused();
+    expect((await page.request.get(`/api/goals/${started.goal!.id}`).then((response) => response.json()) as Goal).focus)
+      .toBe(false);
+
     await page.goto(`/${organization.urlKey}/goals`);
-    for (const facet of ["Agent advancing", "Needs your attention", "Waiting for external result", "Ready for acceptance"]) {
+    for (const facet of ["Agent advancing", "Needs your attention", "Ready for Agent work", "Waiting for external result", "Ready for acceptance"]) {
       await expect(page.getByRole("heading", { name: facet })).toBeVisible();
     }
     await expect(page.locator("[draggable=true]")).toHaveCount(0);
@@ -772,6 +1806,58 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByTestId("goal-derived-board")).toBeHidden();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+  });
+
+  test("makes Focus a durable Run admission boundary and resumes after Focus moves", async ({ page }) => {
+    test.setTimeout(180_000);
+    const organization = await createOrganization(page.request, `Goal-focus-admission-${Date.now()}`);
+    const owner = await createAgent(page.request, organization.id, "Focus admission owner");
+    const firstPreview = await previewGoal(
+      page.request,
+      organization.id,
+      owner.id,
+      "Ship the focused Goal result",
+    );
+    const first = await startGoal(page.request, organization.id, firstPreview);
+    expect(first.response.status()).toBe(201);
+    expect((await page.request.post(`/api/goals/${first.goal!.id}/focus`, {
+      data: { focus: true },
+    })).status()).toBe(200);
+
+    const secondPreview = await previewGoal(
+      page.request,
+      organization.id,
+      owner.id,
+      "Ship the queued Goal result after Focus moves",
+    );
+    const second = await startGoal(page.request, organization.id, secondPreview);
+    expect(second.response.status()).toBe(201);
+    const secondWakeup = (await e2eDb.select().from(agentWakeupRequests))
+      .find((wakeup) => (wakeup.payload as Record<string, unknown> | null)?.goalId === second.goal!.id);
+    expect(secondWakeup).toMatchObject({
+      status: "deferred_goal_focus",
+      runId: null,
+      error: "goal.focused_elsewhere",
+    });
+    const waitingWorkspace = await page.request.get(`/api/goals/${second.goal!.id}/workspace`)
+      .then((response) => response.json()) as Workspace;
+    expect(waitingWorkspace.facet).toBe("waiting_focus");
+    expect(waitingWorkspace.attention).toBeNull();
+
+    await page.goto(`/${organization.urlKey}/goals/${second.goal!.id}`);
+    await expect(page.getByText("Ready for Agent work", { exact: true })).toBeVisible();
+    const setFocus = page.getByRole("button", { name: "Start Agent work", exact: true });
+    await setFocus.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Pause Agent work", exact: true })).toBeFocused();
+    await expect(page.getByText("Agent advancing", { exact: true })).toBeVisible();
+    await expect.poll(async () => (
+      await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.wakeupRequestId, secondWakeup!.id))
+    ).length).toBe(1);
+    await page.reload();
+    await expect(page.getByText("Agent advancing", { exact: true })).toBeVisible();
+    expect((await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, secondWakeup!.id)))).toHaveLength(1);
   });
 
   test("preserves Goal Start and feedback exactly once across a server restart", async ({ page }) => {

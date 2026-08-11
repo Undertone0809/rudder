@@ -91,25 +91,34 @@ export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } fro
 export type {
   Goal,
   GoalActivity,
+  GoalAgentContext,
+  GoalAgentListLifecycle,
+  GoalAgentListResponse,
   GoalChangeProposal,
   GoalContinuation,
   GoalContractPatch,
   GoalContractSnapshot,
   GoalCriterion,
   GoalDependencies,
-  GoalDependencyPreview,
-  GoalEvaluationCandidate,
-  GoalFeedbackAttachment,
+  GoalDependencyPreview, GoalEvaluationCandidate, GoalEvidenceItem, GoalFeedbackAttachment,
   GoalFeedbackEntry,
+  GoalHistoryAttachment,
+  GoalHistoryItem,
+  GoalHistoryPage,
   GoalOwnerAssignment,
-  GoalPlan,
-  GoalResultProposal,
+  GoalPlan, GoalResultProposal,
   GoalResultReducerPreflight,
   GoalStartPacket,
   GoalStartPreview,
   GoalStartRequest,
   GoalWorkspaceCard,
-  GoalWorkspaceSummary
+  GoalWorkspaceSummary, PublicGoal,
+  PublicGoalActivity,
+  PublicGoalChangeProposal,
+  PublicGoalCriterion,
+  PublicGoalOwnerAssignment,
+  PublicGoalPlan,
+  PublicGoalResultProposal
 } from "./goal.js";
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
@@ -152,8 +161,7 @@ export type {
 } from "./mcp.js";
 export type {
   IssueFollow,
-  IssueFollowEntry, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,
+  IssueFollowEntry, MessengerApprovalThreadItem, MessengerAssistanceThreadItem, MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,
   MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
@@ -200,6 +208,7 @@ export type {
   ProjectWorkspaceVisibility
 } from "./project.js";
 export type { ProviderQuotaResult, QuotaWindow } from "./quota.js";
+export type { ApprovalRequest, AssistanceRequest, IssueBlockAuditResult, RudderRequest } from "./request.js";
 export type {
   CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, OrganizationResource, ProjectResourceAttachment,
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest

@@ -1,7 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("electron", () => ({ app: { isPackaged: false } }));
-
+import { describe, expect, it } from "vitest";
 import { resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 
 const prodLocalProfile: LocalEnvProfile = {

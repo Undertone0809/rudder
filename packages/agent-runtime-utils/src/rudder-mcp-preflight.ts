@@ -29,6 +29,9 @@ const RUDDER_SCHEMA_KEYS = new Set([
   "maxLength",
   "minItems",
   "maxItems",
+  "minProperties",
+  "maxProperties",
+  "format",
   "oneOf",
   "anyOf",
 ]);
@@ -90,7 +93,16 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
   if (schema.description !== undefined && typeof schema.description !== "string") return false;
 
   if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) return false;
-  for (const key of ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
+  for (const key of [
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "minItems",
+    "maxItems",
+    "minProperties",
+    "maxProperties",
+  ]) {
     if (
       schema[key] !== undefined
       && (typeof schema[key] !== "number" || !Number.isFinite(schema[key]) || Number(schema[key]) < 0)
@@ -98,6 +110,7 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
       return false;
     }
   }
+  if (schema.format !== undefined && typeof schema.format !== "string") return false;
   if (
     schema.oneOf !== undefined
     && (
@@ -121,6 +134,12 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
 
   const supportsObject = types.includes("object");
   const supportsArray = types.includes("array");
+  if (
+    (schema.minProperties !== undefined || schema.maxProperties !== undefined)
+    && !supportsObject
+  ) {
+    return false;
+  }
   if (schema.additionalProperties !== undefined) {
     if (!supportsObject || typeof schema.additionalProperties !== "boolean") return false;
   }

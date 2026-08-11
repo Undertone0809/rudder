@@ -53,6 +53,11 @@ describe("agent-v1 registry", () => {
       "agent.skills.create",
       "agent.skills.enable",
       "agent.skills.sync",
+      "goal.list",
+      "goal.context",
+      "goal.progress",
+      "goal.change.propose",
+      "goal.result.propose",
       "issue.get",
       "issue.list",
       "issue.search",
@@ -174,6 +179,37 @@ describe("agent-v1 registry", () => {
     });
   });
 
+  it("exposes Goal progress and proposals as run-attributed Owner capabilities", () => {
+    const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
+    const byId = new Map(manifest.capabilities.map((entry) => [entry.id, entry]));
+
+    for (const id of ["goal.progress", "goal.change.propose", "goal.result.propose"]) {
+      expect(byId.get(id)).toMatchObject({
+        category: "goal",
+        mutating: true,
+        requiresAgentId: true,
+        requiresRunId: true,
+        attachesRunIdWhenAvailable: true,
+      });
+    }
+  });
+
+  it("exposes Goal discovery and context as read-only runtime-owned capabilities", () => {
+    const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
+    const byId = new Map(manifest.capabilities.map((entry) => [entry.id, entry]));
+
+    for (const id of ["goal.list", "goal.context"]) {
+      expect(byId.get(id)).toMatchObject({
+        category: "goal",
+        mutating: false,
+        requiresAgentId: true,
+        requiresRunId: false,
+        attachesRunIdWhenAvailable: false,
+      });
+    }
+    expect(byId.get("goal.list")?.requiresOrgId).toBe(true);
+  });
+
   it("requires a body in the chat create MCP contract", () => {
     const chatCreate = buildAgentV1McpToolsManifest("agent-v1").tools
       .find((tool) => tool.capabilityId === "chat.create");
@@ -197,6 +233,11 @@ describe("agent-v1 registry", () => {
 
     expect(mcpManifest.tools.every((tool) => tool.category !== "browser")).toBe(true);
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_issue_checkout");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_goal_list");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_goal_context");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_goal_progress");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_goal_change_propose");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_goal_result_propose");
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_runs_errors");
     expect(mcpManifest.tools.map((tool) => tool.name)).not.toContain("rudder_browser_open");
     expect(mcpManifest.tools.find((tool) => tool.capabilityId === "issue.checkout")).toMatchObject({

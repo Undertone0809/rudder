@@ -51,7 +51,7 @@ export type ChatDraftRequest = {
   effortOverride?: string | null;
   issueCreationMode: ChatIssueCreationMode;
   planMode: boolean;
-  contextLinks: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
+  contextLinks: Array<{ entityType: "issue" | "project" | "agent" | "goal"; entityId: string }>;
 };
 
 export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
@@ -130,7 +130,7 @@ export const chatsApi = {
       effortOverride?: string | null;
       issueCreationMode?: ChatIssueCreationMode;
       planMode?: boolean;
-      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
+      contextLinks?: Array<{ entityType: "issue" | "project" | "agent" | "goal"; entityId: string }>;
     },
   ) => api.post<ChatConversation>(`/orgs/${orgId}/chats`, data),
   preflightDraft: (orgId: string, data: ChatDraftRequest) =>
@@ -398,7 +398,7 @@ export const chatsApi = {
   addContextLink: (
     chatId: string,
     data: {
-      entityType: "issue" | "project" | "agent";
+      entityType: "issue" | "project" | "agent" | "goal";
       entityId: string;
       metadata?: Record<string, unknown> | null;
     },

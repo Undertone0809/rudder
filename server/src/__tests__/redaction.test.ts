@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED_EVENT_VALUE, redactEventPayload, sanitizeRecord } from "../redaction.js";
+import { REDACTED_EVENT_VALUE, redactEventPayload, redactSensitiveText, sanitizeRecord } from "../redaction.js";
 
 describe("redaction", () => {
+  it("redacts high-signal credentials embedded in Request text", () => {
+    expect(redactSensitiveText(
+      "Use bearer ghp_example, token: abc123, GitHub ghp_1234567890abcdefghij, " +
+      "JWT abcdefgh.ijklmnop.qrstuvwx after OTP 123456; normal issue 6543210 stays visible.",
+    )).toBe(
+      "Use bearer [REDACTED], token: [REDACTED], GitHub [REDACTED_SECRET], " +
+      "JWT [REDACTED_JWT] after OTP [REDACTED_OTP]; normal issue 6543210 stays visible.",
+    );
+  });
+
+  it("redacts PEM private keys from multiline Request text", () => {
+    expect(redactSensitiveText(
+      "Credential:\n-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----\nContinue.",
+    )).toBe("Credential:\n[REDACTED_PRIVATE_KEY]\nContinue.");
+  });
+
   it("redacts sensitive keys and nested secret values", () => {
     const input = {
       apiKey: "abc123",

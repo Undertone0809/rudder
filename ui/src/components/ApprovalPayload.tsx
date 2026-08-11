@@ -33,6 +33,7 @@ export const typeLabel: Record<string, string> = {
   budget_override_required: "Budget Override",
   chat_issue_creation: "Issue proposed from chat",
   chat_operation: "Chat Operation Proposal",
+  goal_change: "Goal Change",
 };
 
 /** Build a contextual label for an approval, e.g. "Hire Agent: Designer" */
@@ -475,6 +476,216 @@ export function BudgetOverridePayload({ payload }: { payload: Record<string, unk
   );
 }
 
+function payloadRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function payloadString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function goalCriteriaLabels(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((criterion) => {
+    const label = payloadString(payloadRecord(criterion).label);
+    return label ? [label] : [];
+  });
+}
+
+function goalChangeDate(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string" && !(value instanceof Date)) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+const goalAgreementLabels: Record<string, string> = {
+  allowed: "Agent can",
+  requiresHumanApproval: "Must ask you before",
+  acceptance: "Final acceptance",
+  consequentialChanges: "Major Goal changes",
+  terminalEvidenceRequired: "Evidence before completion",
+  humanAcceptanceRequired: "Your acceptance before completion",
+};
+
+const goalAgreementValues: Record<string, string> = {
+  bounded_reversible_work: "bounded, reversible work",
+  external_or_irreversible_action: "external or irreversible actions",
+  authority_expansion: "expanding its authority",
+  board_human: "you",
+};
+
+function goalAgreementLabel(value: string) {
+  return goalAgreementLabels[value]
+    ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, (character) => character.toUpperCase());
+}
+
+function goalAgreementValue(value: unknown): string {
+  if (value === null || value === undefined) return "not set";
+  if (typeof value === "boolean") return value ? "required" : "not required";
+  if (typeof value === "string") return goalAgreementValues[value] ?? goalAgreementLabel(value).toLowerCase();
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(goalAgreementValue).join(", ");
+  const record = payloadRecord(value);
+  return Object.entries(record)
+    .map(([key, entry]) => `${goalAgreementLabel(key)}: ${goalAgreementValue(entry)}`)
+    .join("; ");
+}
+
+function sameGoalAgreementValue(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function goalBoundaryChanges(before: Record<string, unknown>, after: Record<string, unknown>) {
+  return ([
+    ["autonomyEnvelope", "Agent working boundaries"],
+    ["humanAuthorities", "Decisions that need you"],
+    ["evaluationPolicy", "Evidence and acceptance"],
+  ] as const).flatMap(([key, label]) => {
+    if (!Object.hasOwn(after, key) || sameGoalAgreementValue(before[key], after[key])) return [];
+    return [{ label, before: goalAgreementValue(before[key]), after: goalAgreementValue(after[key]) }];
+  });
+}
+
+function goalChangeSummary(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const parts: string[] = [];
+  if (payloadString(after.outcomeStatement)) {
+    parts.push("Update the desired outcome.");
+  }
+
+  const criteria = goalCriteriaLabels(after.criteria);
+  if (criteria.length > 0) {
+    parts.push(`Judge success by: ${criteria.join("; ")}.`);
+  }
+  if (Object.hasOwn(after, "objectiveMode") && after.objectiveMode !== before.objectiveMode) {
+    parts.push("Change how success is judged.");
+  }
+
+  for (const [key, label] of [
+    ["actionDeadline", "work target"],
+    ["evaluationDeadline", "review target"],
+  ] as const) {
+    if (!Object.hasOwn(after, key)) continue;
+    const date = goalChangeDate(after[key]);
+    if (date === null) parts.push(`Remove the ${label}.`);
+    else if (date) parts.push(`Set the ${label} for ${date}.`);
+  }
+
+  return parts.length > 0 ? parts.join(" ") : "Apply the proposed Goal agreement update.";
+}
+
+function goalBoundarySummary(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const changes = [
+    Object.hasOwn(after, "autonomyEnvelope") && !sameGoalAgreementValue(before.autonomyEnvelope, after.autonomyEnvelope) ? "the agent's working limits" : null,
+    Object.hasOwn(after, "humanAuthorities") && !sameGoalAgreementValue(before.humanAuthorities, after.humanAuthorities) ? "human approval responsibilities" : null,
+    Object.hasOwn(after, "evaluationPolicy") && !sameGoalAgreementValue(before.evaluationPolicy, after.evaluationPolicy) ? "evidence and review expectations" : null,
+  ].filter((value): value is string => Boolean(value));
+
+  if (changes.length === 0) {
+    return "The agent's working limits and human approval responsibilities stay the same.";
+  }
+  if (changes.length === 1) return `This proposal changes ${changes[0]}.`;
+  if (changes.length === 2) return `This proposal changes ${changes[0]} and ${changes[1]}.`;
+  return `This proposal changes ${changes.slice(0, -1).join(", ")}, and ${changes.at(-1)}.`;
+}
+
+function goalChangeImpact(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const impacts = [
+    Object.hasOwn(after, "outcomeStatement") && after.outcomeStatement !== before.outcomeStatement
+      ? "the result the Agent is working toward"
+      : null,
+    (Object.hasOwn(after, "criteria") && !sameGoalAgreementValue(before.criteria, after.criteria))
+      || (Object.hasOwn(after, "objectiveMode") && !sameGoalAgreementValue(before.objectiveMode, after.objectiveMode))
+      ? "how success is judged"
+      : null,
+    Object.hasOwn(after, "autonomyEnvelope") && !sameGoalAgreementValue(before.autonomyEnvelope, after.autonomyEnvelope)
+      ? "what the Agent can do independently"
+      : null,
+    Object.hasOwn(after, "humanAuthorities") && !sameGoalAgreementValue(before.humanAuthorities, after.humanAuthorities)
+      ? "which decisions need your approval"
+      : null,
+    Object.hasOwn(after, "evaluationPolicy") && !sameGoalAgreementValue(before.evaluationPolicy, after.evaluationPolicy)
+      ? "what evidence is needed before acceptance"
+      : null,
+    (Object.hasOwn(after, "actionDeadline") && !sameGoalAgreementValue(before.actionDeadline, after.actionDeadline))
+      || (Object.hasOwn(after, "evaluationDeadline") && !sameGoalAgreementValue(before.evaluationDeadline, after.evaluationDeadline))
+      ? "when the work or review is expected"
+      : null,
+  ].filter((value): value is string => Boolean(value));
+  if (impacts.length === 0) return "No user-visible impact was found in the proposed Goal update.";
+  return `This may require the Agent to replan around ${impacts.join(", ")}.`;
+}
+
+function GoalChangeSummaryField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      aria-label={`${label} summary`}
+      className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] items-start gap-2 sm:grid-cols-[6rem_minmax(0,1fr)]"
+    >
+      <h4 className="text-xs font-normal text-muted-foreground">{label}</h4>
+      <div className="min-w-0 max-w-full [overflow-wrap:anywhere]">{children}</div>
+    </section>
+  );
+}
+
+export function GoalChangePayload({ payload }: { payload: Record<string, unknown> }) {
+  const before = payloadRecord(payload.beforeContract);
+  const after = payloadRecord(payload.afterContract);
+  const outcome = payloadString(after.outcomeStatement) ?? payloadString(before.outcomeStatement);
+  const rationale = payloadString(payload.rationale);
+  const boundaryChanges = goalBoundaryChanges(before, after);
+
+  return (
+    <div className="min-w-0 max-w-full space-y-2 text-sm" aria-label="Goal change summary">
+      <GoalChangeSummaryField label="Outcome">
+        <span className="whitespace-pre-wrap font-medium">
+          {outcome ?? "The desired outcome is unchanged by this proposal."}
+        </span>
+      </GoalChangeSummaryField>
+      <GoalChangeSummaryField label="Change">
+        <span className="whitespace-pre-wrap text-foreground/90">
+          {goalChangeSummary(before, after)}
+        </span>
+      </GoalChangeSummaryField>
+      <GoalChangeSummaryField label="Boundary">
+        <span className="whitespace-pre-wrap text-muted-foreground">
+          {goalBoundarySummary(before, after)}
+        </span>
+      </GoalChangeSummaryField>
+      <GoalChangeSummaryField label="Impact">
+        <span className="whitespace-pre-wrap text-foreground/90">
+          {goalChangeImpact(before, after)}
+        </span>
+      </GoalChangeSummaryField>
+      {boundaryChanges.length > 0 ? (
+        <div aria-label="Boundary changes" className="divide-y divide-border border-y border-border">
+          {boundaryChanges.map((change) => (
+            <div key={change.label} className="min-w-0 space-y-1 py-2">
+              <div className="text-xs font-medium text-foreground">{change.label}</div>
+              <div className="min-w-0 break-words text-xs text-muted-foreground">Current: {change.before}</div>
+              <div className="min-w-0 break-words text-xs text-foreground">Proposed: {change.after}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {rationale ? (
+        <GoalChangeSummaryField label="Reason">
+          <span className="whitespace-pre-wrap text-foreground/90">{rationale}</span>
+        </GoalChangeSummaryField>
+      ) : null}
+    </div>
+  );
+}
+
 function ChatIssueCreationPayload({
   payload,
   context,
@@ -567,5 +778,6 @@ export function ApprovalPayloadRenderer({
   if (type === "budget_override_required") return <BudgetOverridePayload payload={payload} />;
   if (type === "chat_issue_creation") return <ChatIssueCreationPayload payload={payload} context={context} />;
   if (type === "chat_operation") return <ChatOperationPayload payload={payload} />;
+  if (type === "goal_change") return <GoalChangePayload payload={payload} />;
   return <CeoStrategyPayload payload={payload} />;
 }

@@ -130,6 +130,7 @@ export function chatAgentRunService(db: Db) {
     turnVariant?: number | null;
     linkedIssueIds: string[];
     linkedProjectId: string | null;
+    linkedGoalId?: string | null;
     runContext?: Record<string, unknown> | null;
     sourceMetadata?: Record<string, unknown> | null;
   }) {
@@ -149,6 +150,7 @@ export function chatAgentRunService(db: Db) {
       issueId,
       linkedIssueIds,
       projectId: input.linkedProjectId,
+      goalId: input.linkedGoalId ?? null,
       planMode: input.conversation.planMode,
       stream: input.triggerDetail === "chat_assistant_reply_stream",
       controlIntent: "new",

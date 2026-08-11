@@ -7,6 +7,7 @@ import { HttpError } from "../errors.js";
 import type { chatAssistantService } from "../services/chat-assistant.js";
 import type {
   agentService,
+  goalService,
   issueService,
   organizationService,
   projectService,
@@ -26,6 +27,7 @@ type DraftPreflightServices = {
   issues: ReturnType<typeof issueService>;
   projects: ReturnType<typeof projectService>;
   agents: ReturnType<typeof agentService>;
+  goals: ReturnType<typeof goalService>;
   assistant: ReturnType<typeof chatAssistantService>;
 };
 
@@ -46,6 +48,13 @@ export function createChatDraftPreflight(services: DraftPreflightServices) {
         const project = await services.projects.getById(link.entityId);
         if (!project || project.orgId !== orgId) {
           throw new HttpError(422, "Project context must belong to the same organization");
+        }
+        continue;
+      }
+      if (link.entityType === "goal") {
+        const goal = await services.goals.getById(link.entityId);
+        if (!goal || goal.orgId !== orgId) {
+          throw new HttpError(422, "Goal context must belong to the same organization");
         }
         continue;
       }

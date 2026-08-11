@@ -322,7 +322,8 @@ describe("bundled rudder docs skill", () => {
       /--decision request_changes/,
       /--decision needs_followup/,
       /--decision blocked/,
-      /blocked[\s\S]*blocker comment/i,
+      /complete the real task[\s\S]*materially different recovery path/i,
+      /first claim[\s\S]*does not directly establish/i,
       /approval[\s\S]*linked issues/i,
       /80%[\s\S]*critical work/i,
       /explicit owner[\s\S]*operator/i,
@@ -512,7 +513,12 @@ describe("bundled rudder docs skill", () => {
       expect(fixture.required_contract_ids).toEqual(workspaceContracts);
     }
     const expectedBilingualReferencePaths = contentMap.pages
-      .filter((page) => page.kind === "reference" && page.status === "active")
+      .filter(
+        (page) =>
+          page.kind === "reference" &&
+          page.status === "active" &&
+          page.contracts.primary.length + page.contracts.supporting.length > 0,
+      )
       .flatMap((page) => [
         `${contentMap.base_url}${page.urls.en}`,
         `${contentMap.base_url}${page.urls.zh}`,

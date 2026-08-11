@@ -484,7 +484,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   setBrowserEnabled: (enabled: boolean) =>
     ipcRenderer.invoke("desktop:set-browser-enabled", enabled) as Promise<void>,
   computerUse: {
-    supported: process.platform === "darwin",
+    supported: ["darwin", "win32", "linux"].includes(process.platform),
     readiness: () =>
       ipcRenderer.invoke("desktop:computer-use-readiness") as Promise<DesktopComputerReadiness>,
     requestPermissions: () =>

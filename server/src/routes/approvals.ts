@@ -11,7 +11,7 @@ import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { redactEventPayload } from "../redaction.js";
+import { redactApprovalPayload } from "../redaction.js";
 import {
   accessService,
   approvalService,
@@ -28,13 +28,6 @@ import {
   wakeIssueAssigneeAfterChatConversion,
   type ChatConvertedIssue,
 } from "./chat-issue-assignment-wakeup.js";
-
-function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
-  return {
-    ...approval,
-    payload: redactEventPayload(approval.payload) ?? {},
-  };
-}
 
 function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { identifier?: string | null } {
   return (
@@ -262,6 +255,7 @@ export function approvalRoutes(db: Db) {
     assertBoard(req);
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
+    if (pendingApproval) assertCompanyAccess(req, pendingApproval.orgId);
     const payloadOverride =
       pendingApproval?.type === "chat_issue_creation"
       && req.body.payload
@@ -278,10 +272,21 @@ export function approvalRoutes(db: Db) {
         : null;
       if (!proposalId) throw unprocessable("Goal change approval is missing its proposal reference");
       const actorId = req.actor.userId ?? "board";
-      const proposal = await goalsSvc.decideChangeProposal(proposalId, {
+      const { proposal, dispatch } = await goalsSvc.decideChangeProposal(proposalId, {
         decision: "approve",
         note: req.body.decisionNote,
       }, actorId);
+      await heartbeat.wakeup(dispatch.ownerAgentId, {
+        existingWakeupRequestId: dispatch.wakeupRequestId,
+        source: dispatch.source,
+        triggerDetail: dispatch.triggerDetail,
+        reason: dispatch.reason,
+        payload: dispatch.payload,
+        contextSnapshot: dispatch.contextSnapshot,
+        requestedByActorType: dispatch.requestedByActorType,
+        requestedByActorId: dispatch.requestedByActorId,
+        idempotencyKey: dispatch.idempotencyKey,
+      });
       const approval = await svc.getById(id);
       if (!approval) throw unprocessable("Goal change approval disappeared after its decision");
       await logActivity(db, {
@@ -530,16 +535,28 @@ export function approvalRoutes(db: Db) {
     assertBoard(req);
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
+    if (pendingApproval) assertCompanyAccess(req, pendingApproval.orgId);
     if (pendingApproval?.type === "goal_change") {
       const proposalId = typeof pendingApproval.payload?.proposalId === "string"
         ? pendingApproval.payload.proposalId
         : null;
       if (!proposalId) throw unprocessable("Goal change approval is missing its proposal reference");
       const actorId = req.actor.userId ?? "board";
-      const proposal = await goalsSvc.decideChangeProposal(proposalId, {
+      const { proposal, dispatch } = await goalsSvc.decideChangeProposal(proposalId, {
         decision: "reject",
         note: req.body.decisionNote,
       }, actorId);
+      await heartbeat.wakeup(dispatch.ownerAgentId, {
+        existingWakeupRequestId: dispatch.wakeupRequestId,
+        source: dispatch.source,
+        triggerDetail: dispatch.triggerDetail,
+        reason: dispatch.reason,
+        payload: dispatch.payload,
+        contextSnapshot: dispatch.contextSnapshot,
+        requestedByActorType: dispatch.requestedByActorType,
+        requestedByActorId: dispatch.requestedByActorId,
+        idempotencyKey: dispatch.idempotencyKey,
+      });
       const approval = await svc.getById(id);
       if (!approval) throw unprocessable("Goal change approval disappeared after its decision");
       await logActivity(db, {
@@ -592,6 +609,10 @@ export function approvalRoutes(db: Db) {
     async (req, res) => {
       assertBoard(req);
       const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (existing?.type === "goal_change") {
+        throw unprocessable("Reject this Goal update with feedback so the Owner can submit a new proposal");
+      }
       const approval = await svc.requestRevision(
         id,
         req.body.decidedByUserId ?? "board",
@@ -620,6 +641,9 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
+    if (existing.type === "goal_change") {
+      throw unprocessable("A rejected Goal update requires a new proposal and approval");
+    }
 
     if (req.actor.type === "agent" && req.actor.agentId !== existing.requestedByAgentId) {
       res.status(403).json({ error: "Only requesting agent can resubmit this approval" });

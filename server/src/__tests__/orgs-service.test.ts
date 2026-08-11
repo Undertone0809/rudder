@@ -12,6 +12,7 @@ import {
   ensurePostgresDatabase,
   executionWorkspaces,
   heartbeatRuns,
+  issueBlockAuditAttempts,
   issueDocuments,
   issues,
   labels,
@@ -19,6 +20,7 @@ import {
   organizations,
   projectWorkspaces,
   projects,
+  requests,
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
@@ -131,6 +133,8 @@ describe("organization service", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(issueBlockAuditAttempts);
+    await db.delete(requests);
     await db.delete(activityLog);
     await db.delete(workspaceOperations);
     await db.delete(workspaceRuntimeServices);
@@ -331,6 +335,39 @@ describe("organization service", () => {
       priority: "medium",
     });
 
+    const requestId = randomUUID();
+    await db.insert(requests).values({
+      id: requestId,
+      orgId,
+      kind: "assistance",
+      subtype: "blocked",
+      issueId,
+      requestedByAgentId: agentId,
+      originRunId: heartbeatRunId,
+      assigneeAgentId: agentId,
+      blockerFingerprint: "environment:desktop-disconnected",
+      title: "Desktop connection required",
+      prompt: "Reconnect the local Desktop runtime.",
+    });
+
+    await db.insert(issueBlockAuditAttempts).values({
+      orgId,
+      issueId,
+      requestId,
+      runId: heartbeatRunId,
+      rootRunId: heartbeatRunId,
+      agentId,
+      continuationKind: "initial",
+      failureClass: "environment",
+      blockerFingerprint: "environment:desktop-disconnected",
+      attemptNumber: 1,
+      requiredAttempts: 3,
+      statusBefore: "in_progress",
+      statusAfter: "in_progress",
+      blockerReason: "Desktop is not connected",
+      requestedAction: "Reconnect Desktop",
+    });
+
     await db.insert(documents).values({
       id: documentId,
       orgId,
@@ -423,6 +460,90 @@ describe("organization service", () => {
     expect(remaining).toBeNull();
     expect(fs.existsSync(resolveOrganizationRoot(orgId))).toBe(false);
     expect(fs.existsSync(legacyProjectsRoot)).toBe(false);
+  });
+
+  it("removes an agent with block audit attempts without deleting the durable request", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const runId = randomUUID();
+    const requestId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Removal Audit",
+      urlKey: deriveOrganizationUrlKey("Agent Removal Audit"),
+      issuePrefix: "ARA",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Audited Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Exercise agent removal",
+      status: "in_progress",
+      priority: "medium",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "manual",
+      status: "succeeded",
+      startedAt: new Date("2026-08-11T01:00:00.000Z"),
+      finishedAt: new Date("2026-08-11T01:00:01.000Z"),
+    });
+    await db.insert(requests).values({
+      id: requestId,
+      orgId,
+      kind: "assistance",
+      subtype: "blocked",
+      issueId,
+      requestedByAgentId: agentId,
+      originRunId: runId,
+      assigneeAgentId: agentId,
+      blockerFingerprint: "tool:browser-unavailable",
+      title: "Browser access required",
+      prompt: "Restore browser access.",
+    });
+    await db.insert(issueBlockAuditAttempts).values({
+      orgId,
+      issueId,
+      requestId,
+      runId,
+      rootRunId: runId,
+      agentId,
+      continuationKind: "initial",
+      failureClass: "tool",
+      blockerFingerprint: "tool:browser-unavailable",
+      attemptNumber: 1,
+      requiredAttempts: 3,
+      statusBefore: "in_progress",
+      statusAfter: "in_progress",
+      blockerReason: "Browser unavailable",
+      requestedAction: "Restore browser access",
+    });
+
+    await expect(agentSvc.remove(agentId)).resolves.toMatchObject({ id: agentId });
+
+    expect(await db.select().from(issueBlockAuditAttempts)).toEqual([]);
+    const [remainingRequest] = await db.select().from(requests).where(eq(requests.id, requestId));
+    expect(remainingRequest).toMatchObject({
+      id: requestId,
+      requestedByAgentId: null,
+      assigneeAgentId: null,
+      originRunId: null,
+    });
   });
 
   it("creates default issue labels for newly created organizations", async () => {

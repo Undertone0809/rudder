@@ -107,6 +107,66 @@ export interface Goal {
   updatedAt: Date;
 }
 
+/** Public Goal fields returned by the user-facing Goal workspace APIs. */
+export interface PublicGoalCriterion {
+  id: string;
+  label: string;
+}
+
+export interface PublicGoal {
+  id: string;
+  orgId: string;
+  title: string;
+  description: string | null;
+  lifecycle: GoalLifecycle;
+  status: GoalStatus;
+  outcomeStatement: string | null;
+  criteria: PublicGoalCriterion[];
+  ownerAgentId: string | null;
+  focus: boolean;
+  evaluationResult: { outcome: string } | null;
+  evaluationDeadline: Date | string | null;
+  actionDeadline: Date | string | null;
+  continuationSummary: string | null;
+  wakeCondition: string | null;
+  alignmentQuestion: string | null;
+  closeReason: GoalCloseReason | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface PublicGoalActivity {
+  id: string;
+  orgId: string;
+  goalId: string;
+  activityKind: GoalActivityKind | null;
+  summary: string;
+  evidence: GoalEvidenceItem[];
+  occurredAt: Date | string;
+  createdAt: Date | string;
+}
+
+export interface PublicGoalPlan {
+  id: string;
+  orgId: string;
+  goalId: string;
+  revision: number;
+  summary: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface PublicGoalOwnerAssignment {
+  id: string;
+  orgId: string;
+  goalId: string;
+  agentId: string;
+  assignmentRevision: number;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  createdAt: Date | string;
+}
+
 export interface GoalStartPacket {
   version: 1;
   title: string;
@@ -128,7 +188,13 @@ export interface GoalStartPreview {
     ownerAgentId?: string;
     targetTime?: Date | string | null;
   } | null;
+  blockers: Array<{
+    code: "outcome_required" | "owner_required";
+    field: "goal" | "ownerAgentId";
+    message: string;
+  }>;
   alignmentQuestion: string | null;
+  warning: string | null;
 }
 
 export interface GoalStartRequest {
@@ -168,6 +234,64 @@ export interface GoalFeedbackEntry {
   updatedAt: Date;
 }
 
+export interface GoalHistoryAttachment {
+  name: string;
+  mimeType: string | null;
+  size: number | null;
+  contentPath: string | null;
+}
+
+/** User-facing evidence descriptor. Raw evidence references stay server-side. */
+export interface GoalEvidenceItem {
+  label: string;
+  href: string | null;
+  external: boolean;
+}
+
+export interface GoalHistoryItem {
+  id: string;
+  kind: "activity" | "feedback" | "change_proposal" | "result_proposal";
+  summary: string;
+  createdAt: Date | string;
+  actorType: "user" | "agent" | "system";
+  actorId: string | null;
+  actorName: string;
+  attachments: GoalHistoryAttachment[];
+  evidence?: GoalEvidenceItem[];
+  feedbackKind?: GoalFeedbackKind;
+  approvalId?: string;
+  status?: string;
+}
+
+export interface PublicGoalChangeProposal {
+  id: string;
+  approvalId: string;
+  status: GoalChangeProposalStatus;
+  rationale: string;
+  evidence: GoalEvidenceItem[];
+  beforeSummary: Record<string, unknown>;
+  afterSummary: Record<string, unknown>;
+}
+
+export interface PublicGoalResultProposal {
+  id: string;
+  status: GoalResultProposalStatus;
+  outcome: string;
+  outcomeLabel: string;
+  criteria: Array<{
+    id: string;
+    status: string;
+    missingEvidenceCount: number;
+  }>;
+  evidence: GoalEvidenceItem[];
+  riskSummary: string | null;
+}
+
+export interface GoalHistoryPage {
+  items: GoalHistoryItem[];
+  nextCursor: string | null;
+}
+
 export interface GoalContractSnapshot {
   contractRevision: number;
   outcomeStatement: string;
@@ -200,6 +324,7 @@ export interface GoalChangeProposal {
   afterContract: GoalContractPatch;
   rationale: string;
   evidenceRefs: string[];
+  evidence?: GoalEvidenceItem[];
   approvalId: string;
   status: GoalChangeProposalStatus;
   idempotencyKey: string;
@@ -234,6 +359,7 @@ export interface GoalResultProposal {
   goalId: string;
   contractRevision: number;
   candidate: GoalEvaluationCandidate;
+  evidence?: GoalEvidenceItem[];
   candidateHash: string;
   preflight: GoalResultReducerPreflight;
   riskSummary: string;
@@ -268,7 +394,7 @@ export interface GoalWorkspaceCard {
 }
 
 export interface GoalWorkspaceSummary {
-  goal: Goal;
+  goal: PublicGoal;
   facet: GoalWorkspaceFacet;
   currentGoal?: {
     summary: string;
@@ -278,12 +404,13 @@ export interface GoalWorkspaceSummary {
   currentProgress: {
     summary: string;
     sourceActivityId: string | null;
-    evidenceRefs: string[];
+    evidence?: GoalEvidenceItem[];
     uncertainty?: string | null;
   };
   agentAction?: {
     summary: string;
     sourceIds?: string[];
+    status?: string;
   } | null;
   nextStep?: {
     summary: string;
@@ -294,19 +421,70 @@ export interface GoalWorkspaceSummary {
     reason: string;
     sourceId: string | null;
     impact?: string | null;
-    evidenceRefs?: string[];
+    evidence?: GoalEvidenceItem[];
   } | null;
-  timeline: Array<{
-    id: string;
-    kind: string;
-    summary: string;
-    createdAt?: Date | string;
-    evidenceRefs?: string[];
-    actorName?: string | null;
-    feedbackKind?: GoalFeedbackKind;
-  }>;
-  changeProposals?: GoalChangeProposal[];
-  resultProposals: GoalResultProposal[];
+  timeline: GoalHistoryItem[];
+  timelineNextCursor: string | null;
+  changeProposals?: PublicGoalChangeProposal[];
+  resultProposals: PublicGoalResultProposal[];
+}
+
+export type GoalAgentListLifecycle = GoalLifecycle | "all";
+
+export interface GoalAgentListResponse {
+  goals: GoalWorkspaceCard[];
+  count: number;
+  filters: {
+    lifecycle: GoalAgentListLifecycle;
+    focus: boolean | null;
+    facet: GoalWorkspaceFacet | null;
+    limit: number;
+  };
+}
+
+export interface GoalAgentContext {
+  goal: Pick<PublicGoal,
+    | "id"
+    | "orgId"
+    | "title"
+    | "description"
+    | "lifecycle"
+    | "status"
+    | "ownerAgentId"
+    | "focus"
+    | "closeReason"
+    | "createdAt"
+    | "updatedAt"
+  >;
+  contract: {
+    revision: number;
+    outcomeStatement: string | null;
+    objectiveMode: GoalObjectiveMode;
+    criteria: GoalCriterion[];
+    autonomyEnvelope: Record<string, unknown>;
+    humanAuthorities: Record<string, unknown>;
+    evaluationPolicy: Record<string, unknown>;
+    actionDeadline: Date | string | null;
+    evaluationDeadline: Date | string | null;
+  };
+  plan: Pick<PublicGoalPlan, "revision" | "summary"> | null;
+  state: Pick<GoalWorkspaceSummary,
+    | "facet"
+    | "currentProgress"
+    | "agentAction"
+    | "nextStep"
+    | "attention"
+  >;
+  pending: {
+    changeProposals: PublicGoalChangeProposal[];
+    resultProposals: PublicGoalResultProposal[];
+  };
+  recentHistory: GoalHistoryItem[];
+  allowedActions: {
+    reportProgress: boolean;
+    proposeChange: boolean;
+    proposeResult: boolean;
+  };
 }
 
 export interface GoalDependencyPreview {

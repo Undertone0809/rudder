@@ -788,6 +788,22 @@ describe("CommentThread", () => {
     expect(document.activeElement).toBe(composerSurface);
   });
 
+  it("replaces the fixed comment composer with a workflow decision surface", () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          onAdd={vi.fn().mockResolvedValue(undefined)}
+          fixedComposer
+          composerReplacement={<div data-testid="request-decision">Request decision</div>}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector('[data-testid="request-decision"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Comment composer"]')).toBeNull();
+  });
+
   it("posts a directed Agent comment without confirmation", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const container = renderInteractive(
@@ -1356,7 +1372,7 @@ describe("CommentThread", () => {
     expect(longComment?.textContent).toContain("Long comment content.");
     expect(imageComment?.textContent).toContain("Visual evidence");
     expect(composer?.getAttribute("data-composer-state")).toBe("empty");
-    expect(composer?.className).toContain("grid-cols-[2.25rem_minmax(0,1fr)_auto]");
+    expect(composer?.className).toContain("grid-cols-[var(--control-height-sm)_minmax(0,1fr)_auto]");
     expect(composerScroll?.className).toContain("h-[var(--comment-composer-editor-height)]");
     expect(composerScroll?.className).toContain("max-h-[min(24dvh,10rem)]");
     expect(composerScroll?.className).toContain("md:max-h-[min(38dvh,22rem)]");

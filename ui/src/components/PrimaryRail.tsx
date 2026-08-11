@@ -180,7 +180,7 @@ export function PrimaryRail({
   onWarmSettings: () => void;
 }) {
   const { t, locale } = useI18n();
-  const { openNewIssue, openNewAgent, openNewProject } = useDialog();
+  const { openNewIssue, openNewAgent, openNewGoal, openNewProject } = useDialog();
   const { setSidebarOpen } = useSidebar();
   const { selectedOrganizationId } = useOrganization();
   const queryClient = useQueryClient();
@@ -227,7 +227,7 @@ export function PrimaryRail({
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
   const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
-  const goalsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "goals", "/goals");
+  const goalsEntryPath = "/goals";
   const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
@@ -510,6 +510,12 @@ export function PrimaryRail({
               <CircleCheckBig className="h-4 w-4" />
               Create new issue
             </DropdownMenuItem>
+            {goalsEnabled ? (
+              <DropdownMenuItem onClick={() => openNewGoal()}>
+                <Target className="h-4 w-4" />
+                Create new goal
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={() => openNewAgent()}>
               <Bot className="h-4 w-4" />
               Create new agent

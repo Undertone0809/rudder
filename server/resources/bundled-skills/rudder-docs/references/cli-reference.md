@@ -52,6 +52,11 @@ operating-practices guide for operating behavior:
 | `rudder_agent_skills_create` | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
 | `rudder_agent_skills_enable` | `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
 | `rudder_agent_skills_sync` | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
+| `rudder_goal_list` | `rudder goal list [--lifecycle <draft|active|closed|all>] [--focus <true|false>] [--facet <facet>] [--limit <n>]` | Discover Goals owned by the authenticated Agent; defaults to active Goals and returns current progress, next step, and attention state. | no | required | required | no |
+| `rudder_goal_context` | `rudder goal context <goal-id>` | Read the owned Goal agreement and current operating context before acting: contract revision, criteria, boundaries, progress, next step, attention, proposals, and recent feedback. | no | no | required | no |
+| `rudder_goal_progress` | `rudder goal progress <goal-id> --summary <text> --evidence-refs <json> --idempotency-key <key>` | Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run. | yes | no | required | required |
+| `rudder_goal_change_propose` | `rudder goal change propose <goal-id> --contract-revision <n> --after-contract <json> --rationale <text> --idempotency-key <key>` | Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change. | yes | no | required | required |
+| `rudder_goal_result_propose` | `rudder goal result propose <goal-id> --contract-revision <n> --criteria <json> --evidence-refs <json> --risk-summary <text> --idempotency-key <key>` | Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal. | yes | no | required | required |
 | `rudder_issue_get` | `rudder issue get <issue>` | Read a full issue by UUID or identifier. | no | no | no | no |
 | `rudder_issue_list` | `rudder issue list --org-id <id>` | List issues with optional status, assignee, and project filters without requiring a search query. | no | required | no | no |
 | `rudder_issue_search` | `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
@@ -64,7 +69,7 @@ operating-practices guide for operating behavior:
 | `rudder_issue_review` | `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
 | `rudder_issue_commit` | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
 | `rudder_issue_done` | `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder_issue_block` | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder_issue_block` | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked. | yes | no | no | attached when available |
 | `rudder_project_list` | `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
 | `rudder_project_get` | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
 | `rudder_project_create` | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
@@ -147,7 +152,7 @@ Operating rules live in [ownership, checkout, and wake scope](operating-practice
 
 - progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`
 - done: `rudder issue done <issue> --comment-file <path> [--image <path>]`
-- blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`
+- assistance/block audit: `rudder issue block <issue> --comment-file <path> [--image <path>]`
 
 Issue comment and close-out commands accept comment bodies only from files or stdin. For multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 

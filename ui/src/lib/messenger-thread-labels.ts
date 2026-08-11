@@ -7,7 +7,7 @@ export function messengerThreadKindLabel(kind: MessengerThreadKind): string {
     case "issues":
       return "Issues";
     case "approvals":
-      return "Approvals";
+      return "Requests";
     case "failed-runs":
       return "Failed runs";
     case "budget-alerts":

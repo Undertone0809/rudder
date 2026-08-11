@@ -5,6 +5,7 @@ import {
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
+  RUDDER_MCP_TOOL_COUNT,
   type AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
@@ -1003,7 +1004,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
           coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
           provenance: "desktop_bundle",
           serverName: "rudder-tools",
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
           version: "0.4.6",
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
@@ -2359,7 +2360,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         provenance: "desktop_bundle",
         serverName: "rudder-tools",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        toolCount: RUDDER_MCP_TOOL_COUNT,
         version: "0.4.6",
       });
       expect(runtimeMetadata.rudderMcp).not.toHaveProperty("browserAvailable");
@@ -4131,7 +4132,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");
