@@ -95,12 +95,12 @@ async function restoreSourcePackageManifests(snapshots) {
 async function restoreWorkspaceDependencyLinks() {
   const args = [
     "install",
-    "--offline",
     "--frozen-lockfile",
   ];
-  // pnpm's forced reinstall can delete packages while traversing the virtual
-  // store on Windows. A normal frozen install is sufficient to restore links.
-  if (process.platform !== "win32") args.push("--force");
+  // Forced installs traverse optional packages that do not exist on the
+  // current platform. Windows also needs network access when a fresh lockfile
+  // references a tarball that is not present in the local store yet.
+  if (process.platform !== "win32") args.push("--offline");
   await run(pnpmBin, args, repoRoot);
 }
 
