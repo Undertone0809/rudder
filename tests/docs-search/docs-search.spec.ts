@@ -141,6 +141,10 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
 
+    const latestUpdate = page.locator("h2#v0-7-3").locator("xpath=ancestor::div[contains(@class, 'update-container')]");
+    await expect(latestUpdate.locator('[data-component-part="update-tag-list"]')).toBeHidden();
+    await expect(latestUpdate.locator('[data-component-part="update-description"]')).toBeHidden();
+
     await page.getByRole("button", { name: item.fixedTag, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
     await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
