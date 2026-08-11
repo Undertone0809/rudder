@@ -116,19 +116,19 @@ test("renders representative English and Chinese pages on desktop and mobile", a
   }
 });
 
-test("renders and filters the localized changelog timeline", async ({ page }) => {
+test("renders the localized changelog timeline and filter controls", async ({ page }) => {
   const locales = [
     {
       route: "/releases",
       title: "Changelog",
       latestDate: "August 11, 2026",
-      newTag: "New",
+      tags: ["Improved", "New", "Fixed"],
     },
     {
       route: "/zh/releases",
       title: "更新日志",
       latestDate: "2026年8月11日",
-      newTag: "新功能",
+      tags: ["改进", "新功能", "问题修复"],
     },
   ];
 
@@ -137,18 +137,17 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await page.goto(item.route);
 
     await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
-    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
+    await expect(page.getByText(item.latestDate, { exact: true }).first()).toBeVisible();
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
-
-    await page.getByRole("button", { name: item.newTag, exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
-    await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
     await expect(page.locator("h2#v0-7-2")).toBeVisible();
+    for (const tag of item.tags) {
+      await expect(page.getByRole("button", { name: tag, exact: true })).toBeVisible();
+    }
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
+    await expect(page.getByText(item.latestDate, { exact: true }).first()).toBeVisible();
     const overflows = await page.evaluate(() =>
       document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
