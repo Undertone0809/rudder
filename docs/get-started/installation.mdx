@@ -16,6 +16,17 @@ Rudder runs locally on macOS, Windows, and Linux. The setup command downloads
 the desktop app for your computer and installs the `rudder` command for later
 starts.
 
+## Code signing policy
+
+Rudder is applying to the SignPath Foundation program for Windows Desktop
+release artifacts. Until the application is accepted and the release pipeline
+is configured, released binaries are not represented as SignPath-signed.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/). See the full
+[code signing policy](/reference/code-signing-policy) and
+[privacy policy](/reference/privacy).
+
 You need:
 
 - Node.js 20 or newer, which provides the `npx` command
@@ -74,3 +85,18 @@ open a new terminal, and run the setup command again.
 When an update is ready while an Agent is still working, choose **Update when
 idle** to let the run finish. Choose **Stop runs and update now** only when it is
 safe to cancel the active work.
+
+## Uninstall Rudder
+
+Quit Rudder Desktop and make sure no Agent run is active before removing it.
+
+1. Remove the portable Desktop app from its default location:
+   - macOS: move `~/Applications/Rudder.app` to Trash.
+   - Windows: remove `%LOCALAPPDATA%\\Programs\\Rudder`.
+   - Linux: remove `~/.local/share/rudder/Rudder.AppImage`.
+2. Remove the persistent CLI with `npm uninstall --global @rudderhq/cli`.
+
+Rudder keeps local workspace and runtime data under `~/.rudder` by default.
+Deleting the Desktop app or CLI does not delete that data. Back up anything you
+need, then remove that directory separately only when you intend to erase all
+local Rudder state.

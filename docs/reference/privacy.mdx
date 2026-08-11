@@ -1,0 +1,66 @@
+---
+title: "Privacy Policy"
+description: "How Rudder handles local workspace data, accounts, optional analytics, and public-site data."
+icon: "shield-check"
+canonical: "https://docs.rudderhq.dev/reference/privacy"
+"og:url": "https://docs.rudderhq.dev/reference/privacy"
+hreflang_en: "https://docs.rudderhq.dev/reference/privacy"
+hreflang_zh: "https://docs.rudderhq.dev/zh/reference/privacy"
+---
+
+Last updated: August 12, 2026.
+
+Rudder is open-source software developed and maintained by Foundria, LLC. This
+policy explains the data boundaries of the Rudder Desktop app, Rudder accounts,
+optional product analytics, and Rudder's public website and documentation.
+
+## Local workspace data
+
+Rudder stores organizations, goals, issues, chats, run transcripts, artifacts,
+settings, and runtime state in the Rudder installation controlled by the user.
+This workspace data is not automatically uploaded to Foundria.
+
+Credentials for local runtimes and configured integrations remain in the
+user-controlled environment or encrypted Rudder server state. Rudder does not
+copy an existing provider login into a central Rudder account. When a user asks
+an external runtime or integration to act, the data sent to that provider is
+governed by the user's configuration and that provider's privacy terms.
+
+## Rudder accounts
+
+Creating a Rudder account is optional for local use. When a user creates or
+connects an account, Rudder processes the email address, authentication-provider
+identity, verification state, and device/session records needed to authenticate
+and secure the account. Passwords and provider credentials are not stored in
+plain text by Rudder.
+
+## Optional product analytics
+
+Product analytics starts **off**. A user must explicitly choose anonymous or
+account-linked sharing before eligible events can leave the local installation.
+The Privacy & Telemetry settings show the current mode and allow consent to be
+revoked.
+
+Analytics payloads use allowlisted operational facts and pseudonymous
+identifiers. They do not include raw prompts, transcripts, titles,
+descriptions, URLs, email addresses, credentials, or local file contents.
+Account-linked mode uses an account-scoped identifier only after explicit
+consent. Revocation removes unsent events from older consent epochs.
+
+## Public website and documentation
+
+Rudder's public website and documentation may process standard request data
+such as IP address, browser and device information, referrer, page path, and
+timestamps. The public site may use VibeCafe analytics, and the documentation
+may use Google Analytics, to measure page usage and diagnose availability.
+These sites do not have access to local Rudder workspace content.
+
+## Data choices and contact
+
+Users can keep product analytics off, revoke analytics consent in Rudder, sign
+out of account-linked sessions, and remove local Rudder data from their own
+installation. Requests about account data, deletion, or this policy can be sent
+to [zeeland4work@gmail.com](mailto:zeeland4work@gmail.com).
+
+Rudder may update this policy when data flows or providers change. Material
+changes will be reflected in this page and its last-updated date.

@@ -1,0 +1,57 @@
+---
+title: "Code Signing Policy"
+description: "How Rudder builds, reviews, approves, and signs Windows Desktop release artifacts."
+icon: "badge-check"
+canonical: "https://docs.rudderhq.dev/reference/code-signing-policy"
+"og:url": "https://docs.rudderhq.dev/reference/code-signing-policy"
+hreflang_en: "https://docs.rudderhq.dev/reference/code-signing-policy"
+hreflang_zh: "https://docs.rudderhq.dev/zh/reference/code-signing-policy"
+---
+
+Last updated: August 12, 2026.
+
+Rudder is applying to the SignPath Foundation program for Windows Desktop
+release artifacts. Until the application is accepted and the release pipeline
+is configured, released binaries are not represented as SignPath-signed.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
+
+## Scope
+
+- Source repository: [Undertone0809/rudder](https://github.com/Undertone0809/rudder)
+- License: Apache-2.0 at the project level, with third-party notices and
+  component licenses recorded in the repository
+- Build system: GitHub Actions
+- Signing scope: Windows Desktop artifacts built by the repository's automated
+  release workflow from reviewed source and build scripts
+- Upstream binaries are not signed as if they were Rudder-owned source
+
+Every signing request requires manual approval. The project does not use the
+certificate to sign unrelated software, local development builds, or artifacts
+that cannot be traced to the public source repository and release workflow.
+
+## Team roles
+
+- Committer and author: [Zeeland (@Undertone0809)](https://github.com/Undertone0809)
+- Reviewer: [Rudder independent maintainer (@Rudderhq)](https://github.com/Rudderhq),
+  including the release and product-contract paths assigned through
+  [CODEOWNERS](https://github.com/Undertone0809/rudder/blob/main/.github/CODEOWNERS)
+- Signing approver: [Zeeland (@Undertone0809)](https://github.com/Undertone0809)
+
+Project members with source or signing access must use multi-factor
+authentication. Changes from contributors without direct commit access are
+reviewed before merge. Release and signing changes receive the review required
+by repository ownership rules.
+
+## User privacy and security
+
+Rudder's [privacy policy](/reference/privacy) describes local workspace data,
+optional account and analytics data, and third-party runtime boundaries. Rudder
+does not intentionally include malware, unwanted software, or features whose
+purpose is to identify or exploit security vulnerabilities or circumvent the
+security controls of the execution environment.
+
+Installation and [uninstallation instructions](/get-started/installation#uninstall-rudder)
+are published with the download path. Security or signing concerns can be
+reported privately to [zeeland4work@gmail.com](mailto:zeeland4work@gmail.com).
