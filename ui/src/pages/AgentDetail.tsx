@@ -1537,24 +1537,38 @@ function AgentConfigurePage({
         hidePromptTemplate
         hideInstructionsFile
       />
-      <div>
-        <h3 className="text-sm font-medium mb-3">API Keys</h3>
+      <section aria-labelledby="agent-api-keys-heading">
+        <h3 id="agent-api-keys-heading" className="text-sm font-medium mb-3">API Keys</h3>
         <KeysTab agentId={agentId} orgId={orgId} />
-      </div>
+      </section>
 
-      {/* Configuration Revisions — collapsible at the bottom */}
-      <div>
-        <button
-          className="flex items-center gap-2 text-sm font-medium hover:text-foreground transition-colors"
-          onClick={() => setRevisionsOpen((v) => !v)}
-        >
-          {revisionsOpen
-            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-          }
-          Configuration Revisions
-          <span className="text-xs font-normal text-muted-foreground">{configRevisions?.length ?? 0}</span>
-        </button>
+      {orgId ? (
+        <section aria-labelledby="agent-budget-heading">
+          <h3 id="agent-budget-heading" className="mb-3 text-sm font-medium">Budget</h3>
+          <BudgetPolicyCard
+            summary={budgetSummary}
+            isSaving={isBudgetSaving}
+            onSave={onSaveBudget}
+            variant="configuration"
+          />
+        </section>
+      ) : null}
+
+      <section aria-labelledby="agent-revisions-heading" className="border-t border-border/60 pt-4">
+        <h3 id="agent-revisions-heading" className="text-sm font-medium">
+          <button
+            type="button"
+            className="flex items-center gap-2 transition-colors hover:text-foreground"
+            onClick={() => setRevisionsOpen((v) => !v)}
+          >
+            {revisionsOpen
+              ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            }
+            Configuration Revisions
+            <span className="text-xs font-normal text-muted-foreground">{configRevisions?.length ?? 0}</span>
+          </button>
+        </h3>
         {revisionsOpen && (
           <div className="mt-3">
             {(configRevisions ?? []).length === 0 ? (
@@ -1562,7 +1576,7 @@ function AgentConfigurePage({
             ) : (
               <div className="space-y-2">
                 {(configRevisions ?? []).slice(0, 10).map((revision) => (
-                  <div key={revision.id} className="border border-border/70 rounded-md p-3 space-y-2">
+                  <div key={revision.id} className="space-y-2 rounded-md border border-border/70 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs text-muted-foreground">
                         <span className="font-mono">{revision.id.slice(0, 8)}</span>
@@ -1591,19 +1605,7 @@ function AgentConfigurePage({
             )}
           </div>
         )}
-      </div>
-
-      {orgId ? (
-        <section aria-labelledby="agent-budget-heading">
-          <h3 id="agent-budget-heading" className="mb-3 text-sm font-medium">Budget</h3>
-          <BudgetPolicyCard
-            summary={budgetSummary}
-            isSaving={isBudgetSaving}
-            onSave={onSaveBudget}
-            variant="configuration"
-          />
-        </section>
-      ) : null}
+      </section>
     </div>
   );
 }
@@ -2663,10 +2665,6 @@ function KeysTab({ agentId, orgId }: { agentId: string; orgId?: string }) {
 
       {/* Active keys */}
       {isLoading && <p className="text-sm text-muted-foreground">Loading keys...</p>}
-
-      {!isLoading && activeKeys.length === 0 && !newToken && (
-        <p className="text-sm text-muted-foreground">No active API keys.</p>
-      )}
 
       {activeKeys.length > 0 && (
         <div>
