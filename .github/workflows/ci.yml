@@ -102,6 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
 
       - uses: actions/setup-node@v6
