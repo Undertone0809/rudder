@@ -1,9 +1,13 @@
 import { applyRudderBrowserCapabilityEnv } from "@rudderhq/agent-runtime-utils";
+import { createRudderSkillDirectoryLink } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { prepareManagedCodexHome } from "./codex-home.js";
+import {
+  prepareManagedCodexHome,
+  realizeManagedCodexSkillEntries,
+} from "./codex-home.js";
 
 describe("managed Codex home config sync", () => {
   const tempRoots: string[] = [];
@@ -47,6 +51,46 @@ describe("managed Codex home config sync", () => {
       logs,
     };
   }
+
+  it("materializes selected skills into managed CODEX_HOME without Windows symlink privileges", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-skill-link-"));
+    tempRoots.push(root);
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const managedCodexHome = path.join(root, "managed-codex-home");
+    const skillSource = path.join(root, "bundled-skills", "browser");
+    const staleSkillSource = path.join(root, "bundled-skills", "stale-browser");
+    const managedSkillsHome = path.join(managedCodexHome, "skills");
+    const materializedSkill = path.join(managedSkillsHome, "browser");
+    await mkdir(sharedCodexHome, { recursive: true });
+    await mkdir(skillSource, { recursive: true });
+    await mkdir(staleSkillSource, { recursive: true });
+    await mkdir(path.join(managedSkillsHome, "unselected-skill"), { recursive: true });
+    await writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "gpt-5.6"\n', "utf8");
+    await writeFile(path.join(skillSource, "SKILL.md"), "# Browser\n", "utf8");
+    await writeFile(path.join(staleSkillSource, "SKILL.md"), "# Stale Browser\n", "utf8");
+    await createRudderSkillDirectoryLink(staleSkillSource, materializedSkill);
+
+    const syncSkills = () =>
+      realizeManagedCodexSkillEntries(
+        { CODEX_HOME: sharedCodexHome },
+        managedCodexHome,
+        [skillSource],
+        async () => {},
+        undefined,
+        undefined,
+        {},
+        { command: process.execPath, args: ["rudder-mcp-placeholder"], provenance: "repo" },
+      );
+
+    await syncSkills();
+    await expect(readFile(path.join(materializedSkill, "SKILL.md"), "utf8")).resolves.toBe("# Browser\n");
+    await expect(fs.access(path.join(managedSkillsHome, "unselected-skill"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(materializedSkill)).isSymbolicLink()).toBe(true);
+    expect(path.resolve(await fs.realpath(materializedSkill))).toBe(path.resolve(skillSource));
+
+    await syncSkills();
+    expect(path.resolve(await fs.realpath(materializedSkill))).toBe(path.resolve(skillSource));
+  });
 
   it.each([
     { enabled: true, expected: "true", untrusted: "false" },

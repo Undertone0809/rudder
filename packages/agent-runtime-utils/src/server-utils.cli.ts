@@ -999,6 +999,19 @@ export async function ensureLocalCliCredentialShimsInPath(input: {
   return prependPathEntry(normalized, shimDir);
 }
 
+export function resolveRudderSkillDirectoryLinkType(
+  platform: NodeJS.Platform = process.platform,
+): "junction" | "dir" {
+  return platform === "win32" ? "junction" : "dir";
+}
+
+export async function createRudderSkillDirectoryLink(
+  source: string,
+  target: string,
+): Promise<void> {
+  await fs.symlink(source, target, resolveRudderSkillDirectoryLinkType());
+}
+
 export async function ensureRudderSkillSymlink(
   source: string,
   target: string,

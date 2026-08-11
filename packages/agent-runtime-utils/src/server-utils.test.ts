@@ -7,6 +7,7 @@ import {
   cleanupLegacyRudderDocsManagedEntry,
   cleanupRetiredRudderManagedEntries,
   createOperatorInterruptAbortReason,
+  createRudderSkillDirectoryLink,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   filterRudderDesiredSkillsForBrowserCapability,
@@ -18,6 +19,7 @@ import {
   resolveLocalOperatorHome,
   resolveRudderCliShimTarget,
   resolveRudderDesiredSkillNames,
+  resolveRudderSkillDirectoryLinkType,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
@@ -55,6 +57,35 @@ function readPathValue(env: NodeJS.ProcessEnv): string {
 function shimName(): string {
   return process.platform === "win32" ? "rudder.cmd" : "rudder";
 }
+
+describe("createRudderSkillDirectoryLink", () => {
+  it("uses junctions for Windows directory materialization", () => {
+    expect(resolveRudderSkillDirectoryLinkType("win32")).toBe("junction");
+    expect(resolveRudderSkillDirectoryLinkType("linux")).toBe("dir");
+    expect(resolveRudderSkillDirectoryLinkType("darwin")).toBe("dir");
+  });
+
+  it("materializes directory skills with a Windows-safe directory link", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-link-"));
+    const source = path.join(root, "source-skill");
+    const target = path.join(root, "managed-skills", "source-skill");
+
+    try {
+      await fs.mkdir(source, { recursive: true });
+      await fs.writeFile(path.join(source, "SKILL.md"), "# Windows-safe skill\n", "utf8");
+      await fs.mkdir(path.dirname(target), { recursive: true });
+
+      await expect(createRudderSkillDirectoryLink(source, target)).resolves.toBeUndefined();
+      await expect(fs.readFile(path.join(target, "SKILL.md"), "utf8")).resolves.toBe(
+        "# Windows-safe skill\n",
+      );
+      expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
+      expect(path.resolve(await fs.realpath(target))).toBe(path.resolve(source));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("cleanupLegacyRudderDocsManagedEntry", () => {
   it("is exposed by the shared runtime utilities", () => {
