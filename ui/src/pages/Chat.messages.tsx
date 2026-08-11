@@ -2373,6 +2373,7 @@ export function ChatMessageItem({
   askUserAnswer,
   animateAskUserAnswer,
   issueCreatedMessage,
+  localizeText = (text) => text,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -2429,6 +2430,7 @@ export function ChatMessageItem({
   animateAskUserAnswer?: boolean;
   issueCreatedMessage?: ChatMessage | null;
   turnBranchControls?: ChatTurnBranchControls | null;
+  localizeText?: (text: string) => string;
 }) {
   const assistantAnnotationSourceRef = useRef<HTMLDivElement>(null);
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
@@ -2497,7 +2499,7 @@ export function ChatMessageItem({
   const inlineAnnotationAttachmentIds = new Set(
     inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
   );
-  const statusLabel = !isUser ? assistantStateLabel(displayedState) : null;
+  const statusLabel = !isUser ? localizeText(assistantStateLabel(displayedState) ?? "") || null : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => (
@@ -2900,10 +2902,13 @@ export function ChatMessagesLoadingState() {
   );
 }
 
-function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcriptSummary"]>) {
+function transcriptSummaryDurationMs(
+  summary: NonNullable<ChatMessage["transcriptSummary"]>,
+  streamingActive = false,
+) {
   if (!summary.startedAt) return null;
   const start = Date.parse(summary.startedAt);
-  const end = summary.endedAt ? Date.parse(summary.endedAt) : Date.now();
+  const end = streamingActive ? Date.now() : summary.endedAt ? Date.parse(summary.endedAt) : Date.now();
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   return Math.max(0, end - start);
 }
@@ -2914,20 +2919,29 @@ export function LazyStreamTranscriptItem({
   generationTerminalReason,
   loading,
   onLoad,
+  localizeText = (text) => text,
 }: {
   summary: NonNullable<ChatMessage["transcriptSummary"]>;
   state: ChatStreamDraftState | ChatMessage["status"];
   generationTerminalReason?: string | null;
   loading?: boolean;
   onLoad: () => void;
+  localizeText?: (text: string) => string;
 }) {
-  const durationMs = transcriptSummaryDurationMs(summary);
+  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!streamingActive) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, [streamingActive]);
+  const durationMs = transcriptSummaryDurationMs(summary, streamingActive);
   const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
     displayedState === "failed"
-      ? "Stopped with errors"
+      ? localizeText("Stopped with errors")
       : displayedState === "stopped"
-        ? "Stopped"
+        ? localizeText("Stopped")
         : "";
 
   return (
@@ -2944,7 +2958,9 @@ export function LazyStreamTranscriptItem({
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
             <span className="whitespace-nowrap">
-              {durationMs === null ? "Process details" : `Worked for ${formatChatProcessDuration(durationMs)}`}
+              {localizeText(durationMs === null
+                ? "Process details"
+                : `${streamingActive ? "Working" : "Worked"} for ${formatChatProcessDuration(durationMs)}`)}
             </span>
             {statusHint ? (
               <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
@@ -2976,6 +2992,7 @@ export function StreamTranscriptItem({
   onOpenAgent,
   annotationSource,
   sentAnnotationContext,
+  localizeText = (text) => text,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
@@ -3009,6 +3026,7 @@ export function StreamTranscriptItem({
     ) => void;
     unlocatableAnnotationId?: string | null;
   };
+  localizeText?: (text: string) => string;
 }) {
   const timelineEntries = useMemo(
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
@@ -3044,9 +3062,9 @@ export function StreamTranscriptItem({
   const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
     displayedState === "failed"
-      ? "Stopped with errors"
+      ? localizeText("Stopped with errors")
       : displayedState === "stopped"
-        ? "Stopped"
+        ? localizeText("Stopped")
         : "";
 
   const showBody = processOpen || streamingActive;
@@ -3077,7 +3095,7 @@ export function StreamTranscriptItem({
                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
               ) : null}
               <span className="whitespace-nowrap">
-                {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
+                {localizeText(`${streamingActive ? "Working" : "Worked"} for ${formatChatProcessDuration(durationMs)}`)}
               </span>
               {statusHint ? (
                 <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
@@ -3104,6 +3122,7 @@ export function StreamTranscriptItem({
               presentation="chat"
               showDeveloperDiagnostics={showDeveloperDiagnostics}
               hiddenAssistantMessageText={assistantMessageBody}
+              localizeText={localizeText}
               onOpenFile={onOpenFile}
               onOpenSkill={onOpenSkill}
               canOpenSkill={canOpenSkill}

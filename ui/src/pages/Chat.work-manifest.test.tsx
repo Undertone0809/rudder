@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { translateLegacyString } from "../i18n/legacyPhrases";
 import { ChatWorkManifest, ChatWorkManifestToggle } from "./Chat.work-manifest";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -129,6 +130,57 @@ const wideProps = {
 };
 
 describe("ChatWorkManifest", () => {
+  it("localizes rendered manifest chrome while preserving item identifiers", () => {
+    const localizeText = (text: string) => translateLegacyString("zh-CN", text);
+    const sources = Array.from(
+      { length: 7 },
+      (_, index) => item(`source-${index + 1}`, "source", `Source ${index + 1}.md`),
+    );
+    const localizedManifest: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 12,
+      outputs: [item("output-1", "output", "Report.md")],
+      sources,
+      references: [referenceItem("issue-1", "issue", "RUD-42", "blocked")],
+      subagents: {
+        active: [subagent("active-1", "active", "running", "2026-07-29T10:04:00.000Z")],
+        done: [subagent("done-1", "done", "completed", "2026-07-29T10:06:00.000Z")],
+        totalCount: 2,
+      },
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={localizedManifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        localizeText={localizeText}
+        {...handlers}
+      />,
+    );
+
+    expect(container.textContent).toContain("产出");
+    expect(container.textContent).toContain("来源");
+    expect(container.textContent).toContain("引用");
+    expect(container.textContent).toContain("子智能体");
+    expect(container.textContent).toContain("1 个运行中 · 1 个已完成");
+    expect(container.textContent).toContain("Report.md");
+    expect(container.textContent).toContain("RUD-42");
+    expect(container.querySelector("[data-file-icon='issue']")?.getAttribute("title"))
+      .toBe("任务状态：阻塞");
+    expect(container.querySelector("[data-testid='chat-work-manifest-subagents-summary']")?.getAttribute("aria-label"))
+      .toBe("打开子智能体，1 个运行中 · 1 个已完成");
+    expect(container.querySelector("button[title='跳转到来源消息']")?.getAttribute("aria-label"))
+      .toBe("跳转到 Report.md 的来源消息");
+
+    const viewAll = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("查看全部 7 项"));
+    expect(viewAll).toBeTruthy();
+    act(() => viewAll?.click());
+    expect(viewAll?.textContent).toContain("收起");
+  });
+
   it("renders ordered sections and website details without project work", () => {
     const container = render(
       <ChatWorkManifest

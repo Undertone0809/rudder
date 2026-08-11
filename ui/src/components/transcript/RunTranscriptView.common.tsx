@@ -148,6 +148,8 @@ export interface RunTranscriptViewProps {
   hideAssistantMessages?: boolean;
   /** For embedded chat process logs, remove only the final answer suffix while keeping progress notes visible. */
   hiddenAssistantMessageText?: string | null;
+  /** Localize operator-facing Chat transcript chrome while preserving raw payloads and identifiers. */
+  localizeText?: (text: string) => string;
   /** Open a structured local-file target without inferring paths from rendered prose. */
   onOpenFile?: (targetPath: string, label: string) => void;
   /** Open a structured skill target without reparsing its rendered activity label. */
