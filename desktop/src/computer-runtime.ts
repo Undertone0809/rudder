@@ -1,9 +1,8 @@
 import {
   COMPUTER_USE_ACTIONS,
   computerUseActionSchemas,
-  type ComputerUseAction,
   type ComputerUseBrokerCommand,
-  type ComputerUseRuntimeIdentity,
+  type ComputerUseRuntimeIdentity
 } from "@rudderhq/shared/computer-use";
 import { randomUUID } from "node:crypto";
 import { ComputerDriverError, type ComputerDriver, type ComputerDriverResult } from "./computer-driver.js";
@@ -164,6 +163,14 @@ export function createComputerRuntime(options: {
     if (command.action === "list_apps") {
       return serializeResult(await activeDriver.callTool("list_apps", {}, command.signal));
     }
+    if (command.action === "launch_app") {
+      const result = await activeDriver.callTool("launch_app", {
+        ...(typeof args.name === "string" ? { name: args.name } : {}),
+        ...(typeof args.bundleId === "string" ? { bundle_id: args.bundleId } : {}),
+        ...(args.newInstance === true ? { creates_new_application_instance: true } : {}),
+      }, command.signal);
+      return serializeResult(result);
+    }
     if (command.action === "list_windows") {
       const pid = await resolvePid(activeDriver, args, command.signal);
       if (typeof args.app === "string" && !pid) {
@@ -246,7 +253,13 @@ export function createComputerRuntime(options: {
     } else if (command.action === "type_text") {
       toolArgs = { ...common, text: args.text, ...(typeof args.delayMs === "number" ? { delay_ms: args.delayMs } : {}) };
     } else if (command.action === "press_key") {
-      toolArgs = { ...common, key: args.key, ...(Array.isArray(args.modifiers) ? { modifiers: args.modifiers } : {}) };
+      if (Array.isArray(args.modifiers) && args.modifiers.length > 0) {
+        toolName = "hotkey";
+        const { snapshot_id: _snapshotId, element_index: _elementIndex, element_token: _elementToken, ...hotkeyTarget } = common;
+        toolArgs = { ...hotkeyTarget, keys: [...args.modifiers, args.key] };
+      } else {
+        toolArgs = { ...common, key: args.key };
+      }
     } else if (command.action === "scroll") {
       toolArgs = {
         ...common,

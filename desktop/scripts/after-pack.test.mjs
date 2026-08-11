@@ -20,6 +20,48 @@ afterEach(() => {
 });
 
 describe("Desktop afterPack internal package manifest normalization", () => {
+  it.each(["darwin", "linux", "win32"])(
+    "copies staged Computer Use dependencies into the %s application",
+    async (electronPlatformName) => {
+      const projectDir = mkdtempSync(path.join(tmpdir(), "rudder-after-pack-computer-use-"));
+      tempRoots.push(projectDir);
+      const appOutDir = path.join(projectDir, "release", "unpacked");
+      const resourcesDir = electronPlatformName === "darwin"
+        ? path.join(appOutDir, "Rudder.app", "Contents", "Resources")
+        : path.join(appOutDir, "resources");
+      const stagedPackageDir = path.join(
+        projectDir,
+        ".packaged",
+        "app",
+        "node_modules",
+        "@trycua",
+        "cua-driver",
+      );
+      mkdirSync(stagedPackageDir, { recursive: true });
+      writeFileSync(path.join(stagedPackageDir, "package.json"), `${JSON.stringify({
+        name: "@trycua/cua-driver",
+        version: "0.19.2",
+      })}\n`);
+      writeFileSync(path.join(stagedPackageDir, "runtime-marker"), "staged\n");
+
+      await afterPack({
+        appDir: projectDir,
+        electronPlatformName,
+        appOutDir,
+        packager: { projectDir },
+      });
+
+      expect(readFileSync(path.join(
+        resourcesDir,
+        "app",
+        "node_modules",
+        "@trycua",
+        "cua-driver",
+        "runtime-marker",
+      ), "utf8")).toBe("staged\n");
+    },
+  );
+
   it.each([
     { electronPlatformName: "darwin", packageScope: "@rudderhq" },
     { electronPlatformName: "darwin", packageScope: "@rudder" },

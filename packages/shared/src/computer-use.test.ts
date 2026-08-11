@@ -19,9 +19,15 @@ describe("Computer Use contract", () => {
   });
 
   it("requires a fresh observation for every mutating action", () => {
-    for (const action of COMPUTER_USE_ACTIONS.filter((name) => !["list_apps", "list_windows", "get_app_state", "stop"].includes(name))) {
+    for (const action of COMPUTER_USE_ACTIONS.filter((name) => !["list_apps", "launch_app", "list_windows", "get_app_state", "stop"].includes(name))) {
       expect(computerUseActionSchemas[action].safeParse({}).success, action).toBe(false);
     }
+  });
+
+  it("requires an exact app target before launching", () => {
+    expect(computerUseActionSchemas.launch_app.safeParse({ name: "Calculator" }).success).toBe(true);
+    expect(computerUseActionSchemas.launch_app.safeParse({ bundleId: "com.apple.calculator" }).success).toBe(true);
+    expect(computerUseActionSchemas.launch_app.safeParse({}).success).toBe(false);
   });
 
   it("inherits the Codex confirmation taxonomy without gating ordinary actions", () => {

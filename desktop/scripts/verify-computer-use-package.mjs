@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveComputerUsePackageTarget } from "./computer-use-package-target.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -17,10 +18,20 @@ async function exists(targetPath) {
 
 async function resolvePackagedAppRoot() {
   const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
-  const candidates = [
-    path.join(desktopRoot, "release", `mac-${arch}`, "Rudder.app", "Contents", "Resources", "app"),
-    path.join(desktopRoot, "release", "mac", "Rudder.app", "Contents", "Resources", "app"),
-  ];
+  const candidates = process.platform === "darwin"
+    ? [
+        path.join(desktopRoot, "release", `mac-${arch}`, "Rudder.app", "Contents", "Resources", "app"),
+        path.join(desktopRoot, "release", "mac", "Rudder.app", "Contents", "Resources", "app"),
+      ]
+    : process.platform === "win32"
+      ? [
+          path.join(desktopRoot, "release", arch === "arm64" ? "win-arm64-unpacked" : "win-unpacked", "resources", "app"),
+          path.join(desktopRoot, "release", "win-unpacked", "resources", "app"),
+        ]
+      : [
+          path.join(desktopRoot, "release", arch === "arm64" ? "linux-arm64-unpacked" : "linux-unpacked", "resources", "app"),
+          path.join(desktopRoot, "release", "linux-unpacked", "resources", "app"),
+        ];
   for (const candidate of candidates) {
     if (await exists(candidate)) return candidate;
   }
@@ -28,19 +39,20 @@ async function resolvePackagedAppRoot() {
 }
 
 async function main() {
-  if (process.platform !== "darwin") {
-    console.log("Computer Use package verification skipped outside macOS.");
+  const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+  const target = resolveComputerUsePackageTarget(process.platform, arch);
+  if (!target) {
+    console.log(`Computer Use package verification skipped on ${process.platform}.`);
     return;
   }
-  const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
   const appRoot = await resolvePackagedAppRoot();
   const nodeModules = path.join(appRoot, "node_modules");
   const driverEntry = path.join(nodeModules, "@trycua", "cua-driver", "dist", "index.js");
   const sharedRoot = path.join(nodeModules, "@rudderhq", "shared");
   const sharedComputerUseEntry = path.join(sharedRoot, "dist", "computer-use.js");
   const zodRoot = path.join(nodeModules, "zod");
-  const nativeRoot = path.join(nodeModules, "@trycua", `cua-driver-darwin-${arch}`);
-  const ubjsNativeRoot = path.join(nodeModules, "@ubjs", `node-darwin-${arch}`);
+  const nativeRoot = path.join(nodeModules, ...target.driverPackage.split("/"));
+  const ubjsNativeRoot = path.join(nodeModules, ...target.ubjsPackage.split("/"));
   const requiredFiles = [
     driverEntry,
     sharedComputerUseEntry,
@@ -48,8 +60,8 @@ async function main() {
     path.join(nodeModules, "@ubjs", "core", "package.json"),
     path.join(nodeModules, "@ubjs", "node", "package.json"),
     path.join(ubjsNativeRoot, "package.json"),
-    path.join(nativeRoot, "libcua_driver_sdk.dylib"),
-    path.join(nativeRoot, "cua_driver_node_runtime.node"),
+    path.join(ubjsNativeRoot, target.ubjsFile),
+    ...target.driverFiles.map((fileName) => path.join(nativeRoot, fileName)),
   ];
   for (const requiredFile of requiredFiles) await fs.access(requiredFile);
   if (arch === process.arch) {
@@ -64,10 +76,10 @@ async function main() {
         [path.join(nodeModules, "@rudderhq", "shared"), path.join(isolatedApp, "node_modules", "@rudderhq", "shared")],
         [path.join(nodeModules, "zod"), path.join(isolatedApp, "node_modules", "zod")],
         [path.join(nodeModules, "@trycua", "cua-driver"), path.join(isolatedApp, "node_modules", "@trycua", "cua-driver")],
-        [nativeRoot, path.join(isolatedApp, "node_modules", "@trycua", `cua-driver-darwin-${arch}`)],
+        [nativeRoot, path.join(isolatedApp, "node_modules", ...target.driverPackage.split("/"))],
         [path.join(nodeModules, "@ubjs", "core"), path.join(isolatedApp, "node_modules", "@ubjs", "core")],
         [path.join(nodeModules, "@ubjs", "node"), path.join(isolatedApp, "node_modules", "@ubjs", "node")],
-        [ubjsNativeRoot, path.join(isolatedApp, "node_modules", "@ubjs", `node-darwin-${arch}`)],
+        [ubjsNativeRoot, path.join(isolatedApp, "node_modules", ...target.ubjsPackage.split("/"))],
       ];
       for (const [source, destination] of packages) {
         await fs.mkdir(path.dirname(destination), { recursive: true });
@@ -79,7 +91,7 @@ async function main() {
       await fs.rm(isolatedRoot, { recursive: true, force: true });
     }
   }
-  console.log(`Verified packaged Computer Use runtime (${arch}).`);
+  console.log(`Verified packaged Computer Use runtime (${process.platform}/${arch}).`);
 }
 
 void main().catch((error) => {

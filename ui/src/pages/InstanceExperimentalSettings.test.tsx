@@ -49,7 +49,7 @@ vi.mock("@/context/I18nContext", () => ({
       "experimental.computerUse.disabledDescription": "Adds native app interaction.",
       "experimental.computerUse.readyDescription": "Computer Use is ready.",
       "experimental.computerUse.permissionDescription": "Permissions are required.",
-      "experimental.computerUse.desktopRequired": "Rudder Desktop on macOS is required.",
+      "experimental.computerUse.desktopRequired": "A supported Rudder Desktop build is required.",
       "experimental.computerUse.toggle": "Enable Computer Use",
       "experimental.computerUse.requestPermissions": "Grant access",
       "experimental.computerUse.openScreenRecording": "Open Screen Recording settings",
@@ -199,17 +199,25 @@ describe("InstanceExperimentalSettings", () => {
   it("enables Computer Use as one Agent capability and requests macOS permissions", async () => {
     const requestPermissions = vi.fn().mockResolvedValue({
       supported: true,
+      platform: "darwin",
+      driverAvailable: true,
       accessibility: true,
       screenRecording: true,
       actionReady: true,
+      permissionPromptAvailable: true,
+      screenRecordingSettingsAvailable: false,
       driverVersion: "0.19.2",
       reason: null,
     });
     const readiness = vi.fn().mockResolvedValue({
       supported: true,
+      platform: "darwin",
+      driverAvailable: true,
       accessibility: false,
       screenRecording: false,
       actionReady: false,
+      permissionPromptAvailable: true,
+      screenRecordingSettingsAvailable: true,
       driverVersion: "0.19.2",
       reason: "Permissions are required.",
     });
@@ -247,5 +255,52 @@ describe("InstanceExperimentalSettings", () => {
     });
 
     expect(container.textContent).toContain("Enable Computer Use");
+  });
+
+  it.each(["win32", "linux"])("enables Computer Use on %s without requesting permissions", async (platform) => {
+    const requestPermissions = vi.fn();
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        computerUse: {
+          supported: true,
+          readiness: vi.fn().mockResolvedValue({
+            supported: true,
+            platform,
+            driverAvailable: true,
+            accessibility: true,
+            screenRecording: true,
+            actionReady: true,
+            permissionPromptAvailable: false,
+            screenRecordingSettingsAvailable: false,
+            driverVersion: "0.19.2",
+            reason: null,
+          }),
+          requestPermissions,
+          openScreenRecordingSettings: vi.fn(),
+        },
+      },
+    });
+    mocks.updateGeneral.mockResolvedValue({
+      censorUsernameInLogs: false,
+      showDeveloperDiagnostics: false,
+      experimentalSitesEnabled: false,
+      experimentalGoalsEnabled: false,
+      experimentalComputerUseEnabled: true,
+      locale: "en",
+    });
+    const container = await renderPage();
+
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector(
+        '[data-testid="experimental-computer-use-toggle"]',
+      )).not.toBeNull());
+      container.querySelector<HTMLButtonElement>('[data-testid="experimental-computer-use-toggle"]')?.click();
+      await vi.waitFor(() => expect(mocks.updateGeneral).toHaveBeenCalledWith({
+        experimentalComputerUseEnabled: true,
+      }));
+    });
+
+    expect(requestPermissions).not.toHaveBeenCalled();
   });
 });

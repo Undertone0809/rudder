@@ -78,9 +78,13 @@ export async function registerDesktopBrowserBroker(
   broker: DesktopBrowserBrokerRegistration,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<void> {
-  const response = await boundedFetch(fetchImpl, browserApiUrl(apiUrl, "/instance/browser/broker"), {
+  const requestUrl = browserApiUrl(apiUrl, "/instance/browser/broker");
+  const response = await boundedFetch(fetchImpl, requestUrl, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      origin: new URL(requestUrl).origin,
+    },
     body: JSON.stringify(broker),
   });
   if (!response.ok) {
@@ -97,9 +101,13 @@ export async function unregisterDesktopBrowserBroker(
   token: string,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<void> {
-  const response = await boundedFetch(fetchImpl, browserApiUrl(apiUrl, "/instance/browser/broker"), {
+  const requestUrl = browserApiUrl(apiUrl, "/instance/browser/broker");
+  const response = await boundedFetch(fetchImpl, requestUrl, {
     method: "DELETE",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      origin: new URL(requestUrl).origin,
+    },
     body: JSON.stringify({ token }),
   });
   if (!response.ok) {

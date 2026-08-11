@@ -17,9 +17,13 @@ export type DesktopSystemPermissionId = keyof DesktopSystemPermissions;
 
 export type DesktopComputerUseReadiness = {
   supported: boolean;
+  platform: "darwin" | "win32" | "linux" | "unsupported";
+  driverAvailable: boolean;
   accessibility: boolean;
   screenRecording: boolean;
   actionReady: boolean;
+  permissionPromptAvailable: boolean;
+  screenRecordingSettingsAvailable: boolean;
   driverVersion: string | null;
   reason: string | null;
 };
