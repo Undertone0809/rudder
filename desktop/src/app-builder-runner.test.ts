@@ -44,6 +44,7 @@ async function fixture() {
   const pnpmCli = path.join(runtimeRoot, "toolchain", "pnpm", "bin", "pnpm.cjs");
   const nodeBin = path.join(runtimeRoot, "toolchain", "node", "bin");
   const nodeShim = path.join(nodeBin, process.platform === "win32" ? "node.cmd" : "node");
+  const pnpmShim = path.join(nodeBin, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
   await mkdir(runtimeRoot, { recursive: true });
   await Promise.all([
     copyFile(sourcePackageStore, packageStore),
@@ -58,7 +59,7 @@ async function fixture() {
     'const fs = require("node:fs");',
     'require("node:child_process").execFileSync("node", ["-e", "process.stdout.write(process.execPath)"]);',
     "fs.appendFileSync(process.env.APP_BUILDER_RUNNER_TEST_LOG,",
-    '  JSON.stringify({ argv: process.argv.slice(2), dataRoot: process.env.RUDDER_APP_DATA_DIR ?? null, nodeExecutable: process.env.RUDDER_APP_BUILDER_NODE_EXECUTABLE, nodeOptions: process.env.NODE_OPTIONS, registry: process.env.npm_config_registry }) + "\\n");',
+    '  JSON.stringify({ argv: process.argv.slice(2), dataRoot: process.env.RUDDER_APP_DATA_DIR ?? null, managedPnpmOnPath: process.env.PATH.split(require("node:path").delimiter).some((entry) => { try { return fs.realpathSync(entry) === fs.realpathSync(require("node:path").resolve(__dirname, "../../node/bin")); } catch { return false; } }) && fs.existsSync(require("node:path").resolve(__dirname, "../../node/bin", process.platform === "win32" ? "pnpm.cmd" : "pnpm")), nodeExecutable: process.env.RUDDER_APP_BUILDER_NODE_EXECUTABLE, nodeOptions: process.env.NODE_OPTIONS, registry: process.env.npm_config_registry }) + "\\n");',
   ].join("\n"));
   if (process.platform === "win32") {
     await writeFile(nodeShim, [
@@ -75,6 +76,12 @@ async function fixture() {
       "",
     ].join("\n"));
     await chmod(nodeShim, 0o755);
+  }
+  if (process.platform === "win32") {
+    await writeFile(pnpmShim, "@echo off\r\nexit /b 0\r\n");
+  } else {
+    await writeFile(pnpmShim, "#!/bin/sh\nexit 0\n");
+    await chmod(pnpmShim, 0o755);
   }
   await writeFile(
     path.join(appRoot, "rudder.app.json"),
@@ -125,6 +132,7 @@ async function calls(logPath: string) {
     .map((line) => JSON.parse(line) as {
       argv: string[];
       dataRoot: string | null;
+      managedPnpmOnPath: boolean;
       nodeExecutable: string;
       nodeOptions: string;
       registry: string;
@@ -222,6 +230,7 @@ describe("App Builder managed runner", () => {
       expect((await calls(logPath)).every(
         (call) => call.nodeExecutable === electronBinary,
       )).toBe(true);
+      expect((await calls(logPath)).every((call) => call.managedPnpmOnPath)).toBe(true);
     },
     30_000,
   );

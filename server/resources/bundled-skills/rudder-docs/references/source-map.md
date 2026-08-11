@@ -48,6 +48,8 @@ Other lookup pages are similarly narrow:
 | Workspace and file placement | `https://docs.rudderhq.dev/reference/workspace-boundaries` | `https://docs.rudderhq.dev/zh/reference/workspace-boundaries` |
 | Automation result destinations | `https://docs.rudderhq.dev/reference/automation-output-routing` | `https://docs.rudderhq.dev/zh/reference/automation-output-routing` |
 | Deployment trust, credentials, Browser, and platform behavior | `https://docs.rudderhq.dev/reference/permissions-and-platforms` | `https://docs.rudderhq.dev/zh/reference/permissions-and-platforms` |
+| Windows Desktop release signing policy | `https://docs.rudderhq.dev/reference/code-signing-policy` | `https://docs.rudderhq.dev/zh/reference/code-signing-policy` |
+| Local data and optional service privacy | `https://docs.rudderhq.dev/reference/privacy` | `https://docs.rudderhq.dev/zh/reference/privacy` |
 
 ## Product Logic Registry
 

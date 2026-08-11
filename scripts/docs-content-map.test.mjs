@@ -40,6 +40,17 @@ const BATCH_2_HOW_TO_IDS = [
   "review-agent-work",
 ];
 
+const BATCH_2_ANCHOR_OVERRIDES = {
+  plugins: {
+    en: ["one-package-for-reusable-capabilities", "what-installation-does", "lifecycle-and-trust"],
+    zh: ["用一个软件包分发相关能力", "安装会发生什么", "生命周期和信任边界"],
+  },
+  "manage-plugins": {
+    en: ["what-you-will-do", "before-you-start", "install-and-set-up", "check-the-result", "update-or-roll-back", "disable-or-uninstall"],
+    zh: ["你将完成什么", "开始前", "安装和设置", "检查结果", "更新或回滚", "禁用或卸载"],
+  },
+};
+
 const BATCH_3_REFERENCE_IDS = [
   "issue-statuses",
   "runtime-types",
@@ -198,7 +209,9 @@ test("Batch 2 concepts and how-to guides keep their case-led retrieval structure
     assert.equal(page.example_ids.length, 1, `${pageId} must declare one continuing case`);
     assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
     assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
-    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, conceptAnchors, `${pageId} anchors`);
+    for (const [locale, anchors] of Object.entries(page.anchors)) {
+      assert.deepEqual(anchors, BATCH_2_ANCHOR_OVERRIDES[pageId]?.[locale] ?? conceptAnchors, `${pageId} anchors`);
+    }
   }
 
   for (const pageId of BATCH_2_HOW_TO_IDS) {
@@ -207,7 +220,9 @@ test("Batch 2 concepts and how-to guides keep their case-led retrieval structure
     assert.equal(page.example_ids.length, 1, `${pageId} must declare one case-backed procedure`);
     assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
     assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
-    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, howToAnchors, `${pageId} anchors`);
+    for (const [locale, anchors] of Object.entries(page.anchors)) {
+      assert.deepEqual(anchors, BATCH_2_ANCHOR_OVERRIDES[pageId]?.[locale] ?? howToAnchors, `${pageId} anchors`);
+    }
   }
 });
 
@@ -1115,14 +1130,14 @@ test("atomic writer reports restore failures and retains backup and temporary re
   }
 });
 
-test("docs structure test is a gate in general CI and both docs deployment workflows", () => {
+test("docs structure test is a gate in stable releases and both docs deployment workflows", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   assert.match(
     packageJson.scripts["docs:structure:test"],
     /scripts\/postprocess-docs-export\.test\.mjs/u,
     "docs:structure:test must include static export and verifier regressions",
   );
-  for (const workflow of ["ci.yml", "docs-staging.yml", "docs-production.yml"]) {
+  for (const workflow of ["release.yml", "docs-staging.yml", "docs-production.yml"]) {
     const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
     assert.match(source, /run: pnpm docs:structure:test/u, `${workflow} must run docs:structure:test`);
   }
