@@ -20,8 +20,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1423,14 +1421,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       });
     }
 
-    if (linearIssueLink?.linked) {
-      items.push({
-        id: "linear-linked-issue",
-        createdAt: linearIssueLink.latestIssue?.updatedAt ?? linearIssueLink.link.updatedAt ?? linearIssueLink.link.importedAt,
-        node: <LinearIssueActivityCard data={linearIssueLink} />,
-      });
-    }
-
     for (const evt of activity ?? []) {
       if (!shouldShowIssueActivityEvent(evt)) continue;
       items.push({
@@ -1454,7 +1444,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     currentBoardUserId,
     issue,
     latestAssistanceRequest,
-    linearIssueLink,
     operatorDisplayName,
     resolvedCompanyId,
   ]);
