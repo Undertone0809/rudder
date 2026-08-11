@@ -383,6 +383,9 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(extensionSource).toContain('"issue"');
       expect(extensionSource).toContain("pickManagedRuntimeEnv");
       expect(extensionSource).toContain("result.isError === true");
+      const preAbortedGuardIndex = extensionSource.indexOf("if (signal?.aborted)");
+      expect(preAbortedGuardIndex).toBeGreaterThan(0);
+      expect(preAbortedGuardIndex).toBeLessThan(extensionSource.indexOf("const child = spawn"));
       expect(extensionSource).not.toContain("run-jwt-token");
       expect(extensionSource).not.toContain("forbidden-api-key");
       expect(extensionSource).not.toContain("forbidden-agent");

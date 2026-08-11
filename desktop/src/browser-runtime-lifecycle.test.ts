@@ -12,6 +12,7 @@ function createHarness(options: {
   registrationGate?: Promise<void>;
   registrationGates?: Array<Promise<void> | undefined>;
   initialServerEnabled?: boolean;
+  reapGate?: Promise<void>;
 } = {}) {
   const createBroker = (index: number) => ({
     endpoint: `http://127.0.0.1:${43123 + index}/browser`,
@@ -31,6 +32,7 @@ function createHarness(options: {
       : vi.fn(async () => undefined),
     reapInactiveRuns: vi.fn(async (isRunActive: (value: typeof identity) => Promise<boolean>) => {
       await isRunActive(identity);
+      await options.reapGate;
     }),
   };
   const registerBroker = vi.fn(async () => {
@@ -315,6 +317,30 @@ describe("Desktop Browser runtime lifecycle", () => {
       "Rudder Browser settings sync failed.",
       expect.any(Error),
     );
+  });
+
+  it("does not carry a stale sweep reconcile into a later explicit connection", async () => {
+    let releaseReap!: () => void;
+    const reapGate = new Promise<void>((resolve) => { releaseReap = resolve; });
+    const harness = createHarness({ reapGate });
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+
+    harness.setServerEnabled(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.tabs.reapInactiveRuns).toHaveBeenCalledTimes(1));
+    harness.setServerEnabled(true);
+    const reconnecting = harness.lifecycle.connect("http://127.0.0.1:3200/api");
+    releaseReap();
+    await reconnecting;
+
+    expect(harness.registerBroker).toHaveBeenCalledTimes(2);
+    expect(harness.registerBroker).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:3200/api",
+      harness.brokers[1],
+      undefined,
+    );
+    expect(harness.brokers).toHaveLength(2);
   });
 
   it("continues run cleanup when registration refresh fails", async () => {

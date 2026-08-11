@@ -374,6 +374,10 @@ function pickManagedRuntimeEnv(): Record<string, string> {
 
 function invokeRudderMcpTool(toolName: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Rudder MCP tool call aborted"));
+      return;
+    }
     const child = spawn(RUDDER_MCP_COMMAND, RUDDER_MCP_ARGS, {
       env: { ...process.env, ...RUDDER_MCP_ENV, ...pickManagedRuntimeEnv() },
       stdio: ["pipe", "pipe", "pipe"],

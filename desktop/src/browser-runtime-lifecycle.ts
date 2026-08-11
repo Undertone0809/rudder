@@ -45,7 +45,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
   let lifecycleQueue: Promise<void> = Promise.resolve();
   let lifecycleEpoch = 0;
   let acceptingCommands = false;
-  let reconcileRequested = false;
+  let reconcileEpoch: number | null = null;
   let supersededRequested = false;
   let reconnectAttempt = 0;
 
@@ -97,14 +97,14 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
         const settings = await syncProfileSetting(apiUrl, expectedEpoch);
         if (settings && Boolean(broker) !== settings.enabled) {
           acceptingCommands = false;
-          reconcileRequested = true;
+          reconcileEpoch = expectedEpoch;
         } else if (settings?.enabled && broker) {
           try {
             await options.registerBroker(apiUrl, broker, registeredGeneration, true);
           } catch (error) {
             if (isDesktopBrowserBrokerRegistrationRevoked(error)) {
               acceptingCommands = false;
-              reconcileRequested = true;
+              reconcileEpoch = expectedEpoch;
             } else if (isDesktopBrowserBrokerRegistrationConflict(error)) {
               acceptingCommands = false;
               supersededRequested = true;
@@ -133,9 +133,11 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
         void enqueue(disconnectCurrent);
         return;
       }
-      if (reconcileRequested && expectedEpoch === lifecycleEpoch) {
-        reconcileRequested = false;
+      if (reconcileEpoch === expectedEpoch && expectedEpoch === lifecycleEpoch) {
+        reconcileEpoch = null;
         void connect(apiUrl);
+      } else if (reconcileEpoch === expectedEpoch) {
+        reconcileEpoch = null;
       }
     });
     return sweepInFlight;
@@ -188,6 +190,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 
   const connect = (apiUrl: string, isReconnect = false): Promise<void> => {
     acceptingCommands = false;
+    reconcileEpoch = null;
     supersededRequested = false;
     clearReconnectTimer();
     if (!isReconnect) reconnectAttempt = 0;
@@ -251,6 +254,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 
   const disconnect = (): Promise<void> => {
     acceptingCommands = false;
+    reconcileEpoch = null;
     clearReconnectTimer();
     reconnectAttempt = 0;
     lifecycleEpoch += 1;

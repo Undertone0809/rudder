@@ -84,8 +84,8 @@ export function requestHeadersForLogs(req: object, headers: unknown): unknown {
   }
   const output = { ...(headers as Record<string, unknown>) };
   const sensitiveNames = isMcpOAuthCallbackRequest(req)
-    ? ["referer", "referrer", "cookie", "authorization"]
-    : ["cookie", "authorization"];
+    ? ["referer", "referrer", "cookie", "authorization", "proxy-authorization", "x-api-key", "x-rudder-api-key"]
+    : ["cookie", "authorization", "proxy-authorization", "x-api-key", "x-rudder-api-key"];
   for (const name of sensitiveNames) {
     if (Object.keys(output).some((key) => key.toLowerCase() === name)) {
       for (const key of Object.keys(output)) {

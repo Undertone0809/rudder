@@ -21,7 +21,7 @@ type BrowserAgentWebContents = {
     removeListener(event: "message", listener: (...args: any[]) => void): unknown;
   };
   session: {
-    fetch(input: string, init?: { method?: string; redirect?: "follow" }): Promise<Response>;
+    fetch(input: string, init?: { method?: string; redirect?: "follow" | "manual"; signal?: AbortSignal }): Promise<Response>;
     cookies: {
       set(details: {
         url: string;

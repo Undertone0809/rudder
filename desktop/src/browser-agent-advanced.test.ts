@@ -10,7 +10,7 @@ function createHarness() {
   let attached = false;
   const png = Buffer.from("advanced-png");
   let clipboardItems: Array<{ entries: Array<{ mimeType: string; text?: string }> }> = [];
-  const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+  const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>, _sessionId?: string) => {
     if (method === "Page.getFrameTree") return {
       frameTree: { frame: { id: "main-frame", loaderId: "loader-1", url: "https://example.com" } },
     };
@@ -62,7 +62,7 @@ function createHarness() {
   };
   const fetch = vi.fn(async (
     _input: string,
-    _init?: { method?: string; redirect?: "follow"; signal?: AbortSignal },
+    _init?: { method?: string; redirect?: "follow" | "manual"; signal?: AbortSignal },
   ) => new Response(Buffer.from("asset-bytes"), {
     status: 200,
     headers: { "content-type": "image/png", "content-length": "11" },
@@ -317,9 +317,20 @@ describe("Browser Agent advanced driver", () => {
 
     await driver.execute("cua", { action: "click", x: 40, y: 50, keys: ["Shift"] });
     await driver.execute("cua", { action: "keypress", keys: ["ControlOrMeta", "a"] });
+    await driver.execute("cua", { action: "keypress", keys: ["1"] });
     await driver.execute("cua", { action: "type", text: "hello" });
     expect(harness.sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.objectContaining({ type: "mousePressed", x: 40, y: 50 }));
     expect(harness.sendCommand).toHaveBeenCalledWith("Input.insertText", { text: "hello" });
+    expect(harness.sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.objectContaining({
+      type: "keyDown",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+    }));
+    expect(harness.sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.objectContaining({
+      type: "keyDown",
+      code: "Digit1",
+      windowsVirtualKeyCode: 49,
+    }));
 
     const query = document.querySelector("#query") as HTMLInputElement;
     query.value = "private clipboard";
@@ -467,9 +478,16 @@ describe("Browser Agent advanced driver", () => {
   it("resolves safe locator operations inside a cross-origin frame context", async () => {
     const harness = createHarness();
     const defaultImplementation = harness.sendCommand.getMockImplementation();
-    harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+    harness.sendCommand.mockImplementation(async (
+      method: string,
+      params?: Record<string, unknown>,
+      sessionId?: string,
+    ) => {
       const expression = String(params?.expression || "");
       if (method === "Page.createIsolatedWorld") {
+        if (params?.frameId === "child-frame" && sessionId !== "child-session") {
+          throw new Error("No frame for given id found");
+        }
         return { executionContextId: params?.frameId === "child-frame" ? 22 : 11 };
       }
       if (method === "Runtime.evaluate" && params?.contextId === 11 && expression.includes("HTMLIFrameElement")) {
@@ -481,7 +499,7 @@ describe("Browser Agent advanced driver", () => {
       if (method === "DOM.describeNode" && params?.objectId === "iframe-object") {
         return { node: { frameId: "child-frame", backendNodeId: 90 } };
       }
-      if (method === "Runtime.evaluate" && params?.contextId === 22 && expression.includes("RUDDER_BROWSER_ADVANCED_DOM_V1")) {
+      if (method === "Runtime.evaluate" && params?.contextId === 22 && sessionId === "child-session" && expression.includes("RUDDER_BROWSER_ADVANCED_DOM_V1")) {
         const encoded = /atob\("([^"]+)"\)/u.exec(expression)?.[1];
         const input = encoded ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) : null;
         if (input?.args?.action === "count") return { result: { value: { count: 1 } } };
@@ -498,9 +516,18 @@ describe("Browser Agent advanced driver", () => {
       return defaultImplementation?.(method, params);
     });
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    harness.debuggerHandlers.get("message")?.({}, "Target.attachedToTarget", {
+      sessionId: "child-session",
+      targetInfo: { targetId: "child-frame", type: "iframe" },
+    });
     const locator = { strategy: "css", value: "#frame-target", frame: ["iframe#cross-origin"] };
 
     await expect(driver.execute("locator", { action: "count", locator })).resolves.toEqual({ count: 1 });
+    expect(harness.sendCommand).toHaveBeenCalledWith(
+      "Page.createIsolatedWorld",
+      expect.objectContaining({ frameId: "child-frame" }),
+      "child-session",
+    );
     expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
     await driver.dispose();
   });
@@ -791,8 +818,10 @@ describe("Browser Agent advanced driver", () => {
       start(controller) { controller.enqueue(Buffer.from("private")); },
       cancel,
     });
-    const redirected = new Response(redirectedBody, { status: 200 });
-    Object.defineProperty(redirected, "url", { value: "http://127.0.0.1:3100/api/private" });
+    const redirected = new Response(redirectedBody, {
+      status: 302,
+      headers: { location: "http://127.0.0.1:3100/api/private" },
+    });
     harness.fetch.mockResolvedValueOnce(redirected);
     const redirectInventory = await driver.execute("assets", { action: "list" }) as any;
     const redirectBundle = await driver.execute("assets", {
@@ -802,6 +831,35 @@ describe("Browser Agent advanced driver", () => {
     }) as any;
     expect(redirectBundle.failures[0]?.reason).toMatch(/redirect target is unsafe/i);
     expect(cancel).toHaveBeenCalledOnce();
+    expect(harness.fetch).toHaveBeenCalledWith(
+      "https://example.com/hero.png",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+    await driver.dispose();
+  });
+
+  it("normalizes Chromium policy rejection for a blocked asset redirect", async () => {
+    const harness = createHarness();
+    const hero = document.querySelector("img.hero") as HTMLImageElement;
+    hero.src = "https://example.com/redirect-rudder.png";
+    harness.fetch.mockRejectedValueOnce(new Error("net::ERR_BLOCKED_BY_CLIENT"));
+    const driver = await createBrowserAdvancedDriver({
+      window: harness.windowStub,
+      getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
+    });
+
+    const inventory = await driver.execute("assets", { action: "list" }) as any;
+    const bundle = await driver.execute("assets", {
+      action: "bundle",
+      inventoryId: inventory.id,
+      assetIds: [inventory.assets[0].id],
+    }) as any;
+
+    expect(bundle.failures[0]?.reason).toMatch(/redirect target is unsafe/i);
+    expect(harness.fetch).toHaveBeenCalledWith(
+      "https://example.com/redirect-rudder.png",
+      expect.objectContaining({ redirect: "manual" }),
+    );
     await driver.dispose();
   });
 

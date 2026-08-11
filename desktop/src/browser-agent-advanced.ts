@@ -9,20 +9,21 @@ type DebuggerMessageListener = (
   event: unknown,
   method: string,
   params: Record<string, unknown>,
+  sessionId?: string,
 ) => void;
 
 type BrowserDebugger = {
   isAttached(): boolean;
   attach(protocolVersion?: string): void;
   detach(): void;
-  sendCommand(method: string, commandParams?: Record<string, unknown>): Promise<any>;
+  sendCommand(method: string, commandParams?: Record<string, unknown>, sessionId?: string): Promise<any>;
   on(event: "message", listener: DebuggerMessageListener): unknown;
   removeListener(event: "message", listener: DebuggerMessageListener): unknown;
 };
 
 type BrowserSessionFetch = (
   input: string,
-  init?: { method?: string; redirect?: "follow"; signal?: AbortSignal },
+  init?: { method?: string; redirect?: "follow" | "manual"; signal?: AbortSignal },
 ) => Promise<Response>;
 
 type BrowserAdvancedContents = {
@@ -689,6 +690,13 @@ function cdpKey(key: string): { key: string; code?: string; windowsVirtualKeyCod
     PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
     PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
   };
+  if (/^[a-z]$/iu.test(key)) {
+    const upper = key.toUpperCase();
+    return { key, code: `Key${upper}`, windowsVirtualKeyCode: upper.charCodeAt(0) };
+  }
+  if (/^[0-9]$/u.test(key)) {
+    return { key, code: `Digit${key}`, windowsVirtualKeyCode: key.charCodeAt(0) };
+  }
   return { key, ...(aliases[key] ?? {}) };
 }
 
@@ -710,6 +718,7 @@ export async function createBrowserAdvancedDriver(options: {
   let navigationSequence = 0;
   let disposed = false;
   let virtualClipboardItems: VirtualClipboardItem[] = [];
+  const frameTargetSessions = new Map<string, string>();
 
   const onElectronDialog = (
     info: { dialogType?: unknown; messageText?: unknown; defaultPromptText?: unknown; frame?: { url?: unknown } },
@@ -741,7 +750,43 @@ export async function createBrowserAdvancedDriver(options: {
   contents.on("-run-dialog", onElectronDialog);
   contents.on("-cancel-dialogs", onElectronDialogsCancelled);
 
-  const onDebuggerMessage: DebuggerMessageListener = (_event, method, params) => {
+  const debuggerCommand = (
+    method: string,
+    params: Record<string, unknown> = {},
+    sessionId?: string,
+  ) => sessionId
+    ? debug.sendCommand(method, params, sessionId)
+    : debug.sendCommand(method, params);
+
+  const initializeDebuggerSession = async (sessionId?: string) => {
+    await Promise.all([
+      debuggerCommand("Page.enable", {}, sessionId).catch(() => undefined),
+      debuggerCommand("Runtime.enable", {}, sessionId).catch(() => undefined),
+      debuggerCommand("Log.enable", {}, sessionId).catch(() => undefined),
+      debuggerCommand("Network.enable", {}, sessionId).catch(() => undefined),
+    ]);
+  };
+
+  const onDebuggerMessage: DebuggerMessageListener = (_event, method, params, sessionId) => {
+    if (method === "Target.attachedToTarget") {
+      const childSessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+      const targetInfo = params.targetInfo as Record<string, unknown> | undefined;
+      const targetId = typeof targetInfo?.targetId === "string" ? targetInfo.targetId : "";
+      if (childSessionId && targetId && targetInfo?.type === "iframe") {
+        frameTargetSessions.set(targetId, childSessionId);
+        void initializeDebuggerSession(childSessionId).catch(() => undefined);
+      }
+    }
+    if (method === "Target.detachedFromTarget") {
+      const targetId = typeof params.targetId === "string" ? params.targetId : "";
+      if (targetId) frameTargetSessions.delete(targetId);
+      const detachedSessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+      if (detachedSessionId) {
+        for (const [frameId, candidateSessionId] of frameTargetSessions) {
+          if (candidateSessionId === detachedSessionId) frameTargetSessions.delete(frameId);
+        }
+      }
+    }
     if (method === "Page.frameNavigated") {
       const frame = params.frame as Record<string, unknown> | undefined;
       if (frame && typeof frame.id === "string" && !frame.parentId) {
@@ -815,12 +860,12 @@ export async function createBrowserAdvancedDriver(options: {
   contents.on("console-message", onConsoleMessage);
 
   if (!debug.isAttached()) debug.attach("1.3");
-  await Promise.all([
-    debug.sendCommand("Page.enable").catch(() => undefined),
-    debug.sendCommand("Runtime.enable").catch(() => undefined),
-    debug.sendCommand("Log.enable").catch(() => undefined),
-    debug.sendCommand("Network.enable").catch(() => undefined),
-  ]);
+  await debuggerCommand("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: false,
+    flatten: true,
+  }).catch(() => undefined);
+  await initializeDebuggerSession();
 
   const mainFrameId = async (): Promise<string> => {
     const frameTree = await debug.sendCommand("Page.getFrameTree");
@@ -830,16 +875,29 @@ export async function createBrowserAdvancedDriver(options: {
     return frameId;
   };
 
-  const isolatedWorld = async (frameId: string, purpose: string): Promise<number> => {
-    const created = await debug.sendCommand("Page.createIsolatedWorld", {
+  const isolatedWorld = async (frameId: string, purpose: string, preferredSessionId?: string) => {
+    const create = (sessionId?: string) => debuggerCommand("Page.createIsolatedWorld", {
       frameId,
       worldName: `rudder-browser-${purpose}-v1`,
       grantUniveralAccess: false,
-    });
+    }, sessionId);
+    let sessionId = frameTargetSessions.get(frameId) ?? preferredSessionId;
+    let created;
+    try {
+      created = await create(sessionId);
+    } catch (error) {
+      for (let attempt = 0; attempt < 25 && !frameTargetSessions.has(frameId); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const attachedSessionId = frameTargetSessions.get(frameId);
+      if (!attachedSessionId || attachedSessionId === sessionId) throw error;
+      sessionId = attachedSessionId;
+      created = await create(sessionId);
+    }
     if (typeof created?.executionContextId !== "number") {
       throw new Error("Browser frame execution context is unavailable.");
     }
-    return created.executionContextId;
+    return { contextId: created.executionContextId, sessionId };
   };
 
   const frameSelectors = (locator: unknown): string[] => {
@@ -854,32 +912,80 @@ export async function createBrowserAdvancedDriver(options: {
     return rest;
   };
 
+  const childFrameIdForOwner = async (
+    parentFrameId: string,
+    backendNodeId: number,
+    sessionId?: string,
+  ): Promise<string> => {
+    const tree = await debuggerCommand("Page.getFrameTree", {}, sessionId);
+    const findFrameTree = (candidate: any): any => {
+      if (candidate?.frame?.id === parentFrameId) return candidate;
+      for (const child of Array.isArray(candidate?.childFrames) ? candidate.childFrames : []) {
+        const match = findFrameTree(child);
+        if (match) return match;
+      }
+      return null;
+    };
+    const parent = findFrameTree(tree?.frameTree);
+    for (const child of Array.isArray(parent?.childFrames) ? parent.childFrames : []) {
+      const childFrameId = child?.frame?.id;
+      if (typeof childFrameId !== "string" || !childFrameId) continue;
+      const owner = await debuggerCommand("DOM.getFrameOwner", { frameId: childFrameId }, sessionId).catch(() => null);
+      if (owner?.backendNodeId === backendNodeId) return childFrameId;
+    }
+    throw new Error("Browser frame execution target is unavailable.");
+  };
+
+  const sessionForFrameTarget = async (frameId: string): Promise<string | undefined> => {
+    for (let attempt = 0; attempt < 25 && !frameTargetSessions.has(frameId); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const existing = frameTargetSessions.get(frameId);
+    if (existing) return existing;
+    const targets = await debug.sendCommand("Target.getTargets").catch(() => null);
+    const target = (Array.isArray(targets?.targetInfos) ? targets.targetInfos : [])
+      .find((candidate: any) => candidate?.type === "iframe" && candidate?.targetId === frameId);
+    if (!target) return undefined;
+    const attached = await debug.sendCommand("Target.attachToTarget", {
+      targetId: frameId,
+      flatten: true,
+    }).catch(() => null);
+    const sessionId = typeof attached?.sessionId === "string" ? attached.sessionId : frameTargetSessions.get(frameId);
+    if (!sessionId) return undefined;
+    frameTargetSessions.set(frameId, sessionId);
+    await initializeDebuggerSession(sessionId);
+    return sessionId;
+  };
+
   const resolveFrameContext = async (selectors: string[]) => {
     let frameId = await mainFrameId();
+    let sessionId: string | undefined;
     let offsetX = 0;
     let offsetY = 0;
     for (const selector of selectors) {
-      const contextId = await isolatedWorld(frameId, "frame-resolution");
-      const evaluated = await debug.sendCommand("Runtime.evaluate", {
+      const world = await isolatedWorld(frameId, "frame-resolution", sessionId);
+      sessionId = world.sessionId;
+      const evaluated = await debuggerCommand("Runtime.evaluate", {
         expression: `(() => { const matches = document.querySelectorAll(${JSON.stringify(selector)}); if (matches.length !== 1) throw new Error("Browser frame selector must resolve to exactly one iframe; matched " + matches.length + "."); const frame = matches[0]; if (!(frame instanceof HTMLIFrameElement)) throw new Error("Browser frame selector did not resolve to an iframe."); return frame; })()`,
-        contextId,
+        contextId: world.contextId,
         returnByValue: false,
         awaitPromise: true,
-      });
+      }, sessionId);
       if (evaluated.exceptionDetails) {
         throw new Error(String(evaluated.exceptionDetails.exception?.description || evaluated.exceptionDetails.text || "Browser frame could not be resolved.").slice(0, 500));
       }
       const objectId = evaluated.result?.objectId;
       if (typeof objectId !== "string" || !objectId) throw new Error("Browser frame could not be resolved.");
+      let childFrameId: string;
       try {
         const [rectResult, described] = await Promise.all([
-          debug.sendCommand("Runtime.callFunctionOn", {
+          debuggerCommand("Runtime.callFunctionOn", {
             objectId,
             functionDeclaration: "function() { const rect = this.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, clientLeft: this.clientLeft, clientTop: this.clientTop }; }",
             returnByValue: true,
             throwOnSideEffect: true,
-          }),
-          debug.sendCommand("DOM.describeNode", { objectId, depth: 0, pierce: true }),
+          }, sessionId),
+          debuggerCommand("DOM.describeNode", { objectId, depth: 0, pierce: true }, sessionId),
         ]);
         const rect = rectResult?.result?.value;
         if (!rect || !Number.isFinite(Number(rect.x)) || !Number.isFinite(Number(rect.y))) {
@@ -887,18 +993,30 @@ export async function createBrowserAdvancedDriver(options: {
         }
         offsetX += Number(rect.x) + Number(rect.clientLeft || 0);
         offsetY += Number(rect.y) + Number(rect.clientTop || 0);
-        const childFrameId = described?.node?.frameId ?? described?.node?.contentDocument?.frameId;
-        if (typeof childFrameId !== "string" || !childFrameId) {
+        const backendNodeId = described?.node?.backendNodeId;
+        if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
           throw new Error("Browser frame execution target is unavailable.");
         }
-        frameId = childFrameId;
+        const describedFrameId = described?.node?.frameId ?? described?.node?.contentDocument?.frameId;
+        try {
+          childFrameId = await childFrameIdForOwner(frameId, backendNodeId, sessionId);
+        } catch (error) {
+          if (typeof describedFrameId !== "string" || !describedFrameId) throw error;
+          const childSessionId = await sessionForFrameTarget(describedFrameId);
+          if (!childSessionId) throw error;
+          childFrameId = describedFrameId;
+        }
       } finally {
-        await debug.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined);
+        await debuggerCommand("Runtime.releaseObject", { objectId }, sessionId).catch(() => undefined);
       }
+      frameId = childFrameId;
+      sessionId = frameTargetSessions.get(frameId) ?? sessionId;
     }
+    const world = await isolatedWorld(frameId, "dom", sessionId);
     return {
       frameId,
-      contextId: await isolatedWorld(frameId, "dom"),
+      contextId: world.contextId,
+      sessionId: world.sessionId,
       offsetX,
       offsetY,
     };
@@ -917,12 +1035,12 @@ export async function createBrowserAdvancedDriver(options: {
         __frameOffsetX: context.offsetX,
         __frameOffsetY: context.offsetY,
       };
-      const evaluated = await debug.sendCommand("Runtime.evaluate", {
+      const evaluated = await debuggerCommand("Runtime.evaluate", {
         expression: domScript(action, framedArgs),
         contextId: context.contextId,
         awaitPromise: true,
         returnByValue: true,
-      });
+      }, context.sessionId);
       if (evaluated.exceptionDetails) {
         throw new Error(String(evaluated.exceptionDetails.exception?.description || evaluated.exceptionDetails.text || "Browser frame operation failed.").slice(0, 500));
       }
@@ -1146,24 +1264,52 @@ export async function createBrowserAdvancedDriver(options: {
     const controller = new AbortController();
     activeFetches.add(controller);
     try {
-      const response = await contents.session.fetch(url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-      });
-      const rejectResponse = async (message: string): Promise<never> => {
-        controller.abort();
+      const cancelResponse = async (response: Response, message: string) => {
         await response.body?.cancel(message).catch(() => undefined);
+      };
+      const rejectResponse = async (response: Response, message: string): Promise<never> => {
+        controller.abort();
+        await cancelResponse(response, message);
         throw new Error(message);
       };
-      const finalUrl = response.url || url;
-      if (!isAllowedBrowserNavigationUrl(finalUrl, rudderAppOrigins)) {
-        return await rejectResponse("Browser asset redirect target is unsafe.");
+      let requestUrl = url;
+      let response: Response;
+      for (let redirectCount = 0; ; redirectCount += 1) {
+        response = await contents.session.fetch(requestUrl, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+        });
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          let redirectUrl = "";
+          try {
+            redirectUrl = location ? new URL(location, requestUrl).href : "";
+          } catch {
+            redirectUrl = "";
+          }
+          if (!redirectUrl || !isAllowedBrowserNavigationUrl(redirectUrl, rudderAppOrigins)) {
+            return await rejectResponse(response, "Browser asset redirect target is unsafe.");
+          }
+          if (redirectCount >= 10) {
+            return await rejectResponse(response, "Browser asset exceeded the redirect limit.");
+          }
+          await cancelResponse(response, "Browser asset redirect followed.");
+          requestUrl = redirectUrl;
+          continue;
+        }
+        break;
       }
-      if (!response.ok) return await rejectResponse(`Browser asset request failed with status ${response.status}.`);
+      const finalUrl = response.url || requestUrl;
+      if (!isAllowedBrowserNavigationUrl(finalUrl, rudderAppOrigins)) {
+        return await rejectResponse(response, "Browser asset redirect target is unsafe.");
+      }
+      if (!response.ok) {
+        return await rejectResponse(response, `Browser asset request failed with status ${response.status}.`);
+      }
       const declared = Number.parseInt(response.headers.get("content-length") || "", 10);
       if (Number.isFinite(declared) && declared > maxBytes) {
-        return await rejectResponse("Browser asset exceeded the download limit.");
+        return await rejectResponse(response, "Browser asset exceeded the download limit.");
       }
       const bytes = await readBoundedResponseBytes(response, maxBytes);
       const parsed = new URL(url);
@@ -1177,6 +1323,12 @@ export async function createBrowserAdvancedDriver(options: {
         await fs.writeFile(outputPath, bytes, { flag: "wx" });
       }
       return { filename, path: outputPath, contentType: response.headers.get("content-type"), byteSize: bytes.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/ERR_BLOCKED_BY_CLIENT|redirect was cancelled/iu.test(message)) {
+        throw new Error("Browser asset redirect target is unsafe.");
+      }
+      throw error;
     } finally {
       activeFetches.delete(controller);
     }

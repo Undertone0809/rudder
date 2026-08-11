@@ -221,6 +221,9 @@ describe("HTTP request-body logging", () => {
       {
         cookie: "better-auth.session_token=secret",
         authorization: "Bearer secret",
+        "proxy-authorization": "Basic proxy-secret",
+        "x-api-key": "api-secret",
+        "x-rudder-api-key": "rudder-secret",
         origin: "http://127.0.0.1:3100",
       },
     );
@@ -235,6 +238,9 @@ describe("HTTP request-body logging", () => {
     expect(requestHeaders).toEqual({
       cookie: "[REDACTED]",
       authorization: "[REDACTED]",
+      "proxy-authorization": "[REDACTED]",
+      "x-api-key": "[REDACTED]",
+      "x-rudder-api-key": "[REDACTED]",
       origin: "http://127.0.0.1:3100",
     });
     expect(response).toEqual({
