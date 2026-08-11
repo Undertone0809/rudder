@@ -2,7 +2,7 @@
 title: Unified Requests And Issue Block Audit
 date: 2026-08-11
 kind: proposal
-status: in_progress
+status: completed
 area: api
 entities:
   - request_workflow
@@ -32,6 +32,7 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - ui/src/components/ApprovalCard.tsx
+  - ui/src/components/AssistanceRequestPanel.tsx
   - ui/src/pages/Inbox.tsx
   - ui/src/pages/Messenger.tsx
 commit_refs: []
@@ -39,6 +40,34 @@ updated_at: 2026-08-11
 ---
 
 # Unified Requests And Issue Block Audit
+
+## Proposal Delta: Issue-Inline Request Handling
+
+An Assistance Request linked to an Issue is one durable object with two equal
+operator entry points: the Requests thread and the Issue detail. The Issue
+surface must not reduce the Request to a redirect. While the Request is open,
+the operator can answer it, mark the external action complete, report that they
+cannot help, or cancel it directly on the Issue. Both entry points call the same
+Request API and render the same persisted state.
+
+After resolution, the panel remains visible on the Issue as a read-only record
+with the terminal status, typed resolution, persisted response, and resolution
+time. Refreshing or reopening either surface reads this state from the server;
+there is no separate Issue-local copy of the response or outcome.
+
+### Compact state inventory
+
+| State | Current decision | Visible controls | Deferred controls | Continuity |
+| --- | --- | --- | --- | --- |
+| Open | Provide the requested input or action outcome | Response field; Send answer; Mark action complete; Cannot help; Cancel request | No later workflow controls | Unsent text is local to the mounted panel; terminal state comes from the Request record |
+| Submitting | Wait for the selected Request mutation | Disabled peer actions and stable panel dimensions | Further submissions | Success updates both entry points; failure preserves input and exposes an error toast |
+| Resolved | Review what was supplied and how the Request ended | Read-only status, typed resolution, response, resolution time, secondary Requests link | All mutation controls | Refresh and reopen preserve the server-backed terminal state |
+| Cancelled or superseded | Review why the Request no longer needs action | Read-only status, optional reason, secondary Requests link | All mutation controls | A later Request is a new durable object; the old record is not reopened |
+
+The panel presents one decision at a time. `Send answer` requires a response;
+the other typed outcomes may use concise defaults when the operator provides no
+text. The secondary Requests link remains available for surrounding history,
+but is not required to complete the Request.
 
 ## Overview
 

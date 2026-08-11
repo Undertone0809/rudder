@@ -6,7 +6,6 @@ import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
-import { requestsApi } from "@/api/requests";
 import { AgentIcon } from "@/components/AgentAvatar";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
@@ -16,6 +15,7 @@ import {
   chatIssueApprovalLabelIds,
   chatIssueApprovalNeedsLabelSelection,
 } from "@/components/ApprovalPayload";
+import { AssistanceRequestPanel } from "@/components/AssistanceRequestPanel";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/MessengerRunOrigin";
@@ -785,52 +785,7 @@ function MessengerAssistanceCard({
   item: MessengerAssistanceThreadItem;
   orgId: string;
 }) {
-  const queryClient = useQueryClient();
-  const { pushToast } = useToast();
-  const [response, setResponse] = useState("");
   const request = item.assistanceRequest;
-  const isOpen = request.status === "open";
-  const resolveMutation = useMutation({
-    mutationFn: (resolution: "answered" | "action_completed" | "cannot_help") =>
-      requestsApi.resolveAssistance(
-        request.id,
-        resolution,
-        response.trim() || (resolution === "cannot_help" ? "I cannot help with this request." : "The requested action is complete."),
-      ),
-    onSuccess: async () => {
-      setResponse("");
-      await Promise.all([
-        invalidateMessengerQueries(queryClient, orgId),
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.list(orgId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(request.issueId) }),
-      ]);
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to resolve request",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
-  const cancelMutation = useMutation({
-    mutationFn: () => requestsApi.cancelAssistance(request.id, response.trim() || undefined),
-    onSuccess: async () => {
-      setResponse("");
-      await Promise.all([
-        invalidateMessengerQueries(queryClient, orgId),
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.list(orgId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(request.issueId) }),
-      ]);
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to cancel request",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
 
   return (
     <ThreadMessage
@@ -839,41 +794,8 @@ function MessengerAssistanceCard({
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-assistance-message-${item.id}`}
     >
-      <div className="space-y-3 rounded-md border border-border bg-card p-4" data-testid={`messenger-assistance-card-${item.id}`}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">{item.title}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{item.subtitle}</div>
-          </div>
-          <span className="shrink-0 text-xs capitalize text-muted-foreground">{request.status}</span>
-        </div>
-        <MarkdownBody>{request.prompt}</MarkdownBody>
-        {isOpen ? (
-          <div className="space-y-2 border-t border-border pt-3">
-            <Textarea
-              value={response}
-              onChange={(event) => setResponse(event.target.value)}
-              placeholder="Answer or describe what changed"
-              className="min-h-20"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => resolveMutation.mutate("answered")} disabled={!response.trim() || resolveMutation.isPending || cancelMutation.isPending}>
-                Send answer
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => resolveMutation.mutate("action_completed")} disabled={resolveMutation.isPending || cancelMutation.isPending}>
-                Mark action complete
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => resolveMutation.mutate("cannot_help")} disabled={resolveMutation.isPending || cancelMutation.isPending}>
-                Cannot help
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => cancelMutation.mutate()} disabled={resolveMutation.isPending || cancelMutation.isPending}>
-                Cancel request
-              </Button>
-            </div>
-          </div>
-        ) : request.response ? (
-          <div className="border-t border-border pt-3 text-sm text-muted-foreground">{request.response}</div>
-        ) : null}
+      <div data-testid={`messenger-assistance-card-${item.id}`}>
+        <AssistanceRequestPanel request={request} orgId={orgId} showRequestsLink={false} />
       </div>
     </ThreadMessage>
   );

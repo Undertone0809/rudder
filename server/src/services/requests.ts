@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
@@ -11,6 +10,7 @@ import {
   requests,
 } from "@rudderhq/db";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { notFound, unprocessable } from "../errors.js";
 import { redactSensitiveText } from "../redaction.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
@@ -57,7 +57,10 @@ export function requestService(db: Db) {
       if (!filters.kind || filters.kind === "assistance") {
         const conditions = [eq(requests.orgId, orgId)];
         if (filters.status) conditions.push(eq(requests.status, filters.status));
-        result.push(...await db.select().from(requests).where(and(...conditions)).orderBy(desc(requests.updatedAt)));
+        result.push(...await db.select().from(requests).where(and(...conditions)).orderBy(
+          desc(requests.updatedAt),
+          desc(requests.id),
+        ));
       }
       if (!filters.kind || filters.kind === "approval") {
         const approvalRows = await db.select().from(approvals).where(eq(approvals.orgId, orgId));
@@ -70,8 +73,11 @@ export function requestService(db: Db) {
           }))
           .filter((approval) => !filters.status || approval.requestStatus === filters.status));
       }
-      return result.sort((left, right) =>
-        new Date(String(right.updatedAt)).getTime() - new Date(String(left.updatedAt)).getTime());
+      return result.sort((left, right) => {
+        const updatedDelta = new Date(String(right.updatedAt)).getTime() - new Date(String(left.updatedAt)).getTime();
+        if (updatedDelta !== 0) return updatedDelta;
+        return String(right.id).localeCompare(String(left.id));
+      });
     },
 
     getById: async (id: string) => {

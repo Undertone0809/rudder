@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   activityLog,
   agentWakeupRequests,
@@ -15,7 +16,6 @@ import {
 } from "../../packages/db/src/index.ts";
 import { createLocalAgentJwt } from "../../server/src/agent-auth-jwt.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
-import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -143,8 +143,10 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   expect(third.status).toBe("blocked");
   expect(third.blockAudit).toMatchObject({ attempt: 3, requiredAttempts: 3, blocked: true });
   await page.goto(`/issues/${fixture.issue.identifier}`);
-  await expect(page.getByTestId("issue-request-attention")).toContainText("Blocked · Waiting on you");
-  await expect(page.getByTestId("issue-request-attention")).toContainText("Attempt 3/3");
+  const issueRequestPanel = page.getByTestId("issue-request-attention");
+  await expect(issueRequestPanel).toContainText("Blocked · Waiting on you");
+  await expect(issueRequestPanel).toContainText("Attempt 3/3");
+  await expect(issueRequestPanel.getByRole("button", { name: "Send answer" })).toBeDisabled();
 
   const requestRows = await e2eDb.select().from(requests).where(and(
     eq(requests.issueId, fixture.issue.id),
@@ -166,13 +168,22 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   expect(auditEvents.filter((event) => [run1, ...attempts.map((attempt) => attempt.runId)].includes(event.runId)))
     .toHaveLength(3);
 
+  await issueRequestPanel.getByPlaceholder("Answer or describe what changed").fill("GitHub mobile confirmation approved.");
+  await issueRequestPanel.getByRole("button", { name: "Send answer" }).click();
+  await expect(issueRequestPanel.getByText("Answered", { exact: true })).toBeVisible();
+  await expect(issueRequestPanel).toContainText("GitHub mobile confirmation approved.");
+  await expect(issueRequestPanel.getByRole("button", { name: "Send answer" })).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByTestId("issue-request-attention")).toContainText("Answered");
+  await expect(page.getByTestId("issue-request-attention")).toContainText("GitHub mobile confirmation approved.");
+
   await page.goto("/messenger/approvals");
   await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
   const card = page.getByTestId(`messenger-assistance-card-${requestRows[0]!.id}`);
   await expect(card).toBeVisible();
-  await card.getByPlaceholder("Answer or describe what changed").fill("GitHub mobile confirmation approved.");
-  await card.getByRole("button", { name: "Send answer" }).click();
-  await expect(card.getByText("resolved", { exact: true }).first()).toBeVisible();
+  await expect(card.getByText("Answered", { exact: true })).toBeVisible();
+  await expect(card).toContainText("GitHub mobile confirmation approved.");
 
   const [resumedIssue] = await e2eDb.select().from(issues).where(eq(issues.id, fixture.issue.id));
   expect(resumedIssue?.status).toBe("in_progress");
@@ -213,6 +224,10 @@ test("resets the audit when the blocker materially changes", async ({ page }) =>
   const [superseded] = requestRows.filter((request) => request.status === "superseded");
   expect(open).toBeTruthy();
   expect(superseded).toMatchObject({ supersededByRequestId: open!.id });
+  await page.goto(`/issues/${fixture.issue.identifier}`);
+  await expect(page.getByTestId("issue-request-attention")).toContainText("In progress · Waiting on you");
+  await expect(page.getByTestId("issue-request-attention")).toContainText("repository owner must now grant access");
+  await expect(page.getByTestId("issue-request-attention")).not.toContainText("Superseded because");
   const [resetAttempt] = await e2eDb.select().from(issueBlockAuditAttempts)
     .where(eq(issueBlockAuditAttempts.requestId, open!.id));
   expect(resetAttempt).toMatchObject({ attemptNumber: 1, resetReason: "reset_after_blocker_change" });

@@ -60,6 +60,7 @@ import { pluginsApi } from "../api/plugins";
 import { projectsApi } from "../api/projects";
 import { requestsApi } from "../api/requests";
 import { AgentIdentity } from "../components/AgentAvatar";
+import { AssistanceRequestPanel } from "../components/AssistanceRequestPanel";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { isAgentWakeEligible } from "../components/CommentThread.submit";
 import { Identity } from "../components/Identity";
@@ -110,6 +111,22 @@ type IssueCostSummaryData = {
 };
 
 type IssueChatTarget = Pick<Issue, "id" | "identifier" | "title" | "projectId" | "assigneeAgentId">;
+
+export function selectIssueAssistanceRequest(
+  assistanceRequests: AssistanceRequest[] | undefined,
+  issueId: string | undefined,
+): AssistanceRequest | null {
+  if (!issueId) return null;
+  return [...(assistanceRequests ?? [])]
+    .filter((request) => request.issueId === issueId)
+    .sort((left, right) => {
+      if (left.status === "open" && right.status !== "open") return -1;
+      if (right.status === "open" && left.status !== "open") return 1;
+      const updatedDelta = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      if (updatedDelta !== 0) return updatedDelta;
+      return right.id.localeCompare(left.id);
+    })[0] ?? null;
+}
 
 export function buildIssueChatHref(issue: IssueChatTarget) {
   const params = new URLSearchParams({
@@ -1154,8 +1171,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     queryFn: () => requestsApi.list(resolvedCompanyId!, { kind: "assistance" }),
     enabled: Boolean(resolvedCompanyId && issue?.id),
   });
-  const latestAssistanceRequest = assistanceRequests?.find((request): request is AssistanceRequest =>
-    request.kind === "assistance" && request.issueId === issue?.id) ?? null;
+  const latestAssistanceRequest = selectIssueAssistanceRequest(
+    assistanceRequests?.filter((request): request is AssistanceRequest => request.kind === "assistance"),
+    issue?.id,
+  );
 
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
@@ -1602,6 +1621,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(issueOrgId) });
+      queryClient.invalidateQueries({ queryKey: ["requests", issueOrgId] });
+      if (latestAssistanceRequest) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(latestAssistanceRequest.id) });
+      }
     }
   };
 
@@ -2193,26 +2216,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                     Properties
                   </p>
                 </div>
-                {latestAssistanceRequest ? (
-                  <div
-                    className="mb-3 flex items-center justify-between gap-3 border-b border-border pb-3 text-xs"
-                    data-testid="issue-request-attention"
-                    title={latestAssistanceRequest.response ?? latestAssistanceRequest.prompt}
-                  >
-                    <span className="font-medium text-foreground">
-                      {latestAssistanceRequest.status === "open"
-                        ? `${issue.status === "blocked" ? "Blocked" : "In progress"} · Waiting on you`
-                        : `Request ${latestAssistanceRequest.status}${latestAssistanceRequest.resolution ? ` · ${latestAssistanceRequest.resolution.replace("_", " ")}` : ""}`}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                      Attempt {Number(latestAssistanceRequest.metadata.attempt ?? 1)}/3
-                      <Link to="/messenger/approvals" className="inline-flex items-center gap-1 text-foreground hover:underline">
-                        Open request
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    </span>
-                  </div>
-                ) : null}
                 <IssueProperties
                   issue={issue}
                   onUpdate={(data) => updateIssue.mutate(data)}
@@ -2228,6 +2231,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           className="issue-detail-body min-w-0 space-y-6"
           data-testid="issue-detail-primary-content"
         >
+
+        {latestAssistanceRequest ? (
+          <div data-testid="issue-request-attention">
+            <AssistanceRequestPanel
+              request={latestAssistanceRequest}
+              orgId={resolvedCompanyId!}
+              issueStatus={issue.status}
+            />
+          </div>
+        ) : null}
 
         <InlineEditor
           value={issue.description ?? ""}
