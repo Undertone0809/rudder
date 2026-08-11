@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, Loader2, Target, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { useDialog, type NewGoalDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -76,6 +77,12 @@ export function NewGoalDialog() {
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: Boolean(newGoalOpen && selectedOrganizationId),
+  });
+  const uploadContextImage = useMutation({
+    mutationFn: async (file: File) => {
+      if (!selectedOrganizationId) throw new Error("No organization selected");
+      return assetsApi.uploadImage(selectedOrganizationId, file, "goals/drafts");
+    },
   });
 
   useEffect(() => {
@@ -242,6 +249,10 @@ export function NewGoalDialog() {
                 onChange={setContext}
                 bordered={false}
                 contentClassName="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/55 focus-within:border-ring"
+                imageUploadHandler={async (file) => {
+                  const asset = await uploadContextImage.mutateAsync(file);
+                  return asset.contentPath;
+                }}
               />
             </div>
 

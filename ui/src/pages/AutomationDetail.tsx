@@ -39,6 +39,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentRunsApi } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTriggerResponse } from "../api/automations";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
@@ -179,6 +180,12 @@ export function AutomationDetail({
     outputMode: "track_issue",
     chatConversationId: "",
     notifyOnIssueCreated: false,
+  });
+  const uploadDescriptionImage = useMutation({
+    mutationFn: async (file: File) => {
+      if (!selectedOrganizationId) throw new Error("No organization selected");
+      return assetsApi.uploadImage(selectedOrganizationId, file, `automations/${automationId}`);
+    },
   });
 
   const { data: automation, isLoading, error } = useQuery({
@@ -1240,6 +1247,10 @@ export function AutomationDetail({
                 "text-[15px] leading-7 text-foreground/90",
                 embedded ? "min-h-[220px]" : "min-h-[180px] md:min-h-[240px]",
               )}
+              imageUploadHandler={async (file) => {
+                const asset = await uploadDescriptionImage.mutateAsync(file);
+                return asset.contentPath;
+              }}
             />
           </section>
 

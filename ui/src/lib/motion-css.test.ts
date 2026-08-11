@@ -158,6 +158,15 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toMatch(/\.motion-entity-preview-pop,[\s\S]*?filter: none !important/);
   });
 
+  it("moves Markdown block actions with motion tokens and a reduced-motion fallback", () => {
+    expect(motionCss).toMatch(
+      /\.motion-markdown-block-hover \{[\s\S]*?transform var\(--motion-duration-instant\) var\(--motion-ease-enter\)/,
+    );
+    expect(motionCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-markdown-block-hover,[\s\S]*?transition: none !important/,
+    );
+  });
+
   it("defines motion for transcript disclosure controls", () => {
     expect(motionCss).toContain(".motion-disclosure-enter");
     expect(motionCss).toContain(".motion-disclosure-icon");

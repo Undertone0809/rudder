@@ -1089,6 +1089,12 @@ export function MarkdownBody({
         <table {...tableProps} {...sourceAttributesForNode(node)}>{tableChildren}</table>
       </div>
     ),
+    th: ({ node, children: cellChildren, ...cellProps }) => (
+      <th {...cellProps} {...sourceAttributesForNode(node)}>{cellChildren}</th>
+    ),
+    td: ({ node, children: cellChildren, ...cellProps }) => (
+      <td {...cellProps} {...sourceAttributesForNode(node)}>{cellChildren}</td>
+    ),
     pre: renderPre,
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;

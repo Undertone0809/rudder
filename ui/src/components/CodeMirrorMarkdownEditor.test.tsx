@@ -40,6 +40,7 @@ vi.mock("./MarkdownBody", () => ({
     children,
     className,
     onLinkClick,
+    sourceOffsetBase = 0,
     skillReferences,
   }: {
     children: string;
@@ -49,6 +50,7 @@ vi.mock("./MarkdownBody", () => ({
       href: string;
       label: string;
     }) => boolean | void;
+    sourceOffsetBase?: number;
     skillReferences?: Array<{
       href: string;
       detailsHref?: string | null;
@@ -65,6 +67,51 @@ vi.mock("./MarkdownBody", () => ({
               <svg aria-hidden="true" />
             </span>
           </button>
+        </div>
+      );
+    }
+    const tableLines = renderedSource.split("\n");
+    if (tableLines.length >= 2 && /\|/u.test(tableLines[0] ?? "")) {
+      let lineOffset = 0;
+      const rows = tableLines.flatMap((line, lineIndex) => {
+        const currentOffset = lineOffset;
+        lineOffset += line.length + 1;
+        if (lineIndex === 1) return [];
+        const cells: Array<{ from: number; to: number; value: string }> = [];
+        const pipeIndexes = Array.from(line.matchAll(/\|/gu), (match) => match.index);
+        const boundaries = [...pipeIndexes];
+        if (boundaries[0] !== 0) boundaries.unshift(0);
+        if (boundaries.at(-1) !== line.length - 1) boundaries.push(line.length);
+        for (let index = 0; index + 1 < boundaries.length; index += 1) {
+          const segmentFrom = boundaries[index]! + (boundaries[index] === 0 && line[0] !== "|" ? 0 : 1);
+          const segmentTo = boundaries[index + 1]!;
+          const segment = line.slice(segmentFrom, segmentTo);
+          cells.push({
+            from: sourceOffsetBase + currentOffset + boundaries[index]!,
+            to: sourceOffsetBase + currentOffset + (
+              index + 2 === boundaries.length ? line.length : boundaries[index + 1]!
+            ),
+            value: segment.trim(),
+          });
+        }
+        const Cell = lineIndex === 0 ? "th" : "td";
+        return [(
+          <tr key={lineIndex}>
+            {cells.map((cell, cellIndex) => (
+              <Cell
+                key={cellIndex}
+                data-markdown-source-start={cell.from}
+                data-markdown-source-end={cell.to}
+              >
+                {cell.value}
+              </Cell>
+            ))}
+          </tr>
+        )];
+      });
+      return (
+        <div className={className} data-rendered-markdown={children}>
+          <table><tbody>{rows}</tbody></table>
         </div>
       );
     }
@@ -155,11 +202,12 @@ function clipboardEvent(text: string) {
   return event;
 }
 
-function imageClipboardEvent(file: File) {
+function imageClipboardEvent(fileOrFiles: File | File[]) {
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
     value: {
-      files: [file],
+      files,
       items: [],
       getData: () => "",
     },
@@ -336,6 +384,228 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
     expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+  });
+
+  it("edits rendered table cells in place and targets hover actions to the visual row", async () => {
+    const ref = createRef<MarkdownEditorRef>();
+    const markdown = [
+      "| Item | Status |",
+      "| --- | --- |",
+      "| First | Needs work |",
+    ].join("\n");
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={ref}
+          value={markdown}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const statusCell = Array.from(container?.querySelectorAll<HTMLTableCellElement>("td") ?? [])
+      .find((cell) => cell.textContent === "Needs work");
+    expect(statusCell).toBeTruthy();
+    act(() => {
+      statusCell?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await flushReact();
+    expect(document.querySelector('[aria-label="Open block actions for line 3"]')).toBeTruthy();
+
+    let cellTop = 120;
+    vi.spyOn(statusCell!, "getBoundingClientRect").mockImplementation(() => ({
+      bottom: cellTop + 32,
+      height: 32,
+      left: 100,
+      right: 260,
+      top: cellTop,
+      width: 160,
+      x: 100,
+      y: cellTop,
+      toJSON: () => ({}),
+    }));
+
+    act(() => {
+      statusCell?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-testid="markdown-table-cell-editor"]',
+    );
+    expect(input?.value).toBe("Needs work");
+    expect(input?.style.top).toBe("120px");
+    expect(container?.querySelector("table")).toBeTruthy();
+    expect(container?.textContent).not.toContain("| Item | Status |");
+
+    cellTop = 48;
+    act(() => window.dispatchEvent(new Event("scroll")));
+    await flushReact();
+    expect(input?.style.top).toBe("48px");
+
+    act(() => {
+      if (!input) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Ready");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(ref.current?.getMarkdown?.()).toBe(markdown.replace("Needs work", "Ready"));
+    expect(container?.querySelector("table")).toBeTruthy();
+    expect(Array.from(container?.querySelectorAll("td") ?? []).some(
+      (cell) => cell.textContent === "Ready",
+    )).toBe(true);
+    const previousCellInput = document.querySelector<HTMLInputElement>(
+      '[aria-label="Edit table cell row 2 column 1"]',
+    );
+    expect(previousCellInput?.value).toBe("First");
+    act(() => {
+      previousCellInput?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+    expect(document.querySelector('[data-testid="markdown-table-cell-editor"]')).toBeNull();
+  });
+
+  it("refreshes rendered tables when a document change follows an unfinished preview drag", async () => {
+    const ref = createRef<MarkdownEditorRef>();
+    const markdown = [
+      "# Instructions",
+      "",
+      "| Step | Owner |",
+      "| --- | --- |",
+      "| Run safely | Agent |",
+    ].join("\n");
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={ref}
+          value={markdown}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const headingPreview = container?.querySelector<HTMLElement>(
+      '[data-markdown-preview-state="preview"][data-source-line-start="1"]',
+    );
+    vi.spyOn(editorView(), "posAtCoords").mockReturnValue(0);
+    act(() => {
+      headingPreview?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    const runCell = Array.from(container?.querySelectorAll<HTMLTableCellElement>("td") ?? [])
+      .find((cell) => cell.textContent === "Run safely");
+    expect(runCell).toBeTruthy();
+    vi.spyOn(runCell!, "getBoundingClientRect").mockImplementation(() => ({
+      bottom: 152,
+      height: 32,
+      left: 100,
+      right: 260,
+      top: 120,
+      width: 160,
+      x: 100,
+      y: 120,
+      toJSON: () => ({}),
+    }));
+    act(() => {
+      runCell?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-testid="markdown-table-cell-editor"]',
+    );
+    act(() => {
+      if (!input) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Review safely");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(ref.current?.getMarkdown?.()).toContain("| Review safely | Agent |");
+    expect(Array.from(container?.querySelectorAll("td") ?? []).some(
+      (cell) => cell.textContent === "Review safely",
+    )).toBe(true);
+  });
+
+  it.each([
+    ["outer pipes", ["| Item | Status |", "| --- | --- |", "| First | Needs work |"].join("\n")],
+    ["no outer pipes", ["Item | Status", "--- | ---", "First | Needs work"].join("\n")],
+  ])("escapes every unescaped table delimiter with %s without changing surrounding source", async (
+    _label,
+    markdown,
+  ) => {
+    const ref = createRef<MarkdownEditorRef>();
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor ref={ref} value={markdown} onChange={() => undefined} />,
+      );
+    });
+    await flushReact();
+
+    const statusCell = Array.from(container?.querySelectorAll<HTMLTableCellElement>("td") ?? [])
+      .find((cell) => cell.textContent === "Needs work");
+    act(() => {
+      statusCell?.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-testid="markdown-table-cell-editor"]',
+    );
+    const editedValue = String.raw`A||B\\|C\|D`;
+    act(() => {
+      if (!input) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        editedValue,
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(ref.current?.getMarkdown?.()).toBe(
+      markdown.replace("Needs work", String.raw`A\|\|B\\\|C\|D`),
+    );
   });
 
   it("marks fenced source lines so the active block keeps its visual container", async () => {
@@ -1777,6 +2047,102 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
         "![library-screenshot.png](/api/assets/image/content)",
       );
     });
+  });
+
+  it("pastes multiple images in clipboard order as one undoable edit", async () => {
+    const ref = createRef<MarkdownEditorRef>();
+    const resolvers = new Map<string, (url: string) => void>();
+    const upload = vi.fn((file: File) => new Promise<string>((resolve) => {
+      resolvers.set(file.name, resolve);
+    }));
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={ref}
+          value=""
+          onChange={() => undefined}
+          imageUploadHandler={upload}
+        />,
+      );
+    });
+    await flushReact();
+
+    const files = [
+      new File(["first"], "first.png", { type: "image/png" }),
+      new File(["second"], "second.png", { type: "image/png" }),
+      new File(["third"], "third.png", { type: "image/png" }),
+    ];
+    act(() => {
+      ref.current?.focus();
+      editorView().contentDOM.dispatchEvent(imageClipboardEvent(files));
+    });
+    expect(upload).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      resolvers.get("third.png")?.("/api/assets/third/content");
+      resolvers.get("first.png")?.("/api/assets/first/content");
+      resolvers.get("second.png")?.("/api/assets/second/content");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getMarkdown?.()).toBe([
+      "![first.png](/api/assets/first/content)",
+      "![second.png](/api/assets/second/content)",
+      "![third.png](/api/assets/third/content)",
+    ].join("\n"));
+    expect(container?.querySelector('img[alt="first.png"]')).toBeTruthy();
+    expect(container?.querySelector('img[alt="second.png"]')).toBeTruthy();
+    expect(container?.querySelector('img[alt="third.png"]')).toBeTruthy();
+    expect(container?.textContent).not.toContain("![third.png]");
+
+    act(() => ref.current?.undo?.());
+    await flushReact();
+    expect(ref.current?.getMarkdown?.()).toBe("");
+  });
+
+  it("keeps successful images in clipboard order when part of a multi-image paste fails", async () => {
+    const ref = createRef<MarkdownEditorRef>();
+    const uploads = new Map<string, {
+      reject: (error: Error) => void;
+      resolve: (url: string) => void;
+    }>();
+    const upload = vi.fn((file: File) => new Promise<string>((resolve, reject) => {
+      uploads.set(file.name, { reject, resolve });
+    }));
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={ref}
+          value=""
+          onChange={() => undefined}
+          imageUploadHandler={upload}
+        />,
+      );
+    });
+    await flushReact();
+
+    act(() => {
+      ref.current?.focus();
+      editorView().contentDOM.dispatchEvent(imageClipboardEvent([
+        new File(["first"], "first.png", { type: "image/png" }),
+        new File(["broken"], "broken.png", { type: "image/png" }),
+        new File(["third"], "third.png", { type: "image/png" }),
+      ]));
+    });
+
+    await act(async () => {
+      uploads.get("first.png")?.resolve("/api/assets/first.png/content");
+      uploads.get("broken.png")?.reject(new Error("Upload unavailable"));
+      uploads.get("third.png")?.resolve("/api/assets/third.png/content");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(ref.current?.getMarkdown?.()).toBe([
+      "![first.png](/api/assets/first.png/content)",
+      "![third.png](/api/assets/third.png/content)",
+    ].join("\n"));
+    expect(container?.textContent).toContain("1 of 3 images failed to upload. Upload unavailable");
   });
 
   it("maps a pending image replacement through edits made before upload completes", async () => {
