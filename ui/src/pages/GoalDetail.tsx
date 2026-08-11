@@ -1,10 +1,18 @@
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import {
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
-  type GoalDependencies,
   type GoalFeedbackAttachment,
   type GoalWorkspaceFacet,
   type Issue,
@@ -13,37 +21,47 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  BriefcaseBusiness,
   Check,
   CircleDot,
   Clock3,
+  Copy,
   ExternalLink,
   FileCheck2,
   Focus,
   History,
+  ListTree,
+  MessageSquare,
   MessageSquareText,
+  MoreHorizontal,
   Paperclip,
   Pencil,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Target,
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { agentsApi } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
+import { AgentIdentity } from "../components/AgentAvatar";
+import { CommentComposer } from "../components/CommentComposer";
 import { InlineEditor } from "../components/InlineEditor";
 import { MarkdownBody } from "../components/MarkdownBody";
+import type { MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
+import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { toDateTimeLocalValue } from "../lib/datetime-local";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
@@ -138,6 +156,42 @@ type ChangeDecisionInput = {
   id: string;
   decision: "approve" | "reject";
 };
+
+const GOAL_DETAIL_TABS = ["conversation", "activity", "work", "evidence"] as const;
+type GoalDetailTab = (typeof GOAL_DETAIL_TABS)[number];
+
+function goalDetailTab(search: string): GoalDetailTab {
+  const value = new URLSearchParams(search).get("tab");
+  return GOAL_DETAIL_TABS.includes(value as GoalDetailTab) ? value as GoalDetailTab : "conversation";
+}
+
+function storedGoalChatTarget(
+  organizationId: string,
+  goalId: string,
+): Extract<SidePanelTarget, { kind: "goal_chat" }> | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(`rudder.goal-chat:${organizationId}:${goalId}`) ?? "null") as unknown;
+    const record = asRecord(value);
+    if (
+      record.kind !== "goal_chat"
+      || record.organizationId !== organizationId
+      || record.goalId !== goalId
+      || typeof record.clientMutationId !== "string"
+    ) return null;
+    return {
+      kind: "goal_chat",
+      organizationId,
+      goalId,
+      agentId: typeof record.agentId === "string" ? record.agentId : null,
+      conversationId: typeof record.conversationId === "string" ? record.conversationId : null,
+      clientMutationId: record.clientMutationId,
+      body: typeof record.body === "string" ? record.body : "",
+      label: typeof record.label === "string" ? record.label : "Goal",
+    };
+  } catch {
+    return null;
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -748,30 +802,6 @@ function WorkLinks({ projects, issues }: { projects: Project[]; issues: Issue[] 
   );
 }
 
-const dependencyLabels: Record<string, string> = {
-  childGoals: "Child Goals",
-  linkedProjects: "Linked projects",
-  linkedIssues: "Linked issues",
-  automations: "Automations",
-  calendarEvents: "Calendar events",
-};
-
-function DeletionBlockers({ dependencies }: { dependencies: GoalDependencies }) {
-  const previewGroups = Object.entries(dependencies.previews).filter(([, previews]) => previews.length > 0);
-  if (dependencies.canDelete || (previewGroups.length === 0 && dependencies.blockers.length === 0)) return null;
-  return (
-    <div className="space-y-2 border-l-2 border-amber-500/45 pl-3">
-      <div className="text-xs font-medium">Deletion blockers</div>
-      {previewGroups.map(([kind, previews]) => (
-        <div key={kind} className="text-xs text-muted-foreground">
-          <div className="font-medium text-foreground">{dependencyLabels[kind] ?? kind}</div>
-          {previews.map((preview) => <div key={preview.id} className="mt-1 min-w-0 break-words">{preview.title}</div>)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function facetLabel(facet: GoalWorkspaceFacet | string) {
   if (facet === "closed") return "History";
   if (facet === "ready_for_acceptance") return "Ready for acceptance";
@@ -812,17 +842,19 @@ export function GoalDetail() {
   const { goalId, orgPrefix } = useParams<{ goalId: string; orgPrefix?: string }>();
   const location = useLocation();
   const debugMode = new URLSearchParams(location.search).get("goalDebug") === "1";
+  const activeTab = goalDetailTab(location.search);
   const { organizations, selectedOrganizationId } = useOrganization();
   const { confirm, openNewGoal } = useDialog();
   const { closePanel } = usePanel();
+  const sidePanel = useSidePanel();
   const { pushToast } = useToast();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const feedbackRef = useRef<HTMLTextAreaElement>(null);
+  const feedbackRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const feedbackFileRef = useRef<HTMLInputElement>(null);
   const focusButtonRef = useRef<HTMLButtonElement>(null);
+  const goalTitleRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const attentionHeadingRef = useRef<HTMLHeadingElement>(null);
   const historyFocusRef = useRef<HTMLDivElement>(null);
@@ -843,6 +875,7 @@ export function GoalDetail() {
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
+  const [copiedGoalId, setCopiedGoalId] = useState(false);
 
   const workspaceQuery = useQuery({
     queryKey: ["goals", "detail", goalId, "workspace"],
@@ -1088,6 +1121,18 @@ export function GoalDetail() {
     }),
     [issuesQuery.data, projectsQuery.data, workspace?.goal.criteria, workspace?.goal.ownerAgentId, workspace?.resultProposals],
   );
+  const conversationTimeline = useMemo(
+    () => timeline.filter((entry) => entry.kind === "feedback"),
+    [timeline],
+  );
+  const activityTimeline = useMemo(
+    () => timeline.filter((entry) => entry.kind !== "feedback"),
+    [timeline],
+  );
+  const evidenceTimeline = useMemo(
+    () => timeline.filter((entry) => entry.evidence.length > 0 || entry.evidenceRefs.length > 0),
+    [timeline],
+  );
 
   useLayoutEffect(() => {
     const request = decisionFocusRequestRef.current;
@@ -1113,13 +1158,16 @@ export function GoalDetail() {
     const attentionHeading = hasOtherActionableAttention ? attentionHeadingRef.current : null;
     const outcomeHeading = outcomeHeadingRef.current;
     const feedbackComposer = feedbackRef.current;
+    const goalTitle = goalTitleRef.current;
     const target = attentionHeading?.isConnected
       ? attentionHeading
       : outcomeHeading?.isConnected
         ? outcomeHeading
-        : feedbackComposer?.isConnected
+        : feedbackComposer
           ? feedbackComposer
-          : null;
+          : goalTitle?.isConnected
+            ? goalTitle
+            : null;
     if (!target) return;
     target.focus();
     decisionFocusRequestRef.current = null;
@@ -1211,6 +1259,16 @@ export function GoalDetail() {
   const hasAttention = Boolean(workspace.attention || readyProposals.length > 0 || pendingChanges.length > 0);
   const evaluationOutcome = readString(asRecord(goal.evaluationResult), "outcome");
   const showHeaderFacet = !["needs_attention", "needs_your_attention"].includes(workspace.facet);
+  const progressProposal = acceptedProposal ?? readyProposals[0] ?? resultProposals[0] ?? null;
+  const verifiedCriteriaCount = progressProposal?.criteria.filter((criterion) => criterion.status === "met").length ?? 0;
+  const criteriaCount = goal.criteria?.length ?? 0;
+  const verifiedCriteriaPercent = criteriaCount > 0
+    ? Math.round((verifiedCriteriaCount / criteriaCount) * 100)
+    : null;
+  const linkedWorkCount = linkedProjects.length + linkedIssues.length;
+  const activeIssueCount = linkedIssues.filter((issue) => !["done", "cancelled"].includes(issue.status)).length;
+  const activeProjectCount = linkedProjects.filter((project) => !["completed", "cancelled", "archived"].includes(project.status)).length;
+  const activeWorkCount = activeIssueCount + activeProjectCount;
 
   const beginTitleEdit = () => {
     setTitleDraft(goal.title);
@@ -1281,19 +1339,6 @@ export function GoalDetail() {
     setFeedbackBody("");
     feedbackMutation.mutate(pending);
   };
-  const handleFeedbackFilePicked = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) feedbackAttachmentMutation.mutate({ file });
-  };
-  const removeFeedbackAttachment = (uri: string) => {
-    setFeedbackAttachments((current) => current.filter((attachment) => attachment.uri !== uri));
-    if (pendingFeedback?.status === "failed") {
-      setFeedbackBody(pendingFeedback.body);
-      setPendingFeedback(null);
-      feedbackRequestRef.current = null;
-    }
-  };
   const resultKey = (proposalId: string, decision: "accept" | "reject", feedback = "") => {
     const identity = `${proposalId}:${decision}:${feedback.trim()}`;
     const existing = resultRequestKeysRef.current.get(identity);
@@ -1302,6 +1347,160 @@ export function GoalDetail() {
     resultRequestKeysRef.current.set(identity, key);
     return key;
   };
+  const selectTab = (value: string) => {
+    if (!GOAL_DETAIL_TABS.includes(value as GoalDetailTab)) return;
+    const nextTab = value as GoalDetailTab;
+    const params = new URLSearchParams(location.search);
+    if (nextTab === "conversation") params.delete("tab");
+    else params.set("tab", nextTab);
+    const nextSearch = params.toString();
+    navigate({
+      pathname: location.pathname,
+      search: nextSearch ? `?${nextSearch}` : "",
+      hash: location.hash,
+    }, { replace: true });
+  };
+  const copyGoalId = async () => {
+    await navigator.clipboard?.writeText(goal.id);
+    setCopiedGoalId(true);
+    pushToast({ title: "Copied Goal ID", tone: "success" });
+    setTimeout(() => setCopiedGoalId(false), 1500);
+  };
+  const openGoalChat = () => {
+    const restored = storedGoalChatTarget(goal.orgId, goal.id);
+    sidePanel.openTarget({
+      kind: "goal_chat",
+      organizationId: goal.orgId,
+      goalId: goal.id,
+      agentId: goal.ownerAgentId ?? restored?.agentId ?? null,
+      conversationId: restored?.conversationId ?? null,
+      clientMutationId: restored?.clientMutationId ?? crypto.randomUUID(),
+      body: restored?.body ?? "",
+      label: goal.title,
+    });
+  };
+  const renderTimelineEntries = (
+    entries: TimelineView[],
+    options: { comments: boolean; emptyMessage: string; includePending?: boolean },
+  ) => (
+    <div className={cn("min-w-0", options.comments ? "space-y-3" : "divide-y divide-border border-y border-border")}>
+      {entries.length === 0 && !(options.includePending && pendingFeedback) ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">{options.emptyMessage}</p>
+      ) : null}
+      {entries.map((entry) => {
+        const entryKey = `${entry.kind}:${entry.id}`;
+        const receivesHistoryFocus = entryKey === historyFocusKey;
+        const actorLabel = entry.actorType === "user" && entry.actorId && entry.actorId === sessionQuery.data?.user.id
+          ? "You"
+          : entry.actorName ?? timelineKindLabel(entry.kind);
+        const content = (
+          <>
+            {entry.kind === "result_proposal" && entry.status ? (
+              <div className="mb-1 text-xs font-medium text-muted-foreground">
+                {resultProposalHistoryLabel(entry.status)}
+              </div>
+            ) : null}
+            {entry.kind === "feedback" ? (
+              <MarkdownBody className="min-w-0 break-words text-sm leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                {entry.summary}
+              </MarkdownBody>
+            ) : (
+              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{entry.summary}</p>
+            )}
+            <EvidenceList
+              items={entry.evidence}
+              refs={entry.evidenceRefs}
+              context={{
+                ...evidenceContext,
+                runAgentId: entry.actorType === "agent" && entry.actorId
+                  ? entry.actorId
+                  : evidenceContext.runAgentId,
+              }}
+            />
+            <AttachmentList attachments={entry.attachments} />
+          </>
+        );
+        if (options.comments) {
+          return (
+            <div key={entryKey} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2.5">
+              <div className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs font-semibold text-muted-foreground">
+                {actorLabel.slice(0, 1).toUpperCase()}
+              </div>
+              <article
+                ref={receivesHistoryFocus ? historyFocusRef : undefined}
+                tabIndex={receivesHistoryFocus ? -1 : undefined}
+                className="min-w-0 overflow-hidden rounded-md border border-border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/25 px-3 py-2">
+                  <span className="min-w-0 break-words text-xs font-medium">{actorLabel}</span>
+                  {entry.createdAt ? <span className="shrink-0 text-xs text-muted-foreground">{formatDate(entry.createdAt)}</span> : null}
+                </header>
+                <div className="min-w-0 px-3 py-3">{content}</div>
+              </article>
+            </div>
+          );
+        }
+        return (
+          <div
+            key={entryKey}
+            ref={receivesHistoryFocus ? historyFocusRef : undefined}
+            tabIndex={receivesHistoryFocus ? -1 : undefined}
+            className="grid min-w-0 gap-2 rounded-sm py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[9rem_minmax(0,1fr)_auto]"
+          >
+            <span className="min-w-0 break-words text-xs font-medium text-muted-foreground">{actorLabel}</span>
+            <div className="min-w-0">{content}</div>
+            {entry.createdAt ? <span className="shrink-0 text-xs text-muted-foreground">{formatDate(entry.createdAt)}</span> : null}
+          </div>
+        );
+      })}
+      {options.includePending && pendingFeedback ? (
+        <div className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2.5">
+          <div className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs font-semibold">Y</div>
+          <article className={cn("min-w-0 overflow-hidden rounded-md border bg-background", pendingFeedback.status === "failed" ? "border-destructive/50" : "border-border")}>
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/25 px-3 py-2">
+              <span className="text-xs font-medium">You</span>
+              <span className={cn("text-xs text-muted-foreground", pendingFeedback.status === "failed" && "text-destructive")}>
+                {pendingFeedback.status === "sending" ? "Posting..." : "Not posted"}
+              </span>
+            </header>
+            <div className="space-y-2 px-3 py-3">
+              <MarkdownBody className="min-w-0 break-words text-sm leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                {pendingFeedback.body}
+              </MarkdownBody>
+              {pendingFeedback.attachments.length > 0 ? (
+                <div aria-label="Pending feedback attachments" className="flex min-w-0 flex-wrap gap-2">
+                  {pendingFeedback.attachments.map((attachment) => (
+                    <span key={attachment.uri} className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                      <span className="break-all">{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {pendingFeedback.error ? <p role="alert" className="text-xs text-destructive">{pendingFeedback.error}</p> : null}
+              {pendingFeedback.status === "failed" ? (
+                <Button type="button" size="sm" variant="outline" onClick={() => feedbackMutation.mutate(pendingFeedback)}>Retry comment</Button>
+              ) : null}
+            </div>
+          </article>
+        </div>
+      ) : null}
+    </div>
+  );
+  const historyPagination = historyCursor ? (
+    <div className="py-3 text-center">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={historyMutation.isPending}
+        onClick={() => historyMutation.mutate(historyCursor)}
+      >
+        {historyMutation.isPending ? "Loading..." : historyMutation.isError ? "Retry earlier records" : "Load earlier records"}
+      </Button>
+      {historyMutation.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{historyMutation.error.message}</p> : null}
+    </div>
+  ) : null;
 
   return (
     <div data-testid="goal-detail-workspace" className="mx-auto min-w-0 max-w-6xl overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
@@ -1313,8 +1512,64 @@ export function GoalDetail() {
             {goal.focus ? <span className="text-xs font-medium text-[color:var(--accent-base)]">Focus Goal</span> : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {isDraft ? <Button size="sm" onClick={continueAlignment}><Target className="mr-1.5 h-3.5 w-3.5" />Continue Goal</Button> : null}
-            {isActive ? <Button ref={focusButtonRef} size="sm" variant={goal.focus ? "outline" : "default"} onClick={() => setFocus.mutate(!goal.focus)} disabled={setFocus.isPending}><Focus className="mr-1.5 h-3.5 w-3.5" />{goal.focus ? "Unfocus" : "Set focus"}</Button> : null}
+            {isDraft ? <Button size="sm" className="h-8" onClick={continueAlignment}><Target className="mr-1.5 h-3.5 w-3.5" />Continue Goal</Button> : null}
+            <div className="flex h-9 items-center gap-0.5 rounded-full border border-border bg-background/80 p-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 rounded-full px-0 text-xs sm:w-auto sm:px-2.5"
+                aria-label={copiedGoalId ? "Copied" : "Copy ID"}
+                onClick={() => void copyGoalId()}
+              >
+                {copiedGoalId ? <Check className="h-4 w-4 sm:mr-1.5" /> : <Copy className="h-4 w-4 sm:mr-1.5" />}
+                <span className="hidden sm:inline">{copiedGoalId ? "Copied" : "Copy ID"}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 rounded-full px-0 text-xs sm:w-auto sm:px-2.5"
+                aria-label="Chat"
+                onClick={openGoalChat}
+              >
+                <MessageSquare className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Chat</span>
+              </Button>
+              {isActive ? (
+                <Button
+                  ref={focusButtonRef}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 rounded-full px-0 text-xs sm:w-auto sm:px-2.5"
+                  aria-label={goal.focus ? "Unfocus" : "Set focus"}
+                  onClick={() => setFocus.mutate(!goal.focus)}
+                  disabled={setFocus.isPending}
+                >
+                  <Focus className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">{goal.focus ? "Unfocus" : "Set focus"}</span>
+                </Button>
+              ) : null}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon-sm" className="h-7 w-7 rounded-full" aria-label="More Goal actions" title="More actions">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onSelect={() => void copyGoalId()}>
+                    <Copy className="h-4 w-4" />Copy Goal ID
+                  </DropdownMenuItem>
+                  {isDraft ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void remove()}>
+                        <Trash2 className="h-4 w-4" />Delete Goal
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
         {isDraft && titleEditing ? (
@@ -1353,7 +1608,7 @@ export function GoalDetail() {
           </div>
         ) : (
           <div className="flex min-w-0 items-start gap-2">
-            <h1 className="min-w-0 flex-1 whitespace-normal break-words text-2xl font-semibold">{goal.title}</h1>
+            <h1 ref={goalTitleRef} tabIndex={-1} className="min-w-0 flex-1 whitespace-normal break-words rounded-sm text-2xl font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring">{goal.title}</h1>
             {isDraft ? (
               <Button type="button" size="icon-sm" variant="ghost" aria-label="Edit Goal title" title="Edit title" onClick={beginTitleEdit}>
                 <Pencil className="h-4 w-4" />
@@ -1362,16 +1617,67 @@ export function GoalDetail() {
           </div>
         )}
         {isDraft ? (
-          <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
-        ) : goal.description ? (
-          <MarkdownBody className="min-w-0 break-words text-sm text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-            {goal.description}
-          </MarkdownBody>
+          <InlineEditor
+            value={goal.description ?? ""}
+            onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })}
+            as="p"
+            className="-ml-3 min-h-0 min-w-0 whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground"
+            placeholder="Add a description..."
+            multiline
+            editorEngine="codemirror"
+            documentIdentity={`goal:${goal.id}`}
+            variant="issue-description"
+          />
         ) : null}
+        {!isDraft ? <section aria-label="Goal progress" className="grid min-w-0 gap-3 border-y border-border py-3 sm:grid-cols-[minmax(0,1fr)_9rem_9rem]">
+          <div className="min-w-0 sm:pr-4">
+            <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>Current progress</span>
+              {verifiedCriteriaPercent !== null ? <span className="tabular-nums">{verifiedCriteriaPercent}% verified</span> : null}
+            </div>
+            {verifiedCriteriaPercent !== null ? (
+              <div className="mt-2 h-1.5 overflow-hidden rounded-sm bg-muted" aria-label={`${verifiedCriteriaPercent}% of success criteria verified`}>
+                <div className="h-full bg-[color:var(--accent-base)] transition-[width]" style={{ width: `${verifiedCriteriaPercent}%` }} />
+              </div>
+            ) : null}
+            <p className="mt-2 line-clamp-2 min-w-0 break-words text-sm leading-5">{workspace.currentProgress.summary}</p>
+          </div>
+          <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+            <span className="text-xs text-muted-foreground">Success criteria</span>
+            <strong className="mt-1 block text-sm font-semibold tabular-nums">{criteriaCount > 0 ? `${verifiedCriteriaCount} / ${criteriaCount} met` : "Not defined"}</strong>
+          </div>
+          <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+            <span className="text-xs text-muted-foreground">Next</span>
+            <strong className={cn("mt-1 block line-clamp-2 text-sm font-semibold", hasAttention && "text-amber-700 dark:text-amber-400")}>
+              {hasAttention ? "Your review" : isClosed ? "Complete" : "Agent action"}
+            </strong>
+          </div>
+        </section> : null}
       </header>
 
-      <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_16rem] md:items-start">
+      {!isDraft ? <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 gap-0">
+        <TabsList className="scrollbar-auto-hide h-10 max-w-full justify-start overflow-x-auto" aria-label="Goal detail views">
+          <TabsTrigger value="conversation" className="min-w-fit flex-none px-3 text-sm">
+            <MessageSquareText className="h-4 w-4" />Conversation
+            {conversationTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{conversationTimeline.length}</span> : null}
+          </TabsTrigger>
+          <TabsTrigger value="activity" className="min-w-fit flex-none px-3 text-sm">
+            <ListTree className="h-4 w-4" />Activity
+            {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
+          </TabsTrigger>
+          <TabsTrigger value="work" className="min-w-fit flex-none px-3 text-sm">
+            <BriefcaseBusiness className="h-4 w-4" />Work
+            {linkedWorkCount > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{linkedWorkCount}</span> : null}
+          </TabsTrigger>
+          <TabsTrigger value="evidence" className="min-w-fit flex-none px-3 text-sm">
+            <FileCheck2 className="h-4 w-4" />Evidence
+            {evidenceTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{evidenceTimeline.length}</span> : null}
+          </TabsTrigger>
+        </TabsList>
+
+      <div className="grid min-w-0 gap-6 pt-5 md:grid-cols-[minmax(0,1fr)_16rem] md:items-start">
         <main className="order-2 min-w-0 space-y-5 md:order-1">
+          <TabsContent value="work" className="m-0 min-w-0 space-y-5">
           {isDraft ? (
             <Section title="Before work starts" icon={Target} headingRef={outcomeHeadingRef}>
               <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">
@@ -1412,6 +1718,33 @@ export function GoalDetail() {
                 </Section>
             </>
           )}
+          <Section title="Related work" icon={BriefcaseBusiness}>
+            <WorkLinks projects={linkedProjects} issues={linkedIssues} />
+          </Section>
+          </TabsContent>
+
+      <TabsContent value="conversation" className="m-0 min-w-0 space-y-5">
+      <section className="min-w-0" aria-labelledby="goal-opening-heading">
+        <div className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2.5">
+          <div className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs font-semibold text-muted-foreground">
+            G
+          </div>
+          <article className="min-w-0 overflow-hidden rounded-md border border-border bg-background">
+            <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/25 px-3 py-2">
+              <span id="goal-opening-heading" className="text-xs font-medium">Description</span>
+              <span className="text-xs text-muted-foreground">Opened {formatDate(goal.createdAt)}</span>
+            </header>
+            <div className="min-w-0 space-y-3 px-3 py-3">
+              <p className="min-w-0 whitespace-pre-wrap break-words text-sm font-medium leading-6">{currentGoalSummary}</p>
+              {goal.description && goal.description.trim() !== currentGoalSummary.trim() ? (
+                <MarkdownBody className="min-w-0 break-words text-sm leading-6 text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                  {goal.description}
+                </MarkdownBody>
+              ) : null}
+            </div>
+          </article>
+        </div>
+      </section>
 
       {!isClosed && !isDraft && hasAttention ? (
         <Section title="Action needed" icon={ShieldCheck} headingRef={attentionHeadingRef}>
@@ -1537,135 +1870,43 @@ export function GoalDetail() {
         </Section>
       ) : null}
 
-      {isClosed ? (
-        <Section title="Result accepted" icon={FileCheck2}>
-          {acceptedProposal ? (
-            <article aria-label="Accepted Goal result" className={cn(
-              "min-w-0 border-l-2 pl-3",
-              acceptedProposal.outcomeKind === "not_achieved" || acceptedProposal.outcomeKind === "breached"
-                ? "border-destructive/45"
-                : "border-emerald-500/50",
-            )}>
-              <ResultProposalSummary proposal={acceptedProposal} accepted />
-            </article>
-          ) : (
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Accepted proposal details are not available for this earlier Goal.</p>
-            </div>
-          )}
-        </Section>
-      ) : null}
-
-      {!isDraft || timeline.length > 0 || historyCursor ? <Section title={isClosed ? "History" : "Progress and feedback"} icon={History}>
-        <div className="divide-y divide-border border-y border-border">
-          {timeline.length === 0 && !(isActive && pendingFeedback) ? <p className="py-3 text-sm text-muted-foreground">No progress or feedback yet.</p> : null}
-          {timeline.map((entry) => {
-            const entryKey = `${entry.kind}:${entry.id}`;
-            const receivesHistoryFocus = entryKey === historyFocusKey;
-            return (
-            <div
-              key={entryKey}
-              ref={receivesHistoryFocus ? historyFocusRef : undefined}
-              tabIndex={receivesHistoryFocus ? -1 : undefined}
-              className="min-w-0 space-y-1 rounded-sm py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 break-all text-xs font-medium text-muted-foreground">
-                  {entry.actorType === "user" && entry.actorId && entry.actorId === sessionQuery.data?.user.id
-                    ? "You"
-                    : entry.actorName ?? timelineKindLabel(entry.kind)}
-                </div>
-                {entry.createdAt ? <div className="shrink-0 text-xs text-muted-foreground">{formatDate(entry.createdAt)}</div> : null}
-              </div>
-              {entry.kind === "result_proposal" && entry.status ? (
-                <div className="text-xs font-medium text-muted-foreground">
-                  {resultProposalHistoryLabel(entry.status)}
-                </div>
-              ) : null}
-              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{entry.summary}</p>
-              <EvidenceList
-                items={entry.evidence}
-                refs={entry.evidenceRefs}
-                context={{
-                  ...evidenceContext,
-                  runAgentId: entry.actorType === "agent" && entry.actorId
-                    ? entry.actorId
-                    : evidenceContext.runAgentId,
-                }}
-              />
-              <AttachmentList attachments={entry.attachments} />
-            </div>
-            );
+      <Section title="Comments" icon={History}>
+        <div className="relative min-w-0 before:absolute before:bottom-0 before:left-4 before:top-0 before:w-px before:bg-border">
+          {renderTimelineEntries(conversationTimeline, {
+            comments: true,
+            emptyMessage: isDraft ? "No comments while this Goal is being aligned." : "No comments yet.",
+            includePending: isActive,
           })}
-          {isActive && pendingFeedback ? (
-            <div className={cn("min-w-0 space-y-1 py-2.5", pendingFeedback.status === "failed" && "text-destructive")}>
-              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-medium">You</div>
-                <div className="text-xs">{pendingFeedback.status === "sending" ? "Sending..." : "Not sent"}</div>
-              </div>
-              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{pendingFeedback.body}</p>
-              {pendingFeedback.attachments.length > 0 ? (
-                <div aria-label="Pending feedback attachments" className="flex min-w-0 flex-wrap gap-2 pt-1">
-                  {pendingFeedback.attachments.map((attachment) => (
-                    <span key={attachment.uri} className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                      <Paperclip className="h-3.5 w-3.5 shrink-0" />
-                      <span className="break-all">{attachment.name}</span>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {pendingFeedback.error ? <p role="alert" className="text-xs">{pendingFeedback.error}</p> : null}
-              {pendingFeedback.status === "failed" ? (
-                <Button type="button" size="sm" variant="outline" onClick={() => feedbackMutation.mutate(pendingFeedback)}>Retry feedback</Button>
-              ) : null}
-            </div>
-          ) : null}
-          {historyCursor ? (
-            <div className="py-3 text-center">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={historyMutation.isPending}
-                onClick={() => historyMutation.mutate(historyCursor)}
-              >
-                {historyMutation.isPending ? "Loading..." : historyMutation.isError ? "Retry earlier records" : "Load earlier records"}
-              </Button>
-              {historyMutation.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{historyMutation.error.message}</p> : null}
-            </div>
-          ) : null}
         </div>
+        {historyPagination}
+      </Section>
 
-        {isActive ? <div className="min-w-0 space-y-2">
-          <input
-            ref={feedbackFileRef}
-            type="file"
-            accept="image/*"
-            aria-label="Attach feedback image"
-            className="hidden"
-            onChange={handleFeedbackFilePicked}
-          />
-          {feedbackAttachments.length > 0 ? (
-            <div aria-label="Selected feedback attachments" className="flex min-w-0 flex-wrap gap-2">
-              {feedbackAttachments.map((attachment) => (
-                <span key={attachment.uri} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                  <Paperclip className="h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0 break-all">{attachment.name}</span>
-                  <button
-                    type="button"
-                    className="ml-1 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
-                    aria-label={`Remove feedback attachment ${attachment.name}`}
-                    onClick={() => removeFeedbackAttachment(attachment.uri)}
-                    disabled={feedbackAttachmentMutation.isPending || feedbackMutation.isPending}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {feedbackAttachmentError ? (
+      {isActive ? (
+        <CommentComposer
+          body={feedbackBody}
+          onBodyChange={(body) => {
+            feedbackMutation.reset();
+            setFeedbackBody(body);
+          }}
+          onSubmit={submitFeedback}
+          canSubmit={Boolean(feedbackBody.trim()) && !feedbackMutation.isPending && !feedbackAttachmentMutation.isPending}
+          submitting={feedbackMutation.isPending}
+          editorRef={feedbackRef}
+          ariaLabel="Goal comment composer"
+          editorAriaLabel="Goal comment"
+          detailEscapeLayer
+          attachmentAccept="image/*"
+          attachmentAriaLabel="Attach comment image"
+          attachmentMultiple={false}
+          imageUploadHandler={async (file) => {
+            const asset = await feedbackAttachmentMutation.mutateAsync({ file });
+            return asset.contentPath;
+          }}
+          onAttachmentError={(error, file) => {
+            setFeedbackAttachmentError(error.message);
+            setFailedFeedbackFile(file);
+          }}
+          attachmentStatus={feedbackAttachmentError ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
               <span role="alert">{feedbackAttachmentError}</span>
               {failedFeedbackFile ? (
@@ -1674,7 +1915,16 @@ export function GoalDetail() {
                   variant="link"
                   size="sm"
                   className="h-auto p-0 text-xs"
-                  onClick={() => feedbackAttachmentMutation.mutate({ file: failedFeedbackFile })}
+                  onClick={() => {
+                    const file = failedFeedbackFile;
+                    void feedbackAttachmentMutation.mutateAsync({ file }).then((asset) => {
+                      const safeName = file.name.replace(/[[\]]/g, "\\$&");
+                      setFeedbackBody((current) => current
+                        ? `${current}\n\n![${safeName}](${asset.contentPath})`
+                        : `![${safeName}](${asset.contentPath})`);
+                      requestAnimationFrame(() => feedbackRef.current?.focus());
+                    }).catch(() => undefined);
+                  }}
                   disabled={feedbackAttachmentMutation.isPending}
                 >
                   Retry attachment
@@ -1682,88 +1932,175 @@ export function GoalDetail() {
               ) : null}
             </div>
           ) : null}
-          <Textarea
-            ref={feedbackRef}
-            aria-label="Goal feedback"
-            value={feedbackBody}
-            onChange={(event) => {
-              feedbackMutation.reset();
-              setFeedbackBody(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                submitFeedback();
-              }
-            }}
-            placeholder="Add a fact, correction, concern, or direction..."
-            className="min-h-20 min-w-0 resize-y"
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => feedbackFileRef.current?.click()}
-              disabled={feedbackAttachmentMutation.isPending || feedbackMutation.isPending}
-            >
-              <Paperclip className="mr-1.5 h-3.5 w-3.5" />
-              {feedbackAttachmentMutation.isPending ? "Uploading..." : "Attach image"}
-            </Button>
-            <Button type="button" size="sm" onClick={submitFeedback} disabled={!feedbackBody.trim() || feedbackMutation.isPending || feedbackAttachmentMutation.isPending}>
-              <MessageSquareText className="mr-1.5 h-3.5 w-3.5" />Send feedback
-            </Button>
+        />
+      ) : (
+        <p className="border-t border-border pt-4 text-sm text-muted-foreground">
+          {isDraft ? "Comments become available after this Goal starts." : "This conversation is read-only because the Goal is closed."}
+        </p>
+      )}
+      </TabsContent>
+
+      <TabsContent value="activity" className="m-0 min-w-0 space-y-4">
+        <div className="flex min-w-0 items-end justify-between gap-3 border-b border-border pb-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">Activity</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{activityTimeline.length} recorded update{activityTimeline.length === 1 ? "" : "s"}</p>
           </div>
-        </div> : null}
-      </Section> : null}
+        </div>
+        {renderTimelineEntries(activityTimeline, { comments: false, emptyMessage: "No Goal activity yet." })}
+        {historyPagination}
+      </TabsContent>
+
+      <TabsContent value="evidence" className="m-0 min-w-0 space-y-5">
+        {isClosed ? (
+          <Section title="Result accepted" icon={FileCheck2}>
+            {acceptedProposal ? (
+              <article aria-label="Accepted Goal result" className={cn(
+                "min-w-0 border-l-2 pl-3",
+                acceptedProposal.outcomeKind === "not_achieved" || acceptedProposal.outcomeKind === "breached"
+                  ? "border-destructive/45"
+                  : "border-emerald-500/50",
+              )}>
+                <ResultProposalSummary proposal={acceptedProposal} accepted />
+              </article>
+            ) : (
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Accepted proposal details are not available for this earlier Goal.</p>
+              </div>
+            )}
+          </Section>
+        ) : null}
+        <Section title="Success criteria" icon={Target}>
+          {goal.criteria && goal.criteria.length > 0 ? (
+            <div className="divide-y divide-border border-y border-border">
+              {goal.criteria.map((criterion) => {
+                const resultCriterion = progressProposal?.criteria.find((candidate) => candidate.label === criterion.label);
+                return (
+                  <div key={criterion.id} className="flex min-w-0 items-start justify-between gap-3 py-2.5 text-sm">
+                    <span className="min-w-0 break-words">{criterion.label}</span>
+                    <span className={cn(
+                      "shrink-0 text-xs font-medium",
+                      resultCriterion?.status === "met" && "text-emerald-700 dark:text-emerald-400",
+                      (resultCriterion?.status === "unmet" || resultCriterion?.status === "breached") && "text-destructive",
+                      (!resultCriterion || resultCriterion.status === "unknown") && "text-muted-foreground",
+                    )}>
+                      {resultCriterion?.statusLabel ?? "Not verified"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <p className="text-sm text-muted-foreground">No success criteria defined.</p>}
+        </Section>
+        <Section title="Current evidence" icon={FileCheck2}>
+          <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
+          {(workspace.currentProgress.evidence ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No current progress evidence attached.</p> : null}
+        </Section>
+        {resultProposals.length > 0 ? (
+          <Section title="Result evidence" icon={ShieldCheck}>
+            <div className="space-y-4">
+              {resultProposals.map((proposal) => (
+                <article key={proposal.id} className="min-w-0 border-l-2 border-border pl-3">
+                  <div className="text-xs font-medium text-muted-foreground">{resultProposalHistoryLabel(proposal.status)}</div>
+                  <ResultProposalSummary proposal={proposal} accepted={proposal.status === "accepted"} />
+                </article>
+              ))}
+            </div>
+          </Section>
+        ) : null}
+        <Section title="Evidence updates" icon={History}>
+          {renderTimelineEntries(evidenceTimeline, { comments: false, emptyMessage: "No evidence updates yet." })}
+          {historyPagination}
+        </Section>
+      </TabsContent>
 
         </main>
 
-        <aside className="contents md:order-2 md:block md:min-w-0 md:space-y-4 md:sticky md:top-4" aria-label="Goal properties">
-          <section className="order-1 min-w-0 rounded-md border border-border bg-background/80 p-3">
-            <h2 className="text-xs font-medium text-muted-foreground">Details</h2>
-            <dl className="mt-3 divide-y divide-border">
-              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2 first:pt-0">
-                <dt className="text-xs text-muted-foreground">Status</dt>
-                <dd className="min-w-0 break-words text-right text-sm capitalize">{lifecycle}</dd>
+        <aside className="contents md:order-2 md:block md:min-w-0 md:sticky md:top-4" aria-label="Goal properties">
+          <section className="order-1 min-w-0 rounded-lg border border-border bg-background/80 p-4">
+            <h2 className="text-sm font-semibold">Properties</h2>
+            <div className="mt-3 divide-y divide-border">
+              <div className="min-w-0 pb-3">
+                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                  <span>Owner</span>
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </div>
+                {owner ? (
+                  <AgentIdentity
+                    name={owner.name}
+                    icon={owner.icon}
+                    role={owner.role}
+                    className="max-w-full min-w-0 items-start font-medium [&>span:last-child]:break-all [&>span:last-child]:whitespace-normal [&>span:last-child]:overflow-visible"
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">{goal.ownerAgentId ? "Owner unavailable" : "Unassigned"}</p>
+                )}
               </div>
-              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2">
-                <dt className="text-xs text-muted-foreground">Owner</dt>
-                <dd className="min-w-0 break-words text-right text-sm">{owner?.name ?? (goal.ownerAgentId ? "Owner unavailable" : "Unassigned")}</dd>
+
+              <div className="min-w-0 py-3">
+                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                  <span>Working mode</span>
+                  <Focus className="h-3.5 w-3.5" />
+                </div>
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-sm font-medium">
+                  <Focus className="h-3.5 w-3.5" />
+                  {goal.focus ? "Focused" : "On demand"}
+                </span>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {goal.focus ? "Kept in the active Goal loop." : "Advanced when linked work or feedback arrives."}
+                </p>
               </div>
-              <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 py-2 last:pb-0">
-                <dt className="text-xs text-muted-foreground">Target</dt>
-                <dd className="min-w-0 break-words text-right text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</dd>
+
+              <div className="min-w-0 py-3">
+                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                  <span>Active work</span>
+                  <BriefcaseBusiness className="h-3.5 w-3.5" />
+                </div>
+                {linkedWorkCount > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-md bg-muted px-2 py-1 text-xs font-medium tabular-nums">{activeWorkCount} active</span>
+                    <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums">{linkedWorkCount} linked</span>
+                  </div>
+                ) : <p className="text-sm text-muted-foreground">No linked work yet.</p>}
               </div>
-            </dl>
+
+              <div className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] gap-2 py-3">
+                <span className="text-xs font-medium text-muted-foreground">Status</span>
+                <span className="min-w-0 break-words text-right text-sm capitalize">{lifecycle}</span>
+                <span className="text-xs font-medium text-muted-foreground">Target</span>
+                <span className="min-w-0 break-words text-right text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</span>
+              </div>
+
+              {goal.criteria.length > 0 ? (
+                <div className="min-w-0 py-3">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                    <span>Success criteria</span>
+                    <Target className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="divide-y divide-border">
+                    {goal.criteria.slice(0, 3).map((criterion) => (
+                      <p key={criterion.id} className="min-w-0 whitespace-pre-wrap break-words py-2 text-sm leading-5">{criterion.label}</p>
+                    ))}
+                  </div>
+                  {goal.criteria.length > 3 ? <p className="pt-1 text-xs text-muted-foreground">+{goal.criteria.length - 3} more in Evidence</p> : null}
+                </div>
+              ) : null}
+
+              {linkedWorkCount > 0 ? (
+                <div className="min-w-0 pt-3">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                    <span>Related</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </div>
+                  <WorkLinks projects={linkedProjects} issues={linkedIssues} />
+                </div>
+              ) : null}
+            </div>
           </section>
-
-          {goal.criteria && goal.criteria.length > 0 ? (
-            <section className="order-3 min-w-0 rounded-md border border-border bg-background/80 p-3">
-              <h2 className="text-xs font-medium text-muted-foreground">How we will know it worked</h2>
-              <div className="mt-2 divide-y divide-border">
-                {goal.criteria.map((criterion) => <p key={criterion.id} className="min-w-0 whitespace-pre-wrap break-words py-2 text-sm">{criterion.label}</p>)}
-              </div>
-            </section>
-          ) : null}
-
-          {(linkedProjects.length > 0 || linkedIssues.length > 0) ? (
-            <section className="order-3 min-w-0 rounded-md border border-border bg-background/80 p-3">
-              <h2 className="mb-2 text-xs font-medium text-muted-foreground">Related work</h2>
-              <WorkLinks projects={linkedProjects} issues={linkedIssues} />
-            </section>
-          ) : null}
-
-          {isDraft ? (
-            <section className="order-3 min-w-0 space-y-3 rounded-md border border-border bg-background/80 p-3">
-              {dependenciesQuery.data ? <DeletionBlockers dependencies={dependenciesQuery.data} /> : null}
-              <Button type="button" size="sm" variant="outline" className="w-full justify-start text-destructive" onClick={remove} disabled={deleteGoal.isPending}>
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />{deleteGoal.isPending ? "Deleting..." : "Delete Goal"}
-              </Button>
-            </section>
-          ) : null}
         </aside>
       </div>
+      </Tabs> : null}
 
       {debugMode ? (
         <Section title="Goal diagnostics" icon={ShieldCheck}>

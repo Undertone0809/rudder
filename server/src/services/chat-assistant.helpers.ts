@@ -449,6 +449,26 @@ export function buildSelectedIssuePromptSection(
   return lines.join("\n");
 }
 
+export function buildSelectedGoalPromptSection(contextLinks: ChatContextLink[]) {
+  const goalLink = contextLinks.find((link) => link.entityType === "goal");
+  if (!goalLink) return null;
+
+  const lines = [
+    "Selected Goal context:",
+    `- Goal ID: ${goalLink.entityId}`,
+  ];
+  if (goalLink.entity?.label) lines.push(`- Title: ${goalLink.entity.label}`);
+  if (goalLink.entity?.status) lines.push(`- Status: ${goalLink.entity.status}`);
+  if (goalLink.entity?.subtitle) lines.push(`- Lifecycle: ${goalLink.entity.subtitle}`);
+  if (goalLink.entity?.description?.trim()) {
+    lines.push(`- Context: ${goalLink.entity.description.trim()}`);
+  }
+  lines.push(
+    "Keep this conversation anchored to the selected Goal. Use linked work and evidence to reason about progress, gaps, decisions, and the next useful action.",
+  );
+  return lines.join("\n");
+}
+
 export function buildIssueLabelsPromptSection(labels: IssueLabel[] | null | undefined) {
   if (!labels || labels.length === 0) return null;
   const lines = [
@@ -1094,6 +1114,7 @@ export function buildConversationPrompt(
   const operatorProfileSection = buildOperatorProfilePromptSection(input.operatorProfile);
   const selectedProjectSection = buildSelectedProjectPromptSection(input.contextLinks);
   const selectedIssueSection = buildSelectedIssuePromptSection(input.conversation, input.contextLinks);
+  const selectedGoalSection = buildSelectedGoalPromptSection(input.contextLinks);
   const issueLabelsSection = buildIssueLabelsPromptSection(input.issueLabels);
   const automationRunInputSection = buildAutomationRunInputPromptSection(
     input.messages,
@@ -1119,6 +1140,7 @@ export function buildConversationPrompt(
   return [
     systemPrompt(runtimeSource, input.conversation, resultSentinel),
     ...(selectedIssueSection ? [selectedIssueSection] : []),
+    ...(selectedGoalSection ? [selectedGoalSection] : []),
     ...(selectedProjectSection ? [selectedProjectSection] : []),
     ...(issueLabelsSection ? [issueLabelsSection] : []),
     ...(automationRunInputSection ? [automationRunInputSection] : []),

@@ -14,6 +14,7 @@ import { GoalDetail } from "./GoalDetail";
 
 const navigate = vi.fn();
 const openNewGoal = vi.fn();
+const openSidePanelTarget = vi.fn();
 const randomUUID = vi.fn();
 let search = "";
 let routeGoalId = "goal-1";
@@ -48,6 +49,10 @@ vi.mock("../context/PanelContext", () => ({
   usePanel: () => ({ closePanel: vi.fn() }),
 }));
 
+vi.mock("../context/SidePanelContext", () => ({
+  useSidePanel: () => ({ openTarget: openSidePanelTarget }),
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
@@ -57,7 +62,7 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../components/InlineEditor", () => ({
-  InlineEditor: ({ value, as: Tag = "span", ...props }: { value: string; as?: "h1" | "p" | "span" }) => <Tag {...props}>{value}</Tag>,
+  InlineEditor: ({ value, as: Tag = "span", className }: { value: string; as?: "h1" | "p" | "span"; className?: string }) => <Tag className={className}>{value}</Tag>,
 }));
 
 vi.mock("../components/MarkdownBody", () => ({
@@ -70,6 +75,44 @@ vi.mock("../components/MarkdownBody", () => ({
     );
   },
 }));
+
+vi.mock("../components/MarkdownEditor", async () => {
+  const React = await import("react");
+  return {
+    MarkdownEditor: React.forwardRef(function MockMarkdownEditor(
+      { value, onChange, onSubmit, ariaLabel, placeholder }: {
+        value: string;
+        onChange: (value: string) => void;
+        onSubmit?: () => void;
+        ariaLabel?: string;
+        placeholder?: string;
+      },
+      ref: React.ForwardedRef<{ focus: () => void; insertTextAtSelection: (text: string) => boolean }>,
+    ) {
+      const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+      React.useImperativeHandle(ref, () => ({
+        focus: () => textareaRef.current?.focus(),
+        insertTextAtSelection: (text: string) => {
+          onChange(`${value}${text}`);
+          textareaRef.current?.focus();
+          return true;
+        },
+      }), [onChange, value]);
+      return (
+        <textarea
+          ref={textareaRef}
+          aria-label={ariaLabel}
+          placeholder={placeholder}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit?.();
+          }}
+        />
+      );
+    }),
+  };
+});
 
 vi.mock("../components/StatusBadge", () => ({
   StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
@@ -129,7 +172,7 @@ const workspace = {
   currentProgress: {
     summary: longProgress,
     sourceActivityId: "activity-1",
-    evidenceRefs: ["artifact://goal-workspace/operator-pass"],
+    evidence: [{ label: "Artifact evidence 1", href: null, external: false }],
     uncertainty: "Public rollout is still outside the agreed boundary.",
   },
   attention: {
@@ -137,7 +180,7 @@ const workspace = {
     reason: "Review the terminal result.",
     sourceId: "result-1",
     impact: "Acceptance closes this Goal record.",
-    evidenceRefs: ["artifact://goal-workspace/operator-pass"],
+    evidence: [{ label: "Artifact evidence 1", href: null, external: false }],
   },
   agentAction: { summary: "Hold the immutable candidate while the operator reviews it." },
   nextStep: { summary: "Accept the result or explain the remaining gap.", wakeCondition: null },
@@ -280,6 +323,8 @@ beforeEach(() => {
   contextOrganizations = [
     { id: "org-1", name: "Rudder", issuePrefix: "RUD", urlKey: "rudder" },
   ];
+  openSidePanelTarget.mockReset();
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -310,6 +355,7 @@ describe("GoalDetail", () => {
   });
 
   it("does not present a closed Goal as still advancing", async () => {
+    search = "?tab=evidence";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: {
@@ -341,19 +387,19 @@ describe("GoalDetail", () => {
     expect(container.textContent).not.toContain("Needs your attention");
     expect(container.querySelector('[aria-label="Goal change proposal"]')).toBeNull();
     expect(container.querySelector('[aria-label="Goal result proposal"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal feedback"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal comment"]')).toBeNull();
     expect(button(container, "Rename")).toBeNull();
   });
 
   it("renders the Goal Workspace in operational order without standard low-level fields", async () => {
-    const container = renderPage();
+    search = "?tab=work";
+    const { container, rerender } = renderPageWithClient();
     await waitUntil(() => expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(true));
     const text = container.textContent ?? "";
     const orderedSections = [
       "Outcome",
       "Work",
-      "Action needed",
-      "Progress and feedback",
+      "Related work",
     ];
     const headingLabels = Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent?.trim());
     for (let index = 1; index < orderedSections.length; index += 1) {
@@ -383,9 +429,15 @@ describe("GoalDetail", () => {
     expect(text).not.toContain("Agreement revision");
     expect(text).not.toContain("objectiveMode");
     expect(text).not.toContain('"evaluator"');
-    expect(text).toContain("Success: The operator workflow passes");
     expect(text).not.toContain("Goal diagnostics");
+    const properties = container.querySelector('[aria-label="Goal properties"]');
+    expect(properties?.textContent).toContain("Properties");
+    expect(properties?.textContent).toContain("Workspace owner");
+    expect(properties?.querySelector("img")).not.toBeNull();
 
+    search = "";
+    rerender();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal result proposal"]')).not.toBeNull());
     const resultBlock = container.querySelector<HTMLElement>('[aria-label="Goal result proposal"]')!;
     expect(resultBlock.textContent).toContain("Goal achieved");
     expect(resultBlock.textContent).toContain("The operator workflow passes");
@@ -414,6 +466,7 @@ describe("GoalDetail", () => {
   });
 
   it("uses plain-language History labels instead of internal timeline kinds", async () => {
+    search = "?tab=activity";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       timeline: [
@@ -430,10 +483,10 @@ describe("GoalDetail", () => {
       ],
     } as never);
 
-    const container = renderPage();
+    const { container, rerender } = renderPageWithClient();
     await waitUntil(() => expect(container.textContent).toContain("Goal updated after approval."));
     const text = container.textContent ?? "";
-    for (const label of ["Progress update", "Feedback", "Proposed Goal update", "Proposed result", "Related work", "Goal update"]) {
+    for (const label of ["Progress update", "Proposed Goal update", "Proposed result", "Related work", "Goal update"]) {
       expect(text).toContain(label);
     }
     for (const state of [
@@ -448,6 +501,11 @@ describe("GoalDetail", () => {
     for (const internalKind of ["change_proposal", "result_proposal", "work_status", "internal_future_kind"]) {
       expect(text).not.toContain(internalKind);
     }
+
+    search = "";
+    rerender();
+    await waitUntil(() => expect(container.textContent).toContain("Keep the scope bounded."));
+    expect(container.textContent).toContain("Feedback");
   });
 
   it("uses human action labels for attention and boundary-only Goal updates", async () => {
@@ -519,10 +577,11 @@ describe("GoalDetail", () => {
     const container = renderPage();
     await waitUntil(() => expect(container.textContent).toContain("verified evidence"));
     expect(button(container, "Rename")).toBeNull();
-    expect(container.querySelector("strong")?.textContent).toBe("verified evidence");
+    expect(Array.from(container.querySelectorAll("strong")).some((element) => element.textContent === "verified evidence")).toBe(true);
   });
 
   it("keeps a Draft focused on its start blocker instead of repeating empty lifecycle sections", async () => {
+    search = "?tab=work";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: {
@@ -551,14 +610,16 @@ describe("GoalDetail", () => {
 
     const container = renderPage();
     await waitUntil(() => expect(button(container, "Continue Goal")).not.toBeNull());
-    expect(container.textContent).toContain("Before work starts");
-    expect(container.textContent).toContain("Owner");
+    expect(container.querySelector('[aria-label="Goal progress"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal detail views"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal properties"]')).toBeNull();
+    expect(container.textContent).not.toContain("Before work starts");
+    expect(container.textContent).not.toContain("Owner");
     expect(container.textContent).not.toContain("Needs your attention");
-    expect(container.textContent).not.toContain("Current progress");
     expect(container.textContent).not.toContain("Agent is doing");
-    expect(container.textContent).not.toContain("Progress and feedback");
-    expect(container.textContent).not.toContain("No progress or feedback yet.");
+    expect(container.textContent).not.toContain("No Goal activity yet.");
     expect(button(container, "Rename")).toBeNull();
+    expect(Array.from(container.querySelectorAll("p")).find((element) => element.textContent === goal.description)?.className).toContain("-ml-3");
   });
 
   it("edits a Draft title in place with explicit keyboard save and cancel", async () => {
@@ -831,18 +892,18 @@ describe("GoalDetail", () => {
       .mockRejectedValueOnce(new Error("Network interrupted"))
       .mockResolvedValueOnce({ id: "feedback-1" } as never);
     const container = renderPage();
-    await waitUntil(() => expect(container.querySelector('[aria-label="Goal feedback"]')).not.toBeNull());
-    const composer = container.querySelector<HTMLTextAreaElement>('[aria-label="Goal feedback"]')!;
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull());
+    const composer = container.querySelector<HTMLTextAreaElement>('[aria-label="Goal comment"]')!;
     change(composer, "Keep the evidence tied to the immutable candidate.");
-    act(() => button(container, "Send feedback")?.click());
+    act(() => button(container, "Comment")?.click());
 
     expect(container.textContent).toContain("Keep the evidence tied to the immutable candidate.");
-    expect(container.textContent).toContain("Sending...");
-    await waitUntil(() => expect(container.textContent).toContain("Not sent"));
+    expect(container.textContent).toContain("Posting...");
+    await waitUntil(() => expect(container.textContent).toContain("Not posted"));
     expect(container.querySelector("[role=alert]")?.textContent).toContain("Network interrupted");
     await waitUntil(() => expect(document.activeElement).toBe(composer));
 
-    act(() => button(container, "Retry feedback")?.click());
+    act(() => button(container, "Retry comment")?.click());
     await waitUntil(() => expect(goalsApi.feedback).toHaveBeenCalledTimes(2));
     const firstPayload = vi.mocked(goalsApi.feedback).mock.calls[0]?.[1] as Record<string, unknown>;
     const retryPayload = vi.mocked(goalsApi.feedback).mock.calls[1]?.[1] as Record<string, unknown>;
@@ -850,6 +911,24 @@ describe("GoalDetail", () => {
     expect(retryPayload.idempotencyKey).toBe("feedback-key-1");
     expect(firstPayload.feedbackKind).toBe("ordinary");
     await waitUntil(() => expect(document.activeElement).toBe(composer));
+  });
+
+  it("reuses the Issue-style comment composer without extra editing modes", async () => {
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull());
+    const composer = container.querySelector<HTMLTextAreaElement>('[aria-label="Goal comment"]')!;
+    const composerSurface = container.querySelector('[aria-label="Goal comment composer"]');
+    expect(composerSurface?.classList.contains("chat-composer")).toBe(true);
+    expect(container.querySelector('[aria-label="Comment composer mode"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Comment formatting"]')).toBeNull();
+    expect(button(container, "Write")).toBeNull();
+    expect(button(container, "Preview")).toBeNull();
+
+    change(composer, "Review the shared comment flow.");
+    act(() => button(container, "Comment")?.click());
+    await waitUntil(() => expect(goalsApi.feedback).toHaveBeenCalledWith("goal-1", expect.objectContaining({
+      body: "Review the shared comment flow.",
+    })));
   });
 
   it("removes failed feedback actions when the Goal closes during recovery", async () => {
@@ -871,17 +950,17 @@ describe("GoalDetail", () => {
         resultProposals: [{ ...workspace.resultProposals[0], status: "accepted" }],
       } as never);
     const container = renderPage();
-    await waitUntil(() => expect(container.querySelector('[aria-label="Goal feedback"]')).not.toBeNull());
-    change(container.querySelector<HTMLTextAreaElement>('[aria-label="Goal feedback"]')!, "This feedback may race with acceptance.");
-    act(() => button(container, "Send feedback")?.click());
-    await waitUntil(() => expect(button(container, "Retry feedback")).not.toBeNull());
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull());
+    change(container.querySelector<HTMLTextAreaElement>('[aria-label="Goal comment"]')!, "This feedback may race with acceptance.");
+    act(() => button(container, "Comment")?.click());
+    await waitUntil(() => expect(button(container, "Retry comment")).not.toBeNull());
 
     act(() => button(container, "Accept result")?.click());
 
-    await waitUntil(() => expect(container.textContent).toContain("Result accepted"));
-    expect(button(container, "Retry feedback")).toBeNull();
+    await waitUntil(() => expect(container.textContent).toContain("This conversation is read-only because the Goal is closed."));
+    expect(button(container, "Retry comment")).toBeNull();
     expect(container.textContent).not.toContain("This feedback may race with acceptance.");
-    expect(container.querySelector('[aria-label="Goal feedback"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal comment"]')).toBeNull();
   });
 
   it("keeps change and result decisions self-contained, keyboard-operable, and requires rejection feedback", async () => {
@@ -914,11 +993,11 @@ describe("GoalDetail", () => {
   });
 
   it.each([
-    { name: "change approval", proposal: "change", action: "Approve" },
-    { name: "change rejection", proposal: "change", action: "Reject" },
-    { name: "result acceptance", proposal: "result", action: "Accept result" },
-    { name: "result rejection", proposal: "result", action: "Result is not sufficient" },
-  ])("restores focus to the Goal workspace after $name removes the proposal", async ({ proposal, action }) => {
+    { name: "change approval", proposal: "change", action: "Approve", expectedFocus: "comment" },
+    { name: "change rejection", proposal: "change", action: "Reject", expectedFocus: "comment" },
+    { name: "result acceptance", proposal: "result", action: "Accept result", expectedFocus: "comment" },
+    { name: "result rejection", proposal: "result", action: "Result is not sufficient", expectedFocus: "comment" },
+  ])("restores focus to the Goal workspace after $name removes the proposal", async ({ proposal, action, expectedFocus }) => {
     vi.mocked(goalsApi.getWorkspace)
       .mockResolvedValueOnce(workspace as never)
       .mockResolvedValue({
@@ -936,7 +1015,10 @@ describe("GoalDetail", () => {
     act(() => button(container, action)?.click());
 
     await waitUntil(() => expect(container.querySelector(`[aria-label="Goal ${proposal} proposal"]`)).toBeNull());
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
+    await waitUntil(() => {
+      if (expectedFocus === "title") expect(document.activeElement?.textContent).toBe(goal.title);
+      else expect(document.activeElement?.getAttribute("aria-label")).toBe("Goal comment");
+    });
   });
 
   it.each([
@@ -980,7 +1062,10 @@ describe("GoalDetail", () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.goals.detail("goal-1") });
     });
     await waitUntil(() => expect(container.querySelector('[aria-label="Goal result proposal"]')).toBeNull());
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
+    await waitUntil(() => {
+      if (settledStatus === "accepted") expect(document.activeElement?.textContent).toBe(goal.title);
+      else expect(document.activeElement?.getAttribute("aria-label")).toBe("Goal comment");
+    });
   });
 
   it.each([
@@ -1024,10 +1109,14 @@ describe("GoalDetail", () => {
     });
 
     await waitUntil(() => expect(container.querySelector('[aria-label="Goal result proposal"]')).toBeNull());
-    expect(document.activeElement?.textContent).not.toBe("Outcome");
+    if (settledStatus === "accepted") expect(document.activeElement?.textContent).not.toBe(goal.title);
+    else expect(document.activeElement?.getAttribute("aria-label")).not.toBe("Goal comment");
     await act(async () => resolveDecision({ id: "result-1", status: settledStatus }));
     await waitUntil(() => expect(goalsApi.getWorkspace).toHaveBeenCalledTimes(2));
-    await waitUntil(() => expect(document.activeElement?.textContent).toBe("Outcome"));
+    await waitUntil(() => {
+      if (settledStatus === "accepted") expect(document.activeElement?.textContent).toBe(goal.title);
+      else expect(document.activeElement?.getAttribute("aria-label")).toBe("Goal comment");
+    });
   });
 
   it("does not carry a pending decision focus request into another Goal", async () => {
@@ -1181,7 +1270,7 @@ describe("GoalDetail", () => {
         ],
         nextCursor: null,
       } as never);
-    const container = renderPage();
+    const { container, rerender } = renderPageWithClient();
     await waitUntil(() => expect(button(container, "Load earlier records")).not.toBeNull());
     expect(container.textContent).toContain("You");
 
@@ -1198,8 +1287,6 @@ describe("GoalDetail", () => {
     expect(goalsApi.getHistory).toHaveBeenNthCalledWith(1, "goal-1", "history-cursor-1");
     expect(goalsApi.getHistory).toHaveBeenNthCalledWith(2, "goal-1", "history-cursor-1");
     expect(container.textContent).toContain("Collaborator");
-    expect(container.textContent).toContain("Former agent");
-    expect(container.textContent?.match(/The real operator workflow passed\./g)).toHaveLength(1);
     expect(container.textContent).not.toContain("must-not-render.example");
     expect(button(container, "Load earlier records")).toBeNull();
     expect(document.activeElement?.textContent).toContain("A collaborator clarified the acceptance boundary.");
@@ -1208,10 +1295,15 @@ describe("GoalDetail", () => {
       .find((anchor) => anchor.textContent?.includes("acceptance.txt"));
     expect(safeAttachment?.getAttribute("href")).toBe("/api/assets/00000000-0000-4000-8000-000000000001/content");
     expect(Array.from(container.querySelectorAll("a")).some((anchor) => anchor.textContent?.includes("legacy-note.txt"))).toBe(false);
+
+    search = "?tab=activity";
+    rerender();
+    await waitUntil(() => expect(container.textContent).toContain("Former agent"));
+    expect(container.textContent?.match(/The real operator workflow passed\./g)).toHaveLength(1);
   });
 
   it("shows accepted status and exposes read-only diagnostics only with goalDebug=1", async () => {
-    search = "?goalDebug=1";
+    search = "?goalDebug=1&tab=evidence";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: { ...goal, lifecycle: "closed", status: "achieved", evaluationResult: { outcome: "achieved" } },
@@ -1224,6 +1316,51 @@ describe("GoalDetail", () => {
     expect(container.textContent).toContain("achieved");
     expect(container.textContent).toContain("Goal diagnostics");
     expect(container.textContent).not.toContain("Evaluate from evidence");
+  });
+
+  it("defaults to Conversation and persists explicit tab selection in the URL", async () => {
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Conversation"));
+    expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull();
+    expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Comments")).toBe(true);
+    expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(false);
+
+    const workTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      .find((candidate) => candidate.textContent?.includes("Work"));
+    act(() => workTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
+    expect(navigate).toHaveBeenCalledWith({
+      pathname: "/rudder/goals/goal-1",
+      search: "?tab=work",
+      hash: "",
+    }, { replace: true });
+  });
+
+  it("opens one Goal-scoped Chat target and restores its draft conversation", async () => {
+    window.localStorage.setItem("rudder.goal-chat:org-1:goal-1", JSON.stringify({
+      kind: "goal_chat",
+      organizationId: "org-1",
+      goalId: "goal-1",
+      agentId: "agent-previous",
+      conversationId: "chat-goal-1",
+      clientMutationId: "goal-chat-mutation-1",
+      body: "Continue from the saved draft",
+      label: "Saved label",
+    }));
+    const container = renderPage();
+    await waitUntil(() => expect(button(container, "Chat")).not.toBeNull());
+
+    act(() => button(container, "Chat")?.click());
+
+    expect(openSidePanelTarget).toHaveBeenCalledWith({
+      kind: "goal_chat",
+      organizationId: "org-1",
+      goalId: "goal-1",
+      agentId: "agent-1",
+      conversationId: "chat-goal-1",
+      clientMutationId: "goal-chat-mutation-1",
+      body: "Continue from the saved draft",
+      label: "Ship the Goal Workspace",
+    });
   });
 
   it("shows a recoverable not-found state instead of a blank Goal page", async () => {

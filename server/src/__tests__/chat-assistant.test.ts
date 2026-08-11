@@ -314,6 +314,30 @@ function makeIssueContextLink(): ChatContextLink {
   };
 }
 
+function makeGoalContextLink(): ChatContextLink {
+  const now = new Date("2026-03-29T08:00:00.000Z");
+  return {
+    id: "context-goal-1",
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    entityType: "goal",
+    entityId: "goal-1",
+    metadata: null,
+    entity: {
+      type: "goal",
+      id: "goal-1",
+      label: "Ship Goal v2",
+      subtitle: "active",
+      identifier: null,
+      status: "active",
+      description: "Keep progress, discussion, work, and evidence inspectable.",
+      href: "/goals/goal-1",
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function sentinelFromContext(ctx: { context?: Record<string, unknown> }) {
   const prompt = String(ctx.context?.chatPrompt ?? "");
   return prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
@@ -1861,6 +1885,29 @@ describe("chatAssistantService operator profile prompt injection", () => {
       issueId: "issue-1",
       issueIds: ["issue-1"],
     });
+  });
+
+  it("injects selected Goal context into chat prompts without creating an Issue context", async () => {
+    const goalContextLink = makeGoalContextLink();
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ contextLinks: [goalContextLink] }),
+      messages: makeMessages(),
+      contextLinks: [goalContextLink],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("Selected Goal context:");
+    expect(prompt).toContain("- Goal ID: goal-1");
+    expect(prompt).toContain("- Title: Ship Goal v2");
+    expect(prompt).toContain("- Status: active");
+    expect(prompt).toContain("- Lifecycle: active");
+    expect(prompt).toContain("- Context: Keep progress, discussion, work, and evidence inspectable.");
+    expect(prompt).toContain("Keep this conversation anchored to the selected Goal.");
+    expect(executeInput?.context).not.toHaveProperty("issueId");
   });
 
   it("forwards adapter invocation metadata to the caller during streaming", async () => {

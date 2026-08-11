@@ -1632,6 +1632,38 @@ describe("chat routes", () => {
     expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
   });
 
+  it("accepts same-organization Goal context during Chat draft preflight", async () => {
+    const goalId = "10000000-0000-4000-8000-000000000009";
+    mockGoalService.getById.mockResolvedValue({ id: goalId, orgId: "organization-1" });
+
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats/preflight").send({
+      contextLinks: [{ entityType: "goal", entityId: goalId }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockGoalService.getById).toHaveBeenCalledWith(goalId);
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "organization-1",
+        contextLinks: [{ entityType: "goal", entityId: goalId }],
+      }),
+    );
+  });
+
+  it("rejects cross-organization Goal context before Chat persistence", async () => {
+    const goalId = "10000000-0000-4000-8000-000000000010";
+    mockGoalService.getById.mockResolvedValue({ id: goalId, orgId: "organization-2" });
+
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats/preflight").send({
+      contextLinks: [{ entityType: "goal", entityId: goalId }],
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Goal context must belong to the same organization" });
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
+  });
+
   it("rejects an unavailable first turn before persistence", async () => {
     mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({ available: false, sourceType: "agent", sourceLabel: "Unsupported agent", runtimeAgentId: "agent-1", agentRuntimeType: "process", model: null, error: "The current user has not configured a chat model yet." });
     const res = await request(createApp()).post("/api/orgs/organization-1/chats/messages/stream").send({ body: "Do not create an empty chat" });

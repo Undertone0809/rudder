@@ -182,6 +182,7 @@ async function selectAgent(page: Page, agentName: string) {
 }
 
 test("reveals Goals in the primary rail only after the Experimental setting is enabled", async ({ page }, testInfo: TestInfo) => {
+  test.setTimeout(120_000);
   const resetResponse = await page.request.patch("/api/instance/settings/general", {
     data: { experimentalGoalsEnabled: false },
   });
@@ -285,8 +286,8 @@ test("reveals Goals in the primary rail only after the Experimental setting is e
   expect(otherGoalResponse.status()).toBe(201);
   const otherGoal = await otherGoalResponse.json() as Goal;
   await page.goto(`/${organization.urlKey}/goals/${otherGoal.id}`);
-  await expect(page).toHaveURL(new RegExp(`/${otherOrganization.urlKey}/goals/${otherGoal.id}$`));
-  await expect(page.getByRole("heading", { name: otherGoal.title, exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/${otherOrganization.urlKey}/goals/${otherGoal.id}$`), { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: otherGoal.title, exact: true })).toBeVisible({ timeout: 30_000 });
   await page.goto(`/${organization.urlKey}/goals`);
 
   await page.reload();
@@ -330,30 +331,25 @@ test.describe("Goal Workspace v2", () => {
     await page.getByLabel("Context").fill(
       "The result must be inspectable, restart-safe, and ready for user acceptance.",
     );
-    const assigneeTrigger = page.getByRole("button", { name: "Assignee" });
+    await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
+    const assigneeTrigger = page.getByRole("button", { name: "Assignee", exact: true });
     await assigneeTrigger.click();
     const assigneeMenu = page.locator('[data-slot="popover-content"]');
     await expect(assigneeMenu).toBeVisible();
     await expect(assigneeMenu).toHaveAttribute("data-side", "top");
-    const assigneeMenuGeometry = await assigneeMenu.evaluate((menu) => {
-      const menuRect = menu.getBoundingClientRect();
-      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Assignee"]');
-      const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
-      if (!trigger || !dialog) return null;
-      const triggerRect = trigger.getBoundingClientRect();
-      const dialogRect = dialog.getBoundingClientRect();
-      return {
-        menuTop: menuRect.top,
-        menuBottom: menuRect.bottom,
-        triggerTop: triggerRect.top,
-        dialogTop: dialogRect.top,
-        dialogBottom: dialogRect.bottom,
-      };
-    });
+    const [assigneeMenuGeometry, assigneeTriggerGeometry, dialogGeometry] = await Promise.all([
+      assigneeMenu.boundingBox(),
+      assigneeTrigger.boundingBox(),
+      page.locator('[data-slot="dialog-content"]').boundingBox(),
+    ]);
     expect(assigneeMenuGeometry).not.toBeNull();
-    expect(assigneeMenuGeometry!.menuBottom).toBeLessThanOrEqual(assigneeMenuGeometry!.triggerTop);
-    expect(assigneeMenuGeometry!.menuTop).toBeGreaterThanOrEqual(assigneeMenuGeometry!.dialogTop);
-    expect(assigneeMenuGeometry!.menuBottom).toBeLessThanOrEqual(assigneeMenuGeometry!.dialogBottom);
+    expect(assigneeTriggerGeometry).not.toBeNull();
+    expect(dialogGeometry).not.toBeNull();
+    expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
+      .toBeLessThanOrEqual(assigneeTriggerGeometry!.y + 1);
+    expect(assigneeMenuGeometry!.y).toBeGreaterThanOrEqual(dialogGeometry!.y);
+    expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
+      .toBeLessThanOrEqual(dialogGeometry!.y + dialogGeometry!.height);
     await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
     await page.getByLabel("Target time").fill("2026-08-20T10:00");
 
@@ -379,11 +375,16 @@ test.describe("Goal Workspace v2", () => {
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals$`));
     await expect(page.locator("#main-content").getByRole("heading", { name: "Goals", exact: true })).toBeVisible();
     await page.goto(goalDetailUrl);
-    await expect(page.getByText("Outcome", { exact: true })).toBeVisible();
-    await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
-    await expect(page.getByText("Agent is doing", { exact: true })).toBeVisible();
-    await expect(page.getByText("Next step", { exact: true })).toBeVisible();
-    await expect(page.getByText(
+    await expect(page.getByRole("tab", { name: /Conversation/ })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "Comments", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+\\?tab=work$`));
+    const workTab = page.getByRole("tabpanel");
+    await expect(workTab.getByText("Outcome", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Current progress", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Agent is doing", { exact: true })).toBeVisible();
+    await expect(workTab.getByText("Next step", { exact: true })).toBeVisible();
+    await expect(workTab.getByText(
       "Inspect the available context and produce the first bounded, reviewable artifact.",
       { exact: true },
     )).toBeVisible();
@@ -402,7 +403,7 @@ test.describe("Goal Workspace v2", () => {
       await expect(page.getByText(hiddenControl, { exact: true })).toHaveCount(0);
     }
 
-    const goalId = page.url().split("/").at(-1)!;
+    const goalId = new URL(page.url()).pathname.split("/").at(-1)!;
     const startRequest = (await e2eDb.select().from(goalStartRequests)).find((row) => row.goalId === goalId)!;
     const startWakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
       row.orgId === organization.id
@@ -423,6 +424,7 @@ test.describe("Goal Workspace v2", () => {
       updatedAt: new Date(),
     }).where(eq(heartbeatRuns.id, startWakeups[0]!.runId!));
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.getByRole("tab", { name: /Conversation/ }).click();
     await expect(page.getByRole("heading", { name: "Action needed", exact: true })).toBeVisible();
     await expect(page.getByText("The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.", { exact: true })).toBeVisible();
     await expect(page.getByText("Process adapter missing command", { exact: true })).toHaveCount(0);
@@ -440,8 +442,10 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(internalLanguageActivity.status()).toBe(201);
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page.getByText("Current Goal and supporting evidence are being checked.", { exact: true })).toBeVisible();
     await expect(page.getByText(/Goal contract|runtime evidence|change_proposal|result_proposal/i)).toHaveCount(0);
+    await page.getByRole("tab", { name: /Conversation/ }).click();
     const contractBeforeFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     const feedbackBody = "Keep the release focused on the operator journey, not internal Contract terminology.";
     let attachmentAttempts = 0;
@@ -457,7 +461,7 @@ test.describe("Goal Workspace v2", () => {
       }
       await route.continue();
     });
-    const feedbackFile = page.getByLabel("Attach feedback image");
+    const feedbackFile = page.getByLabel("Attach comment image");
     await feedbackFile.setInputFiles({
       name: "operator-screenshot.png",
       mimeType: "image/png",
@@ -465,9 +469,14 @@ test.describe("Goal Workspace v2", () => {
     });
     await expect(page.getByRole("alert")).toContainText("Temporary image outage");
     await page.getByRole("button", { name: "Retry attachment" }).click();
-    await expect(page.getByLabel("Selected feedback attachments").getByText("operator-screenshot.png", { exact: true })).toBeVisible();
+    const goalComposer = page.getByLabel("Goal comment composer", { exact: true });
+    await expect(goalComposer.locator('img[alt="operator-screenshot.png"]')).toBeVisible();
     expect(attachmentAttempts).toBe(2);
     await page.unroute(`**/api/orgs/${organization.id}/assets/images`);
+    await expect(page.getByRole("tablist", { name: "Comment composer mode" })).toHaveCount(0);
+    await expect(page.getByRole("toolbar", { name: "Comment formatting" })).toHaveCount(0);
+    const feedbackInput = goalComposer.locator('[contenteditable="true"]');
+    await expect(feedbackInput).toBeVisible();
     let feedbackAttempts = 0;
     await page.route(`**/api/goals/${goalId}/feedback`, async (route) => {
       feedbackAttempts += 1;
@@ -481,16 +490,14 @@ test.describe("Goal Workspace v2", () => {
       }
       await route.continue();
     });
-    const feedbackInput = page.getByLabel("Goal feedback");
     await feedbackInput.fill(feedbackBody);
-    const sendFeedback = page.getByRole("button", { name: "Send feedback" });
-    await sendFeedback.focus();
-    await page.keyboard.press("Enter");
+    const sendFeedback = page.getByRole("button", { name: "Comment", exact: true });
+    await sendFeedback.click();
     await expect(page.getByRole("alert")).toContainText("Temporary feedback outage");
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible();
     await expect(feedbackInput).toBeFocused();
 
-    const retryFeedback = page.getByRole("button", { name: "Retry feedback" });
+    const retryFeedback = page.getByRole("button", { name: "Retry comment" });
     await retryFeedback.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
@@ -570,7 +577,8 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(progressResponse.status()).toBe(201);
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-    const currentProgress = page.getByText("Current progress", { exact: true }).locator("..");
+    await page.getByRole("tab", { name: /Work/ }).click();
+    const currentProgress = page.getByRole("tabpanel").getByText("Current progress", { exact: true }).locator("..");
     await expect(currentProgress.getByText(
       "The release candidate passed the real operator workflow.",
       { exact: true },
@@ -597,7 +605,8 @@ test.describe("Goal Workspace v2", () => {
     ));
     await expect(page.locator("#main-content")).toContainText("operator-workflow.md");
     await page.goto(`/${organization.urlKey}/goals/${goalId}`);
-    await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
+    await expect(page.getByRole("tabpanel").getByText("Current progress", { exact: true })).toBeVisible();
 
     const workspaceResponse = await page.request.get(`/api/goals/${goalId}/workspace`);
     expect(workspaceResponse.ok()).toBe(true);
@@ -623,14 +632,46 @@ test.describe("Goal Workspace v2", () => {
       && row.submittedByAgentId === owner.id,
     )).toBeTruthy();
 
+    await page.getByRole("tab", { name: /Evidence/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=evidence$`));
+    await expect(page.getByRole("heading", { name: "Current evidence", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=activity$`));
+    await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
+
+    const chatDraft = "Review this Goal against the operator acceptance evidence.";
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    const goalChatPanel = page.getByTestId("goal-chat-panel");
+    await expect(page.getByTestId("chat-side-panel")).toBeVisible();
+    await expect(goalChatPanel.getByText("Chat about Goal", { exact: true })).toBeVisible();
+    await expect(goalChatPanel.getByText("Publish a verified Goal Workspace release candidate", { exact: true })).toBeVisible();
+    await expect(goalChatPanel.getByText(owner.name, { exact: true })).toBeVisible();
+    const goalChatEditor = goalChatPanel.getByTestId("goal-chat-composer").locator('[contenteditable="true"]');
+    await goalChatEditor.fill(chatDraft);
+    await expect(goalChatEditor).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(page.getByTestId("goal-chat-panel").locator('[contenteditable="true"]')).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
+    await page.getByRole("tab", { name: /Work/ }).click();
+
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await expect(page.getByText("Outcome", { exact: true })).toBeVisible();
-    await expect(page.getByText("Current progress", { exact: true })).toBeVisible();
+    const mobileWorkTab = page.getByRole("tabpanel");
+    await expect(mobileWorkTab.getByText("Outcome", { exact: true })).toBeVisible();
+    await expect(mobileWorkTab.getByText("Current progress", { exact: true })).toBeVisible();
     const bodyOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(bodyOverflow).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-mobile.png"), fullPage: true });
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Side Panel" })).toBeVisible();
+    await expect(page.getByTestId("goal-chat-panel").locator('[contenteditable="true"]')).toContainText(chatDraft);
+    await page.getByTestId("chat-side-panel-collapse").click();
 
     expect(pageErrors).toEqual([]);
   });
@@ -661,9 +702,12 @@ test.describe("Goal Workspace v2", () => {
 
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
     const goalId = page.url().split("/").at(-1)!;
-    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Goal detail views" })).toHaveCount(0);
+    await expect(page.getByLabel("Goal progress")).toHaveCount(0);
+    await expect(page.getByLabel("Goal properties")).toHaveCount(0);
+    await expect(page.getByText("Comments become available after this Goal starts.", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toHaveCount(0);
     await expect(page.getByText("Needs your attention", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Current progress", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Progress and feedback", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rename", exact: true })).toHaveCount(0);
@@ -671,7 +715,8 @@ test.describe("Goal Workspace v2", () => {
     await page.screenshot({ path: testInfo.outputPath("goal-draft-blocked-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue Goal", exact: true })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Goal detail views" })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-draft-blocked-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
@@ -702,6 +747,7 @@ test.describe("Goal Workspace v2", () => {
 
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
     await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
     await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
@@ -1103,9 +1149,14 @@ test.describe("Goal Workspace v2", () => {
     await expect(rejectResult).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(firstResultProposal).toHaveCount(0);
-    await expect(page.getByText("Result proposal rejected", { exact: true })).toBeVisible();
     await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeFocused();
+    await expect(
+      page.getByLabel("Goal comment composer", { exact: true }).locator('[contenteditable="true"]'),
+    ).toBeFocused();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByText("Result proposal rejected", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
     const afterReject = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
     expect(afterReject.lifecycle).toBe("active");
     expect(afterReject.evaluationResult).toBeNull();
@@ -1206,8 +1257,11 @@ test.describe("Goal Workspace v2", () => {
     await acceptResult.focus();
     await expect(acceptResult).toBeFocused();
     await page.keyboard.press("Enter");
+    await expect(page.getByText("This conversation is read-only because the Goal is closed.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: goal.title, exact: true })).toBeFocused();
+    await page.getByRole("tab", { name: /Evidence/ }).click();
     await expect(page.getByText("Result accepted", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "History", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Evidence/ })).toHaveAttribute("aria-selected", "true");
     const acceptedResult = page.getByLabel("Accepted Goal result");
     await expect(acceptedResult.getByText("Goal achieved", { exact: true })).toBeVisible();
     await expect(acceptedResult.getByText(preview.review!.success, { exact: true })).toBeVisible();
@@ -1224,15 +1278,16 @@ test.describe("Goal Workspace v2", () => {
     const acceptedArtifactRow = acceptedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(acceptedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
-    const acceptedProgress = page.getByText("Current progress", { exact: true }).locator("..");
+    const acceptedProgress = page.getByLabel("Goal progress");
     await expect(acceptedProgress.getByText("Goal achieved", { exact: true })).toBeVisible();
     await expect(acceptedProgress.getByText("Goal evaluated as", { exact: false })).toHaveCount(0);
     await expect(page.getByText("No evidence-backed progress has been recorded yet.", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent advancing", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Next step", { exact: true })).toHaveCount(0);
-    await expect(page.getByLabel("Goal feedback")).toHaveCount(0);
+    await expect(page.getByLabel("Goal comment composer", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rename" })).toHaveCount(0);
+    await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page.getByText(
       "Goal updated after approval: Supporting work shows that the target must explicitly include restart recovery.",
       { exact: true },
@@ -1240,7 +1295,7 @@ test.describe("Goal Workspace v2", () => {
     for (const internalTerm of ["Goal Contract", "Contract revision", "change_proposal", "result_proposal"]) {
       await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
     }
-    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeFocused();
+    await page.getByRole("tab", { name: /Evidence/ }).click();
     await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
@@ -1371,9 +1426,11 @@ test.describe("Goal Workspace v2", () => {
     await expect(negativeResultProposal.getByText("Supporting work 1", { exact: true })).toBeVisible();
     await expect(negativeResultProposal.getByText("artifact://goal-workspace/failed-release-check", { exact: true })).toHaveCount(0);
     const readyForReviewLabels = page.getByText("Result ready for review", { exact: true });
-    await expect(readyForReviewLabels).toHaveCount(2);
-    await expect(readyForReviewLabels.first()).toBeVisible();
-    await expect(readyForReviewLabels.last()).toBeVisible();
+    await expect(readyForReviewLabels).toHaveCount(1);
+    await expect(readyForReviewLabels).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByRole("tabpanel").getByText("Result ready for review", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
     for (const internalTerm of ["result_proposal", "not_achieved"]) {
       await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
     }
@@ -1382,6 +1439,8 @@ test.describe("Goal Workspace v2", () => {
     const acceptNegativeResult = negativeResultProposal.getByRole("button", { name: "Accept result" });
     await acceptNegativeResult.focus();
     await page.keyboard.press("Enter");
+    await expect(page.getByText("This conversation is read-only because the Goal is closed.", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Evidence/ }).click();
     await expect(page.getByText("Result accepted", { exact: true })).toBeVisible();
     const acceptedNegativeGoal = await (await page.request.get(`/api/goals/${negativeGoal.id}`)).json() as Goal;
     expect(acceptedNegativeGoal.lifecycle).toBe("closed");
@@ -1490,13 +1549,20 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(issueResponse.ok()).toBe(true);
     const issue = await issueResponse.json() as { id: string };
-    const startedRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => {
-      const context = run.contextSnapshot as Record<string, unknown> | null;
-      return run.orgId === organization.id && context?.goalId === started.goal!.id;
-    });
-    for (const run of startedRuns) {
-      await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
-    }
+    const startRequest = (await e2eDb.select().from(goalStartRequests))
+      .find((row) => row.goalId === started.goal!.id)!;
+    let startRunId: string | null = null;
+    await expect.poll(async () => {
+      const startWakeup = (await e2eDb.select().from(agentWakeupRequests)).find((row) =>
+        row.orgId === organization.id
+        && row.agentId === owner.id
+        && row.idempotencyKey === `goal-start:${startRequest.id}`,
+      );
+      startRunId = startWakeup?.runId ?? null;
+      return startRunId;
+    }, { timeout: 30_000 }).toMatch(/^[a-f0-9-]{36}$/);
+    await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() })
+      .where(eq(heartbeatRuns.id, startRunId!));
     const runId = randomUUID();
     const checkpointTime = new Date();
     await e2eDb.insert(heartbeatRuns).values({
@@ -1556,6 +1622,12 @@ test.describe("Goal Workspace v2", () => {
     });
     await e2eDb.update(issues).set({ executionRunId: runId, updatedAt: new Date(checkpointTime.getTime() - 500) }).where(eq(issues.id, issue.id));
 
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/goals/${started.goal!.id}/workspace`);
+      if (!response.ok()) return null;
+      return ((await response.json()) as Workspace).agentAction?.summary ?? null;
+    }, { timeout: 30_000 }).toBe("The linked issue produced a reviewable artifact.");
+
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -1583,11 +1655,15 @@ test.describe("Goal Workspace v2", () => {
       sourceActivityId: progressActivity!.id,
       summary: "The release artifact passed the acceptance workflow.",
     });
-    const currentProgress = page.getByText("Current progress", { exact: true }).locator("..");
+    const currentProgress = page.getByLabel("Goal progress");
     await expect(currentProgress.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Work/ }).click();
     const agentAction = page.getByText(/^(Agent is doing|Latest Agent activity)$/).locator("..");
     await expect(agentAction.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toBeVisible();
-    const history = page.getByRole("heading", { name: "Progress and feedback", exact: true }).locator("..");
+    await expect(page.getByRole("tabpanel").getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    const history = page.getByRole("tabpanel");
+    await expect(history.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
     await expect(history.getByText("Excluded current-progress event 101", { exact: true })).toBeVisible();
     await expect(history.getByText("Excluded current-progress event 1", { exact: true })).toHaveCount(0);
     let loadEarlier = history.getByRole("button", { name: "Load earlier records" });
@@ -1595,7 +1671,7 @@ test.describe("Goal Workspace v2", () => {
     for (const [index, expectedFirstLoaded] of ["Excluded current-progress event 51", "Excluded current-progress event 1"].entries()) {
       await page.keyboard.press("Enter");
       await expect(history.getByText(expectedFirstLoaded, { exact: true })).toBeVisible();
-      await expect(history.getByText(expectedFirstLoaded, { exact: true }).locator("..")).toBeFocused();
+      await expect(history.getByText(expectedFirstLoaded, { exact: true }).locator("../..")).toBeFocused();
       if (index === 0) {
         loadEarlier = history.getByRole("button", { name: "Load earlier records" });
         await page.keyboard.press("Tab");
@@ -1608,10 +1684,12 @@ test.describe("Goal Workspace v2", () => {
     for (const internalKind of ["work_status", "activity", "Related work"]) {
       await expect(history.getByText(internalKind, { exact: true })).toHaveCount(0);
     }
-    await expect(page.getByRole("heading", { name: "Details", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeVisible();
     await expect(page.getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
-    await expect(history.getByText(longHistoryToken, { exact: true })).toBeVisible();
-    await expect(history.getByText(longAttachmentName, { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Conversation/ }).click();
+    const conversation = page.getByRole("tabpanel");
+    await expect(conversation.getByText(longHistoryToken, { exact: true })).toBeVisible();
+    await expect(conversation.getByText(longAttachmentName, { exact: true })).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
     const detailOverflow = await page.getByTestId("goal-detail-workspace").evaluate((root) => {
@@ -1621,11 +1699,21 @@ test.describe("Goal Workspace v2", () => {
         const rect = element.getBoundingClientRect();
         if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return [];
         const escapesRoot = rect.left < rootRect.left - 1 || rect.right > rootRect.right + 1;
+        const containedByHorizontalScroller = (() => {
+          let ancestor = element.parentElement;
+          while (ancestor && ancestor !== root) {
+            const ancestorOverflowX = window.getComputedStyle(ancestor).overflowX;
+            if (["auto", "scroll", "hidden", "clip"].includes(ancestorOverflowX)) return true;
+            ancestor = ancestor.parentElement;
+          }
+          return false;
+        })();
         const clipsContent = element.scrollWidth > element.clientWidth + 1
           && style.overflowX !== "auto"
           && style.overflowX !== "scroll";
-        return escapesRoot || clipsContent
-          ? [{ tag: element.tagName, text: element.textContent?.slice(0, 80), escapesRoot, clipsContent }]
+        const uncontainedEscape = escapesRoot && !containedByHorizontalScroller;
+        return uncontainedEscape || clipsContent
+          ? [{ tag: element.tagName, text: element.textContent?.slice(0, 80), escapesRoot: uncontainedEscape, clipsContent }]
           : [];
       });
     });

@@ -20,6 +20,7 @@ import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
 import { formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
+import { CommentComposer } from "./CommentComposer";
 import { commentThreadTranscriptRuns, type LinkedRunItem } from "./CommentThread.runs";
 import { useCommentSubmit } from "./CommentThread.submit";
 import { Identity } from "./Identity";
@@ -101,21 +102,6 @@ function saveDraft(draftKey: string, value: string) {
   } catch {
     // Ignore localStorage failures.
   }
-}
-
-function shouldForwardComposerFocus(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  return !target.closest([
-    "a",
-    "button",
-    "input",
-    "textarea",
-    "select",
-    "[contenteditable='true']",
-    "[role='button']",
-    "[role='menuitem']",
-    "[data-chat-composer-menu-item]",
-  ].join(","));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1061,13 +1047,11 @@ export function CommentThread({
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
-  const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
   const [reserveHashScrollEndSpace, setReserveHashScrollEndSpace] = useState(false);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const attachInputRef = useRef<HTMLInputElement | null>(null);
   const internalTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTimelineScrollRef = timelineScrollElementRef
     ?? (fixedComposer && fixedComposerTimelineScroll ? internalTimelineScrollRef : undefined);
@@ -1388,43 +1372,6 @@ export function CommentThread({
     setReserveHashScrollEndSpace(false);
   }, [location.hash, location.key, scrollToComment]);
 
-  async function handleAttachFile(evt: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(evt.target.files ?? []);
-    if (files.length === 0) return;
-    setAttaching(true);
-    try {
-      if (imageUploadHandler) {
-        const snippets: string[] = [];
-        for (const file of files) {
-          const url = await imageUploadHandler(file);
-          const safeName = file.name.replace(/[[\]]/g, "\\$&");
-          snippets.push(file.type.startsWith("image/")
-            ? `![${safeName}](${url})`
-            : `[${safeName}](${url})`);
-        }
-        const markdown = snippets.join("\n\n");
-        setBody((prev) => {
-          const nextBody = prev ? `${prev}\n\n${markdown}` : markdown;
-          if (draftKey) saveDraft(draftKey, nextBody);
-          return nextBody;
-        });
-      } else if (onAttachImage) {
-        for (const file of files) {
-          await onAttachImage(file);
-        }
-      }
-    } finally {
-      setAttaching(false);
-      if (attachInputRef.current) attachInputRef.current.value = "";
-    }
-  }
-
-  const focusComposerEditor = (event: MouseEvent<HTMLDivElement>) => {
-    if (!shouldForwardComposerFocus(event.target)) return;
-    event.preventDefault();
-    editorRef.current?.focus();
-  };
-
   const timelineNode = (
     <TimelineList
       timeline={timeline}
@@ -1453,74 +1400,32 @@ export function CommentThread({
   );
 
   const composerNode = (
-    <div
-      ref={composerSurfaceRef}
-      aria-label="Comment composer"
-      className="chat-composer rounded-[var(--radius-lg)] p-3"
-      data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
-      onMouseDown={focusComposerEditor}
-      tabIndex={-1}
-    >
-      <div
-        data-testid="issue-comment-composer-editor-scroll"
-        className="scrollbar-auto-hide max-h-[min(38dvh,22rem)] overflow-y-auto overscroll-contain pr-1"
-      >
-        <MarkdownEditor
-          ref={editorRef}
-          engine="milkdown"
-          value={body}
-          onChange={updateBody}
-          placeholder="Leave a comment..."
-          mentions={mentions}
-          agentMentionIntent="wake"
-          onMentionQueryChange={onMentionQueryChange}
-          mentionMenuAnchorRef={composerSurfaceRef}
-          mentionMenuPlacement="container"
-          onSubmit={handleSubmit}
-          imageUploadHandler={imageUploadHandler}
-          className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
-          bordered={false}
-        />
-      </div>
-      <div className="mt-3 flex items-center justify-end gap-3">
-        {(imageUploadHandler || onAttachImage) && (
-          <div className="mr-auto flex items-center gap-3">
-            <input
-              ref={attachInputRef}
-              type="file"
-              accept={COMMENT_ATTACHMENT_ACCEPT}
-              multiple
-              className="hidden"
-              onChange={handleAttachFile}
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => attachInputRef.current?.click()}
-              disabled={attaching}
-              title="Attach file"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-        {canReopen ? (
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={reopen}
-              onChange={(e) => setReopen(e.target.checked)}
-              className="rounded border-border"
-            />
-            Re-open
-          </label>
-        ) : null}
-        <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-          {submitting ? "Posting..." : "Comment"}
-        </Button>
-      </div>
-    </div>
+    <CommentComposer
+      body={body}
+      onBodyChange={updateBody}
+      onSubmit={handleSubmit}
+      canSubmit={canSubmit}
+      submitting={submitting}
+      editorRef={editorRef}
+      surfaceRef={composerSurfaceRef}
+      mentions={mentions}
+      onMentionQueryChange={onMentionQueryChange}
+      imageUploadHandler={imageUploadHandler}
+      onAttachFile={onAttachImage}
+      attachmentAccept={COMMENT_ATTACHMENT_ACCEPT}
+      escapeBackWhenEmpty={escapeBackWhenEmpty}
+      beforeSubmit={canReopen ? (
+        <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={reopen}
+            onChange={(event) => setReopen(event.target.checked)}
+            className="rounded border-border"
+          />
+          Re-open
+        </label>
+      ) : null}
+    />
   );
 
   if (fixedComposer) {

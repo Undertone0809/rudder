@@ -35,7 +35,7 @@ export type CreateChatInput = {
   planMode: boolean;
   createdByUserId: string | null;
   contextLinks?: Array<{
-    entityType: "issue" | "project" | "agent";
+    entityType: "issue" | "project" | "agent" | "goal";
     entityId: string;
     metadata?: Record<string, unknown> | null;
   }>;
@@ -98,7 +98,7 @@ export type CreateChatWithInitialMessageInput = {
   planMode: boolean;
   createdByUserId: string | null;
   contextLinks?: Array<{
-    entityType: "issue" | "project" | "agent";
+    entityType: "issue" | "project" | "agent" | "goal";
     entityId: string;
     metadata?: Record<string, unknown> | null;
   }>;

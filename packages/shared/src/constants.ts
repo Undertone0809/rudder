@@ -583,7 +583,7 @@ export type ChatMessageKind = (typeof CHAT_MESSAGE_KINDS)[number];
 export const CHAT_MESSAGE_STATUSES = ["streaming", "completed", "stopped", "failed", "interrupted"] as const;
 export type ChatMessageStatus = (typeof CHAT_MESSAGE_STATUSES)[number];
 
-export const CHAT_CONTEXT_ENTITY_TYPES = ["issue", "project", "agent"] as const;
+export const CHAT_CONTEXT_ENTITY_TYPES = ["issue", "project", "agent", "goal"] as const;
 export type ChatContextEntityType = (typeof CHAT_CONTEXT_ENTITY_TYPES)[number];
 
 export const MESSENGER_THREAD_KINDS = [
