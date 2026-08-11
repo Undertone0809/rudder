@@ -39,6 +39,8 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("tab", { name: "Manage", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Built-in" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Agent-scoped custom API" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Organization MCPs" })).toHaveCount(0);
+    await expect(page.getByText("No organization Custom MCPs")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Message" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
@@ -100,9 +102,9 @@ test.describe("Agent detail integrations tab", () => {
     }
 
     await expect(page.getByText("Feishu Workspace", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Coming soon")).toHaveCount(4);
-    await expect(page.getByRole("button", { name: "GitHub coming soon" })).toHaveText("Coming soon");
-    await expect(page.getByRole("button", { name: "GitHub coming soon" })).toBeDisabled();
+    await expect(page.getByText("Coming soon")).toHaveCount(3);
+    await expect(page.getByRole("button", { name: "Gmail coming soon" })).toHaveText("Coming soon");
+    await expect(page.getByRole("button", { name: "Gmail coming soon" })).toBeDisabled();
     await page.getByRole("button", { name: "Gmail coming soon" }).click({ force: true });
     await expect(page.getByRole("dialog", { name: "Gmail" })).toHaveCount(0);
 

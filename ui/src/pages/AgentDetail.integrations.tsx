@@ -610,13 +610,13 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
               />
             </IntegrationCategorySection>
-            <IntegrationCategorySection title="Organization MCPs">
-              <AgentManagedMcpConnections
-                agentId={agent.id}
-                orgId={orgId}
-                providers={["custom"]}
-              />
-            </IntegrationCategorySection>
+            <AgentManagedMcpConnections
+              agentId={agent.id}
+              orgId={orgId}
+              providers={["custom"]}
+              sectionTitle="Organization MCPs"
+              hideWhenEmpty
+            />
             <IntegrationCategorySection title="Message">
               <FeishuIntegrationCard
                 state={state}

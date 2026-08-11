@@ -425,6 +425,8 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
     expect(container.textContent).not.toContain("MCP Server");
+    expect(container.textContent).not.toContain("Organization MCPs");
+    expect(container.textContent).not.toContain("No organization Custom MCPs");
     expect(container.textContent).toContain("Supabase");
     expect(container.textContent).toContain("Notion");
     expect(container.textContent).toContain("Linear");

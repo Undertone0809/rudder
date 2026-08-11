@@ -15,7 +15,7 @@ import type {
   McpProviderAvailability,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
 import { McpProviderIcon } from "../components/McpProviderIcon";
@@ -65,12 +65,16 @@ export function AgentManagedMcpConnections({
   providerStatuses,
   providers,
   showOnlyEnabled = false,
+  sectionTitle,
+  hideWhenEmpty = false,
 }: {
   agentId: string;
   orgId?: string;
   providerStatuses?: McpProviderAvailability[];
   providers?: McpConnectionProvider[];
   showOnlyEnabled?: boolean;
+  sectionTitle?: string;
+  hideWhenEmpty?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
@@ -127,24 +131,27 @@ export function AgentManagedMcpConnections({
     );
   });
 
+  if (!query.isLoading && !query.isError && rows.length === 0 && hideWhenEmpty) {
+    return null;
+  }
+
+  let content: ReactNode;
   if (query.isLoading) {
-    return (
+    content = (
       <div className="space-y-2" aria-label="Loading organization MCP connections">
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-16 w-full" />
       </div>
     );
-  }
-  if (query.isError) {
-    return (
+  } else if (query.isError) {
+    content = (
       <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3">
         <p className="text-sm text-destructive">Could not load organization MCP connections.</p>
         <Button size="sm" variant="outline" onClick={() => void query.refetch()}>Retry</Button>
       </div>
     );
-  }
-  if (rows.length === 0) {
-    return (
+  } else if (rows.length === 0) {
+    content = (
       <div className="rounded-md border border-dashed border-border px-4 py-6 text-center">
         <p className="text-sm font-medium text-foreground">
           {showOnlyEnabled
@@ -160,10 +167,9 @@ export function AgentManagedMcpConnections({
         </p>
       </div>
     );
-  }
-
-  return (
-    <>
+  } else {
+    content = (
+      <>
       <div className="space-y-2" data-testid="agent-managed-mcp-connections">
         {rows.map((row) => {
           const currentAccess = row.binding?.accessMode ?? "none";
@@ -244,6 +250,16 @@ export function AgentManagedMcpConnections({
           ) : null}
         </DialogContent>
       </Dialog>
-    </>
+      </>
+    );
+  }
+
+  if (!sectionTitle) return content;
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-foreground">{sectionTitle}</h3>
+      <div className="grid gap-3 lg:grid-cols-2">{content}</div>
+    </section>
   );
 }
