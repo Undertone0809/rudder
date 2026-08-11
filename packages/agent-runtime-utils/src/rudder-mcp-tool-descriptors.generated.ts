@@ -64,6 +64,51 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   },
   {
+    "capabilityId": "goal.list",
+    "name": "rudder_goal_list",
+    "description": "Discover Goals owned by the authenticated Agent; defaults to active Goals and returns current progress, next step, and attention state.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
+    "capabilityId": "goal.context",
+    "name": "rudder_goal_context",
+    "description": "Read the owned Goal agreement and current operating context before acting: contract revision, criteria, boundaries, progress, next step, attention, proposals, and recent feedback.",
+    "mutating": false,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
+    "capabilityId": "goal.progress",
+    "name": "rudder_goal_progress",
+    "description": "Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "goal.change.propose",
+    "name": "rudder_goal_change_propose",
+    "description": "Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "goal.result.propose",
+    "name": "rudder_goal_result_propose",
+    "description": "Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
     "capabilityId": "issue.get",
     "name": "rudder_issue_get",
     "description": "Read a full issue by UUID or identifier.",
@@ -856,5 +901,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db4cf09c49d99e50cc86d72e95addbbd088f7068b91574e1ca568903f8002596";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "e2647b35c1bb057e7379c0465074ab75bd9f9e450aaecfc2d0744b75deb183fb";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

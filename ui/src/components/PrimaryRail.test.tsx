@@ -104,6 +104,7 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
     openNewAgent: vi.fn(),
+    openNewGoal: vi.fn(),
     openNewProject: vi.fn(),
   }),
 }));
@@ -626,6 +627,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("uses remembered section paths as primary rail destinations", async () => {
+    mockState.generalSettings.experimentalGoalsEnabled = true;
     mockState.primaryRailPaths = {
       messenger: "/messenger/issues/ZST-200",
       issues: "/issues/ZST-586",
@@ -643,7 +645,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(linkHref("Messenger")).toBe("/messenger/issues/ZST-200");
     expect(linkHref("Issue")).toBe("/issues/ZST-586");
-    expect(linkHref("Goals")).toBeUndefined();
+    expect(linkHref("Goals")).toBe("/goals");
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
     expect(linkHref("Organization")).toBe("/dashboard/calendar");

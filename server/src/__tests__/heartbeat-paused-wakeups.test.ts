@@ -1,5 +1,6 @@
 import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
+  activityLog,
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
@@ -7,6 +8,7 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -15,11 +17,13 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
+import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockBudgetService = vi.hoisted(() => ({
@@ -34,6 +38,8 @@ vi.mock("../services/budgets.ts", async () => {
   };
 });
 
+import { errorHandler } from "../middleware/index.js";
+import { goalRoutes } from "../routes/goals.js";
 import { heartbeatService } from "../services/heartbeat.ts";
 
 type EmbeddedPostgresInstance = {
@@ -122,6 +128,7 @@ describe("heartbeat paused wakeups", () => {
   afterEach(async () => {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
+        await db.delete(activityLog);
         await db.delete(issues);
         await db.delete(heartbeatRunEvents);
         await db.delete(heartbeatRuns);
@@ -129,6 +136,7 @@ describe("heartbeat paused wakeups", () => {
         await db.delete(agentTaskSessions);
         await db.delete(agentRuntimeState);
         await db.delete(organizationSkills);
+        await db.delete(goals);
         await db.delete(agents);
         await db.delete(organizations);
         return;
@@ -243,6 +251,22 @@ describe("heartbeat paused wakeups", () => {
     });
 
     return { wakeupRequestId, runId };
+  }
+
+  function createGoalRouteApp() {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "board",
+        source: "local_implicit",
+        userId: "board-user",
+      };
+      next();
+    });
+    app.use("/api", goalRoutes(db));
+    app.use(errorHandler);
+    return app;
   }
 
   async function seedIssueExecutionLock(input: {
@@ -687,4 +711,231 @@ describe("heartbeat paused wakeups", () => {
     expect(wakeups[0]?.status).toBe("skipped");
     expect(wakeups[0]?.reason).toBe("budget.blocked");
   });
+
+  it("keeps Focus recovery inside the changed Goal organization", async () => {
+    const orgA = await seedAgentFixture("idle");
+    const orgB = await seedAgentFixture("idle");
+    const goalAId = randomUUID();
+    const goalBId = randomUUID();
+
+    await db.insert(goals).values([
+      {
+        id: goalAId,
+        orgId: orgA.orgId,
+        title: "Recover organization A Goal work",
+        outcomeStatement: "Only organization A work is recovered",
+        lifecycle: "active",
+        status: "active",
+        ownerAgentId: orgA.agentId,
+        planRevision: 1,
+        criteria: [{ id: "org-a", label: "Organization A Run is admitted", evaluator: "artifact" }],
+        continuationKind: "action",
+        continuationSummary: "Resume organization A work",
+      },
+      {
+        id: goalBId,
+        orgId: orgB.orgId,
+        title: "Keep organization B Goal work pending",
+        outcomeStatement: "Organization B work waits for its own recovery",
+        lifecycle: "active",
+        status: "active",
+        ownerAgentId: orgB.agentId,
+        planRevision: 1,
+        criteria: [{ id: "org-b", label: "Organization B Run remains pending", evaluator: "artifact" }],
+        continuationKind: "action",
+        continuationSummary: "Wait for organization B recovery",
+      },
+    ]);
+
+    await seedRunningBlocker({ orgId: orgA.orgId, agentId: orgA.agentId, taskKey: "org-a-blocker" });
+    await seedRunningBlocker({ orgId: orgB.orgId, agentId: orgB.agentId, taskKey: "org-b-blocker" });
+
+    const queueGoalIntent = async (input: {
+      orgId: string;
+      agentId: string;
+      goalId: string;
+      label: string;
+    }) => {
+      const wakeupRequestId = randomUUID();
+      const taskKey = `goal:${input.goalId}:goal_feedback:${input.label}`;
+      await db.insert(agentWakeupRequests).values({
+        id: wakeupRequestId,
+        orgId: input.orgId,
+        agentId: input.agentId,
+        source: "on_demand",
+        triggerDetail: "system",
+        reason: "goal_feedback",
+        payload: {
+          event: "goal_feedback",
+          goalId: input.goalId,
+          feedbackId: input.label,
+          taskKey,
+          _paperclipWakeContext: {
+            goalId: input.goalId,
+            taskKey,
+            wakeReason: "goal_feedback",
+            goal: {
+              id: input.goalId,
+              title: `Goal ${input.label}`,
+              outcomeStatement: `Outcome ${input.label}`,
+              contractRevision: 1,
+            },
+          },
+        },
+        status: "queued",
+        requestedByActorType: "user",
+        requestedByActorId: "board-user",
+        idempotencyKey: `goal-feedback:${input.label}`,
+      });
+      return wakeupRequestId;
+    };
+
+    const wakeupAId = await queueGoalIntent({
+      orgId: orgA.orgId,
+      agentId: orgA.agentId,
+      goalId: goalAId,
+      label: "org-a",
+    });
+    const wakeupBId = await queueGoalIntent({
+      orgId: orgB.orgId,
+      agentId: orgB.agentId,
+      goalId: goalBId,
+      label: "org-b",
+    });
+
+    const response = await request(createGoalRouteApp())
+      .post(`/api/goals/${goalAId}/focus`)
+      .send({ focus: true });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ id: goalAId, orgId: orgA.orgId, focus: true });
+    expect(await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupAId))
+      .then((rows) => rows[0])).toMatchObject({
+      orgId: orgA.orgId,
+      status: "queued",
+      runId: expect.any(String),
+    });
+    expect(await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupBId))
+      .then((rows) => rows[0])).toMatchObject({
+      orgId: orgB.orgId,
+      status: "queued",
+      runId: null,
+    });
+    expect(await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, wakeupBId))).toHaveLength(0);
+  }, 30_000);
+
+  it("keeps Goal wake intents recoverable across budget, policy, and Agent availability blocks", async () => {
+    const { orgId, agentId } = await seedAgentFixture("idle");
+    const goalId = randomUUID();
+    await db.insert(goals).values({
+      id: goalId,
+      orgId,
+      title: "Recover blocked Goal work",
+      outcomeStatement: "Blocked Goal work resumes exactly once",
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: agentId,
+      planRevision: 1,
+      criteria: [{ id: "resume", label: "One Run is admitted", evaluator: "artifact" }],
+      continuationKind: "action",
+      continuationSummary: "Resume after the blocking condition clears",
+    });
+    const heartbeat = heartbeatService(db);
+    const queueAndDispatch = async (eventId: string) => {
+      const wakeupRequestId = randomUUID();
+      const taskKey = `goal:${goalId}:goal_feedback:${eventId}`;
+      const payload = { event: "goal_feedback", goalId, feedbackId: eventId, taskKey };
+      const contextSnapshot = {
+        goalId,
+        taskKey,
+        goal: {
+          id: goalId,
+          title: "Recover blocked Goal work",
+          outcomeStatement: "Blocked Goal work resumes exactly once",
+          contractRevision: 1,
+        },
+        goalContinuation: {
+          kind: "action",
+          summary: "Resume after the blocking condition clears",
+        },
+      };
+      await db.insert(agentWakeupRequests).values({
+        id: wakeupRequestId,
+        orgId,
+        agentId,
+        source: "on_demand",
+        triggerDetail: "system",
+        reason: "goal_feedback",
+        payload,
+        status: "queued",
+        requestedByActorType: "user",
+        requestedByActorId: "board-user",
+        idempotencyKey: `goal-feedback:${eventId}`,
+      });
+      const run = await heartbeat.wakeup(agentId, {
+        existingWakeupRequestId: wakeupRequestId,
+        source: "on_demand",
+        triggerDetail: "system",
+        reason: "goal_feedback",
+        payload,
+        contextSnapshot,
+        requestedByActorType: "user",
+        requestedByActorId: "board-user",
+        idempotencyKey: `goal-feedback:${eventId}`,
+        startImmediately: false,
+      });
+      return { wakeupRequestId, run };
+    };
+    const expectDeferred = async (wakeupRequestId: string, error: string) => {
+      expect(await db.select().from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, wakeupRequestId))
+        .then((rows) => rows[0])).toMatchObject({
+          status: "deferred_goal_blocked",
+          runId: null,
+          finishedAt: null,
+          error,
+        });
+    };
+    const recoverExactlyOnce = async (wakeupRequestId: string) => {
+      const recovery = await heartbeat.resumePendingWakeupRequests({ startImmediately: false });
+      expect(recovery.resumed).toBeGreaterThanOrEqual(1);
+      expect(await db.select().from(heartbeatRuns)
+        .where(eq(heartbeatRuns.wakeupRequestId, wakeupRequestId))).toHaveLength(1);
+      await heartbeat.resumePendingWakeupRequests({ startImmediately: false });
+      expect(await db.select().from(heartbeatRuns)
+        .where(eq(heartbeatRuns.wakeupRequestId, wakeupRequestId))).toHaveLength(1);
+    };
+
+    mockBudgetService.getInvocationBlock.mockResolvedValue({
+      reason: "Agent budget hard-stop reached.",
+      scopeType: "agent",
+      scopeId: agentId,
+    });
+    const budgetBlocked = await queueAndDispatch("budget-feedback");
+    expect(budgetBlocked.run).toBeNull();
+    await expectDeferred(budgetBlocked.wakeupRequestId, "budget.blocked");
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    await recoverExactlyOnce(budgetBlocked.wakeupRequestId);
+
+    await db.update(agents).set({
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 1, wakeOnDemand: false } },
+    }).where(eq(agents.id, agentId));
+    const policyBlocked = await queueAndDispatch("policy-feedback");
+    expect(policyBlocked.run).toBeNull();
+    await expectDeferred(policyBlocked.wakeupRequestId, "heartbeat.wakeOnDemand.disabled");
+    await db.update(agents).set({
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 1, wakeOnDemand: true } },
+    }).where(eq(agents.id, agentId));
+    await recoverExactlyOnce(policyBlocked.wakeupRequestId);
+
+    await db.update(agents).set({ status: "pending_approval" }).where(eq(agents.id, agentId));
+    const unavailable = await queueAndDispatch("availability-feedback");
+    expect(unavailable.run).toBeNull();
+    await expectDeferred(unavailable.wakeupRequestId, "agent.unavailable");
+    await db.update(agents).set({ status: "idle" }).where(eq(agents.id, agentId));
+    await recoverExactlyOnce(unavailable.wakeupRequestId);
+  }, 30_000);
 });

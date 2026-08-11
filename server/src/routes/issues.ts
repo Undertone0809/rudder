@@ -22,6 +22,7 @@ import multer from "multer";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { publicGoalView } from "../services/goals.js";
 import {
   accessService,
   agentIssueCreationService,
@@ -656,7 +657,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       goalId: issue.goalId,
       ancestors,
       project: project ?? null,
-      goal: goal ?? null,
+      goal: goal ? publicGoalView(goal) : null,
       mentionedProjects,
       currentRunWorkspace,
       currentExecutionWorkspace: currentRunWorkspace,

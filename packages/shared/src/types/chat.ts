@@ -3,7 +3,7 @@ import type { ChatConversationMutability } from "../constants.js";
 import type { Approval } from "./approval.js";
 
 export interface ChatLinkedEntity {
-  type: "issue" | "project" | "agent";
+  type: "issue" | "project" | "agent" | "goal";
   id: string;
   label: string;
   subtitle: string | null;
@@ -18,7 +18,7 @@ export interface ChatContextLink {
   id: string;
   orgId: string;
   conversationId: string;
-  entityType: "issue" | "project" | "agent";
+  entityType: "issue" | "project" | "agent" | "goal";
   entityId: string;
   metadata: Record<string, unknown> | null;
   entity: ChatLinkedEntity | null;

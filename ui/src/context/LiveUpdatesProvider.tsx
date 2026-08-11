@@ -593,12 +593,18 @@ function buildRunStatusToast(
           : "cancelled";
   const title = `${name} run ${statusLabel}`;
 
-  let body: string | undefined;
-  if (error) {
-    body = truncate(error, 100);
-  } else if (triggerDetail) {
-    body = `Trigger: ${triggerDetail}`;
-  }
+  const body =
+    status === "failed"
+      ? "The Agent could not complete its latest action."
+      : status === "cancelled"
+        ? "The Agent stopped its latest action."
+        : status === "timed_out"
+          ? "The Agent's latest action needs attention."
+          : error
+            ? truncate(error, 100)
+            : triggerDetail
+              ? `Trigger: ${triggerDetail}`
+              : undefined;
 
   return {
     title,
@@ -894,6 +900,7 @@ export const __liveUpdatesTestUtils = {
   shouldSuppressMessengerToast,
   shouldSuppressRunStatusToastForVisibleIssue,
   shouldSuppressAgentStatusToastForVisibleIssue,
+  buildRunStatusToast,
 };
 
 export function LiveUpdatesProvider({ children }: { children: ReactNode }) {

@@ -1594,15 +1594,12 @@ function AgentConfigurePage({
       </div>
 
       {orgId ? (
-        <section aria-labelledby="agent-budget-heading">
-          <h3 id="agent-budget-heading" className="mb-3 text-sm font-medium">Budget</h3>
-          <BudgetPolicyCard
-            summary={budgetSummary}
-            isSaving={isBudgetSaving}
-            onSave={onSaveBudget}
-            variant="configuration"
-          />
-        </section>
+        <BudgetPolicyCard
+          summary={budgetSummary}
+          isSaving={isBudgetSaving}
+          onSave={onSaveBudget}
+          variant="plain"
+        />
       ) : null}
     </div>
   );

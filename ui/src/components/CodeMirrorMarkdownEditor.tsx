@@ -1046,6 +1046,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const {
     value,
     onChange,
+    ariaLabel,
     placeholder,
     className,
     contentClassName,
@@ -2082,7 +2083,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       ])),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.contentAttributes.of({
-        "aria-label": placeholder ? `${placeholder} Markdown editor` : "Markdown editor",
+        "aria-label": ariaLabel ?? (placeholder ? `${placeholder} Markdown editor` : "Markdown editor"),
         "aria-autocomplete": "list",
         "aria-expanded": "false",
         "data-markdown-source-editor": "true",

@@ -583,6 +583,24 @@ describe("LiveUpdatesProvider notification preferences", () => {
 
     expect(toasts).toEqual([]);
   });
+
+  it("keeps technical run failures out of terminal status toasts", () => {
+    const toast = __liveUpdatesTestUtils.buildRunStatusToast(
+      {
+        runId: "run-1",
+        agentId: "agent-1",
+        status: "failed",
+        error: "Process adapter missing command",
+      },
+      () => "Goal HTTP Agent",
+    );
+
+    expect(toast).toMatchObject({
+      title: "Goal HTTP Agent run failed",
+      body: "The Agent could not complete its latest action.",
+    });
+    expect(JSON.stringify(toast)).not.toContain("Process adapter missing command");
+  });
 });
 
 describe("LiveUpdatesProvider chat invalidation", () => {

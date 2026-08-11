@@ -28,7 +28,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",
-    "test:run": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/shared build && node scripts/run-vitest-projects.mjs",
+    "test:run": "pnpm --filter @rudderhq/identity-core build && node scripts/run-vitest-projects.mjs",
     "db:generate": "pnpm --filter @rudderhq/db generate",
     "db:migrate": "pnpm --filter @rudderhq/db migrate",
     "secrets:migrate-inline-env": "tsx scripts/migrate-inline-env-secrets.ts",

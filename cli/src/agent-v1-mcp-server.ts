@@ -25,6 +25,9 @@ import {
   checkoutIssueSchema,
   computerUseActionForToolName,
   computerUseActionSchemas,
+  createGoalActivitySchema,
+  createGoalChangeProposalSchema,
+  createGoalResultProposalSchema,
 } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -111,6 +114,10 @@ const LEGACY_ARGUMENT_ALIASES: Record<string, Record<string, string>> = {
     selections: "selectionRefs",
     skills: "selectionRefs",
   },
+  "goal.context": { goalId: "goal" },
+  "goal.progress": { goalId: "goal" },
+  "goal.change.propose": { goalId: "goal" },
+  "goal.result.propose": { goalId: "goal" },
   "issue.get": { issueId: "issue" },
   "issue.context": { issueId: "issue" },
   "issue.checkout": { issueId: "issue" },
@@ -629,6 +636,64 @@ async function callToolDirectlyIfSupported(
       return success(await api.get("/api/agents/me"));
     case "agent.inbox":
       return success(await api.get("/api/agents/me/inbox-lite"));
+    case "goal.list": {
+      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
+      requiredRuntimeString(env, "RUDDER_AGENT_ID");
+      const params = new URLSearchParams({
+        lifecycle: optionalString(input.lifecycle) ?? "active",
+        limit: String(parsePositiveInteger(input.limit, 20)),
+      });
+      if (typeof input.focus === "boolean") params.set("focus", String(input.focus));
+      appendOptionalQuery(params, "facet", input.facet);
+      return success(await api.get(`/api/orgs/${encodeURIComponent(orgId)}/goals/assigned?${params}`));
+    }
+    case "goal.context":
+      requiredRuntimeString(env, "RUDDER_AGENT_ID");
+      return success(await api.get(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/agent-context`,
+      ));
+    case "goal.progress": {
+      const payload = createGoalActivitySchema.parse({
+        summary: requiredString(input, "summary"),
+        activityKind: optionalString(input.activityKind) ?? "progress",
+        evidenceRefs: input.evidenceRefs,
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/activities`,
+        payload,
+      ));
+    }
+    case "goal.change.propose": {
+      const payload = createGoalChangeProposalSchema.parse({
+        expectedContractRevision: input.contractRevision,
+        afterContract: input.afterContract,
+        rationale: requiredString(input, "rationale"),
+        evidenceRefs: input.evidenceRefs,
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/change-proposals`,
+        payload,
+      ));
+    }
+    case "goal.result.propose": {
+      const decision = optionalString(input.decision);
+      const payload = createGoalResultProposalSchema.parse({
+        contractRevision: input.contractRevision,
+        criteria: input.criteria,
+        evidenceRefs: input.evidenceRefs,
+        resultValue: input.resultValue,
+        ...(decision ? { decision } : {}),
+        resultPayload: input.resultPayload,
+        riskSummary: requiredString(input, "riskSummary"),
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(requiredAnyString(input, ["goal", "goalId"]))}/result-proposals`,
+        payload,
+      ));
+    }
     case "issue.get":
       return success(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
     case "issue.context": {
@@ -1032,6 +1097,73 @@ function cliArgsForCapability(
       const args = ["agent", "skills", "sync"];
       pushRuntimeAgentArg(args, input, env, true);
       pushOptional(args, "--desired-skills", input.desiredSkills);
+      return args;
+    }
+    case "goal.list": {
+      const args = ["goal", "list"];
+      pushOptional(args, "--lifecycle", input.lifecycle ?? "active");
+      if (typeof input.focus === "boolean") args.push("--focus", String(input.focus));
+      pushOptional(args, "--facet", input.facet);
+      if (input.limit !== undefined) args.push("--limit", String(input.limit));
+      return args;
+    }
+    case "goal.context":
+      return ["goal", "context", requiredAnyString(input, ["goal", "goalId"])];
+    case "goal.progress": {
+      const args = [
+        "goal",
+        "progress",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--summary",
+        requiredString(input, "summary"),
+        "--evidence-refs",
+        JSON.stringify(input.evidenceRefs),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      pushOptional(args, "--activity-kind", input.activityKind);
+      return args;
+    }
+    case "goal.change.propose": {
+      const args = [
+        "goal",
+        "change",
+        "propose",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--contract-revision",
+        String(input.contractRevision),
+        "--after-contract",
+        JSON.stringify(input.afterContract),
+        "--rationale",
+        requiredString(input, "rationale"),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      if (input.evidenceRefs !== undefined) {
+        args.push("--evidence-refs", JSON.stringify(input.evidenceRefs));
+      }
+      return args;
+    }
+    case "goal.result.propose": {
+      const args = [
+        "goal",
+        "result",
+        "propose",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--contract-revision",
+        String(input.contractRevision),
+        "--criteria",
+        JSON.stringify(input.criteria),
+        "--evidence-refs",
+        JSON.stringify(input.evidenceRefs),
+        "--risk-summary",
+        requiredString(input, "riskSummary"),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      if (input.resultValue !== undefined) args.push("--result-value", JSON.stringify(input.resultValue));
+      pushOptional(args, "--decision", input.decision);
+      if (input.resultPayload !== undefined) args.push("--result-payload", JSON.stringify(input.resultPayload));
       return args;
     }
     case "issue.get":

@@ -1,6 +1,6 @@
 ---
 title: "安装和管理插件"
-description: "检查 Codex Plugin 软件包，安装支持的能力，并配置技能或 MCP 访问。"
+description: "检查 Codex Plugin 软件包，安装支持的能力，并配置 Skill 或 MCP 访问。"
 icon: "plug"
 keywords:
   - "安装 Rudder Plugin"
@@ -17,8 +17,8 @@ Codex 插件目录格式，并在安装前显示兼容性报告。
 
 ## 你将完成什么
 
-启用插件，导入一个本地 Codex 插件目录或 `ZIP`，或者添加本地/固定 GitHub 提交的
-`Codex Marketplace`。检查 Rudder 可以使用的内容，把它安装到组织，并完成必要的
+启用插件，导入一个本地 Codex 插件目录或 ZIP，或者添加本地/固定 GitHub 提交的
+Codex Marketplace。检查 Rudder 可以使用的内容，把它安装到组织，并完成必要的
 Agent 或 MCP 设置。
 
 ## 开始前
@@ -31,18 +31,18 @@ Agent 或 MCP 设置。
 
 1. 打开 **Settings > Experimental**，启用 **Enable Plugins**。
 2. 在主导航栏中选择 **Plugins**，打开 **Discover** 或 **Yours**。
-3. 选择 **Folder** 或 **ZIP** 检查单个插件。在 **Discover** 中可添加本地 `Marketplace`
-   目录，或添加使用完整 `commit SHA` 固定的 `GitHub Marketplace`。
+3. 选择 **Folder** 或 **ZIP** 检查单个插件。在 **Discover** 中可添加本地 Marketplace
+   目录，或添加使用完整 commit SHA 固定的 GitHub Marketplace。
 4. 检查软件包身份、内容摘要、技能、MCP 定义、应用引用、技能中的可执行文件，以及浏览器扩展、定时任务模板和钩子等不支持的能力。检查过程不会执行任何内容。
-5. 如果插件技能与现有组织技能冲突，显式选择保留现有版本、替换，或重命名后同时
+5. 如果 Skill 与现有组织 Skill 冲突，显式选择保留现有版本、替换，或重命名后同时
    安装。然后把软件包安装到当前组织。
 6. 对于技能，选择 **Add to Agent**，再选择可以使用它的 Agent。
 7. 对于 MCP 定义，选择 **Set up**，然后在托管 MCP 设置中继续认证、启用和 Agent 访问配置。
 8. 本地应用可以从 **Plugins > Yours** 直接打开。Codex `.app.json` 中的应用别名会被保留，但不是可执行的 Rudder 本地应用。
 9. 如果已启用的托管 MCP 连接提供网页界面资源，可以从 MCP 组件中打开。Rudder 会在禁止网络访问的沙箱中渲染。
 
-`Marketplace` 策略只作为来源信息保留。即使条目声明 `INSTALLED_BY_DEFAULT`，也仍会
-出现在 **Discover** 中并要求用户检查，不会静默安装。
+Marketplace 策略只作为来源信息保留。即使条目声明 `INSTALLED_BY_DEFAULT`，也仍会
+出现在 Discover 中并要求用户检查，不会静默安装。
 
 ## 检查结果
 
@@ -63,8 +63,8 @@ MCP 连接在正常设置完成前保持为未启用草稿。
 更新成功后，可以选择 **Roll back** 重新启用保留的上一份不可变软件包。回滚不会
 改写任何一个软件包快照。
 
-`App Builder` 产生新的本地应用 `revision` 时，**Yours** 会显示 **Update review**。当前
-`revision` 会继续运行，直到用户在插件详情中选择 **Apply update**。
+App Builder 产生新的本地应用 revision 时，**Yours** 会显示 **Update review**。当前
+revision 会继续运行，直到用户在插件详情中选择 **Apply update**。
 
 ## 禁用或卸载
 

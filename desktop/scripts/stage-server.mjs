@@ -97,10 +97,14 @@ async function restoreWorkspaceDependencyLinks() {
     "install",
     "--frozen-lockfile",
   ];
-  // Forced installs traverse optional packages that do not exist on the
-  // current platform. Windows also needs network access when a fresh lockfile
-  // references a tarball that is not present in the local store yet.
-  if (process.platform !== "win32") args.push("--offline");
+  // pnpm 9's forced reinstall traverses Darwin-only optional packages on
+  // Windows. A clean Windows install correctly omits dmg-license, so --force
+  // makes the restore fail while trying to read a package that cannot exist.
+  // Keep Windows online-capable as well: a freshly updated lockfile can need a
+  // tarball that is not present in the local store yet.
+  if (process.platform !== "win32") {
+    args.push("--offline", "--force");
+  }
   await run(pnpmBin, args, repoRoot);
 }
 

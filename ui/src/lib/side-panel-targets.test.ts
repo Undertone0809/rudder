@@ -190,6 +190,22 @@ describe("side panel targets", () => {
     const persistedSideChat = { ...provisionalSideChat, conversationId: "side-chat-1" };
     expect(sidePanelTargetKey(persistedSideChat)).toBe("side-chat:side-chat-1");
     expect(sidePanelFullPageHref(persistedSideChat)).toBe("/messenger/chat/side-chat-1");
+
+    const goalChatDraft = {
+      kind: "goal_chat",
+      organizationId: "org-1",
+      goalId: "goal-1",
+      agentId: "agent-1",
+      conversationId: null,
+      clientMutationId: "goal-chat-mutation-1",
+      body: "",
+      label: "Ship Goal v2",
+    } as const;
+    expect(sidePanelTargetKey(goalChatDraft)).toBe("goal-chat:org-1:goal-1");
+    expect(sidePanelFullPageHref(goalChatDraft)).toBeNull();
+    const goalChatConversation = { ...goalChatDraft, conversationId: "goal-chat-1" };
+    expect(sidePanelTargetKey(goalChatConversation)).toBe("goal-chat:org-1:goal-1");
+    expect(sidePanelFullPageHref(goalChatConversation)).toBe("/messenger/chat/goal-chat-1");
   });
 
   it("keeps explicit Saved View instances distinct from the canonical resource", () => {

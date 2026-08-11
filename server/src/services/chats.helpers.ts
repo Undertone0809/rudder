@@ -6,6 +6,7 @@ import {
   chatConversations,
   chatConversationUserStates,
   chatMessages,
+  goals,
   issues,
   projects
 } from "@rudderhq/db";
@@ -254,8 +255,9 @@ export async function resolveContextEntities(db: Db, rows: ContextLinkRow[]) {
   const issueIds = rows.filter((row) => row.entityType === "issue").map((row) => row.entityId);
   const projectIds = rows.filter((row) => row.entityType === "project").map((row) => row.entityId);
   const agentIds = rows.filter((row) => row.entityType === "agent").map((row) => row.entityId);
+  const goalIds = rows.filter((row) => row.entityType === "goal").map((row) => row.entityId);
 
-  const [issueRows, projectRows, agentRows] = await Promise.all([
+  const [issueRows, projectRows, agentRows, goalRows] = await Promise.all([
     issueIds.length
       ? db
         .select({
@@ -291,10 +293,22 @@ export async function resolveContextEntities(db: Db, rows: ContextLinkRow[]) {
         .from(agents)
         .where(inArray(agents.id, agentIds))
       : Promise.resolve([]),
+    goalIds.length
+      ? db
+        .select({
+          id: goals.id,
+          title: goals.title,
+          description: goals.description,
+          lifecycle: goals.lifecycle,
+          status: goals.status,
+        })
+        .from(goals)
+        .where(inArray(goals.id, goalIds))
+      : Promise.resolve([]),
   ]);
 
   const entityMap = new Map<string, {
-    type: "issue" | "project" | "agent";
+    type: "issue" | "project" | "agent" | "goal";
     id: string;
     label: string;
     subtitle: string | null;
@@ -338,6 +352,18 @@ export async function resolveContextEntities(db: Db, rows: ContextLinkRow[]) {
       identifier: null,
       status: row.status,
       href: `/agents/${row.id}`,
+    });
+  }
+  for (const row of goalRows) {
+    entityMap.set(`goal:${row.id}`, {
+      type: "goal",
+      id: row.id,
+      label: row.title,
+      subtitle: row.lifecycle,
+      identifier: null,
+      status: row.status,
+      description: row.description,
+      href: `/goals/${row.id}`,
     });
   }
 
