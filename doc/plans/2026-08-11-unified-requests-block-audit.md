@@ -50,19 +50,41 @@ the operator can answer it, mark the external action complete, report that they
 cannot help, or cancel it directly on the Issue. Both entry points call the same
 Request API and render the same persisted state.
 
-After resolution, the panel remains visible on the Issue as a read-only record
-with the terminal status, typed resolution, persisted response, and resolution
-time. Refreshing or reopening either surface reads this state from the server;
-there is no separate Issue-local copy of the response or outcome.
+While the Request is open, its decision card replaces the Issue comment
+composer at the bottom of Activity. This keeps the operator's current decision
+at the natural response point without adding another persistent panel above the
+Issue content. After resolution, cancellation, or supersession, the normal
+comment composer returns. The terminal Request remains available in Activity
+and Requests as durable evidence; there is no separate Issue-local copy.
+
+Request messages show the requesting Agent's own avatar and a source link to
+the Issue or Chat where the Request originated. V1 Assistance Requests are
+Issue-backed, while the card contract accepts a generic source label and href
+so Chat-backed Requests can use the same presentation later.
+
+### Special message card language
+
+Requests and Failed Runs use one reusable special-message card instead of
+independent object-card treatments. The card follows a stable three-part
+anatomy inspired by Feishu's lightweight interactive cards:
+
+1. A tinted semantic header containing the title and compact status context.
+2. A neutral, readable body containing the description and source context.
+3. A separated footer containing the current action or peer action set.
+
+The supported semantic variants are `info` (blue, attention or action needed),
+`success` (green, completed), and `error` (red, failed or unable to continue).
+Color reinforces meaning but never carries status alone. UI Lab documents all
+three variants, long-content behavior, and action-footer states.
 
 ### Compact state inventory
 
 | State | Current decision | Visible controls | Deferred controls | Continuity |
 | --- | --- | --- | --- | --- |
-| Open | Provide the requested input or action outcome | Response field; Send answer; Mark action complete; Cannot help; Cancel request | No later workflow controls | Unsent text is local to the mounted panel; terminal state comes from the Request record |
+| Open | Provide the requested input or action outcome | Request card in the Activity composer slot; response field; Send answer; Mark action complete; Cannot help; Cancel request | Normal comment composer and later workflow controls | Unsent text is stored locally by Request ID across refresh; terminal state comes from the Request record |
 | Submitting | Wait for the selected Request mutation | Disabled peer actions and stable panel dimensions | Further submissions | Success updates both entry points; failure preserves input and exposes an error toast |
-| Resolved | Review what was supplied and how the Request ended | Read-only status, typed resolution, response, resolution time, secondary Requests link | All mutation controls | Refresh and reopen preserve the server-backed terminal state |
-| Cancelled or superseded | Review why the Request no longer needs action | Read-only status, optional reason, secondary Requests link | All mutation controls | A later Request is a new durable object; the old record is not reopened |
+| Resolved | Continue normal Issue discussion; inspect Request history when needed | Normal comment composer; terminal record in Activity and Requests | All Request mutation controls | Refresh and reopen preserve the server-backed terminal state |
+| Cancelled or superseded | Continue normal Issue discussion; inspect why the Request ended | Normal comment composer; terminal record in Activity and Requests | All Request mutation controls | A later Request is a new durable object; the old record is not reopened |
 
 The panel presents one decision at a time. `Send answer` requires a response;
 the other typed outcomes may use concise defaults when the operator provides no

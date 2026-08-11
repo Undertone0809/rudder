@@ -1577,6 +1577,22 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issueActivityItems = useMemo<CommentThreadActivityItem[]>(() => {
     const items: CommentThreadActivityItem[] = [];
 
+    if (latestAssistanceRequest && latestAssistanceRequest.status !== "open" && resolvedCompanyId && issue) {
+      items.push({
+        id: `assistance-request:${latestAssistanceRequest.id}`,
+        createdAt: latestAssistanceRequest.updatedAt,
+        node: (
+          <AssistanceRequestPanel
+            key={latestAssistanceRequest.id}
+            request={latestAssistanceRequest}
+            orgId={resolvedCompanyId}
+            issueStatus={issue.status}
+            source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+          />
+        ),
+      });
+    }
+
     if (linearIssueLink?.linked) {
       items.push({
         id: "linear-linked-issue",
@@ -1602,7 +1618,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     }
 
     return items;
-  }, [activity, agentMap, currentBoardUserId, linearIssueLink, operatorDisplayName]);
+  }, [
+    activity,
+    agentMap,
+    currentBoardUserId,
+    issue,
+    latestAssistanceRequest,
+    linearIssueLink,
+    operatorDisplayName,
+    resolvedCompanyId,
+  ]);
 
   const invalidateIssue = () => {
     const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
@@ -2232,16 +2257,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           data-testid="issue-detail-primary-content"
         >
 
-        {latestAssistanceRequest ? (
-          <div data-testid="issue-request-attention">
-            <AssistanceRequestPanel
-              request={latestAssistanceRequest}
-              orgId={resolvedCompanyId!}
-              issueStatus={issue.status}
-            />
-          </div>
-        ) : null}
-
         <InlineEditor
           value={issue.description ?? ""}
           onSave={(description) => updateIssue.mutateAsync({ description: description.trim() ? description : null })}
@@ -2678,6 +2693,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           escapeBackWhenEmpty
           fixedComposer
           fixedComposerTimelineScroll={false}
+          composerReplacement={latestAssistanceRequest?.status === "open" ? (
+            <div key={latestAssistanceRequest.id} data-testid="issue-request-attention">
+              <AssistanceRequestPanel
+                request={latestAssistanceRequest}
+                orgId={resolvedCompanyId!}
+                issueStatus={issue.status}
+                source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+              />
+            </div>
+          ) : undefined}
           timelineScrollElementRef={issueFindRootRef}
           onAdd={async (body, reopen, intent) => {
             await addComment.mutateAsync({

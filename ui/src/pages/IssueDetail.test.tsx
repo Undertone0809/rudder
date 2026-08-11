@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import type { AssistanceRequest } from "@rudderhq/shared";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -330,6 +330,7 @@ vi.mock("../components/CommentThread", () => ({
   CommentThread: (props: {
     mentions?: Array<Record<string, unknown>>;
     activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
+    composerReplacement?: ReactNode;
     fixedComposer?: boolean;
     fixedComposerTimelineScroll?: boolean;
   }) => {
@@ -345,6 +346,7 @@ vi.mock("../components/CommentThread", () => ({
         {sortedActivityItems.map((item) => (
           <div key={item.id}>{item.node}</div>
         ))}
+        {props.composerReplacement}
       </div>
     );
   },
@@ -744,6 +746,7 @@ describe("IssueDetail", () => {
     expect(html).toContain("Cannot help");
     expect(html).toContain("Cancel request");
     expect(html).toContain("Open in Requests");
+    expect((capturedCommentThreadProps?.composerReplacement as ReactElement).key).toBe("request-open");
   });
 
   it("keeps a resolved Assistance Request visible without mutation controls", () => {
@@ -778,6 +781,8 @@ describe("IssueDetail", () => {
     expect(html).toContain("Open in Requests");
     expect(html).not.toContain("Send answer");
     expect(html).not.toContain("Cancel request");
+    const activityItems = capturedCommentThreadProps?.activityItems as Array<{ node: ReactElement }>;
+    expect(activityItems[0]?.node.key).toBe("request-resolved");
   });
 
   it("renders a superseded Assistance Request with operator-facing copy", () => {

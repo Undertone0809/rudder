@@ -7,8 +7,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ExternalLink, MessageSquare, XCircle } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "../context/ToastContext";
-import { cn } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
+import { SpecialMessageCard, type SpecialMessageCardVariant } from "./SpecialMessageCard";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
@@ -45,12 +45,34 @@ function requestTimestamp(value: Date | string | null): string | null {
   });
 }
 
+function requestDraftKey(requestId: string): string {
+  return `rudder:assistance-request-draft:${requestId}`;
+}
+
+function loadRequestDraft(requestId: string): string {
+  try {
+    return localStorage.getItem(requestDraftKey(requestId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveRequestDraft(requestId: string, value: string): void {
+  try {
+    if (value) localStorage.setItem(requestDraftKey(requestId), value);
+    else localStorage.removeItem(requestDraftKey(requestId));
+  } catch {
+    // Storage may be unavailable in restricted browser contexts.
+  }
+}
+
 export function AssistanceRequestPanel({
   request,
   orgId,
   issueStatus,
   showTitle = true,
   showRequestsLink = true,
+  source,
   className,
 }: {
   request: AssistanceRequest;
@@ -58,11 +80,18 @@ export function AssistanceRequestPanel({
   issueStatus?: string | null;
   showTitle?: boolean;
   showRequestsLink?: boolean;
+  source?: { label: string; href: string } | null;
   className?: string;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
-  const [response, setResponse] = useState("");
+  const [responseState, setResponseState] = useState(() => ({
+    requestId: request.id,
+    value: loadRequestDraft(request.id),
+  }));
+  const response = responseState.requestId === request.id
+    ? responseState.value
+    : loadRequestDraft(request.id);
   const isOpen = request.status === "open";
   const attempt = Number(request.metadata.attempt ?? 1);
   const pendingLabel = issueStatus
@@ -93,7 +122,8 @@ export function AssistanceRequestPanel({
         : "The requested action is complete."),
     ),
     onSuccess: async () => {
-      setResponse("");
+      setResponseState({ requestId: request.id, value: "" });
+      saveRequestDraft(request.id, "");
       await invalidateRequestSurfaces();
     },
     onError: (error) => {
@@ -107,7 +137,8 @@ export function AssistanceRequestPanel({
   const cancelMutation = useMutation({
     mutationFn: () => requestsApi.cancelAssistance(request.id, response.trim() || undefined),
     onSuccess: async () => {
-      setResponse("");
+      setResponseState({ requestId: request.id, value: "" });
+      saveRequestDraft(request.id, "");
       await invalidateRequestSurfaces();
     },
     onError: (error) => {
@@ -127,41 +158,35 @@ export function AssistanceRequestPanel({
   const terminalResponse = request.response
     || supersededReason
     || (request.status === "cancelled" ? "This request was cancelled." : "No response provided.");
+  const variant: SpecialMessageCardVariant = isOpen
+    ? "info"
+    : request.status === "resolved"
+      ? "success"
+      : "error";
+  const StatusIcon = isOpen ? MessageSquare : request.status === "resolved" ? CheckCircle2 : XCircle;
 
   return (
-    <section
-      aria-label="Assistance request"
-      className={cn("space-y-3 rounded-md border border-border bg-card p-4", className)}
-      data-testid={`assistance-request-panel-${request.id}`}
-    >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          {showTitle ? <h3 className="break-words text-sm font-medium">{request.title}</h3> : null}
-          <div className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 text-xs", showTitle && "mt-1")}>
-            <span className={cn("font-medium", isOpen ? "text-amber-700 dark:text-amber-300" : "text-foreground")}>
-              {isOpen ? pendingLabel : assistanceRequestStatusLabel(request)}
-            </span>
-            <span className="text-muted-foreground">Attempt {attempt}/3</span>
-            {!isOpen && resolvedAt ? <span className="text-muted-foreground">{resolvedAt}</span> : null}
-          </div>
-        </div>
-        {isOpen
-          ? <MessageSquare className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
-          : request.status === "resolved"
-            ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            : <XCircle className="h-4 w-4 shrink-0 text-muted-foreground" />}
-      </div>
-
-      <div className="break-words text-sm">
-        <MarkdownBody>{request.prompt}</MarkdownBody>
-      </div>
-
-      {isOpen ? (
-        <div className="space-y-2 border-t border-border pt-3">
+    <SpecialMessageCard
+      variant={variant}
+      title={showTitle ? request.title : "Assistance request"}
+      headerMeta={(
+        <>
+          <StatusIcon className="h-4 w-4" />
+          <span>{isOpen ? pendingLabel : assistanceRequestStatusLabel(request)}</span>
+          <span className="opacity-70">Attempt {attempt}/3</span>
+          {!isOpen && resolvedAt ? <span className="opacity-70">{resolvedAt}</span> : null}
+        </>
+      )}
+      description={<MarkdownBody>{request.prompt}</MarkdownBody>}
+      actions={isOpen ? (
+        <div className="space-y-3">
           <Textarea
             aria-label="Answer or describe what changed"
             value={response}
-            onChange={(event) => setResponse(event.target.value)}
+            onChange={(event) => {
+              setResponseState({ requestId: request.id, value: event.target.value });
+              saveRequestDraft(request.id, event.target.value);
+            }}
             placeholder="Answer or describe what changed"
             className="min-h-20 resize-y"
             disabled={isPending}
@@ -181,8 +206,13 @@ export function AssistanceRequestPanel({
             </Button>
           </div>
         </div>
-      ) : (
-        <div className="space-y-1 border-t border-border pt-3">
+      ) : null}
+      className={className}
+      testId={`assistance-request-panel-${request.id}`}
+      ariaLabel="Assistance request"
+    >
+      {!isOpen ? (
+        <div className="space-y-1 border-t border-border/70 pt-3">
           <p className="text-xs font-medium uppercase text-muted-foreground">
             {request.status === "superseded" ? "Superseded because" : "Response"}
           </p>
@@ -190,16 +220,23 @@ export function AssistanceRequestPanel({
             {terminalResponse}
           </p>
         </div>
-      )}
-
-      {showRequestsLink ? (
-        <div className="flex justify-end border-t border-border pt-2">
-          <Link to="/messenger/approvals" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline">
-            Open in Requests
-            <ExternalLink className="h-3 w-3" />
-          </Link>
+      ) : null}
+      {(source || showRequestsLink) ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/70 pt-3 text-xs">
+          {source ? (
+            <Link to={source.href} className="inline-flex items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground hover:underline">
+              Source: {source.label}
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          ) : null}
+          {showRequestsLink ? (
+            <Link to="/messenger/approvals" className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline">
+              Open in Requests
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          ) : null}
         </div>
       ) : null}
-    </section>
+    </SpecialMessageCard>
   );
 }

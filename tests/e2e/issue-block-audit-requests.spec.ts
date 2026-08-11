@@ -119,6 +119,7 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   await page.goto(`/issues/${fixture.issue.identifier}`);
   await expect(page.getByTestId("issue-request-attention")).toContainText("In progress · Waiting on you");
   await expect(page.getByTestId("issue-request-attention")).toContainText("Attempt 1/3");
+  await expect(page.getByLabel("Comment composer")).toHaveCount(0);
 
   const duplicateJwt = createLocalAgentJwt(fixture.agent.id, fixture.org.id, "codex_local", run1);
   const duplicate = await page.request.patch(`/api/issues/${fixture.issue.id}`, {
@@ -169,14 +170,20 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
     .toHaveLength(3);
 
   await issueRequestPanel.getByPlaceholder("Answer or describe what changed").fill("GitHub mobile confirmation approved.");
+  await page.reload();
+  await expect(issueRequestPanel.getByPlaceholder("Answer or describe what changed"))
+    .toHaveValue("GitHub mobile confirmation approved.");
   await issueRequestPanel.getByRole("button", { name: "Send answer" }).click();
-  await expect(issueRequestPanel.getByText("Answered", { exact: true })).toBeVisible();
-  await expect(issueRequestPanel).toContainText("GitHub mobile confirmation approved.");
-  await expect(issueRequestPanel.getByRole("button", { name: "Send answer" })).toHaveCount(0);
+  await expect(page.getByTestId("issue-request-attention")).toHaveCount(0);
+  await expect(page.getByLabel("Comment composer")).toBeVisible();
+  const terminalIssueRequest = page.getByTestId(`assistance-request-panel-${requestRows[0]!.id}`);
+  await expect(terminalIssueRequest).toContainText("Answered");
+  await expect(terminalIssueRequest).toContainText("GitHub mobile confirmation approved.");
 
   await page.reload();
-  await expect(page.getByTestId("issue-request-attention")).toContainText("Answered");
-  await expect(page.getByTestId("issue-request-attention")).toContainText("GitHub mobile confirmation approved.");
+  await expect(page.getByTestId("issue-request-attention")).toHaveCount(0);
+  await expect(page.getByLabel("Comment composer")).toBeVisible();
+  await expect(page.getByTestId(`assistance-request-panel-${requestRows[0]!.id}`)).toContainText("Answered");
 
   await page.goto("/messenger/approvals");
   await expect(page.getByRole("heading", { name: "Requests" })).toBeVisible();
@@ -184,6 +191,10 @@ test("audits three Runs, deduplicates Assistance, and resumes the same assignee"
   await expect(card).toBeVisible();
   await expect(card.getByText("Answered", { exact: true })).toBeVisible();
   await expect(card).toContainText("GitHub mobile confirmation approved.");
+  await expect(card.getByRole("link", { name: "Source: Issue" })).toHaveAttribute(
+    "href",
+    new RegExp(`/issues/${fixture.issue.id}$`),
+  );
 
   const [resumedIssue] = await e2eDb.select().from(issues).where(eq(issues.id, fixture.issue.id));
   expect(resumedIssue?.status).toBe("in_progress");

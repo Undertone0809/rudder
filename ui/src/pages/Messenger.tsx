@@ -19,6 +19,7 @@ import { AssistanceRequestPanel } from "@/components/AssistanceRequestPanel";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/MessengerRunOrigin";
+import { SpecialMessageCard, type SpecialMessageCardVariant } from "@/components/SpecialMessageCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -261,6 +262,7 @@ function ObjectMessageCard({
   status,
   children,
   footer,
+  variant,
   testId,
 }: {
   eyebrow: string;
@@ -269,8 +271,26 @@ function ObjectMessageCard({
   status?: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
+  variant?: SpecialMessageCardVariant;
   testId?: string;
 }) {
+  if (variant) {
+    return (
+      <SpecialMessageCard
+        variant={variant}
+        title={title}
+        headerMeta={<><span>{eyebrow}</span>{status}</>}
+        description={typeof description === "string"
+          ? <p className="text-muted-foreground">{description}</p>
+          : description}
+        actions={footer}
+        testId={testId}
+      >
+        {children}
+      </SpecialMessageCard>
+    );
+  }
+
   return (
     <div
       data-testid={testId}
@@ -786,16 +806,35 @@ function MessengerAssistanceCard({
   orgId: string;
 }) {
   const request = item.assistanceRequest;
+  const requesterAgent = item.requesterAgent;
+  const sourceAction = item.actions.find((action) => action.method === "GET" && action.href);
+  const sourceLabel = sourceAction?.label.replace(/^Open /, "");
 
   return (
     <ThreadMessage
-      icon={<MessageSquare className="h-5 w-5" />}
-      label={item.requesterAgent?.name ?? "Requests"}
+      icon={requesterAgent
+        ? (
+            <AgentIcon
+              icon={requesterAgent.icon}
+              role={requesterAgent.role}
+              fallbackSeed={requesterAgent.name}
+              className="size-full"
+            />
+          )
+        : <MessageSquare className="h-5 w-5" />}
+      label={requesterAgent?.name ?? "Requests"}
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-assistance-message-${item.id}`}
     >
       <div data-testid={`messenger-assistance-card-${item.id}`}>
-        <AssistanceRequestPanel request={request} orgId={orgId} showRequestsLink={false} />
+        <AssistanceRequestPanel
+          request={request}
+          orgId={orgId}
+          showRequestsLink={false}
+          source={sourceAction?.href
+            ? { label: sourceLabel ? sourceLabel.charAt(0).toUpperCase() + sourceLabel.slice(1) : "Issue", href: sourceAction.href }
+            : null}
+        />
       </div>
     </ThreadMessage>
   );
@@ -994,6 +1033,7 @@ function MessengerSystemCard({
         title={item.title}
         description={item.body ?? item.preview ?? "No details available."}
         status={typeof metadata.status === "string" ? <StatusBadge status={metadata.status} /> : undefined}
+        variant={item.kind === "failed-runs" ? "error" : undefined}
         testId={`messenger-system-card-${item.kind}-${item.id}`}
         footer={
           <div className="flex flex-wrap items-center gap-2">
