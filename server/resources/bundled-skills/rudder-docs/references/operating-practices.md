@@ -83,12 +83,16 @@ because work is executable, durable, long-running, or reviewable.
 ## Review And Close-Out
 
 Use the close-out signal matching the outcome: a progress comment when work
-remains, done with completion evidence, blocked with a blocker comment, or an
-explicit handoff comment with an ownership change.
+remains, done with completion evidence, a blocker claim after bounded recovery,
+or an explicit handoff comment with an ownership change.
 
-If blocked, set the issue to `blocked`, identify the blocker, name the next
-actor or action, and leave the blocker comment before exit. Do not present
-partial work as complete.
+Complete the real task. If an action fails, investigate and try a bounded,
+materially different recovery path before requesting human help. A blocker
+claim must identify the blocker and exact human input or action required.
+Rudder records the Assistance Request and audits the same blocker across
+separate execution Runs; the first claim does not directly establish a blocked
+Issue. Do not repeat a failed action inside one Run merely to increase the
+audit count, and do not present partial work as complete.
 
 A reviewer does not take over implementation unless explicitly asked. Ordinary
 explicit reviewer work may happen in any issue status while preserving

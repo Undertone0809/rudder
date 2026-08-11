@@ -80,6 +80,7 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
   fixedComposerTimelineScroll?: boolean;
+  composerReplacement?: ReactNode;
   timelineScrollElementRef?: RefObject<HTMLElement | null>;
 }
 
@@ -1028,6 +1029,7 @@ export function CommentThread({
   escapeBackWhenEmpty = false,
   fixedComposer = false,
   fixedComposerTimelineScroll = true,
+  composerReplacement,
   timelineScrollElementRef,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
@@ -1573,6 +1575,7 @@ export function CommentThread({
       </div>
     </div>
   );
+  const activeComposerNode = composerReplacement ?? composerNode;
 
   if (fixedComposer) {
     if (!fixedComposerTimelineScroll) {
@@ -1593,7 +1596,7 @@ export function CommentThread({
             className="comment-thread-fixed-composer sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 shrink-0 px-4 pb-4 pt-1 md:bottom-0"
             data-testid="comment-thread-fixed-composer"
           >
-            {composerNode}
+            {activeComposerNode}
           </div>
         </div>
       );
@@ -1620,7 +1623,7 @@ export function CommentThread({
           className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 px-4 pb-4 pt-3"
           data-testid="comment-thread-fixed-composer"
         >
-          {composerNode}
+          {activeComposerNode}
         </div>
       </div>
     );
@@ -1636,7 +1639,7 @@ export function CommentThread({
 
       {liveRunSlot}
 
-      {composerNode}
+      {activeComposerNode}
     </div>
   );
 }

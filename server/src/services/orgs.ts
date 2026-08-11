@@ -28,6 +28,7 @@ import {
   invites,
   issueApprovals,
   issueAttachments,
+  issueBlockAuditAttempts,
   issueComments,
   issueDocuments,
   issueReadStates,
@@ -45,6 +46,7 @@ import {
   projectGoals,
   projects,
   projectWorkspaces,
+  requests,
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
@@ -471,6 +473,8 @@ export function organizationService(db: Db) {
     remove: (id: string) =>
       db.transaction(async (tx) => {
         // Delete from child tables in dependency order
+        await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
+        await tx.delete(requests).where(eq(requests.orgId, id));
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.orgId, id));
         await tx.delete(activityLog).where(eq(activityLog.orgId, id));
         await tx.delete(workspaceOperations).where(eq(workspaceOperations.orgId, id));

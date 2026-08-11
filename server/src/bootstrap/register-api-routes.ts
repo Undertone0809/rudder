@@ -32,6 +32,7 @@ import { organizationRoutes } from "../routes/orgs.js";
 import { productAnalyticsRoutes } from "../routes/product-analytics.js";
 import { projectRoutes } from "../routes/projects.js";
 import { rudderPluginRoutes } from "../routes/rudder-plugins.js";
+import { requestRoutes } from "../routes/requests.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
@@ -112,6 +113,7 @@ export function registerApiRoutes(
   }));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));
+  api.use(requestRoutes(db));
   api.use(secretRoutes(db));
   api.use(costRoutes(db));
   api.use(activityRoutes(db));

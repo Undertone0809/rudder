@@ -11,6 +11,7 @@ export const API = {
   calendar: `${API_PREFIX}/calendar`,
   goals: `${API_PREFIX}/goals`,
   approvals: `${API_PREFIX}/approvals`,
+  requests: `${API_PREFIX}/requests`,
   secrets: `${API_PREFIX}/secrets`,
   costs: `${API_PREFIX}/costs`,
   activity: `${API_PREFIX}/activity`,

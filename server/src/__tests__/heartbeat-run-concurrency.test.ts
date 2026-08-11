@@ -1801,6 +1801,85 @@ describe("heartbeat run concurrency", () => {
     expect(linkedRuns[0]?.id).toBe(firstRun?.id);
   });
 
+  it("recovers a persisted runless Assistance wake intent", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const wakeupRequestId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "queued",
+      reason: "assistance_request_resolved",
+      issueId,
+    });
+    await db.update(agentWakeupRequests).set({
+      payload: {
+        issueId,
+        expectedAssigneeAgentId: agentId,
+        expectedIssueStatus: "in_progress",
+        _paperclipWakeContext: {
+          issueId,
+          wakeReason: "assistance_request_resolved",
+          wakeSource: "assignment",
+        },
+      },
+    }).where(eq(agentWakeupRequests.id, wakeupRequestId));
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    const [wakeup] = await listWakeupRequestsForAgent(agentId);
+    expect(wakeup).toMatchObject({
+      id: wakeupRequestId,
+      status: "claimed",
+      reason: "assistance_request_resolved",
+    });
+    expect(wakeup?.runId).toBeTruthy();
+  });
+
+  it.each([
+    { drift: "assignee", expectedReason: "issue_assignee_changed" },
+    { drift: "status", expectedReason: "issue_status_changed" },
+  ])("skips a recovered Assistance wake when the Issue $drift changed", async ({ drift, expectedReason }) => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const wakeupRequestId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "queued",
+      reason: "assistance_request_resolved",
+      issueId,
+    });
+    await db.update(agentWakeupRequests).set({
+      payload: {
+        issueId,
+        expectedAssigneeAgentId: agentId,
+        expectedIssueStatus: "in_progress",
+        _paperclipWakeContext: {
+          issueId,
+          wakeReason: "assistance_request_resolved",
+          wakeSource: "assignment",
+        },
+      },
+    }).where(eq(agentWakeupRequests.id, wakeupRequestId));
+    await db.update(issues).set(
+      drift === "assignee" ? { assigneeAgentId: null } : { status: "todo" },
+    ).where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    const [wakeup] = await listWakeupRequestsForAgent(agentId);
+    expect(wakeup).toMatchObject({
+      id: wakeupRequestId,
+      status: "skipped",
+      reason: expectedReason,
+      runId: null,
+    });
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+  });
+
   it("skips timer heartbeats before launching the runtime when no actionable work exists", async () => {
     await disableExistingTimerAgents();
     const createdAt = new Date("2026-04-27T04:00:00.000Z");

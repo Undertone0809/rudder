@@ -42,6 +42,7 @@ import { SidebarNavItem } from "@/components/SidebarNavItem";
 import { SidebarSection } from "@/components/SidebarSection";
 import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
 import { SkillReferenceToken } from "@/components/SkillReferenceToken";
+import { SpecialMessageCard } from "@/components/SpecialMessageCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusIcon } from "@/components/StatusIcon";
 import { TextDots } from "@/components/TextDots";
@@ -249,6 +250,7 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "ActivityRow", category: "product", sourcePath: "ui/src/components/ActivityRow.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "IssueRow", category: "product", sourcePath: "ui/src/components/IssueRow.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ApprovalCard", category: "product", sourcePath: "ui/src/components/ApprovalCard.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "SpecialMessageCard", category: "product", sourcePath: "ui/src/components/SpecialMessageCard.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "AgentActionButtons", category: "product", sourcePath: "ui/src/components/AgentActionButtons.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "AgentIconPicker", category: "product", sourcePath: "ui/src/components/AgentIconPicker.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "AgentProperties", category: "product", sourcePath: "ui/src/components/AgentProperties.tsx", status: "fixture-backed", exampleKind: "fixture" },
@@ -989,13 +991,15 @@ function LabExample({
   title,
   description,
   children,
+  className,
 }: {
   title: string;
   description?: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="rounded-md border border-border bg-background p-3">
+    <div className={cn("rounded-md border border-border bg-background p-3", className)}>
       <div className="mb-3">
         <h4 className="text-sm font-medium">{title}</h4>
         {description ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p> : null}
@@ -1247,6 +1251,45 @@ function CommonComponentsSection() {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
+        <LabExample title="Special message cards" className="xl:col-span-2">
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-muted-foreground">
+              Special workflow messages use one anatomy: semantic title header, readable description body, and a dedicated action footer. Blue means attention, green means completed, and red means failed.
+            </p>
+            <div className="grid gap-3 xl:grid-cols-3">
+              <SpecialMessageCard
+                variant="info"
+                title="Input needed to continue"
+                headerMeta={<span>Waiting on you</span>}
+                description="The Agent needs the repository access choice before it can continue this Issue."
+                actions={<Button size="sm">Answer request</Button>}
+              >
+                <p className="text-xs text-muted-foreground">Source: RUD-214</p>
+              </SpecialMessageCard>
+              <SpecialMessageCard
+                variant="success"
+                title="Request completed"
+                headerMeta={<span>Answered</span>}
+                description="Access was confirmed and the Agent resumed the same task with the persisted response."
+                actions={<Button size="sm" variant="outline">Open issue</Button>}
+              />
+              <SpecialMessageCard
+                variant="error"
+                title="Agent run failed"
+                headerMeta={<span>Failed · Long content</span>}
+                description={(
+                  <div className="space-y-2">
+                    <p>The run ended before producing a durable task result after several tool attempts.</p>
+                    <p>The full failure description can wrap across multiple lines without moving status context into the body or allowing text to collide with the action footer.</p>
+                    <p className="text-muted-foreground">The source and recovery action remain available here.</p>
+                  </div>
+                )}
+                actions={<Button size="sm" variant="outline">Open run</Button>}
+              />
+            </div>
+          </div>
+        </LabExample>
+
         <LabExample title="Status, priority, and rows">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">

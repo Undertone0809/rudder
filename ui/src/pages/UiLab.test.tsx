@@ -28,6 +28,7 @@ describe("UiLab coverage registry", () => {
       "ActivityRow",
       "IssueRow",
       "ApprovalCard",
+      "SpecialMessageCard",
       "AgentActionButtons",
       "AgentIconPicker",
       "AgentProperties",

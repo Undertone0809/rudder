@@ -102,6 +102,7 @@ export {
 } from "./product-analytics.js";
 export { productIntelligenceService } from "./product-intelligence.js";
 export { projectService } from "./projects.js";
+export { blockerFingerprint, requestService } from "./requests.js";
 export { resourceCatalogService } from "./resource-catalog.js";
 export { rudderPluginService } from "./rudder-plugins.js";
 export { secretService } from "./secrets.js";

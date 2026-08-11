@@ -228,7 +228,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "- progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`",
     "- done: `rudder issue done <issue> --comment-file <path> [--image <path>]`",
-    "- blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`",
+    "- assistance/block audit: `rudder issue block <issue> --comment-file <path> [--image <path>]`",
     "",
     "Issue comment and close-out commands accept comment bodies only from files or stdin. For multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.",
     "",

@@ -5,7 +5,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -216,6 +216,27 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     if (agent.status === "terminated" || agent.status === "pending_approval") {
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
+    }
+
+    const expectedAssigneeAgentId = readNonEmptyString(payload?.expectedAssigneeAgentId);
+    const expectedIssueStatus = readNonEmptyString(payload?.expectedIssueStatus);
+    if (issueId && (expectedAssigneeAgentId || expectedIssueStatus)) {
+      const currentIssue = await db
+        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+        .then((rows) => rows[0] ?? null);
+      const skipReason = !currentIssue
+        ? "issue_execution_issue_not_found"
+        : expectedAssigneeAgentId && currentIssue.assigneeAgentId !== expectedAssigneeAgentId
+          ? "issue_assignee_changed"
+          : expectedIssueStatus && currentIssue.status !== expectedIssueStatus
+            ? "issue_status_changed"
+            : null;
+      if (skipReason) {
+        await writeSkippedRequest(skipReason);
+        return null;
+      }
     }
 
     let projectId = readNonEmptyString(enrichedContextSnapshot.projectId);
@@ -914,6 +935,28 @@ export function createHeartbeatWakeupHandlers(context: any) {
       .limit(25);
 
     for (const pendingWakeup of pendingWakeups) {
+      const linkedRun = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.wakeupRequestId, pendingWakeup.id),
+          eq(heartbeatRuns.orgId, agent.orgId),
+          eq(heartbeatRuns.agentId, agent.id),
+          inArray(heartbeatRuns.status, ["queued", "running"]),
+        ))
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (linkedRun) {
+        await updateWakeupRequestRecord(db, pendingWakeup.id, {
+          status: "queued",
+          runId: linkedRun.id,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+        continue;
+      }
       const pendingPayload = readDeferredWakePayload(pendingWakeup.payload);
       const pendingContext = readDeferredWakeContext(pendingWakeup.payload);
       const pendingIssueId =
@@ -1132,5 +1175,22 @@ export function createHeartbeatWakeupHandlers(context: any) {
     return null;
   }
 
-  return { enqueueWakeup };
+  async function recoverPendingWakeups() {
+    const pendingAgents = await db
+      .select({ agentId: agentWakeupRequests.agentId })
+      .from(agentWakeupRequests)
+      .leftJoin(heartbeatRuns, eq(heartbeatRuns.wakeupRequestId, agentWakeupRequests.id))
+      .where(and(
+        inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+        sql`${agentWakeupRequests.runId} is null`,
+        isNull(heartbeatRuns.id),
+        lte(agentWakeupRequests.requestedAt, new Date()),
+      ));
+    for (const agentId of [...new Set(pendingAgents.map((row) => row.agentId))]) {
+      const agent = await getAgent(agentId);
+      if (agent) await recoverPendingWakeupForTimer(agent);
+    }
+  }
+
+  return { enqueueWakeup, recoverPendingWakeups };
 }

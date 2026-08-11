@@ -788,6 +788,22 @@ describe("CommentThread", () => {
     expect(document.activeElement).toBe(composerSurface);
   });
 
+  it("replaces the fixed comment composer with a workflow decision surface", () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          onAdd={vi.fn().mockResolvedValue(undefined)}
+          fixedComposer
+          composerReplacement={<div data-testid="request-decision">Request decision</div>}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector('[data-testid="request-decision"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Comment composer"]')).toBeNull();
+  });
+
   it("posts a directed Agent comment without confirmation", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const container = renderInteractive(

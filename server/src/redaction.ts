@@ -3,6 +3,19 @@ const SECRET_PAYLOAD_KEY_RE =
 const JWT_VALUE_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?$/;
 export const REDACTED_EVENT_VALUE = "***REDACTED***";
 
+export function redactSensitiveText(value: string): string {
+  return value
+    .replace(
+      /-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/giu,
+      "[REDACTED_PRIVATE_KEY]",
+    )
+    .replace(/\b\d{6}\b/gu, "[REDACTED_OTP]")
+    .replace(/(bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
+    .replace(/((?:^|[?&\s])(?:api[-_]?key|access[-_]?token|token|code|secret|password|credential)\s*[=:]\s*)(?!\[REDACTED_)[^&\s,;]+/giu, "$1[REDACTED]")
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,})\b/gu, "[REDACTED_SECRET]")
+    .replace(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, "[REDACTED_JWT]");
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
@@ -68,4 +81,11 @@ export function redactEventPayload(payload: Record<string, unknown> | null): Rec
   if (!payload) return null;
   if (!isPlainObject(payload)) return payload;
   return sanitizeRecord(payload);
+}
+
+export function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
+  return {
+    ...approval,
+    payload: redactEventPayload(approval.payload) ?? {},
+  };
 }

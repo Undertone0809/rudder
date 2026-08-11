@@ -1,9 +1,9 @@
 import type {
-  MessengerApprovalThreadItem,
   MessengerCustomGroup,
   MessengerCustomGroupEntry,
   MessengerCustomGroupsResponse,
   MessengerIssueThreadItem,
+  MessengerRequestThreadItem,
   MessengerSavedView,
   MessengerSavedViewKeepResult,
   MessengerSavedViewPage,
@@ -119,7 +119,7 @@ export const messengerApi = {
     );
   },
   getApprovalsThread: (orgId: string) =>
-    api.get<MessengerThreadDetailResponse<MessengerApprovalThreadItem>>(`/orgs/${orgId}/messenger/approvals`),
+    api.get<MessengerThreadDetailResponse<MessengerRequestThreadItem>>(`/orgs/${orgId}/messenger/approvals`),
   getSystemThread: (orgId: string, threadKind: MessengerSystemThreadKind) =>
     api.get<MessengerThreadDetailResponse<MessengerSystemThreadItem>>(`/orgs/${orgId}/messenger/system/${threadKind}`),
   listCustomGroups: (orgId: string) =>

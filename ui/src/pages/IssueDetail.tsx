@@ -20,7 +20,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { PluginLauncherOutlet } from "@/plugins/launchers";
+import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
+import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -54,7 +56,9 @@ import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
+import { requestsApi } from "../api/requests";
 import { AgentIdentity } from "../components/AgentAvatar";
+import { AssistanceRequestPanel } from "../components/AssistanceRequestPanel";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { isAgentWakeEligible } from "../components/CommentThread.submit";
 import { Identity } from "../components/Identity";
@@ -106,6 +110,22 @@ type IssueCostSummaryData = {
 };
 
 type IssueChatTarget = Pick<Issue, "id" | "identifier" | "title" | "projectId" | "assigneeAgentId">;
+
+export function selectIssueAssistanceRequest(
+  assistanceRequests: AssistanceRequest[] | undefined,
+  issueId: string | undefined,
+): AssistanceRequest | null {
+  if (!issueId) return null;
+  return [...(assistanceRequests ?? [])]
+    .filter((request) => request.issueId === issueId)
+    .sort((left, right) => {
+      if (left.status === "open" && right.status !== "open") return -1;
+      if (right.status === "open" && left.status !== "open") return 1;
+      const updatedDelta = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      if (updatedDelta !== 0) return updatedDelta;
+      return right.id.localeCompare(left.id);
+    })[0] ?? null;
+}
 
 export function buildIssueChatHref(issue: IssueChatTarget) {
   const params = new URLSearchParams({
@@ -1015,6 +1035,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issuePinUnavailable = issuePinPending || issueFollowsLoading || !issue;
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
+  const { data: assistanceRequests } = useQuery({
+    queryKey: queryKeys.requests.list(resolvedCompanyId ?? "__none__", undefined, "assistance"),
+    queryFn: () => requestsApi.list(resolvedCompanyId!, { kind: "assistance" }),
+    enabled: Boolean(resolvedCompanyId && issue?.id),
+  });
+  const latestAssistanceRequest = selectIssueAssistanceRequest(
+    assistanceRequests?.filter((request): request is AssistanceRequest => request.kind === "assistance"),
+    issue?.id,
+  );
+
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
     recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
@@ -1377,6 +1407,30 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issueActivityItems = useMemo<CommentThreadActivityItem[]>(() => {
     const items: CommentThreadActivityItem[] = [];
 
+    if (latestAssistanceRequest && latestAssistanceRequest.status !== "open" && resolvedCompanyId && issue) {
+      items.push({
+        id: `assistance-request:${latestAssistanceRequest.id}`,
+        createdAt: latestAssistanceRequest.updatedAt,
+        node: (
+          <AssistanceRequestPanel
+            key={latestAssistanceRequest.id}
+            request={latestAssistanceRequest}
+            orgId={resolvedCompanyId}
+            issueStatus={issue.status}
+            source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+          />
+        ),
+      });
+    }
+
+    if (linearIssueLink?.linked) {
+      items.push({
+        id: "linear-linked-issue",
+        createdAt: linearIssueLink.latestIssue?.updatedAt ?? linearIssueLink.link.updatedAt ?? linearIssueLink.link.importedAt,
+        node: <LinearIssueActivityCard data={linearIssueLink} />,
+      });
+    }
+
     for (const evt of activity ?? []) {
       if (!shouldShowIssueActivityEvent(evt)) continue;
       items.push({
@@ -1394,7 +1448,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     }
 
     return items;
-  }, [activity, agentMap, currentBoardUserId, operatorDisplayName]);
+  }, [
+    activity,
+    agentMap,
+    currentBoardUserId,
+    issue,
+    latestAssistanceRequest,
+    linearIssueLink,
+    operatorDisplayName,
+    resolvedCompanyId,
+  ]);
 
   const invalidateIssue = () => {
     const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
@@ -1413,6 +1476,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(issueOrgId) });
+      queryClient.invalidateQueries({ queryKey: ["requests", issueOrgId] });
+      if (latestAssistanceRequest) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(latestAssistanceRequest.id) });
+      }
     }
   };
 
@@ -2424,6 +2491,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           escapeBackWhenEmpty
           fixedComposer
           fixedComposerTimelineScroll={false}
+          composerReplacement={latestAssistanceRequest?.status === "open" ? (
+            <div key={latestAssistanceRequest.id} data-testid="issue-request-attention">
+              <AssistanceRequestPanel
+                request={latestAssistanceRequest}
+                orgId={resolvedCompanyId!}
+                issueStatus={issue.status}
+                source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+              />
+            </div>
+          ) : undefined}
           timelineScrollElementRef={issueFindRootRef}
           onAdd={async (body, reopen, intent) => {
             await addComment.mutateAsync({

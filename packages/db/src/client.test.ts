@@ -942,6 +942,7 @@ describe("applyPendingMigrations", () => {
           "0149_app_builder_verified_source_ready.sql",
           "0150_rudder_plugins_v1.sql",
           "0151_agent_issue_creation_requests.sql",
+          "0152_unified_requests_block_audit.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1114,6 +1115,7 @@ describe("applyPendingMigrations", () => {
           "0149_app_builder_verified_source_ready.sql",
           "0150_rudder_plugins_v1.sql",
           "0151_agent_issue_creation_requests.sql",
+          "0152_unified_requests_block_audit.sql",
         ],
         reason: "pending-migrations",
       });

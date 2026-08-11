@@ -10,6 +10,7 @@ import type { BudgetIncident } from "./budget.js";
 import type { ChatConversation, ChatMessage } from "./chat.js";
 import type { HeartbeatRun } from "./heartbeat.js";
 import type { Issue } from "./issue.js";
+import type { AssistanceRequest } from "./request.js";
 
 export interface MessengerThreadUserState {
   id: string;
@@ -233,9 +234,20 @@ export interface MessengerIssueThreadItem extends MessengerThreadItem {
 }
 
 export interface MessengerApprovalThreadItem extends MessengerThreadItem {
+  requestKind: "approval";
   approval: Approval;
+  assistanceRequest?: never;
   requesterAgent: Pick<Agent, "id" | "name" | "icon" | "role"> | null;
 }
+
+export interface MessengerAssistanceThreadItem extends MessengerThreadItem {
+  requestKind: "assistance";
+  approval?: never;
+  assistanceRequest: AssistanceRequest;
+  requesterAgent: Pick<Agent, "id" | "name" | "icon" | "role"> | null;
+}
+
+export type MessengerRequestThreadItem = MessengerApprovalThreadItem | MessengerAssistanceThreadItem;
 
 export interface MessengerBudgetThreadItem extends MessengerThreadItem {
   incident: BudgetIncident;
