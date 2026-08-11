@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,7 +173,7 @@ describe("App Builder controller facade", () => {
     expect(data.snapshot).toHaveBeenCalledWith(
       "binding",
       "cold-email-crm",
-      path.join(appRoot, "data", "development"),
+      await realpath(path.join(appRoot, "data", "development")),
     );
     expect(preview.stop.mock.invocationCallOrder[0]).toBeLessThan(
       data.snapshot.mock.invocationCallOrder[0],

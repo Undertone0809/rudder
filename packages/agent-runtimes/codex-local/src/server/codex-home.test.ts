@@ -86,10 +86,10 @@ describe("managed Codex home config sync", () => {
     await expect(readFile(path.join(materializedSkill, "SKILL.md"), "utf8")).resolves.toBe("# Browser\n");
     await expect(fs.access(path.join(managedSkillsHome, "unselected-skill"))).rejects.toMatchObject({ code: "ENOENT" });
     expect((await fs.lstat(materializedSkill)).isSymbolicLink()).toBe(true);
-    expect(path.resolve(await fs.realpath(materializedSkill))).toBe(path.resolve(skillSource));
+    expect(await fs.realpath(materializedSkill)).toBe(await fs.realpath(skillSource));
 
     await syncSkills();
-    expect(path.resolve(await fs.realpath(materializedSkill))).toBe(path.resolve(skillSource));
+    expect(await fs.realpath(materializedSkill)).toBe(await fs.realpath(skillSource));
   });
 
   it.each([

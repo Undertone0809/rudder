@@ -65,7 +65,7 @@ if (capturePath) {
   }), "utf8");
 }
 if (process.env.RUDDER_TEST_PI_REALISTIC_OUTPUT === "1") {
-  const bigSignature = "sig_".repeat(3000);
+  const bigSignature = "sig_".repeat(1200);
   emitJson({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() });
   emitJson({ type: "agent_start", signature: bigSignature });
   emitJson({ type: "turn_start" });
