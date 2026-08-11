@@ -1579,8 +1579,7 @@
      Surfaces with decorative pseudo-elements or full-width section bars should define a
      domain-specific pending state instead of borrowing the generic conic boundary. */
   .active-surface-ring,
-  .command-palette-content--searching,
-  .chat-composer--streaming {
+  .command-palette-content--searching {
     position: relative;
     isolation: isolate;
     --active-surface-accent: var(--accent-base);
@@ -1630,25 +1629,14 @@
   }
 
   .chat-composer.chat-composer--streaming {
-    --active-surface-ring-width: 2px;
-    --active-surface-ring-inner-radius: calc(var(--radius-lg) - var(--active-surface-ring-width));
-    --active-surface-ring-cover:
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--surface-elevated) 99%, transparent) 0%,
-        color-mix(in oklab, var(--surface-elevated) 94%, var(--surface-page)) 100%
-      );
     border-color: color-mix(in oklab, var(--ring) 48%, var(--border-base));
     box-shadow:
       var(--shadow-md),
-      0 0 0 1px color-mix(in oklab, var(--ring) 18%, transparent),
-      0 18px 54px -38px color-mix(in oklab, var(--accent-base) 46%, transparent),
-      inset 0 1px 0 color-mix(in oklab, white 46%, transparent);
+      0 0 0 1px color-mix(in oklab, var(--ring) 18%, transparent);
   }
 
   .active-surface-ring::before,
-  .command-palette-content--searching::before,
-  .chat-composer--streaming::before {
+  .command-palette-content--searching::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -1700,18 +1688,8 @@
     animation: none;
   }
 
-  .chat-composer--streaming::before {
-    inset: -2px;
-    border-radius: calc(var(--radius-lg) + 2px);
-    background: color-mix(in oklab, var(--accent-base) 26%, transparent);
-    opacity: 0.55;
-    animation: none;
-    filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent-base) 16%, transparent));
-  }
-
   .active-surface-ring::after,
-  .command-palette-content--searching::after,
-  .chat-composer--streaming::after {
+  .command-palette-content--searching::after {
     content: "";
     position: absolute;
     inset: var(--active-surface-ring-width);
@@ -1751,8 +1729,7 @@
   }
 
   .active-surface-ring > *,
-  .command-palette-content--searching > *,
-  .chat-composer--streaming > * {
+  .command-palette-content--searching > * {
     position: relative;
     z-index: 2;
   }
@@ -1933,8 +1910,7 @@
     .automation-trigger-menu-content[data-state="closed"],
     .chat-review-block--action-pending,
     .active-surface-ring::before,
-    .command-palette-content--searching::before,
-    .chat-composer--streaming::before {
+    .command-palette-content--searching::before {
       animation: none;
       transition: none;
     }
