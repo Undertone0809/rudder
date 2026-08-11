@@ -122,13 +122,13 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       route: "/releases",
       title: "Changelog",
       latestDate: "August 11, 2026",
-      fixedTag: "Fixed",
+      newTag: "New",
     },
     {
       route: "/zh/releases",
       title: "更新日志",
       latestDate: "2026年8月11日",
-      fixedTag: "问题修复",
+      newTag: "新功能",
     },
   ];
 
@@ -141,7 +141,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
 
-    await page.getByRole("button", { name: item.fixedTag, exact: true }).click();
+    await page.getByRole("button", { name: item.newTag, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
     await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
     await expect(page.locator("h2#v0-7-2")).toBeVisible();
