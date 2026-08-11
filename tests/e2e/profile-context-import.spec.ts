@@ -1,6 +1,44 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("Profile context import", () => {
+  test("shows one profile identity with the account avatar beside the nickname", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Profile Identity ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+    const avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+    await page.addInitScript(({ image }) => {
+      const account = { id: "account_profile", email: "zee@rudderhq.dev", name: "OAuth Provider Name", image };
+      const state = { status: "signed-in", account, deviceId: "profile-device" };
+      Object.defineProperty(window, "desktopIdentity", {
+        configurable: true,
+        value: {
+          getState: async () => state,
+          signOut: async () => ({ status: "signed-out" }),
+          listDeviceSessions: async () => [],
+          getProfile: async () => { throw new Error("Unable to load Rudder Account profile (404)"); },
+          updateProfile: async ({ image: nextImage }: { image: string | null }) => ({ ...account, image: nextImage }),
+          onStateChanged: () => () => undefined,
+        },
+      });
+    }, { image: avatar });
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+    const modal = page.getByTestId("settings-modal-shell");
+    await modal.locator('a[href$="/instance/settings/profile"]').click();
+
+    const identityRow = modal.getByTestId("profile-identity-row");
+    await expect(identityRow.locator("#profile-nickname")).toBeVisible();
+    await expect(identityRow.locator(`img[src="${avatar}"]`)).toBeVisible();
+    await expect(identityRow.locator('button[aria-label="Change avatar"]')).toBeVisible();
+    await expect(modal.getByText("OAuth Provider Name", { exact: true })).toHaveCount(0);
+    await expect(modal.getByText(/Unable to load Rudder Account profile \(404\)/)).toHaveCount(0);
+    await expect(modal.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
+  });
+
   test("saves pasted AI provider context through More about you", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

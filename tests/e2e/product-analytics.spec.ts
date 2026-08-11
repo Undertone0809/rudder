@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("product analytics privacy controls", () => {
-  test("renders Privacy & Telemetry and persists anonymous consent from the settings shell", async ({ page }) => {
+  test("keeps Privacy & Telemetry controls available without a sidebar destination", async ({ page }) => {
     await page.request.patch("/api/instance/settings/product-analytics", { data: { mode: "off" } });
     const organizationResponse = await page.request.post("/api/orgs", {
       data: { name: `Analytics Settings UI ${Date.now()}` },
@@ -15,7 +15,7 @@ test.describe("product analytics privacy controls", () => {
     await expect(settings.getByRole("heading", { name: "Privacy & Telemetry", level: 1 })).toBeVisible();
     await expect(settings).toContainText("Masked installation ID");
     await expect(settings).toContainText("Not collected");
-
+    await expect(page.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
     const anonymousToggle = settings.getByRole("switch", { name: "Enable anonymous telemetry" });
     await expect(anonymousToggle).toBeVisible();
     await anonymousToggle.click();

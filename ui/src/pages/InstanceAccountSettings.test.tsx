@@ -244,13 +244,13 @@ describe("InstanceAccountSettings", () => {
     const container = renderPage();
     await settle();
 
-    expect(container.textContent).toContain("Zee Zeeland");
+    expect(container.textContent).not.toContain("Zee Zeeland");
+    expect(container.textContent).toContain("Signed-in account");
     expect(container.textContent).toContain("Device session API is not supported");
     expect(container.textContent).not.toContain("No device sessions reported");
   });
 
-  it("renders the Identity name and avatar and persists a selected image", async () => {
-    const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  it("keeps the account section focused on connection state without a second profile name", async () => {
     const signedIn: DesktopIdentityState = {
       status: "signed-in",
       account: {
@@ -261,39 +261,14 @@ describe("InstanceAccountSettings", () => {
       },
       deviceId: "device_current",
     };
-    const bridge = installBridge({
+    installBridge({
       getState: vi.fn(async () => signedIn),
-      getProfile: vi.fn(async () => ({
-        id: signedIn.account.id,
-        email: signedIn.account.email ?? "zee@rudderhq.dev",
-        name: signedIn.account.name,
-        image: null,
-      })),
-      updateProfile: vi.fn(async () => ({
-        id: signedIn.account.id,
-        email: signedIn.account.email ?? "zee@rudderhq.dev",
-        name: signedIn.account.name,
-        image,
-      })),
     });
     const container = renderPage();
     await settle();
 
-    expect(container.textContent).toContain("Zee Zeeland");
-    const input = container.querySelector<HTMLInputElement>("[data-testid='account-avatar-input']");
-    expect(input).not.toBeNull();
-    const file = new File([Uint8Array.from(atob(image.slice(image.indexOf(",") + 1)), (character) => character.charCodeAt(0))], "avatar.png", { type: "image/png" });
-    Object.defineProperty(input, "files", { configurable: true, value: [file] });
-    await act(async () => {
-      input?.dispatchEvent(new Event("change", { bubbles: true }));
-      await vi.waitFor(() => {
-        expect(bridge.updateProfile).toHaveBeenCalledWith({
-          image: expect.stringMatching(/^data:image\/png;base64,/),
-        });
-      });
-    });
-    await settle();
-
-    expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+    expect(container.textContent).toContain("zee@rudderhq.dev");
+    expect(container.textContent).not.toContain("Zee Zeeland");
+    expect(container.querySelector("[data-testid='account-avatar-input']")).toBeNull();
   });
 });

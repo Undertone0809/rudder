@@ -149,12 +149,6 @@ export function InstanceSidebar() {
               icon={ShieldCheck}
               end
             />
-            <SettingsNavLink
-              to="/instance/settings/privacy"
-              label={t("common.privacyTelemetry")}
-              icon={ShieldCheck}
-              end
-            />
             <SettingsNavLink to="/instance/settings/about" label={t("common.about")} icon={Info} end />
           </div>
         ) : null}
