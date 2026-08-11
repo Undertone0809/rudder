@@ -41,10 +41,19 @@ test.describe("Agent budget configuration", () => {
     await expect(mainContent.getByRole("tab", { name: "Budget", exact: true })).toHaveCount(0);
     const budgetSection = mainContent.getByRole("region", { name: "Budget", exact: true });
     const budgetHeading = budgetSection.getByText("Monthly UTC budget", { exact: true });
+    const revisionsButton = mainContent.getByRole("button", { name: /Configuration Revisions/ });
     await budgetHeading.scrollIntoViewIfNeeded();
     await expect(budgetSection).toBeVisible();
     await expect(budgetHeading).toBeVisible();
     await expect(budgetSection.getByText("No cap configured", { exact: true })).toBeVisible();
+    await expect(mainContent.getByText("No active API keys.", { exact: true })).toHaveCount(0);
+    await expect(revisionsButton).toBeVisible();
+
+    const budgetBox = await budgetSection.boundingBox();
+    const revisionsBox = await revisionsButton.boundingBox();
+    expect(budgetBox).not.toBeNull();
+    expect(revisionsBox).not.toBeNull();
+    expect(revisionsBox?.y).toBeGreaterThan(budgetBox?.y ?? 0);
 
     await budgetSection.getByPlaceholder("0.00").fill("125.50");
     const saveResponse = page.waitForResponse((response) =>
