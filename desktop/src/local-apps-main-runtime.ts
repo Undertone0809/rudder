@@ -37,7 +37,10 @@ export function createDesktopLocalAppsRuntime(options: {
     registryPath: path.join(options.userDataPath, "local-apps", "registry.json"),
     installationId: options.installationId,
   });
-  const runtime = new LocalAppRuntimeManager({ registry });
+  const runtime = new LocalAppRuntimeManager({
+    registry,
+    ...(process.platform === "win32" ? { cleanupTimeoutMs: 30_000 } : {}),
+  });
   const controller = new LocalAppsController({
     registry,
     runtime,

@@ -58,45 +58,116 @@ describe("Local App process platform abstraction", () => {
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
-  it("uses taskkill tree semantics on Windows and proves the owner dead", async () => {
-    let alive = true;
-    const calls: boolean[] = [];
+  it("terminates exact Windows process instances and proves the owner dead", async () => {
+    const alive = new Set([42, 43]);
+    const processTable = [
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+    ];
+    const calls: Array<Array<{ pid: number; parentPid: number; createdAt: string }>> = [];
     await terminateLocalAppOwner(42, {
       platform: "win32",
-      isAlive: () => alive,
-      runTaskkill: async (_pid: number, force: boolean) => {
-        calls.push(force);
-        if (force) alive = false;
+      expectedOwnerCreatedAt: "root-v1",
+      snapshotWindowsProcesses: async () => processTable.filter(({ pid }) => alive.has(pid)),
+      terminateWindowsProcessInstances: async (processes) => {
+        calls.push(processes);
+        for (const { pid } of processes) alive.delete(pid);
       },
       delay: async () => undefined,
       termTimeoutMs: 1,
       pollMs: 1,
     });
-    expect(calls).toEqual([false, true]);
+    expect(calls).toEqual([processTable]);
   });
 
   it("does not mistake a missing Windows root PID for proof that its child tree is dead", async () => {
+    let snapshots = 0;
     await expect(terminateLocalAppOwner(42, {
       platform: "win32",
-      isAlive: () => false,
-      runTaskkill: async () => { throw new Error("root already exited"); },
+      expectedOwnerCreatedAt: "root-v1",
+      snapshotWindowsProcesses: async () => {
+        snapshots += 1;
+        return snapshots === 1
+          ? [
+              { pid: 42, parentPid: 1, createdAt: "root-v1" },
+              { pid: 43, parentPid: 42, createdAt: "child-v1" },
+            ]
+          : [{ pid: 43, parentPid: 42, createdAt: "child-v1" }];
+      },
+      terminateWindowsProcessInstances: async () => { throw new Error("root already exited"); },
       delay: async () => undefined,
       termTimeoutMs: 1,
       pollMs: 1,
     })).rejects.toThrow("could not be proven dead");
   });
 
+  it("terminates listener-verified Windows instances after an intermediate root exits", async () => {
+    const verifiedProcesses = [
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+    ];
+    const terminateWindowsProcessInstances = vi.fn();
+    await terminateLocalAppOwner(42, {
+      platform: "win32",
+      expectedOwnerCreatedAt: "root-v1",
+      expectedWindowsProcesses: verifiedProcesses,
+      snapshotWindowsProcesses: async () => [],
+      terminateWindowsProcessInstances,
+      delay: async () => undefined,
+      termTimeoutMs: 1,
+      pollMs: 1,
+    });
+    expect(terminateWindowsProcessInstances).toHaveBeenCalledWith(verifiedProcesses);
+  });
+
+  it("refuses to terminate a reused Windows root PID", async () => {
+    const terminateWindowsProcessInstances = vi.fn();
+    await expect(terminateLocalAppOwner(42, {
+      platform: "win32",
+      expectedOwnerCreatedAt: "root-v1",
+      snapshotWindowsProcesses: async () => [
+        { pid: 42, parentPid: 1, createdAt: "root-v2" },
+      ],
+      terminateWindowsProcessInstances,
+    })).rejects.toThrow("could not be proven dead");
+    expect(terminateWindowsProcessInstances).not.toHaveBeenCalled();
+  });
+
+  it("does not terminate a replacement that reuses a captured descendant PID", async () => {
+    let processTable = [
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+    ];
+    const terminateWindowsProcessInstances = vi.fn(async () => {
+      processTable = [{ pid: 43, parentPid: 1, createdAt: "child-v2" }];
+    });
+    await terminateLocalAppOwner(42, {
+      platform: "win32",
+      expectedOwnerCreatedAt: "root-v1",
+      snapshotWindowsProcesses: async () => processTable,
+      terminateWindowsProcessInstances,
+      delay: async () => undefined,
+      termTimeoutMs: 1,
+      pollMs: 1,
+    });
+    expect(terminateWindowsProcessInstances).toHaveBeenCalledOnce();
+    expect(terminateWindowsProcessInstances).toHaveBeenCalledWith([
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+    ]);
+  });
+
   it("parses Windows process descendants and requires an exact loopback listener", () => {
     const table = parseWindowsProcessTable(JSON.stringify([
       { ProcessId: 0, ParentProcessId: 0 },
-      { ProcessId: 42, ParentProcessId: 1 },
-      { ProcessId: 43, ParentProcessId: 42 },
-      { ProcessId: 99, ParentProcessId: 1 },
+      { ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" },
+      { ProcessId: 43, ParentProcessId: 42, CreationTime: "child-v1" },
+      { ProcessId: 99, ParentProcessId: 1, CreationTime: "other-v1" },
     ]));
     expect(table).toEqual([
-      { pid: 42, parentPid: 1 },
-      { pid: 43, parentPid: 42 },
-      { pid: 99, parentPid: 1 },
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+      { pid: 99, parentPid: 1, createdAt: "other-v1" },
     ]);
     expect([...descendantProcessIds(42, table!)]).toEqual([42, 43]);
     expect(parseWindowsLoopbackListenerPids(
@@ -108,7 +179,7 @@ describe("Local App process platform abstraction", () => {
       43_123,
     )).toBeNull();
     expect(parseWindowsProcessTable(JSON.stringify([
-      { ProcessId: 0, ParentProcessId: 1 },
+      { ProcessId: 0, ParentProcessId: 1, CreationTime: "invalid" },
     ]))).toBeNull();
   });
 
@@ -116,8 +187,8 @@ describe("Local App process platform abstraction", () => {
     const execute = vi.fn(async (executable: string) => ({
       stdout: executable.endsWith("powershell.exe")
         ? JSON.stringify([
-            { ProcessId: 42, ParentProcessId: 1 },
-            { ProcessId: 43, ParentProcessId: 42 },
+            { ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" },
+            { ProcessId: 43, ParentProcessId: 42, CreationTime: "child-v1" },
           ])
         : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    43",
     }));
@@ -136,7 +207,7 @@ describe("Local App process platform abstraction", () => {
       1,
       expect.stringMatching(/powershell\.exe$/),
       expect.arrayContaining([
-        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+        expect.stringContaining("Creating Process ID"),
       ]),
       expect.objectContaining({ maxBuffer: 2 * 1024 * 1024 }),
     );
@@ -152,6 +223,39 @@ describe("Local App process platform abstraction", () => {
     }
   });
 
+  it("passes only the root instance verified at startup to parent-side termination", async () => {
+    const execute = vi.fn(async (executable: string) => ({
+      stdout: executable.endsWith("powershell.exe")
+        ? JSON.stringify([
+            { ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" },
+            { ProcessId: 43, ParentProcessId: 42, CreationTime: "child-v1" },
+          ])
+        : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    43",
+    }));
+    const terminateWindowsProcessInstances = vi.fn();
+    const platform = createLocalAppProcessPlatform({
+      platform: "win32",
+      execFileAsync: async (executable, args, options) => {
+        return execute(executable, args, options);
+      },
+      snapshotWindowsProcesses: async () => [
+        { pid: 42, parentPid: 1, createdAt: "root-v2" },
+      ],
+      terminateWindowsProcessInstances,
+    });
+    await expect(platform.verifyListenerOwnership({
+      port: 43_123,
+      pid: 42,
+      pgid: 42,
+      timeoutMs: 30_000,
+    })).resolves.toBe(true);
+    await expect(platform.terminate(42)).resolves.toBeUndefined();
+    expect(terminateWindowsProcessInstances).toHaveBeenCalledWith([
+      { pid: 42, parentPid: 1, createdAt: "root-v1" },
+      { pid: 43, parentPid: 42, createdAt: "child-v1" },
+    ]);
+  });
+
   it.each([
     {
       name: "process inspection timeout",
@@ -163,7 +267,7 @@ describe("Local App process platform abstraction", () => {
     {
       name: "missing managed root",
       execute: async () => ({
-        stdout: JSON.stringify([{ ProcessId: 99, ParentProcessId: 1 }]),
+        stdout: JSON.stringify([{ ProcessId: 99, ParentProcessId: 1, CreationTime: "other-v1" }]),
       }),
       reason: "managed root was absent from process snapshot",
     },
@@ -171,7 +275,7 @@ describe("Local App process platform abstraction", () => {
       name: "missing exact listener",
       execute: async (executable: string) => ({
         stdout: executable.endsWith("powershell.exe")
-          ? JSON.stringify([{ ProcessId: 42, ParentProcessId: 1 }])
+          ? JSON.stringify([{ ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" }])
           : "",
       }),
       reason: "exact loopback listener was absent",
@@ -181,8 +285,8 @@ describe("Local App process platform abstraction", () => {
       execute: async (executable: string) => ({
         stdout: executable.endsWith("powershell.exe")
           ? JSON.stringify([
-              { ProcessId: 42, ParentProcessId: 1 },
-              { ProcessId: 99, ParentProcessId: 1 },
+              { ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" },
+              { ProcessId: 99, ParentProcessId: 1, CreationTime: "other-v1" },
             ])
           : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    99",
       }),
@@ -220,8 +324,8 @@ describe("Local App process platform abstraction", () => {
     const execute = vi.fn(async (executable: string) => ({
       stdout: executable.endsWith("powershell.exe")
         ? JSON.stringify([
-            { ProcessId: 42, ParentProcessId: 1 },
-            { ProcessId: 43, ParentProcessId: 42 },
+            { ProcessId: 42, ParentProcessId: 1, CreationTime: "root-v1" },
+            { ProcessId: 43, ParentProcessId: 42, CreationTime: "child-v1" },
           ])
         : "TCP    127.0.0.1:43123    0.0.0.0:0    LISTENING    43",
     }));

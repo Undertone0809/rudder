@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,12 +10,14 @@ import { chromium } from "@playwright/test";
 const desktopRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repositoryRoot = path.resolve(desktopRoot, "..");
 const packaged = process.argv.includes("--packaged");
+const legacyRevisionOne = process.argv.includes("--legacy-revision-1");
 const testRoot = await mkdtemp(path.join(tmpdir(), "rudder-app-builder-smoke-"));
 const projectRoot = path.join(
   testRoot,
   "organization-workspaces",
   "windows-long-path-contract",
   "nested-operator-project",
+  "production-shaped-workspace-depth",
   "project",
 );
 const registryPath = path.join(testRoot, "desktop", "local-apps.json");
@@ -45,6 +48,40 @@ const templateRoot = packaged
       "assets",
       "scaffold",
     );
+
+async function sourceManifest(root) {
+  const manifest = new Map();
+  async function visit(directory, prefix = "") {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const relativePath = path.posix.join(prefix, entry.name);
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        manifest.set(
+          relativePath,
+          createHash("sha256").update(await readFile(absolutePath)).digest("hex"),
+        );
+      }
+    }
+  }
+  await visit(root);
+  return manifest;
+}
+
+async function assertSourceManifest(root, manifest) {
+  for (const [relativePath, expectedHash] of manifest) {
+    const currentHash = createHash("sha256")
+      .update(await readFile(path.join(root, ...relativePath.split("/"))))
+      .digest("hex");
+    assert.equal(
+      currentHash,
+      expectedHash,
+      `Managed legacy preview modified App source: ${relativePath}`,
+    );
+  }
+}
 
 await Promise.all([
   access(runnerPath),
@@ -102,7 +139,11 @@ const registry = new LocalAppRegistry({
   registryPath,
   installationId: "app-builder-smoke-desktop",
 });
-const runtime = new LocalAppRuntimeManager({ registry });
+const runtime = new LocalAppRuntimeManager({
+  registry,
+  maxLogBytes: 2 * 1024 * 1024,
+  ...(process.platform === "win32" ? { cleanupTimeoutMs: 30_000 } : {}),
+});
 const localApps = new LocalAppsController({
   registry,
   runtime,
@@ -136,6 +177,26 @@ try {
     "Smoke CRM",
   );
   assert.equal(scaffold.manifest.app.slug, "smoke-crm");
+  const appRoot = path.join(projectRoot, "apps", "smoke-crm");
+  let legacySourceManifest;
+  if (legacyRevisionOne) {
+    await writeFile(path.join(appRoot, "next.config.ts"), [
+      'import type { NextConfig } from "next";',
+      "",
+      "const nextConfig: NextConfig = {",
+      "  devIndicators: false,",
+      '  output: "standalone",',
+      "  poweredByHeader: false,",
+      "  turbopack: {",
+      "    root: process.cwd(),",
+      "  },",
+      "};",
+      "",
+      "export default nextConfig;",
+      "",
+    ].join("\n"));
+    legacySourceManifest = await sourceManifest(appRoot);
+  }
   binding = await appBuilder.ensurePreview(
     "project-smoke",
     "apps/smoke-crm",
@@ -151,7 +212,6 @@ try {
   assert.match(started.target.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
 
   if (process.platform === "win32") {
-    const appRoot = path.join(projectRoot, "apps", "smoke-crm");
     const installPlan = createAppBuilderInstallPlan({
       appRoot,
       environment: process.env,
@@ -247,8 +307,11 @@ try {
     binding,
   )).status, "stopped");
   await localApps.shutdown();
+  if (legacySourceManifest) {
+    await assertSourceManifest(appRoot, legacySourceManifest);
+  }
   console.log(
-    `[app-builder-smoke] PASS (${packaged ? "packaged assets" : "development assets"})`,
+    `[app-builder-smoke] PASS (${packaged ? "packaged assets" : "development assets"}${legacyRevisionOne ? ", legacy revision-1" : ""})`,
   );
 } catch (error) {
   if (binding) {

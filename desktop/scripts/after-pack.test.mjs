@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +13,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import afterPack from "./after-pack.mjs";
 
 const tempRoots = [];
+
+function stageDarwinComputerUseDependencies(projectDir) {
+  for (const packageName of ["@rudderhq/shared", "zod"]) {
+    const packageDir = path.join(
+      projectDir,
+      ".packaged",
+      "app",
+      "node_modules",
+      ...packageName.split("/"),
+    );
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({
+      name: packageName,
+      version: "1.0.0",
+    }, null, 2)}\n`);
+  }
+}
 
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
@@ -62,6 +80,10 @@ describe("Desktop afterPack internal package manifest normalization", () => {
       }, null, 2)}\n`);
       linkSync(sourceManifestPath, path.join(packageDir, "package.json"));
 
+      if (electronPlatformName === "darwin") {
+        stageDarwinComputerUseDependencies(projectDir);
+      }
+
       await afterPack({
         appDir: projectDir,
         electronPlatformName,
@@ -111,6 +133,7 @@ describe("Desktop afterPack internal package manifest normalization", () => {
 
     const appOutDir = path.join(projectDir, "release", "mac-arm64");
     mkdirSync(path.join(appOutDir, "Rudder.app", "Contents", "Resources"), { recursive: true });
+    stageDarwinComputerUseDependencies(projectDir);
     await afterPack({
       appDir: projectDir,
       electronPlatformName: "darwin",
@@ -135,4 +158,65 @@ describe("Desktop afterPack internal package manifest normalization", () => {
     expect(manifest.exports["."].default).toBe("./dist/index.js");
     },
   );
+});
+
+describe("Desktop afterPack optional dependencies", () => {
+  it("skips dangling pnpm links for optional packages unavailable on the target platform", async () => {
+    const projectDir = mkdtempSync(path.join(tmpdir(), "rudder-after-pack-"));
+    tempRoots.push(projectDir);
+    const appOutDir = path.join(projectDir, "release", "win-unpacked");
+    const packagedNodeModules = path.join(appOutDir, "resources", "app", "node_modules");
+    const driverDir = path.join(packagedNodeModules, "@vendor", "driver");
+    mkdirSync(driverDir, { recursive: true });
+    writeFileSync(path.join(driverDir, "package.json"), `${JSON.stringify({
+      name: "@vendor/driver",
+      version: "1.0.0",
+      optionalDependencies: {
+        "@vendor/available-native": "1.0.0",
+        "@vendor/missing-native": "1.0.0",
+      },
+    }, null, 2)}\n`);
+
+    const availableDir = path.join(projectDir, "node_modules", "@vendor", "available-native");
+    mkdirSync(availableDir, { recursive: true });
+    writeFileSync(path.join(availableDir, "package.json"), `${JSON.stringify({
+      name: "@vendor/available-native",
+      version: "1.0.0",
+    }, null, 2)}\n`);
+
+    const virtualDependencyRoot = path.join(
+      projectDir,
+      "node_modules",
+      ".pnpm",
+      "driver@1.0.0",
+      "node_modules",
+      "@vendor",
+    );
+    mkdirSync(virtualDependencyRoot, { recursive: true });
+    symlinkSync(
+      path.join(projectDir, "node_modules", ".pnpm", "missing-native@1.0.0"),
+      path.join(virtualDependencyRoot, "missing-native"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    await afterPack({
+      appDir: projectDir,
+      electronPlatformName: "win32",
+      appOutDir,
+      packager: { projectDir },
+    });
+
+    expect(JSON.parse(readFileSync(path.join(
+      packagedNodeModules,
+      "@vendor",
+      "available-native",
+      "package.json",
+    ), "utf8"))).toMatchObject({ name: "@vendor/available-native" });
+    expect(() => readFileSync(path.join(
+      packagedNodeModules,
+      "@vendor",
+      "missing-native",
+      "package.json",
+    ), "utf8")).toThrow();
+  });
 });

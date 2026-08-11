@@ -82,6 +82,8 @@ describe("App Builder controller facade", () => {
       .toMatchObject({ style: "new-york", iconLibrary: "lucide" });
     await expect(readFile(path.join(root, "crm", "components", "ui", "table.tsx"), "utf8"))
       .resolves.toContain("export function Table");
+    await expect(readFile(path.join(root, "crm", "next.config.ts"), "utf8"))
+      .resolves.toContain("commonjs ${request}");
   });
 
   it("creates a customized app from the fixed official scaffold", async () => {
@@ -171,7 +173,7 @@ describe("App Builder controller facade", () => {
     expect(data.snapshot).toHaveBeenCalledWith(
       "binding",
       "cold-email-crm",
-      expect.stringMatching(`${path.sep}data${path.sep}development$`),
+      path.join(appRoot, "data", "development"),
     );
     expect(preview.stop.mock.invocationCallOrder[0]).toBeLessThan(
       data.snapshot.mock.invocationCallOrder[0],

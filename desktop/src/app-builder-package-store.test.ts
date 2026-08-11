@@ -45,11 +45,13 @@ describe("App Builder package-store policy", () => {
       ELECTRON_RUN_AS_NODE: "0",
       LOCALAPPDATA: "C:\\Users\\operator\\AppData\\Local",
       RUDDER_APP_BUILDER_CACHE_DIR: "D:\\RudderCache",
+      RUDDER_APP_BUILDER_REGISTRY: "https://registry.example.test/",
       RUDDER_UNRELATED_SECRET: "do-not-copy",
     })).toEqual({
       ELECTRON_RUN_AS_NODE: "1",
       LOCALAPPDATA: "C:\\Users\\operator\\AppData\\Local",
       RUDDER_APP_BUILDER_CACHE_DIR: "D:\\RudderCache",
+      RUDDER_APP_BUILDER_REGISTRY: "https://registry.example.test/",
     });
   });
 
@@ -93,6 +95,7 @@ describe("App Builder package-store policy", () => {
       "ELECTRON_RUN_AS_NODE",
       "LOCALAPPDATA",
       "RUDDER_APP_BUILDER_CACHE_DIR",
+      "RUDDER_APP_BUILDER_REGISTRY",
     ]);
 
     const longestCurrentEsbuildExecutable = path.win32.join(
