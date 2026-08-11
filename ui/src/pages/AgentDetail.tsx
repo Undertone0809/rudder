@@ -395,9 +395,7 @@ export function AgentDetail() {
               ? "integrations"
               : activeView === "runs"
                 ? "runs"
-                : activeView === "budget"
-                  ? "budget"
-              : "dashboard";
+                : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(agentRunPath(`/agents/${canonicalAgentRef}/${canonicalTab}`), { replace: true });
       return;
@@ -540,8 +538,6 @@ export function AgentDetail() {
         crumbs.push({ label: "Integrations" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
-      } else if (activeView === "budget") {
-        crumbs.push({ label: "Budget" });
       } else {
         crumbs.push({ label: "Dashboard" });
       }
@@ -773,7 +769,6 @@ export function AgentDetail() {
               { value: "integrations", label: "Integrations" },
               { value: "runs", label: "Runs" },
               { value: "issues", label: "Issues" },
-              { value: "budget", label: "Budget" },
             ]}
             value={activeView}
             onValueChange={handleDetailTabChange}
@@ -900,6 +895,9 @@ export function AgentDetail() {
           agent={agent}
           agentId={agent.id}
           orgId={resolvedCompanyId ?? undefined}
+          budgetSummary={agentBudgetSummary}
+          isBudgetSaving={budgetMutation.isPending}
+          onSaveBudget={(amount) => budgetMutation.mutate(amount)}
           onDirtyChange={setConfigDirty}
           onSaveActionChange={setSaveConfigAction}
           onCancelActionChange={setCancelConfigAction}
@@ -937,16 +935,6 @@ export function AgentDetail() {
         )
       )}
 
-      {activeView === "budget" && resolvedCompanyId ? (
-        <div className="max-w-3xl">
-          <BudgetPolicyCard
-            summary={agentBudgetSummary}
-            isSaving={budgetMutation.isPending}
-            onSave={(amount) => budgetMutation.mutate(amount)}
-            variant="plain"
-          />
-        </div>
-      ) : null}
       </div>
     </>
   );
@@ -1498,6 +1486,9 @@ function AgentConfigurePage({
   agent,
   agentId,
   orgId,
+  budgetSummary,
+  isBudgetSaving,
+  onSaveBudget,
   onDirtyChange,
   onSaveActionChange,
   onCancelActionChange,
@@ -1507,6 +1498,9 @@ function AgentConfigurePage({
   agent: AgentDetailRecord;
   agentId: string;
   orgId?: string;
+  budgetSummary: BudgetPolicySummary;
+  isBudgetSaving: boolean;
+  onSaveBudget: (amount: number) => void;
   onDirtyChange: (dirty: boolean) => void;
   onSaveActionChange: (save: (() => void) | null) => void;
   onCancelActionChange: (cancel: (() => void) | null) => void;
@@ -1598,6 +1592,15 @@ function AgentConfigurePage({
           </div>
         )}
       </div>
+
+      {orgId ? (
+        <BudgetPolicyCard
+          summary={budgetSummary}
+          isSaving={isBudgetSaving}
+          onSave={onSaveBudget}
+          variant="plain"
+        />
+      ) : null}
     </div>
   );
 }
