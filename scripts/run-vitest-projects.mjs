@@ -2,8 +2,11 @@ import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pnpmCommand, pnpmSpawnShell } from "./package-manager-command.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pnpmBin = pnpmCommand();
+const pnpmShell = pnpmSpawnShell();
 const allProjects = [
   "packages/db",
   "packages/shared",
@@ -41,7 +44,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 function runProject(project, testFiles = []) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(
-      "pnpm",
+      pnpmBin,
       [
         "exec",
         "vitest",
@@ -61,6 +64,7 @@ function runProject(project, testFiles = []) {
       {
         cwd: repoRoot,
         env: process.env,
+        shell: pnpmShell,
         stdio: "inherit",
       },
     );
