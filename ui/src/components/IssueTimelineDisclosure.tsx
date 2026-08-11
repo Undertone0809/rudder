@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import type { InstanceLocale } from "@rudderhq/shared";
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createInitialIssueTimelineDisclosure,
@@ -61,9 +62,9 @@ export function IssueTimelineDisclosureDivider({
         <span className="text-xs tabular-nums text-muted-foreground">{hiddenLabel}</span>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
-          className="h-7 px-2 text-xs"
+          className="group h-8 cursor-pointer !bg-[color:var(--surface-elevated)] px-3 text-xs !shadow-[var(--shadow-sm)] hover:border-[color:var(--border-strong)] hover:!bg-[color:var(--surface-active)]"
           aria-controls={timelineRegionId}
           aria-expanded="false"
           onClick={(event) => onRevealMore?.(
@@ -73,6 +74,10 @@ export function IssueTimelineDisclosureDivider({
           )}
         >
           {locale === "zh-CN" ? "加载更多" : "Load more"}
+          <ChevronDown
+            aria-hidden="true"
+            className="size-3.5 text-muted-foreground transition-transform duration-150 group-active:translate-y-0.5"
+          />
         </Button>
       </div>
       <span aria-hidden="true" className="h-px min-w-4 flex-1 border-t border-dashed border-border" />
@@ -223,4 +228,3 @@ export function useIssueTimelineDisclosure<T extends IssueTimelineDisclosureItem
     timelineRegionId,
   };
 }
-

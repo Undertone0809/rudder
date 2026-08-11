@@ -669,8 +669,16 @@ describe("CommentThread", () => {
     expect(container.textContent).toContain("Timeline comment 79");
     const beforeLabel = container.querySelector("[data-testid='issue-timeline-disclosure']")?.textContent ?? "";
     const beforeCount = Number(beforeLabel.match(/(\d+) hidden/u)?.[1]);
+    const loadMoreButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Load more") ?? null;
+    expect(loadMoreButton?.className).toContain("h-8");
+    expect(loadMoreButton?.className).toContain("cursor-pointer");
+    expect(loadMoreButton?.className).toContain("!shadow-[var(--shadow-sm)]");
+    expect(loadMoreButton?.className).toContain("hover:border-[color:var(--border-strong)]");
+    expect(loadMoreButton?.className).toContain("hover:!bg-[color:var(--surface-active)]");
+    expect(loadMoreButton?.querySelector("svg[aria-hidden='true']")).toBeTruthy();
 
-    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Load more") ?? null);
+    await click(loadMoreButton);
 
     const afterLabel = container.querySelector("[data-testid='issue-timeline-disclosure']")?.textContent ?? "";
     const afterCount = Number(afterLabel.match(/(\d+) hidden/u)?.[1]);
