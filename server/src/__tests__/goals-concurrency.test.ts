@@ -177,6 +177,7 @@ describe("Goal closed-state concurrency", () => {
       idempotencyKey: "accept-close-race",
     }, "acceptance-user");
     let feedback: ReturnType<typeof service.feedback> | null = null;
+    let feedbackExpectation: Promise<void> | null = null;
     try {
       await waitForDatabaseLockWaiters(db, 1);
       feedback = service.feedback(active.id, {
@@ -185,17 +186,23 @@ describe("Goal closed-state concurrency", () => {
         feedbackKind: "ordinary",
         idempotencyKey: "feedback-after-close-race",
       }, "feedback-user");
+      feedbackExpectation = expect(feedback).rejects.toMatchObject({ status: 409 });
       await waitForDatabaseLockWaiters(db, 2);
     } catch (error) {
       heldLock.release();
-      await Promise.allSettled([heldLock.transaction, acceptance, ...(feedback ? [feedback] : [])]);
+      await Promise.allSettled([
+        heldLock.transaction,
+        acceptance,
+        ...(feedback ? [feedback] : []),
+        ...(feedbackExpectation ? [feedbackExpectation] : []),
+      ]);
       throw error;
     }
 
     heldLock.release();
     await heldLock.transaction;
     await expect(acceptance).resolves.toMatchObject({ lifecycle: "closed", status: "achieved" });
-    await expect(feedback).rejects.toMatchObject({ status: 409 });
+    await feedbackExpectation;
 
     const [persistedGoal] = await db.select().from(goals).where(eq(goals.id, active.id));
     const persistedFeedback = await db.select().from(goalFeedbackEntries)
