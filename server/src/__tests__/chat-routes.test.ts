@@ -1742,7 +1742,7 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledTimes(1);
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
       "organization-1",
-      expect.objectContaining({ modelOverride: "gpt-5.6-terra" }),
+      expect.objectContaining({ modelOverride: null, effortOverride: null }),
     );
     expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(
       expect.objectContaining({ modelSnapshot: "gpt-5.6-terra" }),
@@ -3237,16 +3237,14 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
   });
 
-  it("snapshots the effective conversation runtime when a queued message is admitted", async () => {
-    const conversation = createConversation({
-      modelOverride: "gpt-5.6-terra",
-      effortOverride: "high",
-    });
+  it("validates and snapshots the submitted message runtime when a queued message is admitted", async () => {
+    const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValueOnce({
       ...conversation.chatRuntime,
-      model: "gpt-5.6-terra",
-      effort: "high",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      available: true,
     });
 
     const response = await request(createApp())
@@ -3255,8 +3253,8 @@ describe("chat routes", { retry: 2 }, () => {
         clientMutationId: "model-snapshot-1",
         payload: {
           body: "Use the admitted model",
-          model: "client-forged-model",
-          effort: "client-forged-effort",
+          model: "gpt-5.6-luna",
+          effort: "medium",
         },
       });
 
@@ -3267,10 +3265,18 @@ describe("chat routes", { retry: 2 }, () => {
       payload: expect.objectContaining({
         body: "Use the admitted model",
         agentId: conversation.preferredAgentId,
-        model: "gpt-5.6-terra",
-        effort: "high",
+        model: "gpt-5.6-luna",
+        effort: "medium",
       }),
     }));
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      preferredAgentId: conversation.preferredAgentId,
+      modelOverride: "gpt-5.6-luna",
+      effortOverride: "medium",
+      contextLinks: conversation.contextLinks,
+      planMode: conversation.planMode,
+    });
   });
 
   it("replays a queued mutation before resolving a newer conversation model", async () => {
