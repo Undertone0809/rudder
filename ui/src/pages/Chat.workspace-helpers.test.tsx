@@ -259,6 +259,8 @@ describe("createQueuedComposerMessage", () => {
       files: [annotationFile],
       orgId: "org-1",
       projectId: null,
+      modelOverride: null,
+      effortOverride: null,
       serverActiveGenerationId: "generation-1",
       queueSnapshot: undefined,
       queryClient,
@@ -270,6 +272,8 @@ describe("createQueuedComposerMessage", () => {
         payload: expect.objectContaining({
           body: "",
           inlineAnnotations: [annotation],
+          model: null,
+          effort: null,
         }),
       }),
       { files: [annotationFile] },

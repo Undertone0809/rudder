@@ -125,7 +125,7 @@ test("closes the Agent selector when the operator clicks elsewhere in the compos
   });
 });
 
-test("persists conversation runtime overrides, freezes running and queued turns, and resets new Chat", async ({ page }, testInfo) => {
+test("submits per-message runtime overrides without persisting conversation settings", async ({ page }, testInfo) => {
   test.slow();
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-model-selector-"));
   const commandPath = path.join(tempDir, "codex-chat-model-stub");
@@ -140,7 +140,7 @@ process.stdin.on("end", async () => {
     argv: process.argv.slice(2),
     prompt,
   }) + "\\n", "utf8");
-  const delayMs = prompt.includes("Start with the Terra override") ? 45000 : 1000;
+  const delayMs = prompt.includes("Start with the Terra override") ? 15000 : 1000;
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
   const body = "Model capture reply.";
@@ -228,47 +228,25 @@ process.stdin.on("end", async () => {
     }).toBe(1);
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
 
+    const conversationPatchRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "PATCH"
+        && request.url().includes(`/api/chats/${firstConversationId}`)
+      ) {
+        conversationPatchRequests.push(request.postData() ?? "");
+      }
+    });
     await openRuntimePanel(page);
     await expect(page.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
     const runningModelSelector = page.getByTestId("chat-model-selector");
     const runningEffortSelector = page.getByTestId("chat-effort-selector");
-    let releaseModelPatch!: () => void;
-    const modelPatchGate = new Promise<void>((resolve) => {
-      releaseModelPatch = resolve;
-    });
-    let observeModelPatch!: () => void;
-    const modelPatchObserved = new Promise<void>((resolve) => {
-      observeModelPatch = resolve;
-    });
-    await page.route(`**/api/chats/${firstConversationId}`, async (route) => {
-      if (route.request().method() !== "PATCH") {
-        await route.continue();
-        return;
-      }
-      observeModelPatch();
-      await modelPatchGate;
-      await route.continue();
-    });
-    const modelPatchResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/chats/${firstConversationId}`),
-    );
     await chooseRuntimeOption(page, "model", "gpt-5.6-luna");
-    await modelPatchObserved;
-    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeEnabled();
-    releaseModelPatch();
-    expect((await modelPatchResponse).ok()).toBe(true);
-    await page.unroute(`**/api/chats/${firstConversationId}`);
     await expect(runningModelSelector).toHaveAttribute("data-value", "gpt-5.6-luna");
-    await expect(runningEffortSelector).toBeEnabled();
-    const effortPatchResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/chats/${firstConversationId}`),
-    );
     await chooseRuntimeOption(page, "effort", "medium");
-    expect((await effortPatchResponse).ok()).toBe(true);
     await expect(runningEffortSelector).toHaveAttribute("data-value", "medium");
-    await expect(runningModelSelector).toBeEnabled();
+    expect(conversationPatchRequests).toEqual([]);
+    await expect(page.getByText("Saving for this conversation…")).toHaveCount(0);
     await runningEffortSelector.hover();
     await expect(page.getByTestId("chat-effort-options")).toBeVisible();
     await page.screenshot({
@@ -296,22 +274,8 @@ process.stdin.on("end", async () => {
     expect(queued.payload.effort).toBe("medium");
 
     await openRuntimePanel(page);
-    const postAdmissionModelSelector = page.getByTestId("chat-model-selector");
-    const postAdmissionEffortSelector = page.getByTestId("chat-effort-selector");
-    const postAdmissionPatch = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/chats/${firstConversationId}`),
-    );
-    await chooseRuntimeOption(page, "model", "gpt-5.6-sol");
-    expect((await postAdmissionPatch).ok()).toBe(true);
-    await expect(postAdmissionModelSelector).toBeEnabled();
-    await expect(postAdmissionEffortSelector).toBeEnabled();
-    const postAdmissionEffortPatch = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/chats/${firstConversationId}`),
-    );
-    await chooseRuntimeOption(page, "effort", "ultra");
-    expect((await postAdmissionEffortPatch).ok()).toBe(true);
+    await expect(page.getByTestId("chat-model-selector")).toHaveAttribute("data-value", "");
+    await expect(page.getByTestId("chat-effort-selector")).toHaveAttribute("data-value", "");
     await closeRuntimePanelAndAgentMenu(page);
 
     await expect.poll(async () => (await readCaptures(capturePath)).length, {
@@ -330,16 +294,17 @@ process.stdin.on("end", async () => {
     await page.reload();
     await openRuntimePanel(page);
     await expect(page.getByTestId("chat-model-selector"))
-      .toHaveAttribute("data-value", "gpt-5.6-sol");
+      .toHaveAttribute("data-value", "");
     await expect(page.getByTestId("chat-effort-selector"))
-      .toHaveAttribute("data-value", "ultra");
+      .toHaveAttribute("data-value", "");
     await closeRuntimePanelAndAgentMenu(page);
     const persistedRes = await page.request.get(`/api/chats/${firstConversationId}`);
     expect(persistedRes.ok()).toBe(true);
     expect(await persistedRes.json()).toMatchObject({
-      modelOverride: "gpt-5.6-sol",
-      effortOverride: "ultra",
+      modelOverride: null,
+      effortOverride: null,
     });
+    expect(conversationPatchRequests).toEqual([]);
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
     await expect(agentSelector).toContainText("Conversation Model Agent", { timeout: 15_000 });

@@ -144,7 +144,7 @@ import {
   shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
-import { resolveChatLoadError, resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
+import { resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
@@ -186,7 +186,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  ChevronDown,
   CirclePlus,
   Copy,
   Folder,
@@ -202,7 +201,6 @@ import {
   PencilLine,
   Pin,
   PinOff,
-  Plus,
   RefreshCw,
   Square,
   Trash2
@@ -244,7 +242,11 @@ function localAppRecoveryDraftStorageScope(value: string | null): string | null 
     : null;
 }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
-  const localizeChatProcessText = useCallback((text: string) => translateLegacyString(locale, text), [locale]);
+  const localizeChatProcessText = useCallback((text: string) => {
+    // "Thinking" is a live Chat state here; keep it distinct from the model's reasoning setting.
+    if (text === "Thinking" && locale === "zh-CN") return "思考中";
+    return translateLegacyString(locale, text);
+  }, [locale]);
   const macDesktopShell = typeof document !== "undefined"
     && document.documentElement.classList.contains("desktop-shell-macos");
   const { openImagePreview } = useImagePreview(); const {
@@ -566,7 +568,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const conversationHeaderAgent = conversationHeaderAgentId
     ? (agents ?? []).find((agent) => agent.id === conversationHeaderAgentId) ?? null
     : null;
-  const { activeRuntimeOverrides, adapterModelsQuery, draftRuntimeOverrides, runtimeModelSelectRef, runtimeSelectorRef, setDraftRuntimeOverrides, setPendingConversationRuntimeOverrides } = useChatRuntimeSelection({ selectedOrganizationId, selectedConversation, activeAgentId: activeSkillAgentId, activeAgent: activeSkillAgent }); const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
+  const { activeRuntimeOverrides, adapterModelsQuery, draftRuntimeOverrides, runtimeModelSelectRef, runtimeSelectorRef, setDraftRuntimeOverrides } = useChatRuntimeSelection({ selectedOrganizationId, selectedConversation, activeAgentId: activeSkillAgentId, activeAgent: activeSkillAgent }); const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const openSubagentInspection = useCallback((inspection: TranscriptAgentInspection) => {
     if (!selectedConversation) return;
     const senderAgentId = selectedConversation.chatRuntime.runtimeAgentId ?? selectedConversation.preferredAgentId;
@@ -822,9 +824,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, });
   const { applyRuntimeOverrides, runtimeSelectionPending } = useChatRuntimeMutation({
-    activeAgent: activeSkillAgent, selectedConversation, setDraftRuntimeOverrides, setPendingConversationRuntimeOverrides,
-    upsertConversation, upsertMessengerThreadSummary, refreshActiveChatActions,
-    reportError: (title, body) => pushToast({ title, body, tone: "error" }),
+    activeAgent: activeSkillAgent, setDraftRuntimeOverrides,
   }); const renameConversationMutation = useMutation({
     mutationFn: ({ chatId, title }: { chatId: string; title: string }) =>
       chatsApi.update(chatId, { title }),
@@ -1291,12 +1291,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       files: composerAnnotationSubmission.files,
       orgId: selectedOrganizationId,
       projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
+      modelOverride: activeRuntimeOverrides.modelOverride,
+      effortOverride: activeRuntimeOverrides.effortOverride,
       serverActiveGenerationId,
       queueSnapshot: queueQuery.data,
       queryClient,
     });
     if (options?.clearComposerOnSuccess ?? true) {
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
+      setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
       dispatchResponseAnnotation({ type: "clear" });
       setResponseAnnotationsExpanded(false);
       responseAnnotationEditor.close();
@@ -1429,6 +1432,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (usesComposerState) {
                 setBranchPreview(null);
                 setDraft("");
+                setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
                 if (draftStorageConversationId?.startsWith("local-app-recovery:")) {
                   clearChatDraft(draftStorageOrgId, draftStorageConversationId);
                 }
@@ -1548,6 +1552,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,
+        modelOverride: activeRuntimeOverrides.modelOverride,
+        effortOverride: activeRuntimeOverrides.effortOverride,
         files: filesToUpload,
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         queuedMessageId: options?.queuedMessageId ?? null,
@@ -1565,6 +1571,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             );
             if (usesComposerState) {
               setDraft("");
+              setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               clearPendingFilesForCurrentScope();
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
@@ -1575,6 +1582,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
             if (usesComposerState) {
+              setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
               responseAnnotationEditor.close();
@@ -2371,16 +2379,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     nativeSteerMessagesByGenerationId,
     visibleMessages,
   ]);
-  const loadError = resolveChatLoadError([
-    conversationsQuery,
-    { data: conversationSnapshot ?? undefined, error: conversationQuery.error },
-    messagesQuery,
-    { data: agents, error: agentsError },
-    { data: organizationSkills, error: organizationSkillsError },
-    { data: activeAgentSkillSnapshot, error: activeAgentSkillsError },
-    { data: projects, error: projectsError },
-    { data: issues, error: issuesError },
-  ]);
+  const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
   const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const workManifestError = workManifestQuery.error instanceof Error ? workManifestQuery.error.message : workManifestQuery.error ? "Failed to load files and links." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
       await navigator.clipboard.writeText(chatReferenceMarkdown(selectedConversation));
@@ -3567,7 +3566,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       localizeText={localizeChatProcessText}
                     />
                   ) : null}
-                  {!sidePanelOpen ? (
+                  {!isMobile && !sidePanelOpen ? (
                     <button
                       type="button"
                       data-testid="chat-side-panel-trigger"
@@ -3746,32 +3745,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   localizeText={localizeChatProcessText}
                 />
               </div>
-              {isMobile && conversations.length > 0 ? (
-                <div className="shrink-0 border-b panel-divider px-4 py-2 md:hidden">
-                  <div className="mx-auto w-full max-w-4xl">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger type="button" className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-full border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm font-normal text-foreground shadow-none transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" >
-                        <span className="truncate text-left text-foreground">{conversationDisplayTitle(selectedConversation)}</span>
-                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" /> </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="surface-overlay max-h-[min(60vh,320px)] w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto text-foreground" >
-                        {conversations.map((c) => (
-                          <DropdownMenuItem key={c.id} className={cn(c.id === selectedConversation.id && "bg-[color:var(--surface-active)]")} onClick={() => { void prefetchChatConversation(queryClient, selectedOrganizationId, c.id); navigate(chatConversationPath(c.id));
-                            }} onPointerDown={() => {
-                              if (c.id !== selectedConversation.id) {
-                                void prefetchChatConversation(queryClient, selectedOrganizationId, c.id); }
-                            }} onMouseEnter={() => {
-                              if (c.id !== selectedConversation.id) {
-                                void prefetchChatConversation(queryClient, selectedOrganizationId, c.id); }
-                            }} >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate">{conversationDisplayTitle(c)}</span>
-                              {c.isUnread ? (
-                                <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500" aria-label="Unread chat" /> ) : null} </span> </DropdownMenuItem> ))}
-                        <DropdownMenuSeparator className="panel-divider" />
-                        <DropdownMenuItem onClick={() => { setDraft(""); clearPendingFilesForCurrentScope(); navigate(chatRootPath);
-                          }} >
-                          <Plus className="mr-2 h-4 w-4" />
-                          New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
                   <div className={cn(
@@ -3878,6 +3851,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     replyingAgentId={activeStream.replyingAgentId}
                                     conversation={selectedConversation}
                                     agents={agents} onCopyMessageText={copyChatMessageText}
+                                    localizeText={localizeChatProcessText}
                                     skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} />
                                 </Fragment>
                               );

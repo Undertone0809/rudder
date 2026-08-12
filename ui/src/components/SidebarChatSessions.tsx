@@ -76,6 +76,7 @@ function ConversationRow({
   return (
     <ExactTimestampTooltip date={conversation.lastMessageAt ?? conversation.updatedAt}>
       <div
+        data-testid={`sidebar-chat-${conversation.id}`}
         className={cn(
           sidebarItemVariants({ variant: "compact", active }),
           "group transition-[background-color,color,border-color] duration-150",
@@ -170,7 +171,7 @@ function ConversationRow({
 }
 
 function activeConversationIdFromPath(pathname: string): string | null {
-  const m = pathname.match(/\/chat\/([^/]+)\/?/);
+  const m = pathname.match(/\/(?:messenger\/)?chat\/([^/]+)\/?/);
   return m?.[1] ?? null;
 }
 
@@ -206,7 +207,7 @@ export function SidebarChatSessions() {
       chatsApi.update(chatId, data),
     onSuccess: async (conversation) => {
       if (conversation.status === "archived" && conversation.id === activeConversationId) {
-        navigate("/chat");
+        navigate("/messenger/chat");
       }
       setRenamingConversationId((current) => (current === conversation.id ? null : current));
       await refreshChatList(conversation.id);
@@ -260,7 +261,7 @@ export function SidebarChatSessions() {
             aria-label="New chat"
             onClick={(e) => {
               e.stopPropagation();
-              navigate("/chat");
+              navigate("/messenger/chat");
               if (isMobile) setSidebarOpen(false);
             }}
           >
@@ -292,7 +293,7 @@ export function SidebarChatSessions() {
                   onRenameDraftChange={setRenameDraft}
                   onSelect={() => {
                     void prefetchChatConversation(queryClient, selectedOrganizationId, conversation.id);
-                    navigate(`/chat/${conversation.id}`);
+                    navigate(`/messenger/chat/${conversation.id}`);
                     if (isMobile) setSidebarOpen(false);
                   }}
                   onPrefetch={() => {
@@ -335,7 +336,7 @@ export function SidebarChatSessions() {
                   onRenameDraftChange={setRenameDraft}
                   onSelect={() => {
                     void prefetchChatConversation(queryClient, selectedOrganizationId, conversation.id);
-                    navigate(`/chat/${conversation.id}`);
+                    navigate(`/messenger/chat/${conversation.id}`);
                     if (isMobile) setSidebarOpen(false);
                   }}
                   onPrefetch={() => {

@@ -359,6 +359,8 @@ export async function createQueuedComposerMessage(input: {
   files?: File[];
   orgId: string;
   projectId: string | null;
+  modelOverride: string | null;
+  effortOverride: string | null;
   serverActiveGenerationId: string | null;
   queueSnapshot: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined;
   queryClient: QueryClient;
@@ -377,8 +379,8 @@ export async function createQueuedComposerMessage(input: {
         skillRefs: [],
         projectId: input.projectId,
         accessMode: null,
-        model: null,
-        effort: null,
+        model: input.modelOverride,
+        effort: input.effortOverride,
         metadata: { source: "chat_composer" },
       },
     },

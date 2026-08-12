@@ -17,7 +17,7 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import {
@@ -138,7 +138,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         config: null,
         linkedIssueIds: [] as string[],
         linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
         resolvedWorkspace: null,
         sceneContext: null,
         availabilityError: runtimeSource.descriptor.error ?? "Chat assistant is not configured",
@@ -151,7 +150,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         config: null,
         linkedIssueIds: [] as string[],
         linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
         resolvedWorkspace: null,
         sceneContext: null,
         availabilityError: runtimeSource.descriptor.error ?? "Chat runtime is not configured",
@@ -166,7 +164,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         config: null,
         linkedIssueIds: [] as string[],
         linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
         resolvedWorkspace: null,
         sceneContext: null,
         availabilityError: `Unknown chat adapter type: ${runtimeSource.agentRuntimeType}`,
@@ -180,7 +177,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     );
     const linkedIssueIds = linkedIssueIdsForChat(input.conversation, input.contextLinks);
     const linkedProjectId = linkedProjectIdForChat(input.contextLinks);
-    const linkedGoalId = linkedGoalIdForChat(input.contextLinks);
     const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
       runtimeSource.runtimeAgent,
       {
@@ -205,7 +201,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       config,
       linkedIssueIds,
       linkedProjectId,
-      linkedGoalId,
       resolvedWorkspace,
       sceneContext,
       availabilityError: null,
@@ -463,7 +458,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       config,
       linkedIssueIds,
       linkedProjectId,
-      linkedGoalId,
       sceneContext,
     } = resolvedInvocation;
     if (
@@ -487,7 +481,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       turnVariant: input.turnVariant ?? 0,
       linkedIssueIds,
       linkedProjectId,
-      linkedGoalId,
       runContext: {
         ...(input.runContext ?? {}),
         managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],
@@ -955,7 +948,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
             ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
-            ...(linkedGoalId ? { goalId: linkedGoalId } : {}),
             ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
@@ -1038,7 +1030,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             rudderWorkspaces,
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
             ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
-            ...(linkedGoalId ? { goalId: linkedGoalId } : {}),
             ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
