@@ -1599,7 +1599,7 @@ export function MessengerContextSidebar() {
     rangeExtractor: directoryRangeExtractor,
     directDomUpdates: true,
     directDomUpdatesMode: "transform",
-    directDomPrepaintRows: MESSENGER_DIRECTORY_RUNWAY_ROWS - MESSENGER_DIRECTORY_CHUNK_ROWS,
+    directDomPrepaintRows: MESSENGER_DIRECTORY_RUNWAY_ROWS,
     useFlushSync: false,
   });
   const virtualDirectoryItems = directoryVirtualizer.getVirtualItems();
