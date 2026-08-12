@@ -722,7 +722,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByText("Owner Agent", { exact: true })).toBeVisible();
     await expect(startGoal).toBeDisabled();
     await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 390, height: 760 });
     const dialog = page.locator('[data-slot="dialog-content"]');
     const dialogFooter = dialog.locator(":scope > div").last();
     const startPreview = page.getByLabel("Goal start preview");
@@ -734,6 +734,9 @@ test.describe("Goal Workspace v2", () => {
     expect(footerGeometry).not.toBeNull();
     expect(previewGeometry).not.toBeNull();
     expect(previewGeometry!.y + previewGeometry!.height).toBeLessThanOrEqual(footerGeometry!.y);
+    await page.getByRole("button", { name: "Choose Owner Agent", exact: true }).click();
+    await expect(page.getByPlaceholder("Search Agents...")).toBeVisible();
+    await page.keyboard.press("Escape");
     await page.screenshot({ path: testInfo.outputPath("goal-new-dialog-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Save draft", exact: true }).click();

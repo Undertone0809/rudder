@@ -60,6 +60,8 @@ export function NewGoalDialog() {
   const [documentSessionId, setDocumentSessionId] = useState(0);
   const requestRef = useRef<{ identity: string; key: string } | null>(null);
   const contextRef = useRef<MarkdownEditorRef>(null);
+  const ownerSelectorRef = useRef<HTMLButtonElement>(null);
+  const contentScrollerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!newGoalOpen) return;
@@ -223,6 +225,26 @@ export function NewGoalDialog() {
   const ownerReady = Boolean(currentOwner && previewBlockers.every((blocker) => blocker.code !== "owner_required"));
   const unresolvedCount = Number(!outcomeReady) + Number(!ownerReady);
 
+  useEffect(() => {
+    if (!newGoalOpen || !goal.trim() || !preview || unresolvedCount === 0) return;
+    let frame = 0;
+    const revealRequirements = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const contentScroller = contentScrollerRef.current;
+        if (contentScroller) {
+          contentScroller.scrollTop = contentScroller.scrollHeight;
+        }
+      });
+    };
+    revealRequirements();
+    window.addEventListener("resize", revealRequirements);
+    return () => {
+      window.removeEventListener("resize", revealRequirements);
+      cancelAnimationFrame(frame);
+    };
+  }, [goal, newGoalOpen, preview, unresolvedCount]);
+
   return (
     <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent
@@ -255,7 +277,7 @@ export function NewGoalDialog() {
           </Button>
         </div>
 
-        <div className="scrollbar-auto-hide min-h-0 overscroll-contain overflow-x-hidden overflow-y-auto px-4 py-4">
+        <div ref={contentScrollerRef} className="scrollbar-auto-hide min-h-0 overscroll-contain overflow-x-hidden overflow-y-auto px-4 py-4">
           <div className="space-y-4">
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Goal</span>
@@ -303,6 +325,7 @@ export function NewGoalDialog() {
               <div className="min-w-0 space-y-1.5">
                 <div className="text-xs font-medium text-muted-foreground">Assignee</div>
                 <InlineEntitySelector
+                  ref={ownerSelectorRef}
                   value={ownerAgentId}
                   options={agentOptions}
                   placeholder="Select an Agent"
@@ -412,7 +435,13 @@ export function NewGoalDialog() {
                           </span>
                         ) : null}
                       </button>
-                      <div className="flex min-w-0 items-start gap-2 py-2.5 text-sm">
+                      <button
+                        type="button"
+                        aria-label={ownerReady ? "Owner Agent complete" : "Choose Owner Agent"}
+                        className="flex w-full min-w-0 items-start gap-2 py-2.5 text-left text-sm disabled:cursor-default"
+                        disabled={ownerReady}
+                        onClick={() => ownerSelectorRef.current?.focus()}
+                      >
                         {ownerReady
                           ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
                           : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
@@ -424,7 +453,12 @@ export function NewGoalDialog() {
                               : "Select an Agent above to own and start this Goal."}
                           </p>
                         </div>
-                      </div>
+                        {!ownerReady ? (
+                          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-foreground">
+                            Choose <ArrowUp className="h-3.5 w-3.5" />
+                          </span>
+                        ) : null}
+                      </button>
                     </div>
                   </div>
                 ) : null}
