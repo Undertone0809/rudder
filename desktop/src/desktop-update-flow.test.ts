@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,12 @@ import {
   RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
   RUDDER_POSTGRES_BIN_DIR_ENV,
 } from "./postgres-runtime.js";
+import {
+  createInitialDesktopAutoUpdateState,
+  stageAutomaticCandidate,
+  writeDesktopAutoUpdateState,
+  type DesktopAutoUpdateCandidate,
+} from "./desktop-auto-update-state.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const showMessageBoxMock = vi.hoisted(() => vi.fn());
@@ -189,6 +196,227 @@ describe("desktop update flow", () => {
       phase: "failed",
       error: "Desktop API request failed (401 Unauthorized) for /orgs",
     });
+  });
+
+  it("does not apply a prepared automatic candidate without an external helper", async () => {
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "staged.zip");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, "staged payload\n", { mode: 0o600 });
+    const stagedArtifactDigest = createHash("sha256").update("staged payload\n").digest("hex");
+    const candidate: DesktopAutoUpdateCandidate = {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "release-digest",
+      updateId: "automatic-helper-required",
+      assetName: "Rudder.zip",
+      assetChecksum: stagedArtifactDigest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    };
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate));
+    try {
+      const { flow } = createFlow({ hasSignedUpdatePolicyCapability: () => true });
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("does not apply a candidate when its staged artifact proof is missing", async () => {
+    const candidate: DesktopAutoUpdateCandidate = {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "release-digest",
+      updateId: "automatic-artifact-required",
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    };
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate));
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => true,
+      });
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("keeps an exact automatic candidate staged for attached runtimes", async () => {
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "attached-staged.zip");
+    const artifact = Buffer.from("attached staged payload\n", "utf8");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    const candidate: DesktopAutoUpdateCandidate = {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "b".repeat(64),
+      updateId: "automatic-attached-runtime",
+      assetName: "Rudder.zip",
+      assetChecksum: digest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest: digest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    };
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate));
+    try {
+      const { flow } = createFlow({
+        getBootState: () => ({
+          stage: "ready",
+          runtime: { mode: "attached", localEnv: "prod_local", instanceId: "default", version: "0.3.3" },
+        }),
+        hasExternalUpdateHelperCapability: () => true,
+        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1" }),
+        hasSignedUpdatePolicyCapability: () => true,
+      });
+
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("hands the exact candidate to automatic apply only after a clear owned-runtime guard", async () => {
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "owned-staged.zip");
+    const artifact = Buffer.from("owned staged payload\n", "utf8");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    const releaseDigest = "c".repeat(64);
+    const candidate: DesktopAutoUpdateCandidate = {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: releaseDigest,
+      updateId: "automatic-owned-runtime",
+      assetName: "Rudder.zip",
+      assetChecksum: digest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest: digest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    };
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate));
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const listRunningRunsForUpdate = vi.fn(async () => createRunSummary());
+    try {
+      const { flow } = createFlow({
+        getBootState: () => ({
+          stage: "ready",
+          runtime: { mode: "owned", localEnv: "prod_local", instanceId: "default", version: "0.3.3" },
+        }),
+        hasExternalUpdateHelperCapability: () => true,
+        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1" }),
+        hasSignedUpdatePolicyCapability: () => true,
+        listRunningRunsForUpdate,
+      });
+
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("handled");
+      expect(spawnMock).toHaveBeenCalledWith(expect.stringContaining("rudder-update-helper"), ["--stdin"], expect.objectContaining({ detached: true }));
+      const request = JSON.parse(String(child.stdin.write.mock.calls[0]?.[0])) as Record<string, unknown>;
+      expect(request).toMatchObject({
+        operation: "apply",
+        transactionId: candidate.updateId,
+        stagedPath: artifactPath,
+        candidateSha256: digest,
+        targetVersion: candidate.version,
+        installPath: expect.any(String),
+        lkgPath: expect.stringContaining("update-helper/lkg/Rudder.app"),
+        journalPath: expect.stringContaining(`${candidate.updateId}.journal.json`),
+        checkpointPath: expect.stringContaining(`${candidate.updateId}.checkpoint.json`),
+        admission: { closed: true, activeRuns: 0, drainToken: expect.any(String) },
+        checkpoint: { instanceId: "default", databaseRevision: expect.any(String), migrationCompatible: true },
+      });
+      expect(JSON.stringify(request)).not.toContain("sourceReleaseDigest");
+      expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("does not hand an automatic candidate to apply while running work exists", async () => {
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "active-run-staged.zip");
+    const artifact = Buffer.from("active run staged payload\n", "utf8");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "d".repeat(64),
+      updateId: "automatic-active-run",
+      assetName: "Rudder.zip",
+      assetChecksum: digest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest: digest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    }));
+    try {
+      const listRunningRunsForUpdate = vi.fn(async () => createRunSummary([createBlocker("run-active")]));
+      const { flow } = createFlow({
+        getBootState: () => ({
+          stage: "ready",
+          runtime: { mode: "owned", localEnv: "prod_local", instanceId: "default", version: "0.3.3" },
+        }),
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => true,
+        listRunningRunsForUpdate,
+      });
+
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
+      expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(1);
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+    }
   });
 
   it("uses the Node-mode CLI runner for macOS update children", () => {
@@ -428,6 +656,18 @@ describe("desktop update flow", () => {
     });
     expect(child.stdin.write).toHaveBeenCalledTimes(1);
     expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+  });
+
+  it("does not spawn the Node installer for a direct automatic update request", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow();
+
+    await expect(flow.installUpdate("0.3.5-canary.8", { automatic: true })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("waits for a blocker discovered at ready time and applies after it clears", async () => {

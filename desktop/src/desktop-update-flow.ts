@@ -24,6 +24,26 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
+import {
+  DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS,
+  DESKTOP_AUTO_UPDATE_INTERVAL_MS,
+  clearAutomaticCandidate,
+  hasExactStagedAutomaticArtifact,
+  markAutomaticCheckStarted,
+  markAutomaticCandidateStatus,
+  readDesktopAutoUpdateState,
+  resolveDesktopAutoUpdateStatePath,
+  scheduleNextAutomaticCheck,
+  stageAutomaticCandidate,
+  writeDesktopAutoUpdateState,
+  type DesktopAutoUpdateCandidate,
+} from "./desktop-auto-update-state.js";
+import {
+  attestExternalDesktopUpdateHelper,
+  handoffDesktopUpdateToExternalHelper,
+  resolveDesktopUpdateTransactionPaths,
+  type DesktopUpdateHelperRequest,
+} from "./desktop-update-helper.js";
 
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
@@ -99,6 +119,25 @@ export function createDesktopUpdateFlow(context: {
     cancelLabel: string;
   }) => Promise<"wait" | "force" | "cancel" | null | undefined>;
   showMainWindow: () => void;
+  getUserDataPath?: () => string;
+  isAutomaticUpdateAllowed?: () => boolean;
+  /** True only when the stable, externally installed updater is attested. */
+  hasExternalUpdateHelperCapability?: () => boolean;
+  /** True only when an authenticated, replay-protected release policy is loaded. */
+  hasSignedUpdatePolicyCapability?: () => boolean;
+  /** Refreshes the authenticated policy before an automatic check. */
+  refreshSignedUpdatePolicy?: () => Promise<boolean>;
+  /** Authorizes the exact immutable release identity selected for staging/apply. */
+  authorizeSignedUpdateRelease?: (input: {
+    version: string;
+    assetName: string;
+    assetSha256: string;
+    releaseDigest: string;
+  }) => boolean;
+  /** Prevents downloading a version absent from the authenticated policy. */
+  isSignedUpdateVersionAuthorized?: (version: string) => boolean;
+  /** Optional explicit helper attestation for tests or an embedding shell. */
+  getExternalUpdateHelper?: () => { path: string; protocol: string } | null;
 }) {
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
   const activeDesktopUpdates = new Map<string, {
@@ -122,6 +161,284 @@ export function createDesktopUpdateFlow(context: {
     return Boolean(context.getServerHandle()) && context.getBootState()?.stage === "ready";
   }
   let startupUpdateNoticeShown = false;
+  let automaticUpdateTimer: NodeJS.Timeout | null = null;
+  let automaticCheckInFlight: Promise<void> | null = null;
+
+  function autoUpdateStatePath(): string {
+    return resolveDesktopAutoUpdateStatePath(context.getUserDataPath?.() ?? app.getPath("userData"));
+  }
+
+  function readAutomaticState() {
+    return readDesktopAutoUpdateState(autoUpdateStatePath());
+  }
+
+  function writeAutomaticState(state: ReturnType<typeof readAutomaticState>): void {
+    writeDesktopAutoUpdateState(autoUpdateStatePath(), state);
+  }
+
+  function automaticInstallId(): string {
+    return path.resolve(context.getUserDataPath?.() ?? app.getPath("userData"));
+  }
+
+  function clearAutomaticTimer(): void {
+    if (!automaticUpdateTimer) return;
+    clearTimeout(automaticUpdateTimer);
+    automaticUpdateTimer = null;
+  }
+
+  async function applyPreparedAutomaticCandidate(): Promise<"handled" | "continue"> {
+    if (!app.isPackaged || process.platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) return "continue";
+    if (context.hasSignedUpdatePolicyCapability?.() !== true) {
+      console.warn("[rudder-desktop] automatic update deferred: signed release policy is unavailable");
+      return "continue";
+    }
+    if (context.hasExternalUpdateHelperCapability?.() !== true) {
+      console.warn("[rudder-desktop] automatic update deferred: external recovery helper is unavailable");
+      return "continue";
+    }
+    if (context.getBootState().runtime?.mode === "attached") return "continue";
+    const state = readAutomaticState();
+    const candidate = state.candidate;
+    if (!candidate || (candidate.status !== "staged" && candidate.status !== "claimed")) return "continue";
+    if (candidate.platform !== "darwin" || candidate.arch !== process.arch) return "continue";
+    if (candidate.installId !== automaticInstallId()) return "continue";
+    if (!hasExactStagedAutomaticArtifact(candidate)) {
+      console.warn("[rudder-desktop] automatic update deferred: staged artifact proof is missing or invalid");
+      return "continue";
+    }
+    if (context.authorizeSignedUpdateRelease && (!candidate.assetName || !candidate.assetChecksum || !candidate.sourceReleaseDigest
+      || context.authorizeSignedUpdateRelease({
+        version: candidate.version,
+        assetName: candidate.assetName,
+        assetSha256: candidate.assetChecksum,
+        releaseDigest: candidate.sourceReleaseDigest,
+      }) !== true)) {
+      console.warn("[rudder-desktop] automatic update deferred: candidate is not authorized by the signed release policy");
+      return "continue";
+    }
+    if (candidate.version === resolveRudderAppVersion()) {
+      writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
+      return "continue";
+    }
+
+    // Automatic quit must never open the manual blocker prompt. This final
+    // read is only a silent race guard for work started after quit began.
+    try {
+      const activeRuns = await context.listRunningRunsForUpdate();
+      if (activeRuns.totalRuns > 0) return "continue";
+    } catch (error) {
+      console.warn("[rudder-desktop] automatic update blocker inspection failed", error);
+      return "continue";
+    }
+
+    const transactionId = candidate.updateId;
+    const ownerToken = randomUUID();
+    const drainToken = randomUUID();
+    const bootState = context.getBootState();
+    const runtime = bootState.runtime ?? {};
+    const instanceId = candidate.instanceId || runtime.instanceId || "default";
+    const databaseRevision = String(
+      runtime.databaseRevision
+      ?? bootState.databaseRevision
+      ?? bootState.runtime?.migrationRevision
+      ?? runtime.version
+      ?? resolveRudderAppVersion(),
+    );
+    const helper = context.getExternalUpdateHelper?.()
+      ?? attestExternalDesktopUpdateHelper({
+        userDataPath: context.getUserDataPath?.() ?? app.getPath("userData"),
+        resourcesPath: process.resourcesPath,
+        env: process.env,
+      });
+    if (!helper) {
+      console.warn("[rudder-desktop] automatic update deferred: external recovery helper is unavailable");
+      return "continue";
+    }
+    const transactionPaths = resolveDesktopUpdateTransactionPaths({
+      userDataPath: context.getUserDataPath?.() ?? app.getPath("userData"),
+      transactionId,
+      resourcesPath: process.resourcesPath,
+      execPath: process.execPath,
+    });
+    const request: DesktopUpdateHelperRequest = {
+      operation: "apply",
+      ownerToken,
+      transactionId,
+      parentPid: process.pid,
+      ...transactionPaths,
+      stagedPath: candidate.stagedArtifactPath,
+      targetVersion: candidate.version,
+      candidateSha256: candidate.stagedArtifactDigest,
+      admission: { closed: true, activeRuns: 0, drainToken },
+      checkpoint: {
+        instanceId,
+        databaseRevision,
+        migrationCompatible: runtime.migrationCompatible !== false && bootState.migrationCompatible !== false,
+      },
+    };
+
+    writeAutomaticState({
+      ...state,
+      generation: state.generation + 1,
+      candidate: { ...candidate, status: "claimed", generation: state.generation + 1 },
+    });
+    try {
+      handoffDesktopUpdateToExternalHelper({ request, helperPath: effectiveHelper.path });
+      // The helper waits for this Desktop PID to exit before exchanging the
+      // bundle, so normal quit finalization must continue immediately.
+      return "continue";
+    } catch (error) {
+      const current = readAutomaticState();
+      if (current.candidate?.updateId === candidate.updateId) {
+        writeAutomaticState({ ...current, candidate: { ...candidate, status: "staged", generation: current.generation + 1 } });
+      }
+      console.warn("[rudder-desktop] automatic update helper handoff failed", error);
+      return "continue";
+    }
+  }
+
+  function scheduleAutomaticUpdateCheck(): void {
+    clearAutomaticTimer();
+    if (
+      !app.isPackaged
+      || process.platform !== "darwin"
+      || context.isAutomaticUpdateAllowed?.() === false
+    ) return;
+    let state = readAutomaticState();
+    const now = new Date();
+    if (!state.nextCheckAt) {
+      state = scheduleNextAutomaticCheck(state, now);
+      writeAutomaticState(state);
+    }
+    const nextAt = Date.parse(state.nextCheckAt ?? "");
+    const delay = Number.isFinite(nextAt) ? Math.max(0, nextAt - now.getTime()) : DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS;
+    automaticUpdateTimer = setTimeout(() => {
+      automaticUpdateTimer = null;
+      void runAutomaticUpdateCheck();
+    }, Math.min(delay, DESKTOP_AUTO_UPDATE_INTERVAL_MS));
+    automaticUpdateTimer.unref?.();
+  }
+
+  async function prepareAutomaticUpdate(version: string, channel: DesktopUpdateChannel): Promise<void> {
+    if (context.hasSignedUpdatePolicyCapability?.() !== true) return;
+    if (context.isSignedUpdateVersionAuthorized && !context.isSignedUpdateVersionAuthorized(version)) {
+      console.warn("[rudder-desktop] automatic update deferred: version is absent from the signed release policy");
+      return;
+    }
+    const state = readAutomaticState();
+    if (state.candidate) return;
+    const updateId = randomUUID();
+    const childLaunch = resolveDesktopUpdateChildLaunch({
+      cliArgs: [
+        "start", "--no-cli", "--no-runtime", "--no-open", "--target-version", version,
+        "--repo", DESKTOP_GITHUB_REPO, "--no-version-check", "--desktop-progress-json", "--desktop-prepare-only",
+      ],
+      childEnv: createDesktopUpdateChildEnvironment({ resourcesPath: process.resourcesPath }),
+      resourcesPath: process.resourcesPath,
+    });
+    const child = spawn(childLaunch.command, childLaunch.args, {
+      detached: true,
+      env: childLaunch.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let prepared: {
+      assetName?: string;
+      assetChecksum?: string;
+      releaseDigest?: string;
+      stagedArtifactPath?: string;
+      stagedArtifactDigest?: string;
+    } | null = null;
+    let output = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+      const lines = output.split(/\r?\n/);
+      output = lines.pop() ?? "";
+      for (const line of lines) {
+        const event = parseDesktopUpdateProgressLine(updateId, version, line.trim());
+        if (event?.phase === "prepared") {
+          prepared = {
+            assetName: event.assetName,
+            assetChecksum: event.assetChecksum,
+            releaseDigest: event.releaseDigest,
+            stagedArtifactPath: event.stagedArtifactPath,
+            stagedArtifactDigest: event.stagedArtifactDigest,
+          };
+        }
+      }
+    });
+    child.on("close", (code) => {
+      if (code !== 0 || !prepared) return;
+      const current = readAutomaticState();
+      if (!prepared.stagedArtifactPath || !prepared.stagedArtifactDigest) {
+        console.warn("[rudder-desktop] automatic update preparation did not return an exact staged artifact proof");
+        return;
+      }
+      if (context.authorizeSignedUpdateRelease && (!prepared.assetName || !prepared.assetChecksum || !prepared.releaseDigest
+        || context.authorizeSignedUpdateRelease({
+          version,
+          assetName: prepared.assetName,
+          assetSha256: prepared.assetChecksum,
+          releaseDigest: prepared.releaseDigest,
+        }) !== true)) {
+        console.warn("[rudder-desktop] automatic update preparation is not authorized by the signed release policy");
+        return;
+      }
+      const candidate: DesktopAutoUpdateCandidate = {
+        channel,
+        version,
+        platform: "darwin",
+        arch: process.arch,
+        installId: automaticInstallId(),
+        profile: context.getBootState().runtime?.localEnv ?? "prod_local",
+        instanceId: context.getBootState().runtime?.instanceId ?? "default",
+        sourceReleaseDigest: prepared.releaseDigest ?? `${channel}:${version}:${prepared.assetChecksum ?? "unknown"}`,
+        updateId,
+        ...(prepared.assetName ? { assetName: prepared.assetName } : {}),
+        ...(prepared.assetChecksum ? { assetChecksum: prepared.assetChecksum } : {}),
+        stagedArtifactPath: prepared.stagedArtifactPath,
+        stagedArtifactDigest: prepared.stagedArtifactDigest,
+        stagedAt: new Date().toISOString(),
+        status: "staged",
+        generation: current.generation + 1,
+      };
+      writeAutomaticState(stageAutomaticCandidate(current, candidate));
+    });
+    child.unref();
+  }
+
+  async function runAutomaticUpdateCheck(): Promise<void> {
+    if (automaticCheckInFlight) return automaticCheckInFlight;
+    automaticCheckInFlight = (async () => {
+      if (context.refreshSignedUpdatePolicy && !(await context.refreshSignedUpdatePolicy())) {
+        const failedCheckAt = new Date();
+        const failedState = markAutomaticCheckStarted(readAutomaticState(), failedCheckAt);
+        writeAutomaticState(failedState);
+        scheduleAutomaticUpdateCheck();
+        return;
+      }
+      const now = new Date();
+      let state = readAutomaticState();
+      if (!state.nextCheckAt) state = scheduleNextAutomaticCheck(state, now);
+      if (state.nextCheckAt && Date.parse(state.nextCheckAt) > now.getTime()) {
+        scheduleAutomaticUpdateCheck();
+        return;
+      }
+      state = markAutomaticCheckStarted(state, now);
+      writeAutomaticState(state);
+      const result = await checkForUpdates();
+      if (result.status === "update-available" && result.latestVersion) {
+        await prepareAutomaticUpdate(result.latestVersion, result.channel);
+      }
+      scheduleAutomaticUpdateCheck();
+    })().catch((error) => {
+      console.warn("[rudder-desktop] silent automatic update check failed", error);
+      scheduleAutomaticUpdateCheck();
+    }).finally(() => {
+      automaticCheckInFlight = null;
+    });
+    return automaticCheckInFlight;
+  }
 
   type DesktopUpdateInstallResult =
     | { status: "started"; version: string; updateId?: string }
@@ -136,6 +453,7 @@ export function createDesktopUpdateFlow(context: {
     | "downloading_checksums"
     | "downloading_asset"
     | "verifying_checksum"
+    | "prepared"
     | "ready_to_install"
     | "waiting_for_active_runs"
     | "preparing_restart"
@@ -155,6 +473,11 @@ export function createDesktopUpdateFlow(context: {
     blockers?: DesktopUpdateBlocker[];
     automaticApply?: boolean;
     error?: string;
+    assetName?: string;
+    assetChecksum?: string;
+    releaseDigest?: string;
+    stagedArtifactPath?: string;
+    stagedArtifactDigest?: string;
     at: string;
   };
 
@@ -276,6 +599,7 @@ export function createDesktopUpdateFlow(context: {
       "downloading_checksums",
       "downloading_asset",
       "verifying_checksum",
+      "prepared",
       "ready_to_install",
       "waiting_for_active_runs",
       "preparing_restart",
@@ -297,6 +621,11 @@ export function createDesktopUpdateFlow(context: {
       ...(totalBytes === undefined ? {} : { totalBytes }),
       ...(totalRuns === undefined ? {} : { totalRuns }),
       ...(typeof record.error === "string" ? { error: record.error.slice(0, 1000) } : {}),
+      ...(typeof record.assetName === "string" ? { assetName: record.assetName.slice(0, 200) } : {}),
+      ...(typeof record.assetChecksum === "string" ? { assetChecksum: record.assetChecksum.slice(0, 128) } : {}),
+      ...(typeof record.releaseDigest === "string" ? { releaseDigest: record.releaseDigest.slice(0, 128) } : {}),
+      ...(typeof record.stagedArtifactPath === "string" ? { stagedArtifactPath: record.stagedArtifactPath.slice(0, 4096) } : {}),
+      ...(typeof record.stagedArtifactDigest === "string" ? { stagedArtifactDigest: record.stagedArtifactDigest.slice(0, 128) } : {}),
       at: typeof record.at === "string" ? record.at : new Date().toISOString(),
     };
   }
@@ -493,12 +822,18 @@ export function createDesktopUpdateFlow(context: {
 
   async function maybeShowStartupUpdateNotice(): Promise<void> {
     if (startupUpdateNoticeShown || !app.isPackaged || !isLocalRuntimeReadyForUpdate()) return;
+    if (context.refreshSignedUpdatePolicy && !(await context.refreshSignedUpdatePolicy())) {
+      // Keep the startup hook retryable. The hourly timer remains active and
+      // will refresh policy again when the network becomes available.
+      scheduleAutomaticUpdateCheck();
+      return;
+    }
     startupUpdateNoticeShown = true;
-
-    const result = await checkForUpdates();
-    if (result.status !== "update-available") return;
-
-    await promptToInstallAvailableUpdate(result);
+    const state = readAutomaticState();
+    if (!state.nextCheckAt) {
+      writeAutomaticState(scheduleNextAutomaticCheck(state, new Date()));
+    }
+    scheduleAutomaticUpdateCheck();
   }
 
   async function showManualUpdateCheckDialog(): Promise<void> {
@@ -557,7 +892,17 @@ export function createDesktopUpdateFlow(context: {
     }
   }
 
-  async function installUpdate(version: string | null | undefined): Promise<DesktopUpdateInstallResult> {
+  async function installUpdate(
+    version: string | null | undefined,
+    options: {
+      automatic?: boolean;
+      updateId?: string;
+      stagedArtifactPath?: string;
+      stagedArtifactDigest?: string;
+      assetName?: string;
+      sourceReleaseDigest?: string;
+    } = {},
+  ): Promise<DesktopUpdateInstallResult> {
     const normalizedVersion = version?.trim();
     if (!app.isPackaged) {
       return {
@@ -571,6 +916,12 @@ export function createDesktopUpdateFlow(context: {
         message: "The update check did not return a target version.",
       };
     }
+    if (options.automatic === true) {
+      return {
+        status: "unavailable",
+        message: "Automatic updates require an exact staged candidate and the external recovery helper.",
+      };
+    }
     if (!isLocalRuntimeReadyForUpdate()) {
       return {
         status: "blocked",
@@ -581,8 +932,8 @@ export function createDesktopUpdateFlow(context: {
     const existingUpdate = reuseActiveDesktopUpdateAttempt(normalizedVersion);
     if (existingUpdate) return existingUpdate;
 
-    const updateId = randomUUID();
-    const installPromise = Promise.resolve().then(() => installUpdateWithLock(updateId, normalizedVersion));
+    const updateId = options.updateId?.trim() || randomUUID();
+    const installPromise = Promise.resolve().then(() => installUpdateWithLock(updateId, normalizedVersion, options));
     activeDesktopUpdateAttempt = {
       updateId,
       version: normalizedVersion,
@@ -591,7 +942,18 @@ export function createDesktopUpdateFlow(context: {
     return installPromise;
   }
 
-  async function installUpdateWithLock(updateId: string, normalizedVersion: string): Promise<DesktopUpdateInstallResult> {
+  async function installUpdateWithLock(
+    updateId: string,
+    normalizedVersion: string,
+    options: {
+      automatic?: boolean;
+      updateId?: string;
+      stagedArtifactPath?: string;
+      stagedArtifactDigest?: string;
+      assetName?: string;
+      sourceReleaseDigest?: string;
+    } = {},
+  ): Promise<DesktopUpdateInstallResult> {
     try {
       updateDesktopUpdateProgress(updateId, normalizedVersion, {
         phase: "starting",
@@ -600,7 +962,7 @@ export function createDesktopUpdateFlow(context: {
       const activeRuns = await context.listRunningRunsForUpdate();
       let waitForActiveRuns = false;
       let forceWhenApplying = false;
-      if (activeRuns.totalRuns > 0) {
+      if (activeRuns.totalRuns > 0 && options.automatic !== true) {
         const decision = await promptForDeferredUpdate(activeRuns);
         if (decision === "cancel") {
           updateDesktopUpdateProgress(updateId, normalizedVersion, {
@@ -641,6 +1003,15 @@ export function createDesktopUpdateFlow(context: {
         // that install can stall on registry resolution and leave the updater
         // child alive without ever reaching the apply handoff.
         "--no-runtime",
+        ...(options.automatic === true ? ["--no-open"] : []),
+        ...(options.automatic === true
+          ? [
+            "--desktop-asset-path", options.stagedArtifactPath ?? "",
+            "--desktop-asset-checksum", options.stagedArtifactDigest ?? "",
+            "--desktop-asset-name", options.assetName ?? "",
+            "--desktop-release-digest", options.sourceReleaseDigest ?? "",
+          ]
+          : []),
         "--target-version",
         normalizedVersion,
         "--repo",
@@ -648,7 +1019,7 @@ export function createDesktopUpdateFlow(context: {
         "--no-version-check",
         "--desktop-progress-json",
         "--desktop-wait-for-apply",
-        ...(!forceWhenApplying ? ["--wait-for-active-runs"] : []),
+        ...(!forceWhenApplying && options.automatic !== true ? ["--wait-for-active-runs"] : []),
       ];
       const childLaunch = resolveDesktopUpdateChildLaunch({
         cliArgs,
@@ -737,6 +1108,18 @@ export function createDesktopUpdateFlow(context: {
         clearBlockerPoll(updateId);
         activeDesktopUpdates.delete(updateId);
         clearActiveDesktopUpdateAttempt(updateId);
+        try {
+          const automaticState = readAutomaticState();
+          if (automaticState.candidate?.updateId === updateId) {
+            writeAutomaticState(markAutomaticCandidateStatus(
+              automaticState,
+              updateId,
+              code === 0 ? "committed" : "quarantined",
+            ));
+          }
+        } catch (error) {
+          console.warn("[rudder-desktop] failed to finalize automatic update state", error);
+        }
         if (stdoutBuffer.trim()) {
           diagnosticStdout = appendBoundedDesktopUpdateOutput(diagnosticStdout, `${stdoutBuffer}\n`);
         }
@@ -898,5 +1281,8 @@ export function createDesktopUpdateFlow(context: {
     applyUpdate,
     createFeedbackMailtoUrl,
     getDesktopUpdateProgress: () => latestDesktopUpdateProgress,
+    scheduleAutomaticUpdateCheck,
+    runAutomaticUpdateCheck,
+    applyPreparedAutomaticCandidate,
   };
 }
