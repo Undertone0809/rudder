@@ -579,6 +579,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       }
     };
     let cleanupPreparedAttachments: (() => Promise<void>) | null = null;
+    let durableTranscriptImages = new Map<string, { contentPath: string; displayName: string }>();
     try {
       let parser = adapter.parseStdoutLine;
       let stdoutLineBuffer = "";
@@ -597,6 +598,20 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         runId,
       }));
       cleanupPreparedAttachments = preparedAttachments.cleanup;
+      durableTranscriptImages = new Map(
+        input.messages
+          .slice(-12)
+          .flatMap((message) => message.attachments)
+          .flatMap((attachment) => {
+            const localPath = preparedAttachments.references.get(attachment.id)?.localPath;
+            return localPath && attachment.contentPath
+              ? [[localPath, {
+                contentPath: attachment.contentPath,
+                displayName: attachment.originalFilename ?? "image",
+              }] as const]
+              : [];
+          }),
+      );
       const prompt = await guardActiveRun(() => buildConversationPrompt(
         input,
         runtimeSource,
@@ -779,13 +794,29 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                   isError: entry.isError,
                 };
               case "tool_call":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  name: suppressTranscriptSource(entry.name),
-                  input: suppressStructuredTranscriptValue(entry.input),
-                  ...(entry.toolUseId ? { toolUseId: suppressTranscriptSource(entry.toolUseId) } : {}),
-                };
+                {
+                  const rawInput = entry.input && typeof entry.input === "object" && !Array.isArray(entry.input)
+                    ? entry.input as Record<string, unknown>
+                    : null;
+                  const normalizedToolName = entry.name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+                  const durableImage = normalizedToolName === "imageview" && typeof rawInput?.path === "string"
+                    ? durableTranscriptImages.get(rawInput.path)
+                    : null;
+                  const durableInput = durableImage && rawInput
+                    ? {
+                      ...rawInput,
+                      path: durableImage.contentPath,
+                      displayName: durableImage.displayName,
+                    }
+                    : entry.input;
+                  return {
+                    kind: entry.kind,
+                    ts: entry.ts,
+                    name: suppressTranscriptSource(entry.name),
+                    input: suppressStructuredTranscriptValue(durableInput),
+                    ...(entry.toolUseId ? { toolUseId: suppressTranscriptSource(entry.toolUseId) } : {}),
+                  };
+                }
               case "todo_list":
                 return {
                   kind: entry.kind,

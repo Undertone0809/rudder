@@ -1187,10 +1187,11 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
     const status = readStringField(record, ["status"])?.toLowerCase() ?? "";
     const failed = ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
       .includes(status);
+    const durableAssetPath = sourcePath?.startsWith("/api/assets/") ? sourcePath : null;
     const target = sourcePath ? createTranscriptFileTargets([sourcePath], record)[0] : null;
-    const displayLabel = sourcePath
+    const displayLabel = readStringField(record, ["displayName", "display_name", "name"]) ?? (sourcePath
       ? sourcePath.replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).at(-1) ?? sourcePath
-      : "image";
+      : "image");
     return {
       actionKind: "image_view",
       category: "image",
@@ -1199,10 +1200,10 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
       bucket: "explore",
       quantity: 1,
       noun: "item",
-      ...(!failed && target?.path ? {
+      ...(!failed && (durableAssetPath || target?.path) ? {
         image: {
           displayLabel,
-          path: target.path,
+          path: durableAssetPath ?? target!.path!,
         },
       } : {}),
     };
@@ -1215,6 +1216,7 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
 
   if (normalizedName === "image_view") {
     const sourcePath = readStringField(record, ["path"]);
+    const durableAssetPath = sourcePath?.startsWith("/api/assets/") ? sourcePath : null;
     const target = sourcePath ? createTranscriptFileTargets([sourcePath], record)[0] : null;
     return {
       actionKind: "image_view",
@@ -1224,10 +1226,12 @@ export function describeToolSemanticInfo(name: string, input: unknown, result?: 
       bucket: "explore",
       quantity: 1,
       noun: "item",
-      ...(target?.path ? {
+      ...(durableAssetPath || target?.path ? {
         image: {
-          displayLabel: target.displayLabel,
-          path: target.path,
+          displayLabel: readStringField(record, ["displayName", "display_name", "name"])
+            ?? target?.displayLabel
+            ?? "image",
+          path: durableAssetPath ?? target!.path!,
         },
       } : {}),
     };
