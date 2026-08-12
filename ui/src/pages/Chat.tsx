@@ -2384,7 +2384,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     nativeSteerMessagesByGenerationId,
     visibleMessages,
   ]);
-  const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
+  const loadError = conversationsQuery.error
+    ?? (conversationQuery.data === undefined ? conversationQuery.error : null)
+    ?? (messagesQuery.data === undefined ? messagesQuery.error : null)
+    ?? agentsError
+    ?? organizationSkillsError
+    ?? activeAgentSkillsError
+    ?? projectsError
+    ?? issuesError;
   const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const workManifestError = workManifestQuery.error instanceof Error ? workManifestQuery.error.message : workManifestQuery.error ? "Failed to load files and links." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
       await navigator.clipboard.writeText(chatReferenceMarkdown(selectedConversation));
