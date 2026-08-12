@@ -50,6 +50,7 @@ import {
   localAccountAuthService,
   type VerifiedServerExchange,
 } from "../services/local-account-auth.js";
+import { messengerService } from "../services/messenger.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -420,6 +421,67 @@ describe("localAccountAuthService", () => {
       .toHaveLength(beforeRepairCounts.activities);
     expect(await db.select().from(messengerCustomGroups)
       .where(eq(messengerCustomGroups.userId, "local-board"))).toHaveLength(1);
+  });
+
+  it("does not restore a legacy custom group removed after account upgrade", async () => {
+    const svc = service();
+    const { userId } = await svc.redeem("fixture-exchange-code");
+    const [org] = await db.insert(organizations).values({
+      name: "Removed legacy group",
+      urlKey: "removed-legacy-group",
+      issuePrefix: "RLG",
+    }).returning();
+    await db.insert(instanceUserRoles).values({ userId: "local-board", role: "instance_admin" });
+    await db.insert(organizationMemberships).values({
+      orgId: org!.id,
+      principalType: "user",
+      principalId: "local-board",
+      status: "active",
+      membershipRole: "owner",
+    });
+    const [legacyGroup] = await db.insert(messengerCustomGroups).values({
+      orgId: org!.id,
+      userId: "local-board",
+      name: "Do not restore me",
+    }).returning();
+    await db.insert(messengerCustomGroupEntries).values({
+      orgId: org!.id,
+      userId: "local-board",
+      groupId: legacyGroup!.id,
+      threadKey: "approvals",
+    });
+
+    await svc.claimLegacyInstallation({
+      installationId: "installation-1",
+      issuer: claims.issuer,
+      subject: claims.subject,
+      localUserId: userId,
+    });
+    const [recovered] = await db.select().from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, userId));
+    expect(recovered).toMatchObject({ name: "Do not restore me" });
+
+    await messengerService(db).separateCustomGroup(org!.id, userId, recovered!.id);
+    await svc.claimLegacyInstallation({
+      installationId: "installation-1",
+      issuer: claims.issuer,
+      subject: claims.subject,
+      localUserId: userId,
+    });
+
+    expect(await db.select().from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, userId))).toEqual([]);
+    expect(await db.select().from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.userId, userId))).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, "local-board"))).toHaveLength(1);
+    expect(await db.select().from(activityLog)
+      .where(eq(activityLog.action, "messenger.custom_group_removed"))).toMatchObject([{
+      orgId: org!.id,
+      actorId: userId,
+      entityId: recovered!.id,
+      details: { source: "group_separate" },
+    }]);
   });
 
   it("repairs personalization omitted by an already-recorded Canary installation claim", async () => {

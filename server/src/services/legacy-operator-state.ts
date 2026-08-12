@@ -12,12 +12,13 @@ import {
   operatorProfiles,
   organizationMemberships,
 } from "@rudderhq/db";
-import { and, eq, or, sql, type SQLWrapper } from "drizzle-orm";
+import { and, eq, inArray, or, sql, type SQLWrapper } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { lockMessengerOwnerPlacement } from "./messenger-saved-views.js";
 
 const LEGACY_BOARD_USER_ID = "local-board";
 const LEGACY_STATE_COPIED_ACTION = "installation.legacy_operator_state_copied";
+const CUSTOM_GROUP_REMOVED_ACTION = "messenger.custom_group_removed";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -68,14 +69,32 @@ export async function copyLegacyOperatorState(
     .select()
     .from(messengerCustomGroups)
     .where(and(eq(messengerCustomGroups.userId, LEGACY_BOARD_USER_ID), inScope(messengerCustomGroups.orgId)));
+  const deterministicGroupIds = legacyGroups.map((group) => deterministicUuid(group.id, input.targetUserId));
+  const removedTargetGroupIds = deterministicGroupIds.length > 0
+    ? new Set((await tx
+      .select({ groupId: activityLog.entityId })
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.actorType, "user"),
+        eq(activityLog.actorId, input.targetUserId),
+        eq(activityLog.action, CUSTOM_GROUP_REMOVED_ACTION),
+        eq(activityLog.entityType, "messenger_custom_group"),
+        inArray(activityLog.entityId, deterministicGroupIds),
+        inScope(activityLog.orgId),
+      )))
+      .map((row) => row.groupId))
+    : new Set<string>();
+  const recoverableLegacyGroups = legacyGroups.filter((group) => (
+    !removedTargetGroupIds.has(deterministicUuid(group.id, input.targetUserId))
+  ));
   const groupIdMap = new Map(
-    legacyGroups.map((group) => [
+    recoverableLegacyGroups.map((group) => [
       group.id,
       deterministicUuid(group.id, input.targetUserId),
     ]),
   );
-  if (legacyGroups.length > 0) {
-    await tx.insert(messengerCustomGroups).values(legacyGroups.map((group) => ({
+  if (recoverableLegacyGroups.length > 0) {
+    await tx.insert(messengerCustomGroups).values(recoverableLegacyGroups.map((group) => ({
       ...group,
       id: groupIdMap.get(group.id)!,
       userId: input.targetUserId,
@@ -120,20 +139,21 @@ export async function copyLegacyOperatorState(
       eq(messengerCustomGroupEntries.userId, LEGACY_BOARD_USER_ID),
       inScope(messengerCustomGroupEntries.orgId),
     ));
-  if (legacyEntries.length > 0) {
-    await tx.insert(messengerCustomGroupEntries).values(legacyEntries.flatMap((entry) => {
-      const groupId = groupIdMap.get(entry.groupId);
-      if (!groupId) return [];
-      const savedViewMatch = /^saved-view:(.+)$/.exec(entry.threadKey);
-      const mappedSavedViewId = savedViewMatch ? savedViewIdMap.get(savedViewMatch[1]!) : undefined;
-      return [{
-        ...entry,
-        id: deterministicUuid(entry.id, input.targetUserId),
-        userId: input.targetUserId,
-        groupId,
-        threadKey: mappedSavedViewId ? `saved-view:${mappedSavedViewId}` : entry.threadKey,
-      }];
-    })).onConflictDoNothing();
+  const recoverableLegacyEntries = legacyEntries.flatMap((entry) => {
+    const groupId = groupIdMap.get(entry.groupId);
+    if (!groupId) return [];
+    const savedViewMatch = /^saved-view:(.+)$/.exec(entry.threadKey);
+    const mappedSavedViewId = savedViewMatch ? savedViewIdMap.get(savedViewMatch[1]!) : undefined;
+    return [{
+      ...entry,
+      id: deterministicUuid(entry.id, input.targetUserId),
+      userId: input.targetUserId,
+      groupId,
+      threadKey: mappedSavedViewId ? `saved-view:${mappedSavedViewId}` : entry.threadKey,
+    }];
+  });
+  if (recoverableLegacyEntries.length > 0) {
+    await tx.insert(messengerCustomGroupEntries).values(recoverableLegacyEntries).onConflictDoNothing();
   }
 
   const targetEntries = await tx

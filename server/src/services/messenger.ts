@@ -1452,6 +1452,19 @@ export function messengerService(db: Db) {
           { groupId, source },
         );
       }
+      await txDb
+        .insert(activityLog)
+        .values({
+          orgId,
+          actorType: "user",
+          actorId: userId,
+          action: "messenger.custom_group_removed",
+          entityType: "messenger_custom_group",
+          entityId: groupId,
+          details: { source },
+          idempotencyKey: `messenger-custom-group-removed:${userId}:${groupId}`,
+        })
+        .onConflictDoNothing();
       const [group] = await txDb
         .delete(messengerCustomGroups)
         .where(and(
