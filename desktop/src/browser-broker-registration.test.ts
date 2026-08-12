@@ -22,14 +22,20 @@ describe("Desktop Browser Broker server registration", () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "http://127.0.0.1:3100/api/instance/browser/broker", {
       method: "PUT",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:3100",
+      },
       body: JSON.stringify(broker),
       signal: expect.any(AbortSignal),
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(2, "http://127.0.0.1:3100/api/instance/browser/broker", {
       method: "DELETE",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:3100",
+      },
       body: JSON.stringify({ token: broker.token }),
       signal: expect.any(AbortSignal),
     });
@@ -92,7 +98,7 @@ describe("Desktop Browser Broker server registration", () => {
   });
 
   it("routes every protected Browser lifecycle request through the injected fetch", async () => {
-    const sessionFetch = vi.fn(async (url: string) => {
+    const sessionFetch = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url.endsWith("/instance/settings/browser")) {
         return new Response(JSON.stringify({ enabled: true, openLinksIn: "built_in" }), { status: 200 });
       }
@@ -124,6 +130,11 @@ describe("Desktop Browser Broker server registration", () => {
       "http://127.0.0.1:3100/api/instance/browser/broker",
       "http://127.0.0.1:3100/api/heartbeat-runs/run-1",
     ]);
+    for (const call of sessionFetch.mock.calls.slice(1, 3)) {
+      expect(call[1]).toEqual(expect.objectContaining({
+        headers: expect.objectContaining({ origin: "http://127.0.0.1:3100" }),
+      }));
+    }
   });
 
   it("does not expose response bodies or the credential when registration fails", async () => {

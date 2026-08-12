@@ -154,6 +154,7 @@ describe("SettingsSidebar Browser entry", () => {
 
     const browserLink = container.querySelector('a[href="/instance/settings/browser"]');
     expect(browserLink?.textContent).toBe("Browser");
+    expect(container.querySelector('a[href="/instance/settings/privacy"]')).toBeNull();
   });
 
   it("hides Browser outside local trusted deployments", () => {

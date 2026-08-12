@@ -1,14 +1,23 @@
 // @vitest-environment node
 
-import type { ReactNode } from "react";
+import type { AssistanceRequest } from "@rudderhq/shared";
+import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { IssueDetail, buildIssueChatHref, buildIssueHeaderBreadcrumbs, linkedIssueRunsRefetchInterval } from "./IssueDetail";
+import {
+  IssueDetail,
+  buildIssueChatHref,
+  buildIssueHeaderBreadcrumbs,
+  linkedIssueRunsRefetchInterval,
+  selectIssueAssistanceRequest,
+} from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
+const queryErrors = new Set<string>();
+const queryRefetch = vi.fn(async () => undefined);
 
 const parentIssue = {
   id: "issue-parent",
@@ -81,6 +90,7 @@ const queryData = new Map<string, unknown>([
   [JSON.stringify(["issues", "attachments", "ORG2-1"]), []],
   [JSON.stringify(["issues", "live-runs", "ORG2-1"]), []],
   [JSON.stringify(["issues", "active-run", "ORG2-1"]), null],
+  [JSON.stringify(["requests", "org-2", null, "assistance"]), []],
   [JSON.stringify(["issues", "org-2"]), []],
   [JSON.stringify(["issues", "org-2", "children", "issue-parent"]), [childIssue]],
   [JSON.stringify(["agents", "org-2"]), [{
@@ -161,13 +171,27 @@ vi.mock("@tanstack/react-query", () => ({
     queryKey: unknown[];
     enabled?: boolean;
   }) => {
+    const serializedKey = JSON.stringify(queryKey);
     if (enabled === false) {
-      return { data: undefined, isLoading: false, error: null };
+      return {
+        data: undefined,
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        isSuccess: false,
+        error: null,
+        refetch: queryRefetch,
+      };
     }
+    const isError = queryErrors.has(serializedKey);
     return {
-      data: queryData.get(JSON.stringify(queryKey)),
+      data: queryData.get(serializedKey),
+      isError,
+      isFetching: false,
       isLoading: false,
-      error: null,
+      isSuccess: !isError && queryData.has(serializedKey),
+      error: isError ? new Error("Timeline source failed") : null,
+      refetch: queryRefetch,
     };
   },
   useMutation: () => ({
@@ -321,6 +345,7 @@ vi.mock("../components/CommentThread", () => ({
   CommentThread: (props: {
     mentions?: Array<Record<string, unknown>>;
     activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
+    composerReplacement?: ReactNode;
     fixedComposer?: boolean;
     fixedComposerTimelineScroll?: boolean;
   }) => {
@@ -336,6 +361,7 @@ vi.mock("../components/CommentThread", () => ({
         {sortedActivityItems.map((item) => (
           <div key={item.id}>{item.node}</div>
         ))}
+        {props.composerReplacement}
       </div>
     );
   },
@@ -343,6 +369,20 @@ vi.mock("../components/CommentThread", () => ({
 
 vi.mock("../components/IssueProperties", () => ({
   IssueProperties: () => <div>Properties</div>,
+}));
+
+vi.mock("../components/MarkdownBody", () => ({
+  MarkdownBody: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/ui/textarea", () => ({
+  Textarea: ({ value, placeholder, "aria-label": ariaLabel }: {
+    value?: string;
+    placeholder?: string;
+    "aria-label"?: string;
+  }) => (
+    <textarea aria-label={ariaLabel} value={value} placeholder={placeholder} readOnly />
+  ),
 }));
 
 vi.mock("../components/LiveRunWidget", () => ({
@@ -413,6 +453,7 @@ vi.mock("lucide-react", () => {
   const Icon = () => <span />;
   const icons = {
     Activity: Icon,
+    AlertTriangle: Icon,
     Atom: Icon,
     BadgeDollarSign: Icon,
     Bot: Icon,
@@ -424,6 +465,7 @@ vi.mock("lucide-react", () => {
     Calendar: Icon,
     ChartNoAxesColumnIncreasing: Icon,
     Check: Icon,
+    CheckCircle2: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
     CircuitBoard: Icon,
@@ -482,6 +524,7 @@ vi.mock("lucide-react", () => {
     Puzzle: Icon,
     Radar: Icon,
     Repeat: Icon,
+    RefreshCw: Icon,
     Rocket: Icon,
     Scale: Icon,
     Search: Icon,
@@ -505,6 +548,7 @@ vi.mock("lucide-react", () => {
     Users: Icon,
     Wand2: Icon,
     Wrench: Icon,
+    XCircle: Icon,
     XIcon: Icon,
     Zap: Icon,
   };
@@ -570,6 +614,51 @@ describe("buildIssueHeaderBreadcrumbs", () => {
   });
 });
 
+describe("selectIssueAssistanceRequest", () => {
+  const request = (overrides: Partial<AssistanceRequest>): AssistanceRequest => ({
+    id: "request-a",
+    orgId: "org-2",
+    kind: "assistance",
+    subtype: "issue_blocker",
+    status: "resolved",
+    issueId: "issue-parent",
+    requestedByAgentId: "agent-1",
+    requestedByUserId: null,
+    originRunId: "run-1",
+    assigneeAgentId: "agent-1",
+    blockerFingerprint: "fingerprint",
+    supersededByRequestId: null,
+    title: "Request",
+    prompt: "Prompt",
+    resolution: "answered",
+    response: "Done",
+    resolvedByUserId: "user-1",
+    resolvedAt: new Date("2026-04-20T02:00:00.000Z"),
+    metadata: {},
+    createdAt: new Date("2026-04-20T01:00:00.000Z"),
+    updatedAt: new Date("2026-04-20T02:00:00.000Z"),
+    ...overrides,
+  });
+
+  it("prefers the open replacement over a newer terminal request", () => {
+    const selected = selectIssueAssistanceRequest([
+      request({ id: "request-superseded", status: "superseded", updatedAt: new Date("2026-04-20T03:00:00.000Z") }),
+      request({ id: "request-open", status: "open", resolution: null, response: null }),
+    ], "issue-parent");
+
+    expect(selected?.id).toBe("request-open");
+  });
+
+  it("uses updated time and id as deterministic terminal tie breakers", () => {
+    const selected = selectIssueAssistanceRequest([
+      request({ id: "request-a" }),
+      request({ id: "request-b" }),
+    ], "issue-parent");
+
+    expect(selected?.id).toBe("request-b");
+  });
+});
+
 describe("IssueDetail", () => {
   it("polls linked run summaries only while issue execution is live", () => {
     expect(linkedIssueRunsRefetchInterval(false)).toBe(false);
@@ -581,10 +670,13 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     capturedInlineEditorProps = [];
     mockSourceBreadcrumb = null;
+    queryErrors.clear();
+    queryRefetch.mockClear();
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "org-2", "follows"]), []);
+    queryData.set(JSON.stringify(["requests", "org-2", null, "assistance"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
   });
@@ -612,6 +704,117 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("New document");
     expect(html).not.toContain(">Activity</button>");
     expect(html).not.toContain("Comments &amp; Runs");
+  });
+
+  it("renders an open Assistance Request as an inline Issue decision", () => {
+    queryData.set(JSON.stringify(["requests", "org-2", null, "assistance"]), [{
+      id: "request-open",
+      orgId: "org-2",
+      kind: "assistance",
+      subtype: "issue_blocker",
+      status: "open",
+      issueId: "issue-parent",
+      requestedByAgentId: "agent-1",
+      requestedByUserId: null,
+      originRunId: "run-1",
+      assigneeAgentId: "agent-1",
+      blockerFingerprint: "fingerprint",
+      supersededByRequestId: null,
+      title: "GitHub confirmation required",
+      prompt: "Approve the mobile confirmation before token creation can continue.",
+      resolution: null,
+      response: null,
+      resolvedByUserId: null,
+      resolvedAt: null,
+      metadata: { attempt: 3 },
+      createdAt: new Date("2026-04-20T01:00:00.000Z"),
+      updatedAt: new Date("2026-04-20T01:00:00.000Z"),
+    }]);
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...parentIssue,
+      status: "blocked",
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('aria-label="Assistance request"');
+    expect(html).toContain('aria-label="Answer or describe what changed"');
+    expect(html).toContain("Blocked · Waiting on you");
+    expect(html).toContain("Attempt 3/3");
+    expect(html).toContain("Send answer");
+    expect(html).toContain("Mark action complete");
+    expect(html).toContain("Cannot help");
+    expect(html).toContain("Cancel request");
+    expect(html).toContain("Open in Requests");
+    expect((capturedCommentThreadProps?.composerReplacement as ReactElement).key).toBe("request-open");
+  });
+
+  it("keeps a resolved Assistance Request visible without mutation controls", () => {
+    queryData.set(JSON.stringify(["requests", "org-2", null, "assistance"]), [{
+      id: "request-resolved",
+      orgId: "org-2",
+      kind: "assistance",
+      subtype: "issue_blocker",
+      status: "resolved",
+      issueId: "issue-parent",
+      requestedByAgentId: "agent-1",
+      requestedByUserId: null,
+      originRunId: "run-1",
+      assigneeAgentId: "agent-1",
+      blockerFingerprint: "fingerprint",
+      supersededByRequestId: null,
+      title: "GitHub confirmation required",
+      prompt: "Approve the mobile confirmation before token creation can continue.",
+      resolution: "action_completed",
+      response: "GitHub mobile confirmation approved.",
+      resolvedByUserId: "user-1",
+      resolvedAt: new Date("2026-04-20T02:00:00.000Z"),
+      metadata: { attempt: 3 },
+      createdAt: new Date("2026-04-20T01:00:00.000Z"),
+      updatedAt: new Date("2026-04-20T02:00:00.000Z"),
+    }]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Action completed");
+    expect(html).toContain("GitHub mobile confirmation approved.");
+    expect(html).toContain("Open in Requests");
+    expect(html).not.toContain("Send answer");
+    expect(html).not.toContain("Cancel request");
+    const activityItems = capturedCommentThreadProps?.activityItems as Array<{ node: ReactElement }>;
+    expect(activityItems[0]?.node.key).toBe("request-resolved");
+  });
+
+  it("renders a superseded Assistance Request with operator-facing copy", () => {
+    queryData.set(JSON.stringify(["requests", "org-2", null, "assistance"]), [{
+      id: "request-superseded",
+      orgId: "org-2",
+      kind: "assistance",
+      subtype: "issue_blocker",
+      status: "superseded",
+      issueId: "issue-parent",
+      requestedByAgentId: "agent-1",
+      requestedByUserId: null,
+      originRunId: "run-1",
+      assigneeAgentId: "agent-1",
+      blockerFingerprint: "fingerprint",
+      supersededByRequestId: "request-replacement",
+      title: "GitHub confirmation required",
+      prompt: "Approve the mobile confirmation before token creation can continue.",
+      resolution: null,
+      response: null,
+      resolvedByUserId: null,
+      resolvedAt: null,
+      metadata: { attempt: 1, supersededReason: "blocker_changed" },
+      createdAt: new Date("2026-04-20T01:00:00.000Z"),
+      updatedAt: new Date("2026-04-20T02:00:00.000Z"),
+    }]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Superseded because");
+    expect(html).toContain("The blocking condition changed.");
+    expect(html).not.toContain("blocker_changed");
   });
 
   it("shows parent issue context directly under the title for sub-issues", () => {
@@ -706,6 +909,12 @@ describe("IssueDetail", () => {
     expect(capturedCommentThreadProps).toMatchObject({
       fixedComposer: true,
       fixedComposerTimelineScroll: false,
+      progressiveDisclosure: {
+        failOpen: false,
+        key: "ORG2-1",
+        mountAll: false,
+        ready: true,
+      },
     });
     expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
@@ -713,6 +922,22 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("xl:grid");
     expect(html).not.toContain("xl:sticky");
     expect(html).not.toContain('xl:overflow-y-auto');
+  });
+
+  it("fails open and exposes scoped recovery when an activity source errors", () => {
+    queryErrors.add(JSON.stringify(["issues", "activity", "ORG2-1"]));
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('data-testid="issue-timeline-load-warning"');
+    expect(html).toContain("Some activity history could not be loaded.");
+    expect(html).toContain(">Retry</button>");
+    expect(capturedCommentThreadProps).toMatchObject({
+      progressiveDisclosure: {
+        failOpen: true,
+        ready: false,
+      },
+    });
   });
 
   it("keeps an embedded issue detail in its own scroll flow", () => {

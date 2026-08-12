@@ -516,7 +516,7 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "4. Inspect your Rudder inbox. Prioritize reviewer rows in `in_review` or `blocked`, then assignee `in_progress`, then assignee `todo`. Do not look for unassigned work.",
   "5. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so. If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, respond to the comment itself instead of executing the whole issue.",
   "6. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
-  "7. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
+  "7. Complete the real task. When an action fails, investigate and try a bounded materially different recovery path before requesting human help. Before exiting active work, leave exactly one durable signal: progress, done, a blocker claim with the exact human input/action required, explicit handoff, or structured review decision. Rudder audits repeated blocker claims; the first claim does not directly establish a blocked Issue.",
   "8. Treat passive follow-up as issue follow-up, not a fresh assignment.",
   "9. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
   "",

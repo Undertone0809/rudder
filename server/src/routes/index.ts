@@ -18,5 +18,6 @@ export { messengerRoutes } from "./messenger.js";
 export { organizationSkillRoutes } from "./organization-skills.js";
 export { organizationRoutes } from "./orgs.js";
 export { projectRoutes } from "./projects.js";
+export { requestRoutes } from "./requests.js";
 export { secretRoutes } from "./secrets.js";
 export { sidebarBadgeRoutes } from "./sidebar-badges.js";

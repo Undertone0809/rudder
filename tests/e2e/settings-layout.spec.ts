@@ -177,9 +177,10 @@ test.describe("Settings layout", () => {
     const destinations = [
       { href: "/instance/settings/profile", heading: "Profile" },
       { href: "/instance/settings/notifications", heading: "System permissions" },
-      { href: "/instance/settings/privacy", heading: "Privacy & Telemetry" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
     ];
+
+    await expect(modal.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
 
     const browserLink = modal.locator('a[href$="/instance/settings/browser"]');
     if (await browserLink.count()) {

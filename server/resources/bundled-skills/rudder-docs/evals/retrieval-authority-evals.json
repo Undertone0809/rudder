@@ -258,5 +258,45 @@
     "expected_public_path": "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms",
     "expected_anchor": "boundaries",
     "illustrative_case_sufficient": false
+  },
+  {
+    "query": "How does Rudder build, review, approve, and sign Windows Desktop releases?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": [],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/code-signing-policy",
+    "expected_anchor": null,
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Rudder 如何构建、审查、批准并签名 Windows Desktop 发布产物？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": [],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/code-signing-policy",
+    "expected_anchor": null,
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Which Rudder data stays local and which optional services process data?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["ANALYTICS.TELEMETRY.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/privacy",
+    "expected_anchor": null,
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "哪些 Rudder 数据保留在本地，哪些可选服务会处理数据？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["ANALYTICS.TELEMETRY.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/privacy",
+    "expected_anchor": null,
+    "illustrative_case_sufficient": false
   }
 ]

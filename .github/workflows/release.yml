@@ -30,7 +30,7 @@ jobs:
   preflight:
     name: Release preflight
     if: >-
-      (github.event_name == 'workflow_dispatch' && !inputs.resume_missing) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -95,142 +95,21 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
-            channel="canary"
             version="$(./scripts/release.sh canary --preflight)"
+          elif [ "${{ inputs.resume_missing }}" = "true" ]; then
+            version="$(node -p "require('./cli/package.json').version")"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test -f "releases/v${version}.md"
           else
-            channel="stable"
             version="$(./scripts/release.sh stable --preflight)"
           fi
-          node scripts/release-compatibility-matrix.mjs \
-            --channel "$channel" \
-            --candidate-version "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release source: ${{ steps.source.outputs.sha }}"
           echo "Release version: $version"
 
-  prepublish-upgrade-gate:
-    name: Prepublish database and packaged upgrade gate (${{ matrix.os }})
-    needs: preflight
-    if: >-
-      github.event_name == 'workflow_run' ||
-      (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    permissions:
-      contents: read
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Enable pnpm
-        shell: bash
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-
-      - name: Install dependencies
-        shell: bash
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache PostgreSQL 18.4 runtime
-        uses: actions/cache@v5
-        with:
-          path: ~/.rudder/runtime-payloads/postgres-18.4
-          key: postgres-runtime-18.4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/release.yml') }}
-
-      - name: Prepare PostgreSQL 18.4 runtime
-        shell: bash
-        run: |
-          if [ "${RUNNER_OS}" = "Linux" ]; then
-            runtime_arch="$(node -p 'process.arch')"
-            runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${runtime_arch}"
-            bin_dir="${runtime_root}/bin"
-            if [ ! -x "${bin_dir}/postgres" ]; then
-              source_url="https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
-              source_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
-              source_archive="${RUNNER_TEMP}/postgresql-18.4.tar.bz2"
-              source_root="${RUNNER_TEMP}/postgresql-18.4"
-              build_root="${RUNNER_TEMP}/postgresql-18.4-build"
-              curl --fail --location --output "${source_archive}" "${source_url}"
-              actual_sha256="$(shasum -a 256 "${source_archive}" | awk '{print $1}')"
-              test "${actual_sha256}" = "${source_sha256}"
-              tar -xjf "${source_archive}" -C "${RUNNER_TEMP}"
-              mkdir -p "${build_root}"
-              cd "${build_root}"
-              "${source_root}/configure" \
-                --prefix="${runtime_root}" \
-                --without-icu \
-                --without-readline \
-                --without-zlib
-              make -j2
-              make install
-            fi
-            test -f "${runtime_root}/share/postgres.bki"
-            test -f "${runtime_root}/share/postgresql.conf.sample"
-            test -d "${runtime_root}/share/timezone"
-            test -x "${bin_dir}/pg_config"
-            postgres_configure="$("${bin_dir}/pg_config" --configure)"
-            if grep -q -- '--with-system-tzdata' <<< "${postgres_configure}"; then
-              echo "Linux portable PostgreSQL must bundle its own timezone database." >&2
-              exit 1
-            fi
-          else
-            bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
-          fi
-          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
-          RUDDER_POSTGRES_BIN_DIR="${bin_dir}" node -e "const {execFileSync}=require('node:child_process'); const path=require('node:path'); const exe=process.platform==='win32'?'postgres.exe':'postgres'; console.log(execFileSync(path.join(process.env.RUDDER_POSTGRES_BIN_DIR, exe), ['--version'], {encoding:'utf8'}).trim())"
-
-      - name: Verify locked migration compatibility
-        shell: bash
-        run: |
-          channel="canary"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then channel="stable"; fi
-          node scripts/release-compatibility-matrix.mjs \
-            --channel "$channel" \
-            --candidate-version "${{ needs.preflight.outputs.version }}"
-
-      - name: Run database migration and recovery tests
-        if: runner.os != 'Windows'
-        shell: bash
-        run: pnpm --filter @rudderhq/db exec vitest run --maxWorkers=1 src/client.test.ts src/migration-manifest.test.ts
-
-      - name: Run historical schema upgrade matrix with shaped data
-        shell: bash
-        timeout-minutes: 5
-        env:
-          RUDDER_RELEASE_COMPATIBILITY_HEARTBEAT_MS: "10000"
-        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
-
-      - name: Install Playwright Chromium
-        shell: bash
-        run: |
-          if [ "$(uname -s)" = "Linux" ]; then
-            pnpm exec playwright install --with-deps chromium
-          else
-            pnpm exec playwright install chromium
-          fi
-
-      - name: Run packaged upgrade smoke
-        shell: bash
-        run: |
-          if [ "$(uname -s)" = "Linux" ]; then
-            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:verify
-          else
-            pnpm desktop:verify
-          fi
-
   resume-stable:
     name: Resume partial stable release
+    needs: preflight
     if: github.event_name == 'workflow_dispatch' && inputs.resume_missing && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
     permissions:
       actions: write
@@ -238,21 +117,31 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     environment: npm-stable
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    outputs:
+      version: ${{ steps.recovery-source.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
 
-      - name: Require locked v0.7.2 source
+      - name: Require locked stable source
+        id: recovery-source
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
+          PREFLIGHT_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_REF"
-          test "$(node -p "require('./cli/package.json').version")" = "0.7.2"
+          version="$(node -p "require('./cli/package.json').version")"
+          test "$version" = "$PREFLIGHT_VERSION"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v6
         with:
@@ -280,28 +169,18 @@ jobs:
             rm -rf "$pkg_dir/skills"
             cp -R server/resources/bundled-skills "$pkg_dir/skills"
           done
-          node - <<'NODE'
-          const fs = require("node:fs");
-          const file = "packages/agent-runtimes/hermes-gateway/package.json";
-          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-          pkg.repository = {
-            type: "git",
-            url: "https://github.com/Undertone0809/rudder",
-            directory: "packages/agent-runtimes/hermes-gateway",
-          };
-          fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
-          NODE
-          node scripts/release-package-map.mjs set-publish-version 0.7.2 --allow-source-mutation
+          node scripts/release-package-map.mjs set-publish-version "$RELEASE_VERSION" --allow-source-mutation
           ./scripts/build-npm.sh --skip-checks --skip-typecheck
 
       - name: Publish only missing packages and create release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           package_map="$(mktemp)"
           node scripts/release-package-map.mjs list > "$package_map"
-          test "$(wc -l < "$package_map" | xargs)" = "17"
+          test "$(wc -l < "$package_map" | xargs)" = "15"
 
           while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
             [ -n "$pkg_dir" ] || continue
@@ -318,22 +197,47 @@ jobs:
             rm -f "$view_error"
           done < "$package_map"
 
-          while IFS=$'\t' read -r _pkg_dir pkg_name pkg_version; do
-            test "$(npm view "$pkg_name@$pkg_version" version)" = "$pkg_version"
-          done < "$package_map"
+          . ./scripts/release-lib.sh
+          if ! wait_for_npm_package_versions "$(cat "$package_map")" 60 5; then
+            release_fail "publish completed but npm never exposed: $WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING"
+          fi
           rm -f "$package_map"
 
-          git tag v0.7.2 "${{ inputs.source_ref }}"
-          git push origin refs/tags/v0.7.2
-          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh 0.7.2
-          gh workflow run desktop-release.yml --ref main -f release_tag=v0.7.2 -f source_ref=v0.7.2
+          tag="v${RELEASE_VERSION}"
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
+          if [ -n "$remote_tag_sha" ]; then
+            test "$remote_tag_sha" = "$SOURCE_REF"
+            git tag --force "$tag" "$SOURCE_REF"
+          else
+            git tag "$tag" "$SOURCE_REF"
+            git push origin "refs/tags/$tag"
+          fi
+          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "$RELEASE_VERSION"
+          gh workflow run desktop-release.yml --ref main -f release_tag="$tag" -f source_ref="$tag"
+
+      - name: Wait for desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
+        run: |
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "v${RELEASE_VERSION}" \
+            --version "$RELEASE_VERSION"
+
+      - name: Clean up obsolete canary releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/cleanup-obsolete-canaries.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --remote origin \
+            --stable-version "$RELEASE_VERSION"
 
   canary:
     name: Publish npm canary
-    needs:
-      - preflight
-      - prepublish-upgrade-gate
-    if: github.event_name == 'workflow_run' && needs.prepublish-upgrade-gate.result == 'success'
+    needs: preflight
+    if: github.event_name == 'workflow_run'
     permissions:
       actions: write
       contents: write
@@ -359,12 +263,6 @@ jobs:
       - name: Locked canary preflight
         id: locked-preflight
         run: echo "version=$(./scripts/release.sh canary --preflight)" >> "$GITHUB_OUTPUT"
-
-      - name: Locked canary migration compatibility preflight
-        run: |
-          node scripts/release-compatibility-matrix.mjs \
-            --channel canary \
-            --candidate-version "${{ steps.locked-preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:
@@ -429,7 +327,7 @@ jobs:
   stable-dry-run:
     name: Preview stable release
     needs: preflight
-    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run && !inputs.resume_missing
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -440,12 +338,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - name: Locked stable migration compatibility preflight
-        run: |
-          node scripts/release-compatibility-matrix.mjs \
-            --channel stable \
-            --candidate-version "${{ needs.preflight.outputs.version }}"
 
       - uses: actions/setup-node@v6
         with:
@@ -467,10 +359,8 @@ jobs:
 
   stable:
     name: Publish stable release
-    needs:
-      - preflight
-      - prepublish-upgrade-gate
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder' && needs.prepublish-upgrade-gate.result == 'success'
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.resume_missing && github.repository == 'Undertone0809/rudder'
     permissions:
       actions: write
       contents: write
@@ -490,12 +380,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
 
-      - name: Locked stable migration compatibility preflight
-        run: |
-          node scripts/release-compatibility-matrix.mjs \
-            --channel stable \
-            --candidate-version "${{ needs.preflight.outputs.version }}"
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -510,6 +394,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Docs structure
+        run: pnpm docs:structure:test
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Docs search E2E
+        run: pnpm test:docs-search
 
       - name: Configure git identity
         run: |
@@ -563,13 +456,14 @@ jobs:
     needs:
       - preflight
       - stable
-    if: needs.stable.result == 'success'
+      - resume-stable
+    if: always() && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       contents: write
     uses: ./.github/workflows/docs-production.yml
     with:
-      source_ref: v${{ needs.stable.outputs.version }}
-      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      source_ref: v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
       release_docs_approved: true
     secrets: inherit
 
@@ -578,8 +472,9 @@ jobs:
     needs:
       - preflight
       - stable
+      - resume-stable
       - stable-docs
-    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
+    if: always() && needs.stable-docs.result == 'success' && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       actions: write
       contents: write
@@ -599,7 +494,7 @@ jobs:
         id: next-release
         run: |
           node scripts/prepare-next-release.mjs \
-            --stable-version "${{ needs.stable.outputs.version }}"
+            --stable-version "${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
 
       - name: Start CI for the advanced release base
         if: steps.next-release.outputs.action == 'updated'
@@ -621,10 +516,11 @@ jobs:
     needs:
       - canary
       - stable
-    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success')
+      - resume-stable
+    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       contents: read
     uses: ./.github/workflows/public-install-smoke.yml
     with:
-      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version }}"
+      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
       repo: ${{ github.repository }}

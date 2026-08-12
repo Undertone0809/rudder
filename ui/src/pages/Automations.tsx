@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { automationsApi } from "../api/automations";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
@@ -387,6 +388,12 @@ export function Automations() {
     scheduleCron: "0 9 * * *",
     outputMode: "chat_output" as AutomationOutputMode,
     chatConversationId: "",
+  });
+  const uploadDescriptionImage = useMutation({
+    mutationFn: async (file: File) => {
+      if (!selectedOrganizationId) throw new Error("No organization selected");
+      return assetsApi.uploadImage(selectedOrganizationId, file, "automations/drafts");
+    },
   });
 
   const resetDraft = useCallback(() => {
@@ -822,6 +829,10 @@ export function Automations() {
                     placeholder="Add instructions e.g. look for crashes in Sentry"
                     bordered={false}
                     contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
+                    imageUploadHandler={async (file) => {
+                      const asset = await uploadDescriptionImage.mutateAsync(file);
+                      return asset.contentPath;
+                    }}
                     onSubmit={() => {
                       if (!createAutomation.isPending && isDraftReady) {
                         createAutomation.mutate();

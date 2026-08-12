@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
@@ -353,6 +354,12 @@ export function GoalDetail() {
     },
     onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
   });
+  const uploadDescriptionImage = useMutation({
+    mutationFn: async (file: File) => {
+      if (!selectedOrganizationId) throw new Error("No organization selected");
+      return assetsApi.uploadImage(selectedOrganizationId, file, `goals/${goalId}`);
+    },
+  });
   const setFocus = useMutation({
     mutationFn: (focus: boolean) => goalsApi.setFocus(goalId!, focus),
     onSuccess: async () => {
@@ -545,7 +552,10 @@ export function GoalDetail() {
           </div>
         </div>
         <InlineEditor value={goal.title} onSave={(title) => updateGoal.mutate({ title })} as="h1" className="min-w-0 whitespace-normal break-words text-2xl font-semibold" />
-        <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} />
+        <InlineEditor value={goal.description ?? ""} onSave={(description) => updateGoal.mutate({ description: markdownDocumentOrNull(description) })} as="p" className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground" placeholder="Add context..." multiline editorEngine="codemirror" documentIdentity={`goal:${goal.id}`} imageUploadHandler={async (file) => {
+          const asset = await uploadDescriptionImage.mutateAsync(file);
+          return asset.contentPath;
+        }} />
       </header>
 
       <Section title="Current Goal" icon={Target}>

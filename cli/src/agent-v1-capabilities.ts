@@ -330,7 +330,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     id: "issue.block",
     command: "rudder issue block <issue> --comment-file <path> [--image <path>]",
     category: "issue",
-    description: "Mark an issue blocked with a required blocker comment, optionally uploading images.",
+    description: "Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked.",
     mutating: true,
     contract: "agent-v1",
     requiresOrgId: false,

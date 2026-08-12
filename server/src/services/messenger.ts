@@ -24,7 +24,8 @@ import {
   messengerCustomGroups,
   messengerSavedViews,
   messengerThreadUserStates,
-  projects
+  projects,
+  requests
 } from "@rudderhq/db";
 import {
   formatMessengerPreview,
@@ -43,6 +44,7 @@ import {
   type MessengerFailedRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
+  type MessengerRequestThreadItem,
   type MessengerRunOriginDescriptor,
   type MessengerSystemThreadItem,
   type MessengerSystemThreadKind,
@@ -757,12 +759,12 @@ function approvalSummary(
   return {
     threadKey: "approvals",
     kind: "approvals",
-    title: "Approvals",
+    title: "Requests",
     subtitle:
       approvalCount > 0
-        ? `${approvalCount} approval${approvalCount === 1 ? "" : "s"}`
-        : "No approvals yet",
-    preview: approvalCount > 0 ? preview ?? "Review and decide on pending approvals" : "No approvals in this organization",
+        ? `${approvalCount} request${approvalCount === 1 ? "" : "s"}`
+        : "No requests yet",
+    preview: approvalCount > 0 ? preview ?? "Review requests needing your input" : "No requests in this organization",
     latestActivityAt,
     lastReadAt,
     unreadCount,
@@ -897,6 +899,43 @@ function approvalCard(
       requester: approvalRequesterLabel(approval, currentUserId),
     },
     approval: approval as Approval,
+    requestKind: "approval",
+    requesterAgent,
+  };
+}
+
+function assistanceRequestCard(
+  request: typeof requests.$inferSelect,
+  requesterAgent: MessengerRequestThreadItem["requesterAgent"],
+): MessengerRequestThreadItem {
+  return {
+    id: request.id,
+    threadKey: "approvals",
+    kind: "approvals",
+    requestKind: "assistance",
+    title: request.title,
+    subtitle: request.status === "open" ? "Waiting on you" : request.status.replaceAll("_", " "),
+    body: request.prompt,
+    preview: request.prompt,
+    href: request.issueId ? `/issues/${request.issueId}` : "/messenger/approvals",
+    latestActivityAt: request.updatedAt,
+    actions: request.issueId ? [buildAction("Open issue", `/issues/${request.issueId}`, "GET")] : [],
+    metadata: {
+      requestId: request.id,
+      requestKind: "assistance",
+      subtype: request.subtype,
+      status: request.status,
+      issueId: request.issueId,
+    },
+    assistanceRequest: {
+      ...request,
+      kind: "assistance",
+      subtype: "issue_blocker",
+      status: request.status as "open" | "resolved" | "cancelled" | "superseded",
+      resolution: request.resolution as "answered" | "action_completed" | "cannot_help" | null,
+      issueId: request.issueId!,
+      blockerFingerprint: request.blockerFingerprint!,
+    },
     requesterAgent,
   };
 }
@@ -2336,12 +2375,17 @@ export function messengerService(db: Db) {
   async function loadApprovalSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "approvals", threadStates);
 
-    const [approvalRows, latestComments] = await Promise.all([
+    const [approvalRows, assistanceRows, latestComments] = await Promise.all([
       db
         .select()
         .from(approvals)
         .where(eq(approvals.orgId, orgId))
         .orderBy(desc(approvals.updatedAt), desc(approvals.createdAt)),
+      db
+        .select()
+        .from(requests)
+        .where(eq(requests.orgId, orgId))
+        .orderBy(desc(requests.updatedAt), desc(requests.createdAt)),
       db
         .select({
           approvalId: approvalComments.approvalId,
@@ -2363,8 +2407,10 @@ export function messengerService(db: Db) {
     }
 
     const typedApprovalRows = approvalRows as ApprovalRow[];
-    const requesterAgentIds = typedApprovalRows
-      .map((approval) => approvalRequesterAgentId(approval))
+    const requesterAgentIds = [
+      ...typedApprovalRows.map((approval) => approvalRequesterAgentId(approval)),
+      ...assistanceRows.map((request) => request.requestedByAgentId),
+    ]
       .filter((agentId): agentId is string => Boolean(agentId));
     const requesterAgents = requesterAgentIds.length > 0
       ? await db
@@ -2386,7 +2432,7 @@ export function messengerService(db: Db) {
         },
       ]),
     );
-    const unsortedItems = typedApprovalRows.map((approval) => {
+    const unsortedItems: MessengerRequestThreadItem[] = typedApprovalRows.map((approval) => {
       const latestComment = latestCommentByApproval.get(approval.id) ?? null;
       const latestActivityAt = maxDate(approval.updatedAt, latestComment?.createdAt) ?? approval.updatedAt;
       const requesterAgentId = approvalRequesterAgentId(approval);
@@ -2395,12 +2441,21 @@ export function messengerService(db: Db) {
         : null;
       return approvalCard(approval, requesterAgent, latestComment, userId, latestActivityAt);
     });
+    for (const request of assistanceRows) {
+      const requesterAgent = request.requestedByAgentId
+        ? requesterAgentById.get(request.requestedByAgentId) ?? null
+        : null;
+      unsortedItems.push(assistanceRequestCard(request, requesterAgent));
+    }
     const latestFirstItems = [...unsortedItems].sort(compareLatestActivity);
     const chronologicalItems = [...unsortedItems].sort(compareChronologicalActivity);
 
-    const actionable = typedApprovalRows.filter((approval) => ACTIONABLE_APPROVAL_STATUSES.has(approval.status));
-    const unreadCount = actionable.filter((approval) => {
-      const activityAt = normalizeDate(approval.updatedAt);
+    const actionable = unsortedItems.filter((item) =>
+      item.requestKind === "approval"
+        ? ACTIONABLE_APPROVAL_STATUSES.has(item.approval.status)
+        : item.assistanceRequest.status === "open");
+    const unreadCount = actionable.filter((item) => {
+      const activityAt = normalizeDate(item.latestActivityAt);
       if (!activityAt) return false;
       if (!lastReadAt) return true;
       return activityAt.getTime() > lastReadAt.getTime();
@@ -2408,12 +2463,12 @@ export function messengerService(db: Db) {
     const latestActivityAt = latestFirstItems[0]?.latestActivityAt ?? null;
 
     return {
-      summary: approvalSummary(approvalRows.length, latestActivityAt, unreadCount, lastReadAt, latestFirstItems[0]?.preview ?? null),
+      summary: approvalSummary(unsortedItems.length, latestActivityAt, unreadCount, lastReadAt, latestFirstItems[0]?.preview ?? null),
       detail: {
         threadKey: "approvals",
         kind: "approvals",
-        title: "Approvals",
-        subtitle: `${approvalRows.length} approval${approvalRows.length === 1 ? "" : "s"}`,
+        title: "Requests",
+        subtitle: `${unsortedItems.length} request${unsortedItems.length === 1 ? "" : "s"}`,
         preview: latestFirstItems[0]?.preview ?? null,
         latestActivityAt,
         lastReadAt,
@@ -2421,9 +2476,9 @@ export function messengerService(db: Db) {
         needsAttention: unreadCount > 0,
         isPinned: false,
         href: "/messenger/approvals",
-        description: "Approvals needing attention",
+        description: "Approvals and assistance needing attention",
         items: chronologicalItems,
-      } satisfies MessengerThreadDetail<MessengerApprovalThreadItem>,
+      } satisfies MessengerThreadDetail<MessengerRequestThreadItem>,
     };
   }
 
@@ -2512,15 +2567,26 @@ export function messengerService(db: Db) {
     }
 
     const latestItem = candidateItems.sort(compareLatestActivity)[0] ?? null;
-    const itemCount = Number(summaryRows[0]?.itemCount ?? 0);
+    const openAssistancePredicate = and(eq(requests.orgId, orgId), eq(requests.status, "open"));
+    const [assistanceCountRows, latestAssistanceRows, unreadAssistanceRows] = await Promise.all([
+      db.select({ itemCount: sql<number>`count(*)::int` }).from(requests).where(openAssistancePredicate),
+      db.select().from(requests).where(openAssistancePredicate).orderBy(desc(requests.updatedAt)).limit(1),
+      db.select({ unreadCount: sql<number>`count(*)::int` }).from(requests)
+        .where(lastReadAt ? and(openAssistancePredicate, gt(requests.updatedAt, lastReadAt)) : openAssistancePredicate),
+    ]);
+    const latestAssistance = latestAssistanceRows[0] ?? null;
+    const latestApprovalAt = latestItem ? normalizeDate(latestItem.latestActivityAt) : null;
+    const latestAssistanceAt = latestAssistance ? normalizeDate(latestAssistance.updatedAt) : null;
+    const assistanceIsLatest = Boolean(latestAssistanceAt && (!latestApprovalAt || latestAssistanceAt > latestApprovalAt));
+    const itemCount = Number(summaryRows[0]?.itemCount ?? 0) + Number(assistanceCountRows[0]?.itemCount ?? 0);
     return {
       itemCount,
       summary: approvalSummary(
         itemCount,
-        latestItem?.latestActivityAt ?? null,
-        Number(unreadRows[0]?.unreadCount ?? 0),
+        assistanceIsLatest ? latestAssistanceAt : latestItem?.latestActivityAt ?? null,
+        Number(unreadRows[0]?.unreadCount ?? 0) + Number(unreadAssistanceRows[0]?.unreadCount ?? 0),
         lastReadAt,
-        latestItem?.preview ?? null,
+        assistanceIsLatest ? latestAssistance?.prompt ?? null : latestItem?.preview ?? null,
       ),
     };
   }

@@ -18,6 +18,7 @@ type IssueDetailFindProps = {
   refreshKey?: string;
   searchLabel?: string;
   highlightMode?: "mark" | "css";
+  onOpenChange?: (open: boolean) => void;
 };
 
 function hasBlockingOverlay() {
@@ -43,6 +44,7 @@ export function IssueDetailFind({
   refreshKey,
   searchLabel = "Find in issue",
   highlightMode = "mark",
+  onOpenChange,
 }: IssueDetailFindProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -74,7 +76,8 @@ export function IssueDetailFind({
     setQuery("");
     setMatchCount(0);
     setActiveIndex(0);
-  }, [rootRef]);
+    onOpenChange?.(false);
+  }, [onOpenChange, rootRef]);
 
   const moveToMatch = useCallback((direction: 1 | -1) => {
     const matches = matchesRef.current;
@@ -106,6 +109,7 @@ export function IssueDetailFind({
         const target = event.target instanceof HTMLElement ? event.target : null;
         skipEditableRootRef.current = target?.closest("input, textarea, select, [contenteditable='true']") ?? null;
         event.preventDefault();
+        onOpenChange?.(true);
         setOpen(true);
         focusInput();
         return;
@@ -123,7 +127,7 @@ export function IssueDetailFind({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeFind, disabled, focusInput, open]);
+  }, [closeFind, disabled, focusInput, onOpenChange, open]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;

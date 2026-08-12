@@ -322,7 +322,8 @@ describe("bundled rudder docs skill", () => {
       /--decision request_changes/,
       /--decision needs_followup/,
       /--decision blocked/,
-      /blocked[\s\S]*blocker comment/i,
+      /complete the real task[\s\S]*materially different recovery path/i,
+      /first claim[\s\S]*does not directly establish/i,
       /approval[\s\S]*linked issues/i,
       /80%[\s\S]*critical work/i,
       /explicit owner[\s\S]*operator/i,
@@ -470,7 +471,6 @@ describe("bundled rudder docs skill", () => {
         "required_contract_ids",
       ]);
       expect(item.expected_source_class).toBe("official_public_docs_primary");
-      expect(item.required_contract_ids.length).toBeGreaterThan(0);
       expect(item.illustrative_case_sufficient).toBe(false);
       expect(item.expected_public_path).not.toMatch(/\/concepts\/(?:control-plane|approvals-budgets-activity|chat|messenger)$/);
       expect(sourceMap).toContain(item.expected_public_path);
@@ -484,6 +484,11 @@ describe("bundled rudder docs skill", () => {
         ...(page?.contracts.primary ?? []),
         ...(page?.contracts.supporting ?? []),
       ];
+      if (declaredContracts.length === 0) {
+        expect(item.required_contract_ids, item.expected_public_path).toEqual([]);
+      } else {
+        expect(item.required_contract_ids.length, item.expected_public_path).toBeGreaterThan(0);
+      }
       if (item.expected_anchor) {
         expect(page?.anchors[item.locale] ?? [], item.expected_public_path).toContain(
           item.expected_anchor,

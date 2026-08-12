@@ -70,9 +70,10 @@ separate editor behavior.
 ## Intent / User Job
 
 An operator can read a durable Markdown document with its normal visual
-hierarchy, click the relevant content to edit the real syntax, paste useful web
-links without hand-authoring link markup, and save without an editor silently
-changing delimiters, indentation, escapes, or boundary whitespace.
+hierarchy, edit table cells without dropping into a raw table, inspect images at
+full size, paste useful links or several images in one operation, and save
+without an editor silently changing delimiters, indentation, escapes, or
+boundary whitespace.
 
 ## Why / Design Reasoning
 
@@ -117,7 +118,8 @@ changing delimiters, indentation, escapes, or boundary whitespace.
 - Goal and Project description creation and editing.
 - Cursor movement, pointer focus, keyboard selection, paste, undo/redo, and
   controlled-value updates from the owning save flow.
-- An exact single `http` or `https` URL on the clipboard.
+- An exact single `http` or `https` URL, or one or more image files, on the
+  clipboard.
 
 ## Product Logic Flow
 
@@ -136,9 +138,10 @@ changing delimiters, indentation, escapes, or boundary whitespace.
    directly to its target and does not reveal its underlying Markdown link.
    Copy, deletion, undo, and persistence continue to operate on the canonical
    source representation.
-5. An ordinary link or image is not atomic. Activating its block exposes its
-   source, including label, destination, and delimiters. Modifier-click or the
-   accessible keyboard action retains explicit open/navigation behavior.
+5. An ordinary link is not atomic. Activating its block exposes its source,
+   including label, destination, and delimiters. Activating a rendered image
+   opens the global image preview and keeps its Markdown source concealed;
+   keyboard activation provides the same preview behavior.
 6. Pasting one valid HTTP(S) URL over editable selected text replaces the
    selection with `[selected text](URL)` synchronously. Pasting without a
    selection inserts a Markdown link with a known site name or hostname
@@ -156,7 +159,20 @@ changing delimiters, indentation, escapes, or boundary whitespace.
 9. In an inactive block, an ordinary external HTTP(S) link shows the compact
    website icon governed by `CHAT.WEBSITE.LINK.ICON.001`. Activating the block
    removes the icon projection and shows the exact Markdown source.
-10. The owning surface persists the resulting Markdown through its existing
+10. A rendered GFM table remains readable when activated. Activating an
+    individual header or body cell opens an in-place single-cell editor without
+    exposing the whole table source. Enter or blur commits, Escape cancels, and
+    Tab or Shift+Tab commits and advances between adjacent cells. Literal line
+    breaks are flattened and unescaped pipes are escaped before persistence so
+    the edit cannot corrupt the table structure.
+11. Pasting or dropping one or more image files uploads them concurrently and
+    inserts successful Markdown image references once, in clipboard order, as
+    one undoable edit. Successfully inserted image-only lines remain rendered
+    when the paste completes instead of exposing the final image's source. A
+    partial failure retains successful uploads in order and reports how many
+    files failed; a total failure leaves the document unchanged and reports the
+    failure.
+12. The owning surface persists the resulting Markdown through its existing
     save path. Empty-value normalization may use trimming only to decide whether
     a value is empty; every non-empty value is stored without trimming or
     editor-driven source normalization.
@@ -169,6 +185,9 @@ changing delimiters, indentation, escapes, or boundary whitespace.
 | Active normal block | Cursor or selection intersects the block | Reveal exact editable source; reveal the complete inseparable multiline unit | Re-serialize delimiters, indentation, or whitespace | Source-fidelity and selection tests |
 | Rudder rich reference | Canonical `@` entity, `$skill`, or persisted Rudder link | Keep one atomic token; unmodified click navigates | Reveal or rewrite its underlying Markdown on focus | Token unit/E2E coverage |
 | Ordinary external link | Inactive versus active block | Show website icon while inactive; show exact link source while active | Let an icon alter copied or persisted text | Website-link unit/E2E coverage |
+| Rendered image | Click or keyboard activation | Open the global image preview while the Markdown remains rendered | Reveal image source as a side effect of preview | Image-preview component and E2E coverage |
+| Rendered table cell | Click, Enter, blur, Escape, Tab, or Shift+Tab | Edit only the selected cell in place; commit, cancel, or navigate predictably | Reveal the full table source or corrupt delimiters | Table interaction component and E2E coverage |
+| Multiple pasted images | Two or more image files, including partial upload failure | Upload concurrently, insert successes in clipboard order as one undo step, and report failures | Reorder successful images, discard successes, or create one undo step per image | Image-paste component and E2E coverage |
 | URL paste over selection | One valid HTTP(S) URL and editable selected text | Insert `[selection](URL)` immediately | Fetch metadata or overwrite unrelated text | Smart-paste tests |
 | URL paste without selection | One valid HTTP(S) URL outside source/code contexts | Insert fallback label, then conditionally enrich with page title | Replace a range the operator has edited | Metadata race and undo tests |
 | Composer or source field | Chat, Issue comment, agent/prompt config, Skill source, or frontmatter | Keep that surface's existing editor mode | Opt in through a shared default | Negative regression E2E |

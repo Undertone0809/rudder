@@ -174,7 +174,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "issue.block",
     "name": "rudder_issue_block",
-    "description": "Mark an issue blocked with a required blocker comment, optionally uploading images.",
+    "description": "Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked.",
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
@@ -856,5 +856,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "8494e4678d53860a8b3d71f8d1a0c87d75360d4bf7184ba93b0a3c8d98acda58";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db4cf09c49d99e50cc86d72e95addbbd088f7068b91574e1ca568903f8002596";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

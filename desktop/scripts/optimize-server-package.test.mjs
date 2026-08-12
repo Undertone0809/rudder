@@ -47,6 +47,89 @@ function createStorePackage(serverPackageDir, storeName, manifest, files = {}) {
   return packageRoot;
 }
 
+function createHoistedPackage(serverPackageDir, manifest, files = {}) {
+  const packageRoot = path.join(
+    serverPackageDir,
+    "node_modules",
+    ...manifest.name.split("/"),
+  );
+  mkdirSync(packageRoot, { recursive: true });
+  writeJson(path.join(packageRoot, "package.json"), manifest);
+  for (const [relativePath, content] of Object.entries(files)) {
+    const targetPath = path.join(packageRoot, relativePath);
+    mkdirSync(path.dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, content);
+  }
+  return packageRoot;
+}
+
+function createHoistedFixture() {
+  const root = mkdtempSync(path.join(tmpdir(), "rudder-optimize-hoisted-package-"));
+  tempRoots.push(root);
+  const serverPackageDir = path.join(root, "server-package");
+  mkdirSync(path.join(serverPackageDir, "node_modules"), { recursive: true });
+  writeJson(path.join(serverPackageDir, "package.json"), {
+    name: "@rudderhq/server",
+    version: "1.0.0",
+    dependencies: {
+      "gpt-tokenizer": "1.0.0",
+      "runtime-root": "1.0.0",
+    },
+  });
+
+  const runtimeRoot = createHoistedPackage(serverPackageDir, {
+    name: "runtime-root",
+    version: "1.0.0",
+    dependencies: { "runtime-leaf": "1.0.0", tsx: "1.0.0" },
+    optionalDependencies: { "@embedded-postgres/darwin-arm64": "18.4.0" },
+    peerDependencies: { vite: "*" },
+    peerDependenciesMeta: { vite: { optional: true } },
+  });
+  const runtimeLeaf = createHoistedPackage(serverPackageDir, {
+    name: "runtime-leaf",
+    version: "1.0.0",
+    main: "index.js",
+  }, { "index.js": "exports.value = 'runtime';\n" });
+  const embeddedPostgres = createHoistedPackage(serverPackageDir, {
+    name: "@embedded-postgres/darwin-arm64",
+    version: "18.4.0",
+  }, { "native/postgres": "duplicate runtime\n" });
+  const vite = createHoistedPackage(serverPackageDir, {
+    name: "vite",
+    version: "7.0.0",
+  }, { "index.js": "exports.devOnly = true;\n" });
+  const esbuild = createHoistedPackage(serverPackageDir, {
+    name: "@esbuild/darwin-arm64",
+    version: "1.0.0",
+  }, { "bin/esbuild": "build tool\n" });
+  const tsx = createHoistedPackage(serverPackageDir, {
+    name: "tsx",
+    version: "1.0.0",
+  }, { "dist/cli.mjs": "export {};\n" });
+  createHoistedPackage(serverPackageDir, {
+    name: "gpt-tokenizer",
+    version: "1.0.0",
+    license: "MIT",
+  }, {
+    "LICENSE": "MIT\n",
+    "cjs/encoding/o200k_base.js": [
+      "exports.encode = (value) => Array.from(Buffer.from(value));",
+      "exports.decode = (tokens) => Buffer.from(tokens).toString();",
+      "",
+    ].join("\n"),
+  });
+
+  return {
+    embeddedPostgres,
+    esbuild,
+    runtimeLeaf,
+    runtimeRoot,
+    serverPackageDir,
+    tsx,
+    vite,
+  };
+}
+
 function createFixture() {
   const root = mkdtempSync(path.join(tmpdir(), "rudder-optimize-package-"));
   tempRoots.push(root);
@@ -201,6 +284,53 @@ describe("Desktop production package manifest optimizer", () => {
 });
 
 describe("Desktop production server package optimizer", () => {
+  it("prunes duplicate PostgreSQL and build tooling from hoisted deployments", async () => {
+    const fixture = createHoistedFixture();
+
+    const manifest = await optimizeServerPackage({
+      arch: "arm64",
+      bundledPostgres: true,
+      platform: "darwin",
+      serverPackageDir: fixture.serverPackageDir,
+    });
+
+    expect(existsSync(fixture.runtimeRoot)).toBe(true);
+    expect(existsSync(fixture.runtimeLeaf)).toBe(true);
+    expect(existsSync(fixture.embeddedPostgres)).toBe(false);
+    expect(existsSync(fixture.vite)).toBe(false);
+    expect(existsSync(fixture.esbuild)).toBe(false);
+    expect(existsSync(fixture.tsx)).toBe(false);
+    expect(manifest.retainedVirtualStoreEntries).toEqual([]);
+    expect(manifest.removedVirtualStoreEntries).toEqual([]);
+    expect(manifest.removedInstalledPackages.map((entry) => entry.name)).toEqual([
+      "@embedded-postgres/darwin-arm64",
+      "@esbuild/darwin-arm64",
+      "tsx",
+      "vite",
+    ]);
+  });
+
+  it("can optimize an already compacted production package again", async () => {
+    const fixture = createHoistedFixture();
+    await optimizeServerPackage({
+      arch: "arm64",
+      bundledPostgres: true,
+      platform: "darwin",
+      serverPackageDir: fixture.serverPackageDir,
+    });
+
+    const manifest = await optimizeServerPackage({
+      arch: "arm64",
+      bundledPostgres: true,
+      platform: "darwin",
+      serverPackageDir: fixture.serverPackageDir,
+    });
+
+    expect(manifest.tokenizer.status).toBe("already-optimized");
+    expect(existsSync(fixture.runtimeLeaf)).toBe(true);
+    expect(existsSync(fixture.embeddedPostgres)).toBe(false);
+  });
+
   it("keeps runtime dependencies while pruning optional peer tooling and duplicate PostgreSQL", async () => {
     const fixture = createFixture();
 

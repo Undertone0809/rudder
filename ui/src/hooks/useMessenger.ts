@@ -5,8 +5,8 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation } from "@/lib/router";
 import type {
-  MessengerApprovalThreadItem,
   MessengerIssueThreadItem,
+  MessengerRequestThreadItem,
   MessengerSystemThreadItem,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
@@ -34,7 +34,7 @@ export interface MessengerModel {
   isFetchingMoreThreadSummaries: boolean;
   loadMoreThreadSummaries: () => Promise<unknown>;
   issueThreadDetail: MessengerThreadDetail<MessengerIssueThreadItem> | null;
-  approvalThreadDetail: MessengerThreadDetail<MessengerApprovalThreadItem> | null;
+  approvalThreadDetail: MessengerThreadDetail<MessengerRequestThreadItem> | null;
   systemThreadDetail: MessengerThreadDetail<MessengerSystemThreadItem> | null;
   isLoading: boolean;
   error: Error | null;

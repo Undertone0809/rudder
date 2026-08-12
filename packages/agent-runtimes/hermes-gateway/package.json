@@ -2,6 +2,15 @@
   "name": "@rudderhq/agent-runtime-hermes-gateway",
   "version": "0.7.3",
   "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "packages/agent-runtimes/hermes-gateway"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

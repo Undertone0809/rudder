@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { DesktopIdentityApi, DesktopIdentityState } from "@/lib/desktop-identity";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -67,6 +68,17 @@ const translate = vi.hoisted(() => {
     "account.desktopOnly.title": "Rudder Account",
     "account.desktopOnly.status": "Desktop app only",
     "account.desktopOnly.description": "Open this setting in Rudder Desktop.",
+    "account.status.title": "Rudder Account",
+    "account.signedIn.description": "This device is connected.",
+    "account.signOut": "Sign out",
+    "account.signingOut": "Signing out...",
+    "account.sessions.title": "Device sessions",
+    "account.sessions.description": "Review devices.",
+    "account.sessions.empty": "No device sessions reported",
+    "account.sessions.emptyDescription": "No active devices.",
+    "account.avatar.change": "Change avatar",
+    "account.avatar.changing": "Changing avatar...",
+    "account.avatar.saveFailed": "Unable to save your avatar.",
   };
   return (key: string) => messages[key] ?? key;
 });
@@ -88,7 +100,44 @@ afterEach(() => {
   mutate.mockReset();
   profileQueryState.isLoading = false;
   profileQueryState.error = null;
+  delete (window as typeof window & { desktopIdentity?: unknown }).desktopIdentity;
 });
+
+function installSignedInBridge() {
+  const signedIn: DesktopIdentityState = {
+    status: "signed-in",
+    account: {
+      id: "account_zeeland",
+      email: "zee@rudderhq.dev",
+      name: "OAuth Provider Name",
+      image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    },
+    deviceId: "device_current",
+  };
+  const signedOut: DesktopIdentityState = { status: "signed-out" };
+  const bridge: DesktopIdentityApi = {
+    getState: vi.fn(async () => signedIn),
+    signIn: vi.fn(async () => signedIn),
+    signOut: vi.fn(async () => signedOut),
+    listDeviceSessions: vi.fn(async () => []),
+    revokeDeviceSession: vi.fn(async () => undefined),
+    getProfile: vi.fn(async () => {
+      throw new Error("Unable to load Rudder Account profile (404)");
+    }),
+    updateProfile: vi.fn(async ({ image }) => ({ ...signedIn.account, email: signedIn.account.email!, image })),
+    onStateChanged: vi.fn(() => () => undefined),
+  };
+  (window as typeof window & { desktopIdentity?: DesktopIdentityApi }).desktopIdentity = bridge;
+  return bridge;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value");
@@ -120,6 +169,97 @@ function renderPage() {
 }
 
 describe("InstanceProfileSettings", () => {
+  it("places the Rudder Account avatar with the nickname without showing a second name", async () => {
+    installSignedInBridge();
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const identityRow = container.querySelector('[data-testid="profile-identity-row"]');
+    expect(identityRow?.querySelector("#profile-nickname")).not.toBeNull();
+    expect(identityRow?.querySelector("img")).not.toBeNull();
+    expect(identityRow?.textContent).toContain("Change avatar");
+    expect(container.textContent).not.toContain("OAuth Provider Name");
+    expect(container.textContent).not.toContain("Unable to load Rudder Account profile (404)");
+    expect(container.textContent).toContain("zee@rudderhq.dev");
+  });
+
+  it("does not restore a stale account profile after sign-out", async () => {
+    const profileResult = deferred<Awaited<ReturnType<DesktopIdentityApi["getProfile"]>>>();
+    const signedIn: Extract<DesktopIdentityState, { status: "signed-in" }> = {
+      status: "signed-in",
+      account: {
+        id: "account_old",
+        email: "old@rudderhq.dev",
+        name: "Old account",
+        image: "data:image/svg+xml;base64,b2xk",
+      },
+      deviceId: "device_old",
+    };
+    const listeners = new Set<(state: DesktopIdentityState) => void>();
+    const bridge = installSignedInBridge();
+    bridge.getState = vi.fn(async () => signedIn);
+    bridge.getProfile = vi.fn(() => profileResult.promise);
+    bridge.onStateChanged = vi.fn((listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    });
+
+    const container = renderPage();
+    await act(async () => Promise.resolve());
+    expect(container.querySelector('[data-testid="profile-identity-row"] img')).not.toBeNull();
+
+    await act(async () => {
+      listeners.forEach((listener) => listener({ status: "signed-out" }));
+      profileResult.resolve({ ...signedIn.account, email: signedIn.account.email!, image: "data:image/svg+xml;base64,c3RhbGU=" });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="profile-identity-row"] img')).toBeNull();
+    expect(container.querySelector('[data-testid="profile-identity-row"]')?.textContent).not.toContain("Change avatar");
+  });
+
+  it("does not apply a stale avatar update after switching accounts", async () => {
+    const updateResult = deferred<Awaited<ReturnType<DesktopIdentityApi["updateProfile"]>>>();
+    const listeners = new Set<(state: DesktopIdentityState) => void>();
+    const bridge = installSignedInBridge();
+    bridge.updateProfile = vi.fn(() => updateResult.promise);
+    bridge.onStateChanged = vi.fn((listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    });
+    const container = renderPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const input = container.querySelector<HTMLInputElement>('[data-testid="account-avatar-input"]');
+    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (character) => character.charCodeAt(0));
+    const file = new File([png], "avatar.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+      await vi.waitFor(() => expect(bridge.updateProfile).toHaveBeenCalledOnce());
+    });
+
+    const nextImage = "data:image/svg+xml;base64,bmV3";
+    await act(async () => {
+      listeners.forEach((listener) => listener({
+        status: "signed-in",
+        account: { id: "account_new", email: "new@rudderhq.dev", name: "New account", image: nextImage },
+        deviceId: "device_new",
+      }));
+      updateResult.resolve({ id: "account_zeeland", email: "zee@rudderhq.dev", name: "Old account", image: "data:image/svg+xml;base64,c3RhbGU=" });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="profile-identity-row"] img')?.getAttribute("src")).toBe(nextImage);
+  });
+
   it("copies the import prompt and keeps pasted provider memory in the editable profile field", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

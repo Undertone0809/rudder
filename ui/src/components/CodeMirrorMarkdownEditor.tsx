@@ -45,10 +45,12 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type MutableRefObject,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -131,6 +133,7 @@ const markdownBlockActions: Array<{
 
 interface MarkdownBlockHoverState {
   line: number;
+  sourceFrom: number;
   top: number;
   left: number;
 }
@@ -144,6 +147,7 @@ function MarkdownBlockHoverMenu({
   onKeepOpen,
   onOpen,
   onScheduleClose,
+  overlayRef,
 }: {
   anchor: MarkdownBlockHoverState;
   block: MarkdownPreviewBlock | null;
@@ -153,6 +157,7 @@ function MarkdownBlockHoverMenu({
   onKeepOpen: () => void;
   onOpen: () => void;
   onScheduleClose: () => void;
+  overlayRef: MutableRefObject<HTMLDivElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -206,14 +211,20 @@ function MarkdownBlockHoverMenu({
 
   return createPortal(
     <div
-      ref={menuRef}
+      ref={(node) => {
+        menuRef.current = node;
+        overlayRef.current = node;
+      }}
       data-markdown-block-hover-overlay="true"
+      data-open={open ? "true" : "false"}
+      className="motion-markdown-block-hover"
       onMouseEnter={onKeepOpen}
       onMouseLeave={onScheduleClose}
       style={{
         position: "fixed",
-        top: anchor.top,
-        left: anchor.left,
+        left: 0,
+        top: 0,
+        transform: `translate3d(${anchor.left}px, ${anchor.top}px, 0)`,
         zIndex: 80,
       }}
     >
@@ -309,6 +320,73 @@ interface PendingImageUpload {
   to: number;
   empty: boolean;
   expectedSource: string;
+}
+
+function clipboardImageFiles(clipboardData: DataTransfer | null) {
+  if (!clipboardData) return [];
+  const files = Array.from(clipboardData.files).filter((file) => file.type.startsWith("image/"));
+  if (files.length > 0) return files;
+  return Array.from(clipboardData.items).flatMap((item) => {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) return [];
+    const file = item.getAsFile();
+    return file ? [file] : [];
+  });
+}
+
+function markdownImageForUpload(file: File, url: string) {
+  const label = file.name || "image";
+  return `![${label.replace(/([\[\]\\])/gu, "\\$1")}](${url})`;
+}
+
+interface MarkdownTableCellEdit {
+  column: number;
+  element: HTMLTableCellElement;
+  from: number;
+  height: number;
+  left: number;
+  row: number;
+  sourceFrom: number;
+  top: number;
+  to: number;
+  value: string;
+  width: number;
+}
+
+interface MarkdownTableCellCommit {
+  from: number;
+  nextCellFrom: number | null;
+  to: number;
+  value: string;
+}
+
+function isUnescapedTablePipe(source: string, index: number) {
+  if (source[index] !== "|") return false;
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 0;
+}
+
+function escapeMarkdownTableCellPipes(value: string) {
+  let escaped = "";
+  for (let index = 0; index < value.length; index += 1) {
+    if (isUnescapedTablePipe(value, index)) escaped += "\\";
+    escaped += value[index];
+  }
+  return escaped;
+}
+
+function markdownTableCellContentRange(raw: string, rawFrom: number) {
+  let start = 0;
+  let end = raw.length;
+  while (start < end && /[ \t]/u.test(raw[start]!)) start += 1;
+  if (start < end && isUnescapedTablePipe(raw, start)) start += 1;
+  while (start < end && /[ \t]/u.test(raw[start]!)) start += 1;
+  while (end > start && /[ \t]/u.test(raw[end - 1]!)) end -= 1;
+  if (end > start && isUnescapedTablePipe(raw, end - 1)) end -= 1;
+  while (end > start && /[ \t]/u.test(raw[end - 1]!)) end -= 1;
+  return { from: rawFrom + start, to: rawFrom + end };
 }
 
 const externalValueSync = Annotation.define<boolean>();
@@ -458,6 +536,41 @@ function richPreviewBlockIds(
   return ids;
 }
 
+function imageOnlyPreviewBlockIds(
+  state: EditorState,
+  blocks: readonly MarkdownPreviewBlock[],
+) {
+  const imageRanges = new Map<string, Array<{ from: number; to: number }>>();
+  let blockIndex = 0;
+  syntaxTree(state).iterate({
+    enter(node) {
+      if (node.name !== "Image") return;
+      while (blockIndex < blocks.length && blocks[blockIndex]!.to <= node.from) {
+        blockIndex += 1;
+      }
+      const block = blocks[blockIndex];
+      if (!block || block.from > node.from || block.to < node.to) return;
+      const ranges = imageRanges.get(block.id) ?? [];
+      ranges.push({ from: node.from, to: node.to });
+      imageRanges.set(block.id, ranges);
+    },
+  });
+
+  const ids = new Set<string>();
+  for (const block of blocks) {
+    const ranges = imageRanges.get(block.id);
+    if (!ranges || ranges.length === 0) continue;
+    let cursor = block.from;
+    const onlyImages = ranges.every((range) => {
+      if (state.sliceDoc(cursor, range.from).trim()) return false;
+      cursor = range.to;
+      return true;
+    }) && !state.sliceDoc(cursor, block.to).trim();
+    if (onlyImages) ids.add(block.id);
+  }
+  return ids;
+}
+
 function markdownPreviewDecorations(
   state: EditorState,
   document: MarkdownPreviewDocument,
@@ -468,12 +581,29 @@ function markdownPreviewDecorations(
   activeRangesOverride?: Array<{ from: number; to: number }>,
 ): { decorations: DecorationSet; atomic: DecorationSet } {
   const { blocks, referenceDefinitions } = document;
+  const selectionRanges = activeRangesOverride ?? activeSelectionRanges(state);
   const activeIds = focused
     ? activeMarkdownPreviewBlockIds(
       blocks,
-      activeRangesOverride ?? activeSelectionRanges(state),
+      selectionRanges,
     )
     : new Set<string>();
+  const imageOnlyIds = imageOnlyPreviewBlockIds(state, blocks);
+  for (const block of blocks) {
+    if (!imageOnlyIds.has(block.id) || !activeIds.has(block.id)) continue;
+    const intersectingSelections = selectionRanges.filter((selection) => (
+      block.from <= Math.max(selection.from, selection.to)
+      && block.to >= Math.min(selection.from, selection.to)
+    ));
+    if (
+      intersectingSelections.length > 0
+      && intersectingSelections.every((selection) => (
+        selection.from === selection.to && selection.from === block.to
+      ))
+    ) {
+      activeIds.delete(block.id);
+    }
+  }
   const decorations: Range<Decoration>[] = [];
   const atomicDecorations: Range<Decoration>[] = [];
   const sourceDrivenBlocks: MarkdownPreviewBlock[] = [];
@@ -643,14 +773,102 @@ function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
 
 function PortalMarkdownBody({
   descriptor,
+  onTableCellCommit,
   propsRef,
+  readSourceRange,
   skillReferences,
 }: {
   descriptor: MarkdownPortalDescriptor;
+  onTableCellCommit: (commit: MarkdownTableCellCommit) => void;
   propsRef: { current: CodeMirrorMarkdownEditorProps };
+  readSourceRange: (from: number, to: number) => string;
   skillReferences: MarkdownSkillReferencePreview[];
 }) {
   const keyboardScopeRef = useRef<HTMLSpanElement | null>(null);
+  const tableCellInputRef = useRef<HTMLInputElement | null>(null);
+  const [tableCellEdit, setTableCellEdit] = useState<MarkdownTableCellEdit | null>(null);
+  const tableCellEditRef = useRef<MarkdownTableCellEdit | null>(null);
+  tableCellEditRef.current = tableCellEdit;
+  const tableCellEditIdentity = tableCellEdit?.sourceFrom ?? null;
+
+  const liveTableCellForEdit = useCallback((edit: MarkdownTableCellEdit) => (
+    keyboardScopeRef.current?.querySelector<HTMLTableCellElement>(
+      `th[data-markdown-source-start="${edit.sourceFrom}"], td[data-markdown-source-start="${edit.sourceFrom}"]`,
+    ) ?? (edit.element.isConnected ? edit.element : null)
+  ), []);
+
+  useLayoutEffect(() => {
+    const edit = tableCellEditRef.current;
+    if (!edit) return;
+    const element = liveTableCellForEdit(edit);
+    element?.classList.add("rudder-markdown-table-cell--editing");
+    tableCellInputRef.current?.focus();
+    tableCellInputRef.current?.select();
+    return () => {
+      element?.classList.remove("rudder-markdown-table-cell--editing");
+    };
+  }, [liveTableCellForEdit, tableCellEditIdentity]);
+
+  useEffect(() => {
+    if (tableCellEditIdentity === null) return;
+    let frame: number | null = null;
+    const reposition = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const edit = tableCellEditRef.current;
+        const element = edit ? liveTableCellForEdit(edit) : null;
+        const input = tableCellInputRef.current;
+        if (!element || !input) return;
+        element.classList.add("rudder-markdown-table-cell--editing");
+        const rect = element.getBoundingClientRect();
+        input.style.setProperty("height", `${rect.height}px`);
+        input.style.setProperty("left", `${rect.left}px`);
+        input.style.setProperty("top", `${rect.top}px`);
+        input.style.setProperty("width", `${rect.width}px`);
+      });
+    };
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [liveTableCellForEdit, tableCellEditIdentity]);
+
+  const beginTableCellEdit = useCallback((target: EventTarget | null) => {
+    if (descriptor.type !== "block" || descriptor.block.kind !== "table") return false;
+    const element = target instanceof Element
+      ? target.closest<HTMLTableCellElement>(
+        "th[data-markdown-source-start][data-markdown-source-end], td[data-markdown-source-start][data-markdown-source-end]",
+      )
+      : null;
+    if (!element || !keyboardScopeRef.current?.contains(element)) return false;
+    const rawFrom = Number(element.dataset.markdownSourceStart);
+    const rawTo = Number(element.dataset.markdownSourceEnd);
+    if (!Number.isFinite(rawFrom) || !Number.isFinite(rawTo) || rawTo < rawFrom) return false;
+    const raw = readSourceRange(rawFrom, rawTo);
+    const { from, to } = markdownTableCellContentRange(raw, rawFrom);
+    const rowElement = element.parentElement;
+    const tableElement = element.closest("table");
+    const rows = tableElement ? Array.from(tableElement.rows) : [];
+    const rect = element.getBoundingClientRect();
+    setTableCellEdit({
+      column: element.cellIndex + 1,
+      element,
+      from,
+      height: rect.height,
+      left: rect.left,
+      row: rowElement instanceof HTMLTableRowElement ? rows.indexOf(rowElement) + 1 : 1,
+      sourceFrom: rawFrom,
+      top: rect.top,
+      to,
+      value: readSourceRange(from, to),
+      width: rect.width,
+    });
+    return true;
+  }, [descriptor, readSourceRange]);
 
   useEffect(() => {
     const scope = keyboardScopeRef.current;
@@ -661,9 +879,56 @@ function PortalMarkdownBody({
       token.tabIndex = 0;
       token.setAttribute("role", "link");
     }
-  }, [descriptor.key]);
+    if (descriptor.type === "block" && descriptor.block.kind === "table") {
+      for (const cell of scope.querySelectorAll<HTMLTableCellElement>(
+        "th[data-markdown-source-start], td[data-markdown-source-start]",
+      )) {
+        cell.tabIndex = 0;
+      }
+    }
+    const handleTableCellEdit = (event: Event) => {
+      beginTableCellEdit(event.target);
+    };
+    scope.addEventListener("rudder:markdown-table-cell-edit", handleTableCellEdit);
+    return () => scope.removeEventListener("rudder:markdown-table-cell-edit", handleTableCellEdit);
+  }, [beginTableCellEdit, descriptor]);
+
+  const finishTableCellEdit = (direction: -1 | 0 | 1, inputValue?: string) => {
+    const current = tableCellEdit;
+    if (!current) return;
+    const currentElement = liveTableCellForEdit(current) ?? current.element;
+    const cells = Array.from(
+      currentElement.closest("table")?.querySelectorAll<HTMLTableCellElement>(
+        "th[data-markdown-source-start], td[data-markdown-source-start]",
+      ) ?? [],
+    );
+    const currentIndex = cells.indexOf(currentElement);
+    const nextCell = direction === 0 ? null : cells[currentIndex + direction] ?? null;
+    const nextSourceStart = Number(nextCell?.dataset.markdownSourceStart);
+    const value = escapeMarkdownTableCellPipes(
+      (inputValue ?? current.value).replace(/[\r\n]+/gu, " "),
+    );
+    const changeDelta = value.length - (current.to - current.from);
+    onTableCellCommit({
+      from: current.from,
+      nextCellFrom: Number.isFinite(nextSourceStart)
+        ? nextSourceStart + (nextSourceStart > current.to ? changeDelta : 0)
+        : null,
+      to: current.to,
+      value,
+    });
+    setTableCellEdit(null);
+  };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
+    if (
+      event.key === "Enter"
+      && beginTableCellEdit(event.target)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (
       event.key !== "Enter"
       || event.altKey
@@ -693,6 +958,11 @@ function PortalMarkdownBody({
       ref={keyboardScopeRef}
       className="contents"
       onKeyDown={handleKeyDown}
+      onMouseDown={(event) => {
+        if (!beginTableCellEdit(event.target)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
     >
       <MarkdownBody
         className={cn(
@@ -703,11 +973,54 @@ function PortalMarkdownBody({
         skillReferences={skillReferences}
         copyMarkdownOnCopy
         enableCodeBlockCopy
+        sourceOffsetBase={descriptor.type === "block" ? descriptor.block.from : descriptor.reference.from}
       >
         {descriptor.type === "block"
           ? descriptor.previewMarkdown
           : descriptor.reference.markdown}
       </MarkdownBody>
+      {tableCellEdit ? createPortal(
+        <input
+          ref={tableCellInputRef}
+          type="text"
+          value={tableCellEdit.value}
+          aria-label={`Edit table cell row ${tableCellEdit.row} column ${tableCellEdit.column}`}
+          data-testid="markdown-table-cell-editor"
+          className="rudder-markdown-table-cell-editor"
+          style={{
+            height: tableCellEdit.height,
+            left: tableCellEdit.left,
+            top: tableCellEdit.top,
+            width: tableCellEdit.width,
+          }}
+          onBlur={(event) => finishTableCellEdit(0, event.currentTarget.value)}
+          onChange={(event) => {
+            const value = event.target.value;
+            setTableCellEdit((current) => current ? { ...current, value } : current);
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              event.preventDefault();
+              const cell = liveTableCellForEdit(tableCellEdit) ?? tableCellEdit.element;
+              setTableCellEdit(null);
+              requestAnimationFrame(() => cell.focus());
+              return;
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              finishTableCellEdit(0, event.currentTarget.value);
+              return;
+            }
+            if (event.key === "Tab") {
+              event.preventDefault();
+              finishTableCellEdit(event.shiftKey ? -1 : 1, event.currentTarget.value);
+            }
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+        />,
+        document.body,
+      ) : null}
     </span>
   );
 }
@@ -745,6 +1058,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const currentValueRef = useRef(value);
   const pendingTitlesRef = useRef(new Map<number, PendingTitleUpgrade>());
   const pendingImageUploadsRef = useRef(new Map<number, PendingImageUpload>());
+  const pendingTableCellFocusRef = useRef<number | null>(null);
+  const [tableCellFocusRequest, setTableCellFocusRequest] = useState(0);
   const imageUploadRequestIdRef = useRef(0);
   const titleRequestIdRef = useRef(0);
   const mentionStateRef = useRef<CodeMirrorMentionState | null>(null);
@@ -758,6 +1073,9 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const lineSeparatorRef = useRef(sourceLineSeparator(value));
   const mountedRef = useRef(false);
   const markdownBlockHoverRef = useRef<MarkdownBlockHoverState | null>(null);
+  const markdownBlockHoverElementRef = useRef<HTMLElement | null>(null);
+  const markdownBlockHoverOverlayRef = useRef<HTMLDivElement | null>(null);
+  const markdownBlockRefreshFrameRef = useRef<number | null>(null);
   const markdownBlockCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [portals, setPortals] = useState<PortalDescriptor[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -794,6 +1112,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const closeMarkdownBlockHover = useCallback(() => {
     clearMarkdownBlockCloseTimeout();
     markdownBlockHoverRef.current = null;
+    markdownBlockHoverElementRef.current = null;
     setMarkdownBlockMenuOpen(false);
     setMarkdownBlockHover(null);
   }, [clearMarkdownBlockCloseTimeout]);
@@ -815,23 +1134,29 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     setMarkdownBlockMenuOpen(true);
   }, [clearMarkdownBlockCloseTimeout]);
 
-  const updateMarkdownBlockHover = useCallback((line: HTMLElement) => {
-    const parsedLine = Number(line.dataset.sourceLineStart);
-    const lineNumber = Number.isFinite(parsedLine) ? Math.max(1, parsedLine) : null;
-    if (!lineNumber) return;
-    const rect = line.getBoundingClientRect();
+  const updateMarkdownBlockHover = useCallback((element: HTMLElement, lineNumber: number, sourceFrom: number) => {
+    const rect = element.getBoundingClientRect();
+    const anchorOffset = Math.min(16, Math.max(0, (Math.min(rect.height, 64) - 32) / 2));
     const nextHover = {
       line: lineNumber,
-      top: Math.max(8, rect.top + Math.max(0, (rect.height - 32) / 2)),
+      sourceFrom,
+      top: Math.max(8, rect.top + anchorOffset),
       left: Math.max(8, rect.left - 40),
     };
     keepMarkdownBlockOpen();
+    markdownBlockHoverElementRef.current = element;
     const previous = markdownBlockHoverRef.current;
     if (
       previous?.line === nextHover.line
-      && previous.top === nextHover.top
-      && previous.left === nextHover.left
+      && previous.sourceFrom === nextHover.sourceFrom
     ) {
+      markdownBlockHoverRef.current = nextHover;
+      if (previous.top !== nextHover.top || previous.left !== nextHover.left) {
+        markdownBlockHoverOverlayRef.current?.style.setProperty(
+          "transform",
+          `translate3d(${nextHover.left}px, ${nextHover.top}px, 0)`,
+        );
+      }
       return;
     }
     markdownBlockHoverRef.current = nextHover;
@@ -840,31 +1165,77 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
 
   const handleMarkdownEditorMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target instanceof Element ? event.target : null;
+    const view = viewRef.current;
+    if (!target || !view) return;
+    const renderedBlock = target.closest<HTMLElement>([
+      "th[data-markdown-source-start]",
+      "td[data-markdown-source-start]",
+      "p[data-markdown-source-start]",
+      "h1[data-markdown-source-start]",
+      "h2[data-markdown-source-start]",
+      "h3[data-markdown-source-start]",
+      "h4[data-markdown-source-start]",
+      "h5[data-markdown-source-start]",
+      "h6[data-markdown-source-start]",
+      "li[data-markdown-source-start]",
+      "pre[data-markdown-source-start]",
+      "table[data-markdown-source-start]",
+    ].join(", "));
+    const sourceFrom = Number(renderedBlock?.dataset.markdownSourceStart);
+    if (
+      renderedBlock
+      && rootRef.current?.contains(renderedBlock)
+      && Number.isFinite(sourceFrom)
+    ) {
+      const lineNumber = view.state.doc.lineAt(
+        Math.max(0, Math.min(view.state.doc.length, sourceFrom)),
+      ).number;
+      updateMarkdownBlockHover(renderedBlock, lineNumber, sourceFrom);
+      return;
+    }
     const line = target?.closest<HTMLElement>(
       ".cm-line[data-source-line-start]",
     );
-    if (line) updateMarkdownBlockHover(line);
+    const parsedLine = Number(line?.dataset.sourceLineStart);
+    if (!line || !Number.isFinite(parsedLine)) return;
+    const lineNumber = Math.max(1, Math.min(view.state.doc.lines, parsedLine));
+    updateMarkdownBlockHover(line, lineNumber, view.state.doc.line(lineNumber).from);
   }, [updateMarkdownBlockHover]);
 
   const refreshMarkdownBlockHover = useCallback(() => {
     const current = markdownBlockHoverRef.current;
     const view = viewRef.current;
     if (!current || !view) return;
-    const line = view.contentDOM.querySelector<HTMLElement>(
-      `.cm-line[data-source-line-start="${current.line}"]`,
-    );
-    if (line) updateMarkdownBlockHover(line);
+    const renderedElement = markdownBlockHoverElementRef.current;
+    if (renderedElement?.isConnected) {
+      updateMarkdownBlockHover(renderedElement, current.line, current.sourceFrom);
+      return;
+    }
+    const line = view.contentDOM.querySelector<HTMLElement>(`.cm-line[data-source-line-start="${current.line}"]`);
+    if (line) updateMarkdownBlockHover(line, current.line, current.sourceFrom);
   }, [updateMarkdownBlockHover]);
+
+  const scheduleMarkdownBlockHoverRefresh = useCallback(() => {
+    if (markdownBlockRefreshFrameRef.current !== null) return;
+    markdownBlockRefreshFrameRef.current = requestAnimationFrame(() => {
+      markdownBlockRefreshFrameRef.current = null;
+      refreshMarkdownBlockHover();
+    });
+  }, [refreshMarkdownBlockHover]);
 
   useEffect(() => {
     if (!markdownBlockHover) return;
-    window.addEventListener("resize", refreshMarkdownBlockHover);
-    window.addEventListener("scroll", refreshMarkdownBlockHover, true);
+    window.addEventListener("resize", scheduleMarkdownBlockHoverRefresh);
+    window.addEventListener("scroll", scheduleMarkdownBlockHoverRefresh, { capture: true, passive: true });
     return () => {
-      window.removeEventListener("resize", refreshMarkdownBlockHover);
-      window.removeEventListener("scroll", refreshMarkdownBlockHover, true);
+      window.removeEventListener("resize", scheduleMarkdownBlockHoverRefresh);
+      window.removeEventListener("scroll", scheduleMarkdownBlockHoverRefresh, true);
+      if (markdownBlockRefreshFrameRef.current !== null) {
+        cancelAnimationFrame(markdownBlockRefreshFrameRef.current);
+        markdownBlockRefreshFrameRef.current = null;
+      }
     };
-  }, [markdownBlockHover, refreshMarkdownBlockHover]);
+  }, [markdownBlockHover, scheduleMarkdownBlockHoverRefresh]);
 
   const markdownBlockTarget = (() => {
     if (!markdownBlockHover || !viewRef.current) return null;
@@ -891,6 +1262,57 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     setPreviewFocusRef.current?.(view, true);
     closeMarkdownBlockHover();
   }, [closeMarkdownBlockHover]);
+
+  const readSourceRange = useCallback((from: number, to: number) => {
+    const view = viewRef.current;
+    if (!view) return "";
+    const safeFrom = Math.max(0, Math.min(view.state.doc.length, from));
+    const safeTo = Math.max(safeFrom, Math.min(view.state.doc.length, to));
+    return view.state.sliceDoc(safeFrom, safeTo);
+  }, []);
+
+  const handleTableCellCommit = useCallback((commit: MarkdownTableCellCommit) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const from = Math.max(0, Math.min(view.state.doc.length, commit.from));
+    const to = Math.max(from, Math.min(view.state.doc.length, commit.to));
+    pendingTableCellFocusRef.current = commit.nextCellFrom;
+    if (commit.nextCellFrom !== null) {
+      setTableCellFocusRequest((current) => current + 1);
+    }
+    view.dispatch({
+      changes: { from, to, insert: commit.value },
+      userEvent: "input",
+    });
+  }, []);
+
+  useEffect(() => {
+    const sourceFrom = pendingTableCellFocusRef.current;
+    if (sourceFrom === null) return;
+    let frame: number | null = null;
+    let attempts = 0;
+    const focusPendingCell = () => {
+      const cell = rootRef.current?.querySelector<HTMLTableCellElement>(
+        `th[data-markdown-source-start="${sourceFrom}"], td[data-markdown-source-start="${sourceFrom}"]`,
+      );
+      if (!cell && attempts < 3) {
+        attempts += 1;
+        frame = requestAnimationFrame(focusPendingCell);
+        return;
+      }
+      if (!cell) return;
+      pendingTableCellFocusRef.current = null;
+      cell.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+    };
+    frame = requestAnimationFrame(focusPendingCell);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [portals, tableCellFocusRequest]);
 
   const filteredMentions = useMemo(() => {
     if (!mentionState) return [];
@@ -1239,7 +1661,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           };
         }
 
-        if (pointerSelecting) {
+        if (pointerSelecting && !transaction.docChanged) {
           return {
             decorations: current.decorations.map(transaction.changes),
             atomic: current.atomic.map(transaction.changes),
@@ -1281,9 +1703,9 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
     });
 
-    const handleImageUpload = async (file: File, view: EditorView, from: number, to: number) => {
+    const handleImageUploads = async (files: File[], view: EditorView, from: number, to: number) => {
       const upload = propsRef.current.imageUploadHandler;
-      if (!upload) return;
+      if (!upload || files.length === 0) return;
       const requestId = ++imageUploadRequestIdRef.current;
       pendingImageUploadsRef.current.set(requestId, {
         from,
@@ -1292,37 +1714,45 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         expectedSource: view.state.sliceDoc(from, to),
       });
       setUploadError(null);
-      try {
-        const url = await upload(file);
-        const pending = pendingImageUploadsRef.current.get(requestId);
-        pendingImageUploadsRef.current.delete(requestId);
-        if (
-          !pending
-          || viewRef.current !== view
-          || view.state.sliceDoc(pending.from, pending.to) !== pending.expectedSource
-        ) {
-          return;
-        }
-        const label = file.name || "image";
-        const markdownImage = `![${label.replace(/([\[\]\\])/gu, "\\$1")}](${url})`;
+      const results = await Promise.allSettled(files.map((file) => upload(file)));
+      const pending = pendingImageUploadsRef.current.get(requestId);
+      pendingImageUploadsRef.current.delete(requestId);
+      if (
+        !pending
+        || viewRef.current !== view
+        || view.state.sliceDoc(pending.from, pending.to) !== pending.expectedSource
+      ) {
+        return;
+      }
+      const uploaded = results.flatMap((result, index) => (
+        result.status === "fulfilled"
+          ? [markdownImageForUpload(files[index]!, result.value)]
+          : []
+      ));
+      const failureCount = results.length - uploaded.length;
+      if (uploaded.length > 0) {
+        const markdownImages = uploaded.join("\n");
         view.dispatch({
-          changes: { from: pending.from, to: pending.to, insert: markdownImage },
-          selection: { anchor: pending.from + markdownImage.length },
+          changes: { from: pending.from, to: pending.to, insert: markdownImages },
+          selection: { anchor: pending.from + markdownImages.length },
           userEvent: "input.paste",
         });
-      } catch (error) {
-        pendingImageUploadsRef.current.delete(requestId);
-        setUploadError(error instanceof Error ? error.message : "Image upload failed.");
+      }
+      if (failureCount > 0) {
+        const firstFailure = results.find((result) => result.status === "rejected");
+        const reason = firstFailure?.status === "rejected" && firstFailure.reason instanceof Error
+          ? ` ${firstFailure.reason.message}`
+          : "";
+        setUploadError(`${failureCount} of ${files.length} images failed to upload.${reason}`);
       }
     };
 
     const handleSmartPaste = (event: ClipboardEvent, view: EditorView) => {
-      const imageFile = Array.from(event.clipboardData?.files ?? [])
-        .find((file) => file.type.startsWith("image/"));
-      if (imageFile && propsRef.current.imageUploadHandler) {
+      const imageFiles = clipboardImageFiles(event.clipboardData);
+      if (imageFiles.length > 0 && propsRef.current.imageUploadHandler) {
         event.preventDefault();
         const range = view.state.selection.main;
-        void handleImageUpload(imageFile, view, range.from, range.to);
+        void handleImageUploads(imageFiles, view, range.from, range.to);
         return true;
       }
 
@@ -1704,13 +2134,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return false;
         },
         drop: (event, view) => {
-          const file = Array.from(event.dataTransfer?.files ?? [])
-            .find((candidate) => candidate.type.startsWith("image/"));
-          if (!file || !propsRef.current.imageUploadHandler) return false;
+          const files = Array.from(event.dataTransfer?.files ?? [])
+            .filter((candidate) => candidate.type.startsWith("image/"));
+          if (files.length === 0 || !propsRef.current.imageUploadHandler) return false;
           event.preventDefault();
           const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
             ?? view.state.selection.main.head;
-          void handleImageUpload(file, view, position, position);
+          void handleImageUploads(files, view, position, position);
           return true;
         },
       })),
@@ -1834,7 +2264,9 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           : (
             <PortalMarkdownBody
               descriptor={descriptor}
+              onTableCellCommit={handleTableCellCommit}
               propsRef={propsRef}
+              readSourceRange={readSourceRange}
               skillReferences={skillReferences}
             />
           ),
@@ -1854,6 +2286,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           onOpen={openMarkdownBlockMenu}
           onScheduleClose={scheduleMarkdownBlockClose}
           open={markdownBlockMenuOpen}
+          overlayRef={markdownBlockHoverOverlayRef}
         />
       ) : null}
       {mentionState && filteredMentions.length > 0 && mentionMenuPosition ? (

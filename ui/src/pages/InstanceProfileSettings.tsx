@@ -20,7 +20,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import { AccountSettingsSections } from "./InstanceAccountSettings";
+import { AccountAvatarControl, AccountSettingsSections } from "./InstanceAccountSettings";
 
 const PROFILE_IMPORT_PROMPT = `Export all of my stored memories and any context you've learned about me from past conversations. Preserve my words verbatim where possible, especially for instructions and preferences.
 
@@ -168,13 +168,17 @@ export function InstanceProfileSettings() {
             icon={IdCard}
             label={t("profile.nickname.label")}
           >
-            <Input
-              id="profile-nickname"
-              value={nickname}
-              onChange={(event) => setNickname(event.target.value)}
-              placeholder={t("profile.nickname.placeholder")}
-              maxLength={80}
-            />
+            <div data-testid="profile-identity-row" className="flex items-center gap-4">
+              <AccountAvatarControl nickname={nickname} />
+              <Input
+                id="profile-nickname"
+                value={nickname}
+                onChange={(event) => setNickname(event.target.value)}
+                placeholder={t("profile.nickname.placeholder")}
+                maxLength={80}
+                className="min-w-0 flex-1"
+              />
+            </div>
           </SettingsField>
 
           <SettingsField

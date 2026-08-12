@@ -38,9 +38,13 @@ test.describe("Experimental Computer Use", () => {
             supported: true,
             readiness: async () => ({
               supported: true,
+              platform: "darwin",
+              driverAvailable: true,
               accessibility: state.permissionRequests > 0,
               screenRecording: state.permissionRequests > 0,
               actionReady: state.permissionRequests > 0,
+              permissionPromptAvailable: true,
+              screenRecordingSettingsAvailable: state.permissionRequests === 0,
               driverVersion: "0.19.2",
               reason: state.permissionRequests > 0 ? null : "Accessibility and Screen Recording access are required.",
             }),
@@ -48,9 +52,13 @@ test.describe("Experimental Computer Use", () => {
               state.permissionRequests += 1;
               return {
                 supported: true,
+                platform: "darwin",
+                driverAvailable: true,
                 accessibility: true,
                 screenRecording: true,
                 actionReady: true,
+                permissionPromptAvailable: true,
+                screenRecordingSettingsAvailable: false,
                 driverVersion: "0.19.2",
                 reason: null,
               };
@@ -73,7 +81,7 @@ test.describe("Experimental Computer Use", () => {
     const settings = await page.request.get("/api/instance/settings/general");
     expect(settings.ok(), await settings.text()).toBe(true);
     await expect(settings.json()).resolves.toMatchObject({ experimentalComputerUseEnabled: true });
-    await expect(page.getByText("Agents can observe and operate macOS apps on this device.")).toBeVisible();
+    await expect(page.getByText("Agents can observe and operate apps on this device.")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("experimental-computer-use-light.png"), fullPage: true });
 
     await page.evaluate(() => {
@@ -126,8 +134,9 @@ test.describe("Experimental Computer Use", () => {
     expect(exitCode, stderr).toBe(0);
     const responses = stdout.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as McpResponse);
     const tools = responses.find((response) => response.id === 1)?.result?.tools ?? [];
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     expect(tools.every((tool) => tool.name.startsWith("rudder_computer_"))).toBe(true);
+    expect(tools.map((tool) => tool.name)).toContain("rudder_computer_launch_app");
     expect(responses.find((response) => response.id === 2)?.result).toMatchObject({
       isError: true,
       structuredContent: { code: "computer_invalid_argument" },

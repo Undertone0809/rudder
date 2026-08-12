@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
-test("reveals exact Markdown source when a New Issue description image is activated", async ({ page }) => {
+test("opens the global preview without revealing Markdown source when an image is activated", async ({ page }) => {
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
     data: {
       name: `Markdown-Image-Preview-${Date.now()}`,
@@ -58,13 +58,13 @@ test("reveals exact Markdown source when a New Issue description image is activa
   const editor = dialog.locator('[data-editor-engine="codemirror-live-preview"]');
   const inlineImage = editor.locator('img[alt="Wide image"]').first();
   await expect(inlineImage).toBeVisible();
-  await inlineImage.dispatchEvent("mousedown", { button: 0 });
+  await inlineImage.click();
 
+  await expect(page.getByTestId("markdown-body-image-preview-dialog")).toBeVisible();
+  await expect(editor.locator('img[alt="Wide image"]')).toBeVisible();
   await expect(
     editor.locator('[data-markdown-preview-state="source"]').filter({
       hasText: "![Wide image](data:image/png;base64,",
     }),
-  ).toBeVisible();
-  await expect(editor.locator('img[alt="Wide image"]')).toHaveCount(0);
-  await expect(page.getByTestId("markdown-editor-image-preview-dialog")).toHaveCount(0);
+  ).toHaveCount(0);
 });

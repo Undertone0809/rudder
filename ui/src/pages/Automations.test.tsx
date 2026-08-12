@@ -19,6 +19,7 @@ const markdownEditorProps = vi.hoisted(() => [] as Array<{
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
   plainText?: boolean;
+  imageUploadHandler?: (file: File) => Promise<string>;
 }>);
 const automationListState = vi.hoisted(() => ({ items: [] as unknown[] }));
 const automationRouteState = vi.hoisted(() => ({ automationId: undefined as string | undefined }));
@@ -265,6 +266,7 @@ vi.mock("../components/MarkdownEditor", () => ({
       mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
       mentionMenuPlacement?: "caret" | "container";
       plainText?: boolean;
+      imageUploadHandler?: (file: File) => Promise<string>;
     },
     ref,
   ) {
@@ -907,6 +909,7 @@ describe("Automations", () => {
     expect(markdownEditorProps.at(-1)?.engine).toBe("codemirror");
     expect(markdownEditorProps.at(-1)?.plainText).toBeUndefined();
     expect(markdownEditorProps.at(-1)?.mentionMenuPlacement).toBe("container");
+    expect(markdownEditorProps.at(-1)?.imageUploadHandler).toEqual(expect.any(Function));
     expect(markdownEditorProps.at(-1)?.mentionMenuAnchorRef?.current?.dataset.testid)
       .toBe("automation-instructions-composer");
     expect(baseMentionIds).toEqual(expect.arrayContaining([

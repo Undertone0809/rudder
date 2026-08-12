@@ -16,6 +16,7 @@ const mockConfirm = vi.fn(async () => true);
 const markdownEditorProps = vi.hoisted(() => [] as Array<{
   engine?: string;
   mentions?: Array<{ id: string; kind?: string; name: string }>;
+  imageUploadHandler?: (file: File) => Promise<string>;
 }>);
 const mutationCalls = vi.hoisted(() => [] as Array<unknown>);
 
@@ -316,16 +317,18 @@ vi.mock("../components/MarkdownEditor", () => ({
       placeholder,
       mentions,
       engine,
+      imageUploadHandler,
     }: {
       value: string;
       onChange: (value: string) => void;
       placeholder?: string;
       mentions?: Array<{ id: string; kind?: string; name: string }>;
       engine?: string;
+      imageUploadHandler?: (file: File) => Promise<string>;
     },
     ref,
   ) {
-    markdownEditorProps.push({ engine, mentions });
+    markdownEditorProps.push({ engine, mentions, imageUploadHandler });
     useImperativeHandle(ref, () => ({
       focus: vi.fn(),
     }));
@@ -741,6 +744,7 @@ describe("AutomationDetail", () => {
 
     const mentionIds = markdownEditorProps.at(-1)?.mentions?.map((mention) => mention.id) ?? [];
     expect(markdownEditorProps.at(-1)?.engine).toBe("codemirror");
+    expect(markdownEditorProps.at(-1)?.imageUploadHandler).toEqual(expect.any(Function));
     expect(mentionIds).toEqual(expect.arrayContaining([
       "agent:agent-1",
       "project:project-1",

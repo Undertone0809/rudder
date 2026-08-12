@@ -331,10 +331,10 @@ describe("Messenger page headers", () => {
     expect(html).not.toContain("created by me · assigned to me");
   });
 
-  it("renders the Approvals header without pending or total counters", () => {
+  it("renders the Requests header without pending or total counters", () => {
     messengerModel.approvalThreadDetail = {
-      title: "Approvals",
-      description: "Approval objects stay inside the thread so decisions happen without losing context.",
+      title: "Requests",
+      description: "Approval and assistance requests stay inside the thread so responses happen without losing context.",
       unreadCount: 2,
       items: [
         {
@@ -346,6 +346,7 @@ describe("Messenger page headers", () => {
           href: "/messenger/approvals/appr-1",
           latestActivityAt: "2026-04-11T10:00:00.000Z",
           actions: [],
+          requestKind: "approval",
           metadata: {},
           approval: {
             id: "appr-1",
@@ -365,8 +366,8 @@ describe("Messenger page headers", () => {
 
     const html = renderToStaticMarkup(<MessengerApprovalsView />);
 
-    expect(html).toContain("Approvals");
-    expect(html).toContain("Approval objects stay inside the thread so decisions happen without losing context.");
+    expect(html).toContain("Requests");
+    expect(html).toContain("Approvals and assistance stay in one thread while preserving their distinct decisions.");
     expect(html).toContain("budget_override_required");
     expect(html).toContain("Open full approval");
     expect(html).toContain("Noah");

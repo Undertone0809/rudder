@@ -5620,7 +5620,7 @@ describe("messengerService and issue follows", () => {
 
     const restoredGroups = await messengerSvc.listCustomGroups(orgId, userId);
     expect(restoredGroups.groups[0]?.entries.map((entry) => entry.threadKey)).toEqual(["approvals"]);
-    expect(restoredGroups.groups[0]?.entries[0]?.thread.title).toBe("Approvals");
+    expect(restoredGroups.groups[0]?.entries[0]?.thread.title).toBe("Requests");
   });
 
   it("persists follows and includes followed plus assigned issues in the Messenger issues thread", async () => {
@@ -10471,7 +10471,7 @@ describe("messengerService and issue follows", () => {
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(latestCommentAt.toISOString());
     expect(thread.summary.preview).toBe("Latest approval comment drives the summary preview.");
     expect(thread.summary.unreadCount).toBe(1);
-    expect(approvalsSummary?.subtitle).toBe("1 approval");
+    expect(approvalsSummary?.subtitle).toBe("1 request");
     expect(approvalsSummary?.latestActivityAt?.toISOString()).toBe(latestCommentAt.toISOString());
     expect(approvalsSummary?.preview).toBe("Latest approval comment drives the summary preview.");
     expect(approvalsSummary?.unreadCount).toBe(1);

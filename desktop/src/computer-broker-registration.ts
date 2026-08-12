@@ -2,11 +2,16 @@ import type { ComputerUseRuntimeIdentity } from "@rudderhq/shared/computer-use";
 import { randomUUID } from "node:crypto";
 
 export type DesktopComputerSettings = { experimentalComputerUseEnabled: boolean };
+export type DesktopComputerPlatform = "darwin" | "win32" | "linux" | "unsupported";
 export type DesktopComputerReadiness = {
   supported: boolean;
+  platform: DesktopComputerPlatform;
+  driverAvailable: boolean;
   accessibility: boolean;
   screenRecording: boolean;
   actionReady: boolean;
+  permissionPromptAvailable: boolean;
+  screenRecordingSettingsAvailable: boolean;
   driverVersion: string | null;
   reason: string | null;
 };
@@ -19,9 +24,14 @@ function endpoint(apiUrl: string, path: string) {
 }
 
 async function request(apiUrl: string, path: string, init: RequestInit, fetchImpl: typeof fetch) {
-  const response = await fetchImpl(endpoint(apiUrl, path), {
+  const requestUrl = endpoint(apiUrl, path);
+  const response = await fetchImpl(requestUrl, {
     ...init,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(init.method && init.method !== "GET" ? { origin: new URL(requestUrl).origin } : {}),
+      ...(init.headers ?? {}),
+    },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { code?: string; error?: string };
@@ -85,6 +95,30 @@ export async function isDesktopComputerRunActive(
     && value.orgId === identity.orgId
     && value.agentId === identity.agentId
     && value.status === "running";
+}
+
+export function createDesktopComputerApiClient(
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+) {
+  return {
+    registerBroker: (
+      apiUrl: string,
+      broker: { endpoint: string; token: string },
+      registrationGeneration: number,
+      refresh = false,
+    ) => registerDesktopComputerBroker(
+      apiUrl,
+      broker,
+      registrationGeneration,
+      refresh,
+      fetchImpl,
+    ),
+    unregisterBroker: (apiUrl: string, token: string) =>
+      unregisterDesktopComputerBroker(apiUrl, token, fetchImpl),
+    readSettings: (apiUrl: string) => readDesktopComputerSettings(apiUrl, fetchImpl),
+    isRunActive: (apiUrl: string, identity: ComputerUseRuntimeIdentity) =>
+      isDesktopComputerRunActive(apiUrl, identity, fetchImpl),
+  };
 }
 
 export function isComputerRegistrationConflict(error: unknown) {

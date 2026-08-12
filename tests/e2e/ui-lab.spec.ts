@@ -73,6 +73,10 @@ test.describe("UI Lab", () => {
     await expect(page.getByRole("button", { name: /Common Components/ })).toBeVisible();
 
     await page.getByRole("button", { name: /Common Components/ }).click();
+    await expect(page.getByText("Special message cards", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Input needed to continue" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Request completed" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Agent run failed" })).toBeVisible();
     await expect(page.getByText("Status, priority, and rows")).toBeVisible();
     await expect(page.getByText("Identity and assignees")).toBeVisible();
     await expect(page.getByText("Metric cards")).toBeVisible();
@@ -91,7 +95,7 @@ test.describe("UI Lab", () => {
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
     await expect(page.getByText("Create or activate an agent before sending messages.")).toBeVisible();
     await expect(page.getByText("Chat attachments, rich references, and input requests")).toBeVisible();
-    await expect(page.getByText("Input needed")).toBeVisible();
+    await expect(page.getByText("Input needed", { exact: true })).toBeVisible();
     await expect(page.getByTestId("chat-ask-user-answer").getByText("Answered")).toBeVisible();
     await expect(page.getByText("Attachment list")).toBeVisible();
     await page.getByRole("button", { name: "Open image preview: chat-preview.svg" }).first().click();

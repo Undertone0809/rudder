@@ -64,7 +64,7 @@ operating-practices guide for operating behavior:
 | `rudder_issue_review` | `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
 | `rudder_issue_commit` | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
 | `rudder_issue_done` | `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder_issue_block` | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder_issue_block` | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked. | yes | no | no | attached when available |
 | `rudder_project_list` | `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
 | `rudder_project_get` | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
 | `rudder_project_create` | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
@@ -147,7 +147,7 @@ Operating rules live in [ownership, checkout, and wake scope](operating-practice
 
 - progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`
 - done: `rudder issue done <issue> --comment-file <path> [--image <path>]`
-- blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`
+- assistance/block audit: `rudder issue block <issue> --comment-file <path> [--image <path>]`
 
 Issue comment and close-out commands accept comment bodies only from files or stdin. For multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 

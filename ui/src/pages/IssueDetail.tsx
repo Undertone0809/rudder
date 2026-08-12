@@ -20,11 +20,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity as ActivityIcon,
+  AlertTriangle,
   Check,
   ChevronRight,
   Copy,
@@ -39,6 +40,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RefreshCw,
   Repeat,
   SlidersHorizontal,
   Trash2,
@@ -46,15 +48,15 @@ import {
 } from "lucide-react";
 import { isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { accessApi } from "../api/access";
-import { activityApi } from "../api/activity";
-import { agentRunsApi } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
+import { requestsApi } from "../api/requests";
 import { AgentIdentity } from "../components/AgentAvatar";
+import { AssistanceRequestPanel } from "../components/AssistanceRequestPanel";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { isAgentWakeEligible } from "../components/CommentThread.submit";
 import { Identity } from "../components/Identity";
@@ -76,6 +78,7 @@ import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useIssueFollows } from "../hooks/useIssueFollows";
+import { useIssueTimelineQueries } from "../hooks/useIssueTimelineQueries";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -95,6 +98,8 @@ import { queryKeys } from "../lib/queryKeys";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
+export { linkedIssueRunsRefetchInterval } from "../hooks/useIssueTimelineQueries";
+
 type IssueCostSummaryData = {
   input: number;
   output: number;
@@ -106,6 +111,22 @@ type IssueCostSummaryData = {
 };
 
 type IssueChatTarget = Pick<Issue, "id" | "identifier" | "title" | "projectId" | "assigneeAgentId">;
+
+export function selectIssueAssistanceRequest(
+  assistanceRequests: AssistanceRequest[] | undefined,
+  issueId: string | undefined,
+): AssistanceRequest | null {
+  if (!issueId) return null;
+  return [...(assistanceRequests ?? [])]
+    .filter((request) => request.issueId === issueId)
+    .sort((left, right) => {
+      if (left.status === "open" && right.status !== "open") return -1;
+      if (right.status === "open" && left.status !== "open") return 1;
+      const updatedDelta = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      if (updatedDelta !== 0) return updatedDelta;
+      return right.id.localeCompare(left.id);
+    })[0] ?? null;
+}
 
 export function buildIssueChatHref(issue: IssueChatTarget) {
   const params = new URLSearchParams({
@@ -961,10 +982,6 @@ type IssueDetailProps = {
   embedded?: boolean;
 };
 
-export function linkedIssueRunsRefetchInterval(hasLiveRuns: boolean) {
-  return hasLiveRuns ? 5000 : false;
-}
-
 export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueDetailProps = {}) {
   const params = useParams<{ issueId: string }>();
   const issueId = embeddedIssueId ?? params.issueId;
@@ -995,6 +1012,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
   const [issuePinPending, setIssuePinPending] = useState(false);
+  const [issueFindOpen, setIssueFindOpen] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const issueDetailScrollRef = useScrollbarActivityRef("rudder:issue-detail-main");
   const setIssueDetailRootRef = useCallback((element: HTMLDivElement | null) => {
@@ -1015,22 +1033,23 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issuePinUnavailable = issuePinPending || issueFollowsLoading || !issue;
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
+  const { data: assistanceRequests } = useQuery({
+    queryKey: queryKeys.requests.list(resolvedCompanyId ?? "__none__", undefined, "assistance"),
+    queryFn: () => requestsApi.list(resolvedCompanyId!, { kind: "assistance" }),
+    enabled: Boolean(resolvedCompanyId && issue?.id),
+  });
+  const latestAssistanceRequest = selectIssueAssistanceRequest(
+    assistanceRequests?.filter((request): request is AssistanceRequest => request.kind === "assistance"),
+    issue?.id,
+  );
+
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
     recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
   }, [issue?.id, issue?.orgId]);
 
-  const { data: comments } = useQuery({
-    queryKey: queryKeys.issues.comments(issueId!),
-    queryFn: () => issuesApi.listComments(issueId!),
-    enabled: !!issueId,
-  });
-
-  const { data: activity } = useQuery({
-    queryKey: queryKeys.issues.activity(issueId!),
-    queryFn: () => activityApi.forIssue(issueId!),
-    enabled: !!issueId,
-  });
+  const issueTimeline = useIssueTimelineQueries(issueId, issueFindOpen);
+  const { activeRun, activity, comments, hasLiveRuns, linkedRuns, liveRuns } = issueTimeline;
 
   const { data: attachments } = useQuery({
     queryKey: queryKeys.issues.attachments(issueId!),
@@ -1038,34 +1057,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     enabled: !!issueId,
   });
 
-  const { data: liveRuns } = useQuery({
-    queryKey: queryKeys.issues.liveRuns(issueId!),
-    queryFn: () => agentRunsApi.liveRunsForIssue(issueId!),
-    enabled: !!issueId,
-    refetchInterval: 3000,
-  });
-
-  const { data: activeRun } = useQuery({
-    queryKey: queryKeys.issues.activeRun(issueId!),
-    queryFn: () => agentRunsApi.activeRunForIssue(issueId!),
-    enabled: !!issueId,
-    refetchInterval: 3000,
-  });
-
-  const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
-  const { data: linkedRuns } = useQuery({
-    queryKey: queryKeys.issues.runs(issueId!),
-    queryFn: () => activityApi.runsForIssue(issueId!),
-    enabled: !!issueId,
-    refetchInterval: linkedIssueRunsRefetchInterval(hasLiveRuns),
-  });
-  const hadLiveRunsRef = useRef(false);
-  useEffect(() => {
-    if (hadLiveRunsRef.current && !hasLiveRuns && issueId) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) });
-    }
-    hadLiveRunsRef.current = hasLiveRuns;
-  }, [hasLiveRuns, issueId, queryClient]);
   const sourceBreadcrumb = useMemo(
     () => readIssueDetailBreadcrumb(location.state) ?? (
       issueRouteBasePath === "/messenger/issues"
@@ -1377,6 +1368,22 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const issueActivityItems = useMemo<CommentThreadActivityItem[]>(() => {
     const items: CommentThreadActivityItem[] = [];
 
+    if (latestAssistanceRequest && latestAssistanceRequest.status !== "open" && resolvedCompanyId && issue) {
+      items.push({
+        id: `assistance-request:${latestAssistanceRequest.id}`,
+        createdAt: latestAssistanceRequest.updatedAt,
+        node: (
+          <AssistanceRequestPanel
+            key={latestAssistanceRequest.id}
+            request={latestAssistanceRequest}
+            orgId={resolvedCompanyId}
+            issueStatus={issue.status}
+            source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+          />
+        ),
+      });
+    }
+
     for (const evt of activity ?? []) {
       if (!shouldShowIssueActivityEvent(evt)) continue;
       items.push({
@@ -1394,7 +1401,15 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     }
 
     return items;
-  }, [activity, agentMap, currentBoardUserId, operatorDisplayName]);
+  }, [
+    activity,
+    agentMap,
+    currentBoardUserId,
+    issue,
+    latestAssistanceRequest,
+    operatorDisplayName,
+    resolvedCompanyId,
+  ]);
 
   const invalidateIssue = () => {
     const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
@@ -1413,6 +1428,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(issueOrgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(issueOrgId) });
+      queryClient.invalidateQueries({ queryKey: ["requests", issueOrgId] });
+      if (latestAssistanceRequest) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(latestAssistanceRequest.id) });
+      }
     }
   };
 
@@ -1829,6 +1848,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     issueActivityItems.length,
     orderedChildIssues.length,
     attachmentList.length,
+    issueTimeline.visibilityRevision,
   ].join(":");
   const renderDesktopIssueActions = ({
     moreOpen,
@@ -1921,7 +1941,11 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           : "h-auto overflow-x-clip overflow-y-visible md:h-full md:overflow-x-hidden md:overflow-y-auto",
       )}
     >
-      <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
+      <IssueDetailFind
+        rootRef={issueFindRootRef}
+        refreshKey={issueFindRefreshKey}
+        onOpenChange={setIssueFindOpen}
+      />
       <div
         className="issue-detail-layout mx-auto min-h-full max-w-6xl"
         data-testid="issue-detail-layout"
@@ -2403,6 +2427,29 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
           <span>Activity</span>
         </div>
+        {issueTimeline.hasError ? (
+          <div
+            role="alert"
+            className="flex items-center gap-2 border-y border-amber-500/25 bg-amber-500/5 px-2 py-2 text-xs text-amber-800 dark:text-amber-200"
+            data-testid="issue-timeline-load-warning"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {locale === "zh-CN" ? "部分动态记录加载失败。" : "Some activity history could not be loaded."}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2 text-xs"
+              disabled={issueTimeline.retrying}
+              onClick={() => void issueTimeline.retryFailed()}
+            >
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", issueTimeline.retrying && "animate-spin")} />
+              {locale === "zh-CN" ? "重试" : "Retry"}
+            </Button>
+          </div>
+        ) : null}
         <CommentThread
           comments={commentsWithRunMeta}
           linkedRuns={timelineRuns}
@@ -2424,7 +2471,18 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           escapeBackWhenEmpty
           fixedComposer
           fixedComposerTimelineScroll={false}
+          composerReplacement={latestAssistanceRequest?.status === "open" ? (
+            <div key={latestAssistanceRequest.id} data-testid="issue-request-attention">
+              <AssistanceRequestPanel
+                request={latestAssistanceRequest}
+                orgId={resolvedCompanyId!}
+                issueStatus={issue.status}
+                source={{ label: issue.identifier ?? "Issue", href: `/issues/${issue.id}` }}
+              />
+            </div>
+          ) : undefined}
           timelineScrollElementRef={issueFindRootRef}
+          progressiveDisclosure={issueTimeline.progressiveDisclosure}
           onAdd={async (body, reopen, intent) => {
             await addComment.mutateAsync({
               body,

@@ -2,7 +2,7 @@
 title: Experimental Computer Use
 date: 2026-08-10
 kind: implementation
-status: implemented_candidate
+status: validated_candidate
 area: desktop
 entities:
   - computer_use
@@ -35,8 +35,9 @@ mutation switch.
 
 - Product contracts: `AGENT.COMPUTER.USE.001` and the existing
   `AGENT.CONTROL.TOOLS.001` projection contract.
-- Initial accepted platform/runtime: signed macOS Rudder Desktop with
-  `codex_local`; unsupported hosts and runtimes project no Computer Use tools.
+- Initial accepted platform/runtime: macOS Rudder Desktop with `codex_local`.
+  Readiness has explicit macOS, Windows, Linux, and unsupported-platform
+  branches, but Windows/Linux action acceptance remains a separate gate.
 - Agent-facing boundary: one Rudder-owned `rudder-computer` MCP server. The
   Agent never connects directly to Cua Driver.
 - Trusted boundary: Server derives organization, Agent, and Run identity;
@@ -64,14 +65,23 @@ mutation switch.
 
 ## Acceptance Packet
 
-- Branch: `codex/experimental-computer-use`; implementation base:
-  `ce0c24db0b76eade825059acf1089d7bc2c3bc39`.
+- Branch: `codex/experimental-computer-use`; implementation parent:
+  `1e302c5cd4ee0fa8e77602fde7aebe9b0a5b8000` (original branch base:
+  `ce0c24db0b76eade825059acf1089d7bc2c3bc39`).
 - The implementation candidate contains the dedicated MCP projection, Server
   broker boundary, Desktop lifecycle/Driver adapter, Experimental UI, package
   staging/verifier, typed contracts, and acceptance tests described above.
+- The exact accepted local package is
+  `/tmp/rudder-cu-real.hsnZE7/Rudder CU Acceptance.app`, bundle ID
+  `ai.rudder.desktop.cuacceptance`, arm64, ad-hoc signed. Its package hashes are:
+  `main.js` `5f1167db76b1dc7360eaffa696e1d08cb1ff01c9f29adbe7514d3064d8bb4ec3`,
+  `computer-runtime.js` `a6265673f4c4a1d65bc5f7b339b0b83d80e896967f8a691bf6d5c92be2e7214f`,
+  and `cua-computer-driver.js`
+  `38aa2cebd75924bed8e17149202d6b456ef986841a06a55f6104c5ed56bbbb90`.
 - The code/package candidate is accepted for commit and push as an
-  Experimental, default-off feature. Real Driver-backed action acceptance is
-  still permission-blocked on this machine and is not represented as a PASS.
+  Experimental, default-off feature. The real Driver-backed macOS path is a
+  PASS for this exact local package; production signing and Windows/Linux are
+  not covered by this receipt.
 
 ## Verification Receipt
 
@@ -95,6 +105,10 @@ mutation switch.
   temporary directory, so workspace ancestor dependencies cannot make it pass.
 - Packaged account-gate smoke and packaged App Builder assets smoke passed.
 - `git diff --check`: passed.
+- Final focused Computer Use regression: 42 tests across 7 files passed.
+- Final Experimental Computer Use Playwright regression: 2 tests passed,
+  including the 13-tool dedicated MCP surface and `launch_app` projection.
+- `codesign --verify --deep --strict` passed for the exact acceptance app.
 
 ### UI evidence
 
@@ -102,24 +116,36 @@ mutation switch.
   `tests/e2e/test-results/experimental-computer-use--ac8cd-thout-adding-a-new-workflow-chromium/experimental-computer-use-light.png`.
 - E2E mock-ready dark:
   `tests/e2e/test-results/experimental-computer-use--ac8cd-thout-adding-a-new-workflow-chromium/experimental-computer-use-dark.png`.
-- A real isolated Desktop instance opened the exact Experimental route with the
-  toggle enabled, showed `Accessibility and Screen Recording access are
-  required`, and exposed `Grant access`. The Server readiness endpoint returned
-  `{ enabled: true, desktopConnected: false, supported: true }`.
-- Because the real UI hid the `Open Screen Recording settings` action while
-  showing `Grant access`, the Desktop readiness state was Screen Recording
-  present and Accessibility absent. The app correctly kept the broker
-  disconnected rather than projecting an action-ready capability.
+- A real isolated Desktop instance used `RUDDER_HOME` under
+  `/tmp/rudder-cu-real.hsnZE7`, API port `3300`, and PostgreSQL port `54349`.
+  It enabled the experiment, obtained macOS Accessibility and Screen Recording
+  readiness, registered the Desktop broker, and exposed the Agent capability.
+- The real path was `Agent -> rudder-computer MCP -> Server -> Broker -> Desktop
+  CUA Driver`. Chat `f72909a1-e350-41d6-bc15-c630928f648b`, Run
+  `5232712e-4751-40fe-b3e2-5c476a7ab3de`, and Agent
+  `8520c4f1-5b3d-4637-8be5-69ad800eec60` launched Calculator PID `24574`,
+  window `21155`, and produced visible result `711`.
+- The action consumed observation `76e88dbd-d40c-4565-a2d2-2d95f9ec404b`;
+  reuse was rejected as `computer_stale_observation`. Fresh observation
+  `d2928aaa-d929-4105-b698-1ffcb8f4e93e` succeeded. Screenshot observation
+  `e77fcd32-f4ae-4165-adcf-8156e579769b` returned non-empty `image/png`
+  content with no base64 in text or structured output.
+- `stop` returned `stopped: true`; the last pre-stop observation
+  `54bab4db-b167-4ab5-bdce-de3d571ac44f` was rejected after Stop. Disabling
+  the Experimental toggle unregistered the broker, and the authenticated
+  readiness endpoint returned
+  `{ enabled: false, desktopConnected: false, supported: true }`.
 
 ### Honest residual boundary
 
-- No real `rudder_computer_*` Driver action was executed through the packaged
-  app because granting Accessibility changes a security-sensitive macOS system
-  permission. The permission was not changed during automated acceptance.
-- The real action sequence (list apps/windows, observe exact window, ordinary
-  action, stale refusal, fresh observation, Stop, disconnect/lease expiry) is
-  covered by focused runtime/broker tests, but remains pending one signed-app
-  run after the operator grants Accessibility.
+- This is an exact local development-package receipt. The app is ad-hoc signed
+  (`TeamIdentifier=not set`) rather than Developer ID signed/notarized, so it
+  does not prove the production permission identity survives distribution.
+- macOS uses explicit permission preflight, request, and Screen Recording
+  settings actions. Windows and Linux report driver readiness without macOS
+  permission prompts; their real target/action/Stop behavior still requires
+  independent packaged acceptance on each OS. Other platforms fail closed as
+  unsupported.
 - A full `pnpm desktop:verify` invocation was not a single green receipt. The
   first run found and led to fixing the `@rudderhq/shared/computer-use` packaged
   runtime export; a later full dev smoke competed with another App Builder
@@ -150,6 +176,7 @@ Manual review found and fixed two candidate defects before commit:
    specific pre-approval, and no-confirmation ordinary actions.
 
 Verdict: accept the code/package candidate for the default-off Experimental
-branch. Keep real Driver action acceptance explicitly pending until the signed
-Rudder app has Accessibility permission; do not graduate, merge, or release on
-this receipt alone.
+branch. The exact ad-hoc signed macOS package passed real Agent-to-app action,
+freshness, screenshot, Stop, and disconnect acceptance. Do not treat this as
+production signing/notarization or Windows/Linux acceptance, and do not
+graduate the experiment on this receipt alone.

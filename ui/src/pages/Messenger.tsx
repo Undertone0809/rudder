@@ -15,9 +15,11 @@ import {
   chatIssueApprovalLabelIds,
   chatIssueApprovalNeedsLabelSelection,
 } from "@/components/ApprovalPayload";
+import { AssistanceRequestPanel } from "@/components/AssistanceRequestPanel";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/MessengerRunOrigin";
+import { SpecialMessageCard, type SpecialMessageCardVariant } from "@/components/SpecialMessageCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,8 +45,10 @@ import type {
   ChatConversation,
   IssueLabel,
   MessengerApprovalThreadItem,
+  MessengerAssistanceThreadItem,
   MessengerEvent,
   MessengerIssueThreadItem,
+  MessengerRequestThreadItem,
   MessengerSystemThreadItem,
   Project,
 } from "@rudderhq/shared";
@@ -258,6 +262,7 @@ function ObjectMessageCard({
   status,
   children,
   footer,
+  variant,
   testId,
 }: {
   eyebrow: string;
@@ -266,8 +271,26 @@ function ObjectMessageCard({
   status?: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
+  variant?: SpecialMessageCardVariant;
   testId?: string;
 }) {
+  if (variant) {
+    return (
+      <SpecialMessageCard
+        variant={variant}
+        title={title}
+        headerMeta={<><span>{eyebrow}</span>{status}</>}
+        description={typeof description === "string"
+          ? <p className="text-muted-foreground">{description}</p>
+          : description}
+        actions={footer}
+        testId={testId}
+      >
+        {children}
+      </SpecialMessageCard>
+    );
+  }
+
   return (
     <div
       data-testid={testId}
@@ -740,7 +763,7 @@ function MessengerApprovalCard({
             />
           )
         : <ShieldCheck className="h-5 w-5" />}
-      label={requesterAgent?.name ?? "Approvals assistant"}
+      label={requesterAgent?.name ?? "Requests"}
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-approval-message-${item.id}`}
     >
@@ -775,6 +798,66 @@ function MessengerApprovalCard({
   );
 }
 
+function MessengerAssistanceCard({
+  item,
+  orgId,
+}: {
+  item: MessengerAssistanceThreadItem;
+  orgId: string;
+}) {
+  const request = item.assistanceRequest;
+  const requesterAgent = item.requesterAgent;
+  const sourceAction = item.actions.find((action) => action.method === "GET" && action.href);
+  const sourceLabel = sourceAction?.label.replace(/^Open /, "");
+
+  return (
+    <ThreadMessage
+      icon={requesterAgent
+        ? (
+            <AgentIcon
+              icon={requesterAgent.icon}
+              role={requesterAgent.role}
+              fallbackSeed={requesterAgent.name}
+              className="size-full"
+            />
+          )
+        : <MessageSquare className="h-5 w-5" />}
+      label={requesterAgent?.name ?? "Requests"}
+      timestamp={new Date(item.latestActivityAt)}
+      testId={`messenger-assistance-message-${item.id}`}
+    >
+      <div data-testid={`messenger-assistance-card-${item.id}`}>
+        <AssistanceRequestPanel
+          request={request}
+          orgId={orgId}
+          showRequestsLink={false}
+          source={sourceAction?.href
+            ? { label: sourceLabel ? sourceLabel.charAt(0).toUpperCase() + sourceLabel.slice(1) : "Issue", href: sourceAction.href }
+            : null}
+        />
+      </div>
+    </ThreadMessage>
+  );
+}
+
+function MessengerRequestCard({
+  item,
+  ...props
+}: {
+  item: MessengerRequestThreadItem;
+  orgId: string;
+  agents?: Agent[] | null;
+  projects?: Project[] | null;
+  labels?: IssueLabel[] | null;
+  chatConversations?: Pick<ChatConversation, "id" | "title">[] | null;
+  currentUserId?: string | null;
+}) {
+  if (item.requestKind === "assistance") {
+    return <MessengerAssistanceCard item={item} orgId={props.orgId} />;
+  }
+  return <MessengerApprovalCard item={item} {...props} />;
+}
+
 export function MessengerApprovalsView() {
   const { selectedOrganizationId, approvalThreadDetail, currentUserId } = useMessengerModel();
   const { approvalId } = useParams<{ approvalId?: string }>();
@@ -805,13 +888,13 @@ export function MessengerApprovalsView() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
       <MessengerPanelHeader
-        title="Approvals"
-        description="Approval objects stay inside the thread so decisions happen without losing context."
+        title="Requests"
+        description="Approvals and assistance stay in one thread while preserving their distinct decisions."
       />
       <TimelineStream
         items={approvalThreadDetail?.items ?? []}
         renderItem={(item) => (
-          <MessengerApprovalCard
+          <MessengerRequestCard
             key={item.id}
             item={item}
             orgId={selectedOrganizationId}
@@ -826,10 +909,10 @@ export function MessengerApprovalsView() {
       {!approvalThreadDetail?.items.length ? (
         <ThreadEmptyStateMessage
           icon={<ShieldCheck className="h-5 w-5" />}
-          assistantLabel="Approvals assistant"
-          eyebrow="Approvals"
-          title="No approvals waiting here"
-          description="Pending or recently updated approvals will appear in this thread as soon as they need operator attention."
+          assistantLabel="Requests"
+          eyebrow="Requests"
+          title="No requests waiting here"
+          description="Approvals and assistance will appear here when they need operator attention."
         />
       ) : null}
       <ApprovalDetailDialog
@@ -961,6 +1044,7 @@ function MessengerSystemCard({
         title={item.title}
         description={item.body ?? item.preview ?? "No details available."}
         status={typeof metadata.status === "string" ? <StatusBadge status={metadata.status} /> : undefined}
+        variant={item.kind === "failed-runs" ? "error" : undefined}
         testId={`messenger-system-card-${item.kind}-${item.id}`}
         footer={
           <div className="flex flex-wrap items-center gap-2">
@@ -1138,7 +1222,7 @@ export function Messenger() {
       return;
     }
     if (route.kind === "approvals") {
-      setBreadcrumbs([{ label: "Approvals" }]);
+      setBreadcrumbs([{ label: "Requests" }]);
       return;
     }
     if (route.kind === "system") {

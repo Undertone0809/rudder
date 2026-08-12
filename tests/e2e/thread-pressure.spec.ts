@@ -1019,6 +1019,29 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(runsApiResponse.ok()).toBe(true);
   expect(await commentsApiResponse.json()).toHaveLength(ISSUE_COMMENT_COUNT);
   expect(await runsApiResponse.json()).toHaveLength(TERMINAL_RUN_COUNT + ACTIVE_RUN_COUNT);
+  const issueTimelineDisclosure = page.getByTestId("issue-timeline-disclosure");
+  await expect(issueTimelineDisclosure).toBeVisible({ timeout: 30_000 });
+  const initialHiddenCount = Number(
+    (await issueTimelineDisclosure.textContent())?.match(/(\d+) hidden/u)?.[1],
+  );
+  expect(initialHiddenCount).toBeGreaterThan(0);
+  await issueTimelineDisclosure.getByRole("button", { name: "Load more" }).click();
+  const nextHiddenCount = Number(
+    (await issueTimelineDisclosure.textContent())?.match(/(\d+) hidden/u)?.[1],
+  );
+  expect(nextHiddenCount).toBeGreaterThan(0);
+  expect(nextHiddenCount).toBeLessThan(initialHiddenCount);
+
+  await page.keyboard.press("Control+f");
+  const issueFind = page.getByRole("search", { name: "Find in issue" });
+  await expect(issueFind).toBeVisible();
+  await issueFind.getByRole("textbox", { name: "Find in issue" })
+    .fill("Pressure issue comment 250.");
+  await expect(issueFind).toContainText(/1 of [1-9]\d*/u);
+  await expect(page.getByText("Pressure issue comment 250.", { exact: false })).toBeVisible();
+  await expect(page.getByTestId("comment-thread-virtual-timeline")).toHaveCount(0);
+  await issueFind.getByRole("button", { name: "Close find" }).click();
+
   const issueVirtualTimeline = page.getByTestId("comment-thread-virtual-timeline");
   await expect(issueVirtualTimeline).toBeVisible({ timeout: 30_000 });
   expect(await page.locator("[data-run-id]").count()).toBeLessThan(30);
@@ -1303,6 +1326,125 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(requestedLogRequests.filter(
     (request) => request.runId === activeRunDetailId,
   )).toHaveLength(terminalRequestCount);
+});
+
+test("progressively reveals a production-shaped Issue activity timeline", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  const orgResponse = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Disclosure-${Date.now()}` },
+  });
+  expect(orgResponse.ok()).toBe(true);
+  const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+
+  const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Timeline Evidence Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { command: "codex", model: "gpt-5.4" },
+    },
+  });
+  expect(agentResponse.ok()).toBe(true);
+  const agent = await agentResponse.json() as { id: string };
+
+  const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Adaptive Issue activity disclosure",
+      description: "A mixed-height timeline with comments and run evidence.",
+      status: "todo",
+      priority: "high",
+    },
+  });
+  expect(issueResponse.ok()).toBe(true);
+  const issue = await issueResponse.json() as { id: string; identifier: string | null };
+
+  const anchor = Date.parse("2026-07-20T00:00:00.000Z");
+  const commentIds: string[] = [];
+  await insertGeneratedChunks(
+    120,
+    (index) => {
+      const id = randomUUID();
+      const createdAt = new Date(anchor + index * 2_000);
+      commentIds.push(id);
+      return {
+        id,
+        orgId: organization.id,
+        issueId: issue.id,
+        authorAgentId: index % 4 === 0 ? null : agent.id,
+        authorUserId: index % 4 === 0 ? "local-board" : null,
+        body: index % 9 === 0
+          ? `Disclosure comment ${index + 1}.\n\n${"Large agent evidence block. ".repeat(90)}`
+          : `Disclosure comment ${index + 1}. ${"evidence ".repeat(index % 5)}`,
+        createdAt,
+        updatedAt: createdAt,
+      };
+    },
+    (rows) => e2eDb.insert(issueComments).values(rows),
+  );
+  await insertGeneratedChunks(
+    40,
+    (index) => {
+      const createdAt = new Date(anchor + index * 2_000 + 1_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "issue_assignment",
+        triggerDetail: `disclosure run ${index + 1}`,
+        status: "succeeded",
+        startedAt: createdAt,
+        finishedAt: new Date(createdAt.getTime() + 30_000),
+        stdoutExcerpt: `Disclosure run ${index + 1} summary output.`,
+        resultSummaryJson: { summary: `Disclosure result ${index + 1}` },
+        contextSnapshot: { issueId: issue.id, taskId: issue.id },
+        createdAt,
+        updatedAt: createdAt,
+      };
+    },
+    (rows) => e2eDb.insert(heartbeatRuns).values(rows),
+  );
+
+  await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const disclosure = page.getByTestId("issue-timeline-disclosure");
+  await expect(disclosure).toBeVisible({ timeout: 30_000 });
+  await expect(disclosure.getByRole("button", { name: "Load more" })).toBeVisible();
+  const initialLabel = await disclosure.textContent();
+  const initialHiddenCount = Number(initialLabel?.match(/(\d+) hidden/u)?.[1]);
+  expect(initialHiddenCount).toBeGreaterThan(0);
+  await page.screenshot({ path: "/tmp/rudder-issue-activity-disclosure-desktop.png" });
+
+  await disclosure.getByRole("button", { name: "Load more" }).click();
+  await expect.poll(async () => {
+    const label = await disclosure.textContent();
+    return Number(label?.match(/(\d+) hidden/u)?.[1]);
+  }).toBeLessThan(initialHiddenCount);
+
+  const hiddenTargetId = commentIds[80]!;
+  await expect(page.locator(`#comment-${hiddenTargetId}`)).toHaveCount(0);
+  await page.evaluate((commentId) => {
+    window.location.hash = `comment-${commentId}`;
+  }, hiddenTargetId);
+  await expect(page.locator(`#comment-${hiddenTargetId}`)).toBeVisible({ timeout: 10_000 });
+
+  await page.keyboard.press("Control+f");
+  const issueFind = page.getByRole("search", { name: "Find in issue" });
+  await expect(issueFind).toBeVisible();
+  await issueFind.getByRole("textbox", { name: "Find in issue" })
+    .fill("Disclosure comment 61.");
+  await expect(issueFind).toContainText(/1 of [1-9]\d*/u);
+  await expect(page.getByText("Disclosure comment 61.", { exact: false })).toBeVisible();
+  await expect(page.getByTestId("comment-thread-virtual-timeline")).toHaveCount(0);
+  await issueFind.getByRole("button", { name: "Close find" }).click();
+  await expect(page.getByTestId("comment-thread-virtual-timeline")).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "Mobile navigation" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Activity", exact: true })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-issue-activity-disclosure-mobile.png" });
 });
 
 test("keeps the mobile issue comment composer compact, growing, and bounded", async ({ page }) => {

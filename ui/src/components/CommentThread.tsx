@@ -8,10 +8,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDialog } from "@/context/DialogContext";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizationRelativePath } from "@/lib/organization-routes";
-import type { Agent, InstanceLocale, IssueComment } from "@rudderhq/shared";
+import type { Agent, InstanceLocale } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
 import { Check, ChevronDown, Copy, CornerDownRight, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { translateLegacyString } from "../i18n/legacyPhrases";
@@ -22,7 +22,21 @@ import { formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { commentThreadTranscriptRuns, type LinkedRunItem } from "./CommentThread.runs";
 import { useCommentSubmit } from "./CommentThread.submit";
+import {
+  buildCommentThreadTimeline,
+  projectCommentThreadTimeline,
+  toIssueTimelineDisclosureItems,
+  type CommentThreadActivityItem,
+  type CommentWithRunMeta,
+  type CommentThreadTimelineRenderItem as TimelineRenderItem
+} from "./CommentThread.timeline";
+import { CommentThreadTimelineRows } from "./CommentThreadTimelineRows";
 import { Identity } from "./Identity";
+import {
+  IssueTimelineDisclosureDivider,
+  useIssueTimelineDisclosure,
+  type CommentThreadProgressiveDisclosure,
+} from "./IssueTimelineDisclosure";
 import type { MarkdownAgentMentionPreview, MarkdownLinkClickHandler } from "./MarkdownBody";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
@@ -30,7 +44,6 @@ import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
-import { VirtualizedActivityTimeline } from "./VirtualizedActivityTimeline";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
@@ -40,16 +53,7 @@ const MOBILE_COMMENT_COMPOSER_MIN_HEIGHT_PX = 30;
 const MOBILE_COMMENT_COMPOSER_MAX_HEIGHT_PX = 160;
 const MOBILE_COMMENT_COMPOSER_MAX_VIEWPORT_RATIO = 0.24;
 
-interface CommentWithRunMeta extends IssueComment {
-  runId?: string | null;
-  runAgentId?: string | null;
-}
-
-export interface CommentThreadActivityItem {
-  id: string;
-  createdAt: Date | string;
-  node: ReactNode;
-}
+export type { CommentThreadActivityItem } from "./CommentThread.timeline";
 
 interface CommentThreadProps {
   comments: CommentWithRunMeta[];
@@ -80,7 +84,9 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
   fixedComposerTimelineScroll?: boolean;
+  composerReplacement?: ReactNode;
   timelineScrollElementRef?: RefObject<HTMLElement | null>;
+  progressiveDisclosure?: CommentThreadProgressiveDisclosure;
 }
 
 export function shouldOfferReopen(issueStatus?: string) {
@@ -460,11 +466,6 @@ function AnimatedRunDetails({
   );
 }
 
-type TimelineItem =
-  | { kind: "comment"; id: string; createdAtMs: number; comment: CommentWithRunMeta }
-  | { kind: "run"; id: string; createdAtMs: number; run: LinkedRunItem }
-  | { kind: "activity"; id: string; createdAtMs: number; activity: CommentThreadActivityItem };
-
 const TimelineList = memo(function TimelineList({
   timeline,
   agentMap,
@@ -486,10 +487,16 @@ const TimelineList = memo(function TimelineList({
   imageUploadHandler,
   onMarkdownLinkClick,
   reserveHashScrollEndSpace,
+  timelineRegionLabel,
   scrollElementRef,
-  onVirtualTargetMounted,
+  onTargetMounted,
+  mountAll,
+  onRevealMore,
+  timelineRegionId,
+  disclosureAnnouncement,
+  locale,
 }: {
-  timeline: TimelineItem[];
+  timeline: TimelineRenderItem[];
   agentMap?: Map<string, Agent>;
   orgId?: string | null;
   projectId?: string | null;
@@ -509,8 +516,14 @@ const TimelineList = memo(function TimelineList({
   imageUploadHandler?: (file: File) => Promise<string>;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   reserveHashScrollEndSpace?: boolean;
+  timelineRegionLabel?: string;
   scrollElementRef?: RefObject<HTMLElement | null>;
-  onVirtualTargetMounted?: (key: string) => void;
+  onTargetMounted?: (key: string) => void;
+  mountAll?: boolean;
+  onRevealMore?: (keyboard: boolean, dividerTop: number) => void;
+  timelineRegionId: string;
+  disclosureAnnouncement?: string;
+  locale: InstanceLocale;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -550,7 +563,18 @@ const TimelineList = memo(function TimelineList({
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   }
 
-  const renderTimelineItem = (item: TimelineItem) => {
+  const renderTimelineItem = (item: TimelineRenderItem) => {
+        if (item.kind === "disclosure") {
+          return (
+            <IssueTimelineDisclosureDivider
+              hiddenCount={item.hiddenCount}
+              locale={locale}
+              onRevealMore={onRevealMore}
+              timelineRegionId={timelineRegionId}
+            />
+          );
+        }
+
         if (item.kind === "activity") {
           return (
             <div>
@@ -959,44 +983,20 @@ const TimelineList = memo(function TimelineList({
           </div>
         );
       };
-  const getTimelineItemKey = (item: TimelineItem) => `${item.kind}:${item.id}`;
-  const timelineItems = scrollElementRef && timeline.length > 60 ? (
-    <VirtualizedActivityTimeline
-      items={timeline}
-      getItemKey={getTimelineItemKey}
-      estimateSize={(index) => {
-        const item = timeline[index];
-        if (item?.kind === "run") return 52;
-        if (item?.kind === "activity") return 48;
-        return 168;
-      }}
-      overscan={5}
-      preventScrollBlanking
+  return (
+    <CommentThreadTimelineRows
+      announcement={disclosureAnnouncement}
+      mountAll={mountAll}
+      onTargetMounted={onTargetMounted}
+      reserveHashScrollEndSpace={reserveHashScrollEndSpace}
+      regionLabel={timelineRegionLabel}
       scrollElementRef={scrollElementRef}
       targetKey={highlightCommentId ? `comment:${highlightCommentId}` : null}
-      onTargetMounted={onVirtualTargetMounted}
-      testId="comment-thread-virtual-timeline"
+      timeline={timeline}
+      timelineRegionId={timelineRegionId}
     >
       {(item) => renderTimelineItem(item)}
-    </VirtualizedActivityTimeline>
-  ) : timeline.map((item) => (
-    <div key={getTimelineItemKey(item)}>
-      {renderTimelineItem(item)}
-    </div>
-  ));
-
-  return (
-    <div className="space-y-3">
-      {timelineItems}
-      {reserveHashScrollEndSpace ? (
-        <div
-          aria-hidden="true"
-          className="h-[var(--comment-hash-scroll-end-space)]"
-          style={{ "--comment-hash-scroll-end-space": "min(6rem, 12vh)" } as CSSProperties}
-          data-testid="comment-hash-scroll-end-space"
-        />
-      ) : null}
-    </div>
+    </CommentThreadTimelineRows>
   );
 });
 
@@ -1028,7 +1028,9 @@ export function CommentThread({
   escapeBackWhenEmpty = false,
   fixedComposer = false,
   fixedComposerTimelineScroll = true,
+  composerReplacement,
   timelineScrollElementRef,
+  progressiveDisclosure,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
@@ -1107,37 +1109,24 @@ export function CommentThread({
     };
   }, [composerEditorScrollElement]);
 
-  const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
-      kind: "comment",
-      id: comment.id,
-      createdAtMs: new Date(comment.createdAt).getTime(),
-      comment,
-    }));
-    const runItems: TimelineItem[] = linkedRuns.map((run) => ({
-      kind: "run",
-      id: run.runId,
-      createdAtMs: new Date(run.startedAt ?? run.createdAt).getTime(),
-      run,
-    }));
-    const activityTimelineItems: TimelineItem[] = activityItems.map((activity) => ({
-      kind: "activity",
-      id: activity.id,
-      createdAtMs: new Date(activity.createdAt).getTime(),
-      activity,
-    }));
-    const kindOrder: Record<TimelineItem["kind"], number> = {
-      activity: 0,
-      comment: 1,
-      run: 2,
-    };
-    return [...commentItems, ...runItems, ...activityTimelineItems].sort((a, b) => {
-      if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
-      if (a.kind !== b.kind) return kindOrder[a.kind] - kindOrder[b.kind];
-      if (a.kind === b.kind) return a.id.localeCompare(b.id);
-      return 0;
-    });
-  }, [activityItems, linkedRuns, visibleComments]);
+  const timeline = useMemo(() => buildCommentThreadTimeline({
+    activityItems,
+    comments: visibleComments,
+    linkedRuns,
+  }), [activityItems, linkedRuns, visibleComments]);
+  const disclosureItems = useMemo(
+    () => toIssueTimelineDisclosureItems(timeline),
+    [timeline],
+  );
+  const timelineDisclosure = useIssueTimelineDisclosure({
+    config: progressiveDisclosure,
+    items: disclosureItems,
+    locale,
+  });
+  const visibleTimeline = useMemo(
+    () => projectCommentThreadTimeline(timeline, timelineDisclosure.selection),
+    [timeline, timelineDisclosure.selection],
+  );
 
   const transcriptRuns = useMemo(
     () => commentThreadTranscriptRuns(linkedRuns, agentMap),
@@ -1351,6 +1340,12 @@ export function CommentThread({
     return true;
   }, [currentIssueId, location, navigate, scrollToComment]);
 
+  useLayoutEffect(() => {
+    const commentId = commentIdFromIssueCommentHash(location.hash);
+    if (!commentId) return;
+    timelineDisclosure.revealTarget(`comment:${commentId}`);
+  }, [location.hash, timelineDisclosure.revealTarget]);
+
   useEffect(() => {
     const hash = location.hash;
     const commentId = commentIdFromIssueCommentHash(hash);
@@ -1403,7 +1398,7 @@ export function CommentThread({
     }
   }, [clearPendingCommentScroll, location.hash, location.key, scrollToComment, visibleComments]);
 
-  const handleVirtualTargetMounted = useCallback((key: string) => {
+  const handleTargetMounted = useCallback((key: string) => {
     if (!key.startsWith("comment:")) return;
     const navigationKey = `${location.key}:${location.hash}`;
     if (lastHandledCommentHashRef.current === navigationKey) return;
@@ -1452,7 +1447,7 @@ export function CommentThread({
 
   const timelineNode = (
     <TimelineList
-      timeline={timeline}
+      timeline={visibleTimeline}
       agentMap={agentMap}
       orgId={orgId}
       projectId={projectId}
@@ -1472,8 +1467,16 @@ export function CommentThread({
       imageUploadHandler={imageUploadHandler}
       onMarkdownLinkClick={handleMarkdownLinkClick}
       reserveHashScrollEndSpace={reserveHashScrollEndSpace}
+      timelineRegionLabel={progressiveDisclosure
+        ? (locale === "zh-CN" ? "任务动态时间线" : "Issue activity timeline")
+        : undefined}
       scrollElementRef={activeTimelineScrollRef}
-      onVirtualTargetMounted={handleVirtualTargetMounted}
+      onTargetMounted={handleTargetMounted}
+      mountAll={timelineDisclosure.mountAll}
+      onRevealMore={timelineDisclosure.revealMore}
+      timelineRegionId={timelineDisclosure.timelineRegionId}
+      disclosureAnnouncement={timelineDisclosure.announcement}
+      locale={locale}
     />
   );
 
@@ -1573,6 +1576,7 @@ export function CommentThread({
       </div>
     </div>
   );
+  const activeComposerNode = composerReplacement ?? composerNode;
 
   if (fixedComposer) {
     if (!fixedComposerTimelineScroll) {
@@ -1593,7 +1597,7 @@ export function CommentThread({
             className="comment-thread-fixed-composer sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 shrink-0 px-4 pb-4 pt-1 md:bottom-0"
             data-testid="comment-thread-fixed-composer"
           >
-            {composerNode}
+            {activeComposerNode}
           </div>
         </div>
       );
@@ -1620,7 +1624,7 @@ export function CommentThread({
           className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 px-4 pb-4 pt-3"
           data-testid="comment-thread-fixed-composer"
         >
-          {composerNode}
+          {activeComposerNode}
         </div>
       </div>
     );
@@ -1636,7 +1640,7 @@ export function CommentThread({
 
       {liveRunSlot}
 
-      {composerNode}
+      {activeComposerNode}
     </div>
   );
 }

@@ -68,6 +68,24 @@ async function dispatchTextPaste(locator: Locator, text: string) {
   }, text);
 }
 
+async function dispatchImagePaste(locator: Locator, names: string[]) {
+  await locator.evaluate((element, fileNames) => {
+    const bytes = Uint8Array.from(
+      atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+      (character) => character.charCodeAt(0),
+    );
+    const data = new DataTransfer();
+    for (const name of fileNames) {
+      data.items.add(new File([bytes], name, { type: "image/png" }));
+    }
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data,
+    }));
+  }, names);
+}
+
 async function replaceCodeMirrorDocument(
   page: Page,
   editor: Locator,
@@ -482,7 +500,13 @@ test("Automation instructions use live preview and preserve exact Markdown throu
     {
       data: {
         title: "Exact instruction automation",
-        description: "# Existing instructions\n\nRun safely.",
+        description: [
+          "# Existing instructions",
+          "",
+          "| Step | Owner |",
+          "| --- | --- |",
+          "| Run safely | Agent |",
+        ].join("\n"),
         assigneeAgentId: agent.id,
         priority: "medium",
       },
@@ -508,6 +532,53 @@ test("Automation instructions use live preview and preserve exact Markdown throu
     editor.locator('[data-markdown-preview-state="source"]').first(),
   ).toContainText("# Existing instructions");
 
+  await blurCodeMirror(editor);
+  const runCell = editor.getByRole("cell", { name: "Run safely" });
+  await runCell.hover();
+  await expect(page.getByRole("button", { name: "Open block actions for line 5" })).toBeVisible();
+  await runCell.dispatchEvent("mousedown", { button: 0 });
+  const runCellEditor = page.getByRole("textbox", { name: "Edit table cell row 2 column 1" });
+  await expect(runCellEditor).toBeVisible();
+  await runCellEditor.fill("Review safely");
+  await expect(runCellEditor).toHaveValue("Review safely");
+  await runCellEditor.press("Enter");
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${E2E_BASE_URL}/api/automations/${automation.id}?_=${Date.now()}`,
+    );
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toContain("| Review safely | Agent |");
+  await expect(editor.getByRole("cell", { name: "Review safely" })).toBeVisible();
+  await expect(editor.getByRole("cell", { name: "Agent" })).toBeVisible();
+
+  await editor.getByRole("cell", { name: "Review safely" }).dispatchEvent("mousedown", { button: 0 });
+  const boundaryCellEditor = page.getByRole("textbox", { name: "Edit table cell row 2 column 1" });
+  await boundaryCellEditor.fill(String.raw`Review||safe\\|ly`);
+  await boundaryCellEditor.press("Tab");
+  const ownerCellEditor = page.getByRole("textbox", { name: "Edit table cell row 2 column 2" });
+  await expect(ownerCellEditor).toHaveValue("Agent");
+  await ownerCellEditor.fill("Operator");
+  await page.getByRole("textbox", { name: "Automation title" }).click();
+  await expect(editor.getByRole("cell", { name: String.raw`Review||safe\|ly` })).toBeVisible();
+  await expect(editor.getByRole("cell", { name: "Operator" })).toBeVisible();
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${E2E_BASE_URL}/api/automations/${automation.id}?_=${Date.now()}`,
+    );
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toContain(String.raw`| Review\|\|safe\\\|ly | Operator |`);
+
+  await editor.getByRole("cell", { name: "Operator" }).dispatchEvent("mousedown", { button: 0 });
+  const cancelledCellEditor = page.getByRole("textbox", { name: "Edit table cell row 2 column 2" });
+  await cancelledCellEditor.fill("Cancelled");
+  await cancelledCellEditor.press("Escape");
+  await expect(editor.getByRole("cell", { name: "Operator" })).toBeVisible();
+  await expect(editor.getByRole("cell", { name: "Cancelled" })).toHaveCount(0);
+
   const exactMarkdown = "\n  ## Exact Automation Source  \n\n`literal`\n";
   await replaceCodeMirrorDocument(page, editor, exactMarkdown);
 
@@ -526,6 +597,72 @@ test("Automation instructions use live preview and preserve exact Markdown throu
       .locator('[data-markdown-preview-state="preview"]')
       .filter({ hasText: "Exact Automation Source" }),
   ).toBeVisible();
+
+  const markdownBeforeImages = `${exactMarkdown}\n`;
+  await replaceCodeMirrorDocument(page, editor, markdownBeforeImages);
+  await dispatchImagePaste(editor.locator(".cm-content"), ["first.png", "second.png"]);
+  await expect(editor.locator('img[alt="first.png"]')).toBeVisible();
+  await expect(editor.locator('img[alt="second.png"]')).toBeVisible();
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${E2E_BASE_URL}/api/automations/${automation.id}?_=${Date.now()}`,
+    );
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toMatch(/!\[first\.png\]\([^\n]+\)\n!\[second\.png\]\([^\n]+\)$/u);
+
+  await editor.locator(".cm-content").click();
+  await page.keyboard.press(`${modifier}+z`);
+  await expect(editor.locator('img[alt="first.png"]')).toHaveCount(0);
+  await expect(editor.locator('img[alt="second.png"]')).toHaveCount(0);
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${E2E_BASE_URL}/api/automations/${automation.id}?_=${Date.now()}`,
+    );
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toBe(markdownBeforeImages);
+  await page.keyboard.press(`${modifier}+Shift+z`);
+  await expect(editor.locator('img[alt="first.png"]')).toBeVisible();
+  await expect(editor.locator('img[alt="second.png"]')).toBeVisible();
+
+  await editor.locator('img[alt="first.png"]').click();
+  await expect(page.getByTestId("markdown-body-image-preview-dialog")).toBeVisible();
+  await expect(editor.locator('img[alt="first.png"]')).toBeVisible();
+  await expect(editor.locator('img[alt="second.png"]')).toBeVisible();
+  await expect(
+    editor.locator('[data-markdown-preview-state="source"]').filter({ hasText: "![first.png]" }),
+  ).toHaveCount(0);
+  await expect(
+    editor.locator('[data-markdown-preview-state="source"]').filter({ hasText: "![second.png]" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await replaceCodeMirrorDocument(page, editor, markdownBeforeImages);
+  await page.route("**/api/orgs/*/assets/images", async (route) => {
+    const body = route.request().postDataBuffer()?.toString("utf8") ?? "";
+    if (body.includes("broken.png")) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Upload unavailable"}' });
+      return;
+    }
+    await route.continue();
+  });
+  await dispatchImagePaste(editor.locator(".cm-content"), ["first-ok.png", "broken.png", "third-ok.png"]);
+  await expect(editor.locator('img[alt="first-ok.png"]')).toBeVisible();
+  await expect(editor.locator('img[alt="third-ok.png"]')).toBeVisible();
+  await expect(editor.locator('img[alt="broken.png"]')).toHaveCount(0);
+  await expect(editor.getByText(/1 of 3 images failed to upload\./u)).toBeVisible();
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${E2E_BASE_URL}/api/automations/${automation.id}?_=${Date.now()}`,
+    );
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toMatch(/!\[first-ok\.png\]\([^\n]+\)\n!\[third-ok\.png\]\([^\n]+\)$/u);
+  await page.unroute("**/api/orgs/*/assets/images");
 });
 
 test("Goal descriptions use live preview and round-trip exact Markdown", async ({

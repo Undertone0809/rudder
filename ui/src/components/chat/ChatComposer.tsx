@@ -50,7 +50,7 @@ export const ChatComposerSurface = forwardRef<
       data-testid={testId}
       {...fileDropTargetProps}
       className={cn(
-        "chat-composer relative rounded-[var(--radius-lg)] p-3 transition-all duration-300",
+        "chat-composer relative rounded-[var(--radius-lg)] p-3 transition-[border-color,box-shadow] duration-300",
         streaming && "chat-composer--streaming",
         fileDragActive
           && "ring-2 ring-[color:var(--accent-base)] ring-offset-2 ring-offset-background",

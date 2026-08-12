@@ -152,8 +152,7 @@ export type {
 } from "./mcp.js";
 export type {
   IssueFollow,
-  IssueFollowEntry, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,
+  IssueFollowEntry, MessengerApprovalThreadItem, MessengerAssistanceThreadItem, MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,
   MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
@@ -200,6 +199,7 @@ export type {
   ProjectWorkspaceVisibility
 } from "./project.js";
 export type { ProviderQuotaResult, QuotaWindow } from "./quota.js";
+export type { ApprovalRequest, AssistanceRequest, IssueBlockAuditResult, RudderRequest } from "./request.js";
 export type {
   CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, OrganizationResource, ProjectResourceAttachment,
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest

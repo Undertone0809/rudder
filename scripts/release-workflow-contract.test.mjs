@@ -12,14 +12,6 @@ const docsProductionWorkflow = readFileSync(
 const ciWorkflow = readFileSync(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const desktopWorkflow = readFileSync(join(repoRoot, ".github/workflows/desktop-release.yml"), "utf8");
 const releaseScript = readFileSync(join(repoRoot, "scripts/release.sh"), "utf8");
-const releaseCompatibilityScript = readFileSync(
-  join(repoRoot, "scripts/release-compatibility-matrix.mjs"),
-  "utf8",
-);
-const releaseCompatibilityRuntimeScript = readFileSync(
-  join(repoRoot, "scripts/release-compatibility-runtime.ts"),
-  "utf8",
-);
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
 
 describe("release workflow latency contracts", () => {
@@ -50,7 +42,7 @@ describe("release workflow latency contracts", () => {
     expect(ciWorkflow).toContain('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
     expect(ciWorkflow).toContain('test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"');
     expect(releaseWorkflow).toContain(
-      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
+      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.resume_missing && github.repository == 'Undertone0809/rudder'",
     );
     expect(releaseWorkflow).toContain("environment: npm-stable");
     expect(releaseWorkflow).toContain("./scripts/release.sh canary --preflight");
@@ -73,7 +65,33 @@ describe("release workflow latency contracts", () => {
     );
   });
 
-  it("blocks stable and canary publication on the migration compatibility matrix", () => {
+  it("resumes partial stable releases from the locked source version", () => {
+    const resumeJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  resume-stable:\n"),
+      releaseWorkflow.indexOf("\n  canary:\n"),
+    );
+
+    expect(resumeJob).toContain("Require locked stable source");
+    expect(resumeJob).toContain("needs: preflight");
+    expect(resumeJob).toContain("group: release-publish");
+    expect(resumeJob).toContain('echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"');
+    expect(resumeJob).toContain('set-publish-version "$RELEASE_VERSION"');
+    expect(resumeJob).toContain('test "$(wc -l < "$package_map" | xargs)" = "15"');
+    expect(resumeJob).toContain('echo "Skipping existing $pkg_name@$pkg_version"');
+    expect(resumeJob).toContain("npm publish --tag latest");
+    expect(resumeJob).toContain("wait_for_npm_package_versions");
+    expect(resumeJob).toContain("publish completed but npm never exposed");
+    expect(resumeJob).toContain('tag="v${RELEASE_VERSION}"');
+    expect(resumeJob).toContain('test "$remote_tag_sha" = "$SOURCE_REF"');
+    expect(resumeJob).toContain("Wait for desktop release assets");
+    expect(resumeJob).toContain("Clean up obsolete canary releases");
+    expect(releaseWorkflow).toContain("needs.resume-stable.result == 'success'");
+    expect(releaseWorkflow).toContain("needs.resume-stable.outputs.version");
+    expect(resumeJob).not.toContain("v0.7.2");
+    expect(resumeJob).not.toContain('set-publish-version 0.7.2');
+  });
+
+  it("keeps publication behind the immutable-source preflight without the legacy upgrade gate", () => {
     const canaryJob = releaseWorkflow.slice(
       releaseWorkflow.indexOf("\n  canary:\n"),
       releaseWorkflow.indexOf("\n  stable-dry-run:\n"),
@@ -83,79 +101,50 @@ describe("release workflow latency contracts", () => {
       releaseWorkflow.indexOf("\n  stable-docs:\n"),
     );
 
-    expect(releaseWorkflow).toContain("node scripts/release-compatibility-matrix.mjs");
+    expect(releaseWorkflow).not.toContain("prepublish-upgrade-gate");
+    expect(releaseWorkflow).not.toContain("release-compatibility-matrix.mjs");
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
-    expect(canaryJob).toContain("Locked canary migration compatibility preflight");
-    expect(stableJob).toContain("Locked stable migration compatibility preflight");
+    expect(canaryJob).toMatch(/canary:\n[\s\S]*needs: preflight/);
+    expect(stableJob).toMatch(/stable:\n[\s\S]*needs: preflight/);
 
-    const canaryPreflightIndex = canaryJob.indexOf("Locked canary migration compatibility preflight");
+    const canaryPreflightIndex = canaryJob.indexOf("Locked canary preflight");
     const canaryPublishIndex = canaryJob.indexOf("\n      - name: Publish canary\n");
     const canaryDesktopIndex = canaryJob.indexOf("\n      - name: Start desktop release build\n");
     expect(canaryPreflightIndex).toBeGreaterThan(-1);
     expect(canaryPublishIndex).toBeGreaterThan(canaryPreflightIndex);
     expect(canaryDesktopIndex).toBeGreaterThan(canaryPublishIndex);
 
-    const stablePreflightIndex = stableJob.indexOf("Locked stable migration compatibility preflight");
+    const stableCheckoutIndex = stableJob.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}");
     const stablePublishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
     const stableDesktopIndex = stableJob.indexOf("\n      - name: Start desktop release build\n");
-    expect(stablePreflightIndex).toBeGreaterThan(-1);
-    expect(stablePublishIndex).toBeGreaterThan(stablePreflightIndex);
+    expect(stableCheckoutIndex).toBeGreaterThan(-1);
+    expect(stablePublishIndex).toBeGreaterThan(stableCheckoutIndex);
     expect(stableDesktopIndex).toBeGreaterThan(stablePublishIndex);
-
-    expect(releaseCompatibilityScript).toContain("candidateFingerprint");
-    expect(releaseCompatibilityScript).toContain("old-version matrix declaration");
-    expect(releaseCompatibilityScript).toContain("published migration history must remain immutable");
   });
 
-  it("requires the cross-platform packaged upgrade gate before any public mutation", () => {
-    const gateJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n"),
-      releaseWorkflow.indexOf("\n  canary:\n"),
+  it("runs documentation qualification only in the stable release path", () => {
+    const stableJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  stable:\n"),
+      releaseWorkflow.indexOf("\n  stable-docs:\n"),
     );
-    expect(gateJob).toContain("Prepublish database and packaged upgrade gate");
-    expect(gateJob).toContain("os: [ubuntu-latest, macos-latest, windows-latest]");
-    expect(gateJob).toContain("fail-fast: true");
-    expect(gateJob).toContain("timeout-minutes: 25");
-    expect(gateJob).toContain("Cache PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("actions/cache@v5");
-    expect(gateJob).toContain("Prepare PostgreSQL 18.4 runtime");
-    expect(gateJob).toContain("RUDDER_POSTGRES_BIN_DIR=${bin_dir}");
-    expect(gateJob).toContain("https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2");
-    expect(gateJob).toContain("81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094");
-    expect(gateJob).not.toContain("RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES");
-    expect(gateJob).not.toContain("RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE");
-    expect(gateJob).toContain("pnpm desktop:verify");
-    expect(gateJob).toContain("if: runner.os != 'Windows'");
-    expect(gateJob).toContain("src/client.test.ts src/migration-manifest.test.ts");
-    expect(gateJob).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
-    expect(gateJob).toMatch(/Run historical schema upgrade matrix with shaped data[\s\S]*timeout-minutes: 5/);
-    expect(gateJob).toContain('RUDDER_RELEASE_COMPATIBILITY_HEARTBEAT_MS: "10000"');
-    expect(gateJob.indexOf("Install Playwright Chromium")).toBeGreaterThan(
-      gateJob.indexOf("Run historical schema upgrade matrix with shaped data"),
-    );
-    expect(releaseCompatibilityRuntimeScript).toContain("fileURLToPath(import.meta.url)");
-    expect(releaseCompatibilityRuntimeScript).toContain("cwd: REPO_ROOT");
-    expect(releaseCompatibilityRuntimeScript).not.toContain('["-C", REPO_ROOT');
-    expect(releaseCompatibilityRuntimeScript).toContain("chat_conversations");
-    expect(releaseCompatibilityRuntimeScript).toContain("principal_permission_grants");
-    expect(releaseCompatibilityRuntimeScript).toContain("await db.restart()");
-    expect(releaseCompatibilityRuntimeScript).toContain("[compatibility:${ref}] ${event}:");
-    expect(releaseCompatibilityRuntimeScript).toContain("connect_timeout: 5");
-    expect(releaseCompatibilityRuntimeScript).toContain("await sql.end({ timeout: 1 })");
-    expect(releaseCompatibilityRuntimeScript).toContain('["archive", "--format=tar"');
-    expect(releaseCompatibilityRuntimeScript).toContain('["--force-local", "-xf", archivePath');
-    expect(releaseCompatibilityRuntimeScript).toContain('execFileSync("tar", tarArgs, { cwd: archiveRoot })');
-    expect(releaseCompatibilityRuntimeScript).not.toContain('"-C", archiveRoot');
-    expect(releaseCompatibilityRuntimeScript).not.toContain("gitShow(");
+    const docsStructureIndex = stableJob.indexOf("\n      - name: Docs structure\n");
+    const playwrightIndex = stableJob.indexOf("\n      - name: Install Playwright Chromium\n");
+    const docsSearchIndex = stableJob.indexOf("\n      - name: Docs search E2E\n");
+    const publishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
 
-    const gateIndex = releaseWorkflow.indexOf("\n  prepublish-upgrade-gate:\n");
-    const npmPublishIndex = releaseWorkflow.indexOf("./scripts/release.sh canary --skip-verify");
-    const stablePublishIndex = releaseWorkflow.indexOf("./scripts/release.sh stable --skip-verify");
-    expect(gateIndex).toBeGreaterThan(-1);
-    expect(npmPublishIndex).toBeGreaterThan(gateIndex);
-    expect(stablePublishIndex).toBeGreaterThan(gateIndex);
-    expect(releaseWorkflow).toMatch(/canary:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
-    expect(releaseWorkflow).toMatch(/stable:\n[\s\S]*needs:\n[\s\S]*prepublish-upgrade-gate/);
+    expect(docsStructureIndex).toBeGreaterThan(-1);
+    expect(playwrightIndex).toBeGreaterThan(docsStructureIndex);
+    expect(docsSearchIndex).toBeGreaterThan(playwrightIndex);
+    expect(publishIndex).toBeGreaterThan(docsSearchIndex);
+    expect(ciWorkflow).not.toContain("Typecheck");
+    expect(ciWorkflow).not.toContain("Docs structure");
+    expect(ciWorkflow).not.toContain("Docs search E2E");
+    expect(ciWorkflow).not.toContain("Install Playwright Chromium");
+    expect(ciWorkflow).not.toContain("Core work-loop smoke");
+    expect(ciWorkflow).not.toContain("pnpm test:smoke");
+    expect(ciWorkflow).toContain("pnpm test:run --maxWorkers=2");
+    expect(ciWorkflow).toMatch(/os: ubuntu-latest\n\s+test: full/);
+    expect(ciWorkflow).toMatch(/os: macos-latest\n\s+test: build/);
   });
 
   it("keeps dry-run code read-only without repository-authorization attestations", () => {
@@ -173,7 +162,7 @@ describe("release workflow latency contracts", () => {
   });
 
   it("serializes publication and advances the next patch base directly", () => {
-    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(2);
+    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(3);
     expect(releaseWorkflow).toMatch(/^  next-release-base:/m);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
     expect(releaseWorkflow).toContain("Advance main to the next patch version");
@@ -225,6 +214,7 @@ describe("release workflow latency contracts", () => {
   });
 
   it("opens the packaged macOS account gate before publishing Desktop artifacts", () => {
+    expect(desktopWorkflow).not.toContain("--scenario=upgrade");
     expect(desktopWorkflow).toContain("matrix.platform == 'macos' && matrix.arch == 'arm64'");
     expect(desktopWorkflow).toContain(
       "node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate",
@@ -251,8 +241,12 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).not.toContain('test "$CONFIRM_DOCS" = "PUBLISH DOCS"');
     expect(releaseWorkflow).toContain("name: Publish stable changelog to docs production");
     expect(releaseWorkflow).toContain("uses: ./.github/workflows/docs-production.yml");
-    expect(releaseWorkflow).toContain("source_ref: v${{ needs.stable.outputs.version }}");
-    expect(releaseWorkflow).toContain("tag_name: docs/release/v${{ needs.stable.outputs.version }}");
+    expect(releaseWorkflow).toContain(
+      "source_ref: v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}",
+    );
+    expect(releaseWorkflow).toContain(
+      "tag_name: docs/release/v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}",
+    );
     expect(releaseWorkflow).toContain("release_docs_approved: true");
     expect(releaseWorkflow).toContain("needs.stable-docs.result == 'success'");
     expect(stableDocsIndex).toBeGreaterThan(-1);
