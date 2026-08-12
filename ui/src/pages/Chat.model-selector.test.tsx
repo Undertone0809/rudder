@@ -184,4 +184,23 @@ describe("chat conversation model options", () => {
       },
     })).toBe("gpt-5.6-terra · Extra High");
   });
+
+  it("ignores legacy conversation runtime when the composer uses Agent defaults", () => {
+    expect(chatRuntimeSelectionLabel({
+      agent: makeAgent({
+        agentRuntimeConfig: { model: "gpt-5.6-sol", modelReasoningEffort: "high" },
+      }),
+      runtime: {
+        sourceType: "agent",
+        sourceLabel: "Legacy override",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5.6-terra",
+        effort: "xhigh",
+        available: true,
+        error: null,
+      },
+      overrides: { modelOverride: null, effortOverride: null },
+    })).toBe("gpt-5.6-sol · High");
+  });
 });

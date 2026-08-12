@@ -184,7 +184,18 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       : null;
     let runtimeSnapshot = atomicFirstTurn?.runtimeSnapshot ?? null;
     if (!atomicFirstTurn) {
-      const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
+      const runtimeOverrideProvided = Object.hasOwn(normalizedBody, "modelOverride")
+        || Object.hasOwn(normalizedBody, "effortOverride");
+      const assistantAvailability = runtimeOverrideProvided
+        ? await assistantSvc.getDraftChatAssistantAvailability({
+            orgId: conversation.orgId,
+            preferredAgentId: conversation.preferredAgentId,
+            modelOverride: parsedBody.data.modelOverride ?? null,
+            effortOverride: parsedBody.data.effortOverride ?? null,
+            contextLinks: conversation.contextLinks,
+            planMode: conversation.planMode,
+          })
+        : await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
       if (!assistantAvailability.available) {
         res.status(503).json({ error: assistantAvailability.error });
         return;
@@ -1061,8 +1072,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       title: parsed.data.title,
       summary: parsed.data.summary ?? null,
       preferredAgentId: draft.preferredAgentId,
-      modelOverride: draft.modelOverride,
-      effortOverride: draft.effortOverride,
+      modelOverride: null,
+      effortOverride: null,
       issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: parsed.data.planMode ?? false,
       createdByUserId: actor.actorId,

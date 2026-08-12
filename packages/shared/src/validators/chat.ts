@@ -487,6 +487,8 @@ export const addChatMessageSchema = z.object({
   inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
   editUserMessageId: z.string().uuid().optional().nullable(),
   queuedMessageId: z.string().uuid().optional().nullable(),
+  modelOverride: chatModelOverrideSchema.optional().nullable(),
+  effortOverride: chatEffortOverrideSchema.optional().nullable(),
 }).superRefine((value, ctx) => {
   if (value.body.length === 0 && (value.inlineAnnotations?.length ?? 0) === 0) {
     ctx.addIssue({

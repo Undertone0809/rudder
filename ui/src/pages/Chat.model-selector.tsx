@@ -1,6 +1,5 @@
 import type { AgentRuntimeModel } from "@/api/agents";
 import { agentsApi } from "@/api/agents";
-import { chatsApi } from "@/api/chats";
 import {
   shouldShowThinkingEffort,
   thinkingEffortKeyForRuntime,
@@ -14,7 +13,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
 import { cn } from "@/lib/utils";
 import type { Agent, ChatConversation, ChatRuntimeDescriptor } from "@rudderhq/shared";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Bot, Check, ChevronLeft, ChevronRight, Loader2, Lock } from "lucide-react";
 import {
   useEffect,
@@ -33,33 +32,21 @@ export type ChatRuntimeOverrides = {
   effortOverride: string | null;
 };
 
-export type PendingChatRuntimeOverrides = { chatId: string } & ChatRuntimeOverrides;
-
 export function useChatRuntimeSelection(input: {
   selectedOrganizationId: string | null | undefined;
   selectedConversation: ChatConversation | null;
   activeAgentId: string | null;
   activeAgent: Agent | null;
+  composerScopeKey?: string;
 }) {
   const [draftRuntimeOverrides, setDraftRuntimeOverrides] = useState<ChatRuntimeOverrides>({
     modelOverride: null,
     effortOverride: null,
   });
-  const [
-    pendingConversationRuntimeOverrides,
-    setPendingConversationRuntimeOverrides,
-  ] = useState<PendingChatRuntimeOverrides | null>(null);
   const draftRuntimeAgentScopeRef = useRef<string | null>(null);
   const runtimeSelectorRef = useRef<HTMLButtonElement>(null);
   const runtimeModelSelectRef = useRef<HTMLButtonElement>(null);
-  const activeRuntimeOverrides: ChatRuntimeOverrides = input.selectedConversation
-    ? pendingConversationRuntimeOverrides?.chatId === input.selectedConversation.id
-      ? pendingConversationRuntimeOverrides
-      : {
-          modelOverride: input.selectedConversation.modelOverride ?? null,
-          effortOverride: input.selectedConversation.effortOverride ?? null,
-        }
-    : draftRuntimeOverrides;
+  const activeRuntimeOverrides = draftRuntimeOverrides;
   const adapterModelsQuery = useQuery({
     queryKey: input.activeAgent && input.selectedOrganizationId
       ? queryKeys.agents.adapterModels(
@@ -76,12 +63,8 @@ export function useChatRuntimeSelection(input: {
   });
 
   useEffect(() => {
-    if (input.selectedConversation) {
-      draftRuntimeAgentScopeRef.current = null;
-      return;
-    }
     const nextScope =
-      `${input.selectedOrganizationId ?? "__none__"}:${input.activeAgentId ?? "__none__"}`;
+      `${input.selectedOrganizationId ?? "__none__"}:${input.composerScopeKey ?? input.selectedConversation?.id ?? "new"}:${input.activeAgentId ?? "__none__"}`;
     if (
       draftRuntimeAgentScopeRef.current !== null
       && draftRuntimeAgentScopeRef.current !== nextScope
@@ -89,7 +72,12 @@ export function useChatRuntimeSelection(input: {
       setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
     }
     draftRuntimeAgentScopeRef.current = nextScope;
-  }, [input.activeAgentId, input.selectedConversation, input.selectedOrganizationId]);
+  }, [
+    input.activeAgentId,
+    input.composerScopeKey,
+    input.selectedConversation?.id,
+    input.selectedOrganizationId,
+  ]);
 
   return {
     activeRuntimeOverrides,
@@ -98,59 +86,20 @@ export function useChatRuntimeSelection(input: {
     runtimeModelSelectRef,
     runtimeSelectorRef,
     setDraftRuntimeOverrides,
-    setPendingConversationRuntimeOverrides,
   };
 }
 
 export function useChatRuntimeMutation(input: {
   activeAgent: Agent | null;
-  selectedConversation: ChatConversation | null;
   setDraftRuntimeOverrides: Dispatch<SetStateAction<ChatRuntimeOverrides>>;
-  setPendingConversationRuntimeOverrides:
-    Dispatch<SetStateAction<PendingChatRuntimeOverrides | null>>;
-  upsertConversation: (conversation: ChatConversation) => void;
-  upsertMessengerThreadSummary: (conversation: ChatConversation) => void;
-  refreshActiveChatActions: (chatId: string) => Promise<unknown>;
-  reportError: (title: string, body: string) => void;
 }) {
-  const mutation = useMutation({
-    mutationFn: ({
-      chatId,
-      modelOverride,
-      effortOverride,
-    }: PendingChatRuntimeOverrides) =>
-      chatsApi.update(chatId, { modelOverride, effortOverride }),
-    onMutate: input.setPendingConversationRuntimeOverrides,
-    onSuccess: async (conversation) => {
-      input.setPendingConversationRuntimeOverrides((current) => (
-        current?.chatId === conversation.id ? null : current
-      ));
-      input.upsertConversation(conversation);
-      input.upsertMessengerThreadSummary(conversation);
-      await input.refreshActiveChatActions(conversation.id);
-    },
-    onError: (error, variables) => {
-      input.setPendingConversationRuntimeOverrides((current) => (
-        current?.chatId === variables.chatId ? null : current
-      ));
-      input.reportError(
-        "Failed to update conversation runtime",
-        error instanceof Error ? error.message : "Try again.",
-      );
-    },
-  });
   const applyRuntimeOverrides = (overrides: ChatRuntimeOverrides) => {
-    if (!input.activeAgent || mutation.isPending) return;
-    if (!input.selectedConversation) {
-      input.setDraftRuntimeOverrides(overrides);
-      return;
-    }
-    if (input.selectedConversation.mutability === "external_bound_chat") return;
-    mutation.mutate({ chatId: input.selectedConversation.id, ...overrides });
+    if (!input.activeAgent) return;
+    input.setDraftRuntimeOverrides(overrides);
   };
   return {
     applyRuntimeOverrides,
-    runtimeSelectionPending: mutation.isPending,
+    runtimeSelectionPending: false,
   };
 }
 
@@ -237,12 +186,11 @@ export function chatRuntimeSelectionLabel(input: {
 }) {
   if (!input.agent) return "Loading runtime";
   const model = input.overrides.modelOverride
-    ?? input.runtime?.model
     ?? configuredAgentModel(input.agent);
   const modelMetadata = input.adapterModels?.find((candidate) => candidate.id === model);
   if (!shouldShowThinkingEffort(input.agent.agentRuntimeType, model, modelMetadata)) return model;
   const effort = input.overrides.effortOverride == null
-    ? input.runtime?.effort ?? configuredAgentEffort(input.agent)
+    ? configuredAgentEffort(input.agent)
     : input.overrides.effortOverride;
   return `${model} · ${effortLabel(effort)}`;
 }
@@ -540,15 +488,9 @@ export function ChatConversationRuntimeControls(props: {
           ) : null}
         </div>
       ) : null}
-      {props.pending || errorMessage ? (
+      {errorMessage ? (
         <div className="mt-1 flex min-h-7 items-center gap-1.5 border-t border-[color:var(--border-soft)] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
-          {props.pending ? (
-            <Loader2
-              aria-label="Saving runtime selection"
-              className="h-3.5 w-3.5 shrink-0 animate-spin"
-            />
-          ) : null}
-          <span>{props.pending ? "Saving for this conversation…" : errorMessage}</span>
+          <span>{errorMessage}</span>
         </div>
       ) : null}
       {errorMessage ? (
@@ -731,6 +673,7 @@ export function ChatAgentMenuContent(props: {
   modelSelectRef?: Ref<HTMLButtonElement>;
   onSelectAgent: (agentId: string) => void;
   onChangeRuntime: (overrides: ChatRuntimeOverrides) => void;
+  showRuntimeControls?: boolean;
 }) {
   return (
     <>
@@ -782,7 +725,7 @@ export function ChatAgentMenuContent(props: {
                 <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Unavailable after chat starts" />
               ) : null}
             </button>
-            {selected ? (
+            {selected && props.showRuntimeControls !== false ? (
               <ChatAgentRuntimeSelector
                 agent={agent}
                 adapterModels={props.adapterModels}

@@ -564,7 +564,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const conversationHeaderAgent = conversationHeaderAgentId
     ? (agents ?? []).find((agent) => agent.id === conversationHeaderAgentId) ?? null
     : null;
-  const { activeRuntimeOverrides, adapterModelsQuery, draftRuntimeOverrides, runtimeModelSelectRef, runtimeSelectorRef, setDraftRuntimeOverrides, setPendingConversationRuntimeOverrides } = useChatRuntimeSelection({ selectedOrganizationId, selectedConversation, activeAgentId: activeSkillAgentId, activeAgent: activeSkillAgent }); const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
+  const { activeRuntimeOverrides, adapterModelsQuery, draftRuntimeOverrides, runtimeModelSelectRef, runtimeSelectorRef, setDraftRuntimeOverrides } = useChatRuntimeSelection({ selectedOrganizationId, selectedConversation, activeAgentId: activeSkillAgentId, activeAgent: activeSkillAgent }); const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const openSubagentInspection = useCallback((inspection: TranscriptAgentInspection) => {
     if (!selectedConversation) return;
     const senderAgentId = selectedConversation.chatRuntime.runtimeAgentId ?? selectedConversation.preferredAgentId;
@@ -820,9 +820,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, });
   const { applyRuntimeOverrides, runtimeSelectionPending } = useChatRuntimeMutation({
-    activeAgent: activeSkillAgent, selectedConversation, setDraftRuntimeOverrides, setPendingConversationRuntimeOverrides,
-    upsertConversation, upsertMessengerThreadSummary, refreshActiveChatActions,
-    reportError: (title, body) => pushToast({ title, body, tone: "error" }),
+    activeAgent: activeSkillAgent, setDraftRuntimeOverrides,
   }); const renameConversationMutation = useMutation({
     mutationFn: ({ chatId, title }: { chatId: string; title: string }) =>
       chatsApi.update(chatId, { title }),
@@ -1289,12 +1287,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       files: composerAnnotationSubmission.files,
       orgId: selectedOrganizationId,
       projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
+      modelOverride: activeRuntimeOverrides.modelOverride,
+      effortOverride: activeRuntimeOverrides.effortOverride,
       serverActiveGenerationId,
       queueSnapshot: queueQuery.data,
       queryClient,
     });
     if (options?.clearComposerOnSuccess ?? true) {
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
+      setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
       dispatchResponseAnnotation({ type: "clear" });
       setResponseAnnotationsExpanded(false);
       responseAnnotationEditor.close();
@@ -1427,6 +1428,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (usesComposerState) {
                 setBranchPreview(null);
                 setDraft("");
+                setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
                 if (draftStorageConversationId?.startsWith("local-app-recovery:")) {
                   clearChatDraft(draftStorageOrgId, draftStorageConversationId);
                 }
@@ -1546,6 +1548,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,
+        modelOverride: activeRuntimeOverrides.modelOverride,
+        effortOverride: activeRuntimeOverrides.effortOverride,
         files: filesToUpload,
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         queuedMessageId: options?.queuedMessageId ?? null,
@@ -1563,6 +1567,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             );
             if (usesComposerState) {
               setDraft("");
+              setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               clearPendingFilesForCurrentScope();
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
@@ -1573,6 +1578,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
             if (usesComposerState) {
+              setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
               responseAnnotationEditor.close();

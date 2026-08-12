@@ -206,8 +206,8 @@ export const chatsApi = {
         const form = new FormData();
         form.append("body", body);
         form.append("preferredAgentId", options.preferredAgentId);
-        if (options.modelOverride) form.append("modelOverride", options.modelOverride);
-        if (options.effortOverride) form.append("effortOverride", options.effortOverride);
+        form.append("modelOverride", options.modelOverride ?? "__rudder_agent_default__");
+        form.append("effortOverride", options.effortOverride ?? "__rudder_agent_default__");
         form.append("issueCreationMode", options.issueCreationMode);
         form.append("planMode", String(options.planMode));
         form.append("contextLinks", JSON.stringify(options.contextLinks));
@@ -293,6 +293,8 @@ export const chatsApi = {
       signal?: AbortSignal;
       editUserMessageId?: string | null;
       queuedMessageId?: string | null;
+      modelOverride?: string | null;
+      effortOverride?: string | null;
       files?: File[];
       inlineAnnotations?: ChatInlineAnnotationInput[];
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
@@ -306,6 +308,8 @@ export const chatsApi = {
         form.append("body", body);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
         if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
+        form.append("modelOverride", options.modelOverride ?? "__rudder_agent_default__");
+        form.append("effortOverride", options.effortOverride ?? "__rudder_agent_default__");
         if (inlineAnnotations.length > 0) {
           form.append("inlineAnnotations", JSON.stringify(inlineAnnotations));
         }
@@ -318,6 +322,8 @@ export const chatsApi = {
         body,
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
         ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
+        modelOverride: options.modelOverride ?? null,
+        effortOverride: options.effortOverride ?? null,
         ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });
     const res = await fetch(`/api/chats/${chatId}/messages/stream`, {

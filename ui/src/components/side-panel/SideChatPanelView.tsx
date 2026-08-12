@@ -78,7 +78,7 @@ import type {
   ChatInlineAnnotation,
   ChatMessage,
 } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3 } from "lucide-react";
 import {
   useCallback,
@@ -363,12 +363,12 @@ export function SideChatPanelView({
     runtimeModelSelectRef,
     runtimeSelectorRef,
     setDraftRuntimeOverrides,
-    setPendingConversationRuntimeOverrides,
   } = useChatRuntimeSelection({
     selectedOrganizationId: organizationId,
     selectedConversation: conversation,
     activeAgentId: selectedAgentId,
     activeAgent: selectedAgent,
+    composerScopeKey: target.clientMutationId,
   });
   const messages = sideChatConversationMessages(messagesQuery.data ?? []);
   const authoritativeTerminalMessage = stream?.generationId
@@ -398,37 +398,12 @@ export function SideChatPanelView({
   const setConversationCache = (updated: ChatConversation) => {
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
   };
-  const runtimeMutation = useMutation({
-    mutationFn: ({
-      chatId,
-      overrides,
-    }: {
-      chatId: string;
-      overrides: ChatRuntimeOverrides;
-    }) => chatsApi.update(chatId, overrides),
-    onMutate: ({ chatId, overrides }) => {
-      setPendingConversationRuntimeOverrides({ chatId, ...overrides });
-      setSendError(null);
-    },
-    onSuccess: (updated) => {
-      setPendingConversationRuntimeOverrides(null);
-      setConversationCache(updated);
-    },
-    onError: (error) => {
-      setPendingConversationRuntimeOverrides(null);
-      setSendError(error instanceof Error ? error.message : "Could not update Side Chat runtime.");
-    },
-  });
   const applyRuntimeOverrides = (overrides: ChatRuntimeOverrides) => {
-    if (!selectedAgent || runtimeMutation.isPending) return;
-    if (!conversation) {
-      setDraftRuntimeOverrides(overrides);
-      return;
-    }
-    runtimeMutation.mutate({ chatId: conversation.id, overrides });
+    if (!selectedAgent) return;
+    setDraftRuntimeOverrides(overrides);
   };
   const applyPreferredAgent = (agentId: string) => {
-    if (conversation || runtimeMutation.isPending || agentId === selectedAgentId) return;
+    if (conversation || agentId === selectedAgentId) return;
     if (!liveAgents.some((agent) => agent.id === agentId)) return;
     setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
     setDraftPreferredAgentId(agentId);
@@ -543,8 +518,8 @@ export function SideChatPanelView({
           sourceMessageId,
           clientMutationId: target.clientMutationId,
           preferredAgentId: selectedAgentId ?? undefined,
-          modelOverride: activeRuntimeOverrides.modelOverride,
-          effortOverride: activeRuntimeOverrides.effortOverride,
+          modelOverride: null,
+          effortOverride: null,
         });
         if (
           !setChatGenerationConversation(streamScopeKey, generationEpoch, created.id)
@@ -573,12 +548,15 @@ export function SideChatPanelView({
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
         editUserMessageId: retryUserMessageId,
+        modelOverride: activeRuntimeOverrides.modelOverride,
+        effortOverride: activeRuntimeOverrides.effortOverride,
         files: [...regularFiles, ...serializedAnnotations.files],
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         onEvent: async (event) => {
           if (!isChatGenerationCurrent(streamScopeKey, generationEpoch)) return;
           if (event.type === "ack") {
             acknowledged = true;
+            setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
             receivedAckEvent = true;
             acknowledgedUserMessageId = event.userMessage.id;
             retryUserMessageIdRef.current = null;
@@ -1014,7 +992,6 @@ export function SideChatPanelView({
                     (pendingFiles.length === 0
                       && !canSubmitChatResponseAnnotations(draft, annotationState))
                     || sending
-                    || runtimeMutation.isPending
                     || !selectedAgentId
                     || noAnchor
                   }
@@ -1067,7 +1044,7 @@ export function SideChatPanelView({
                   agents={liveAgents}
                   activeAgentId={selectedAgentId ?? ""}
                   agentSelectionLocked={Boolean(conversation)}
-                  runtimeSelectionPending={runtimeMutation.isPending}
+                  runtimeSelectionPending={false}
                   newConversationSendInFlight={sending && !conversation}
                   externalBound={false}
                   adapterModels={adapterModelsQuery.data}
