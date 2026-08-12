@@ -33,7 +33,17 @@ test.describe("Profile context import", () => {
     const identityRow = modal.getByTestId("profile-identity-row");
     await expect(identityRow.locator("#profile-nickname")).toBeVisible();
     await expect(identityRow.locator(`img[src="${avatar}"]`)).toBeVisible();
-    await expect(identityRow.locator('button[aria-label="Change avatar"]')).toBeVisible();
+    const avatarButton = identityRow.locator('button[aria-label="Change avatar"]');
+    await expect(avatarButton).toBeVisible();
+    await expect(identityRow.getByText("Change avatar", { exact: true })).toHaveCount(0);
+
+    const nextAvatar = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAABFaP0WAAAADUlEQVR42mNk+M/wHwAEAQH/69e6WQAAAABJRU5ErkJggg==", "base64");
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await avatarButton.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({ name: "avatar.png", mimeType: "image/png", buffer: nextAvatar });
+    await expect(identityRow.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/u);
+    await expect(identityRow.locator("img")).not.toHaveAttribute("src", avatar);
     await expect(modal.getByText("OAuth Provider Name", { exact: true })).toHaveCount(0);
     await expect(modal.getByText(/Unable to load Rudder Account profile \(404\)/)).toHaveCount(0);
     await expect(modal.locator('a[href$="/instance/settings/privacy"]')).toHaveCount(0);
