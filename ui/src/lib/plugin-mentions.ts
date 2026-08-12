@@ -1,7 +1,5 @@
-import { healthApi } from "@/api/health";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
 import type { MentionOption } from "@/components/MarkdownEditor";
-import { queryKeys } from "@/lib/queryKeys";
 import type { RudderInstalledPlugin, RudderPluginDirectory } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -46,17 +44,14 @@ export function buildPluginMentionOptions(directory: RudderPluginDirectory | nul
 }
 
 export function usePluginMentionCatalog(organizationId: string | null | undefined) {
-  const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: () => healthApi.get() });
-  const pluginsEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
-    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const directoryQuery = useQuery({
     queryKey: ["rudder-plugins", organizationId],
     queryFn: () => rudderPluginsApi.directory(organizationId!),
-    enabled: Boolean(organizationId && pluginsEnabled),
+    enabled: Boolean(organizationId),
   });
   return useMemo(() => ({
     options: buildPluginMentionOptions(directoryQuery.data),
     managedSkillIds: pluginManagedSkillIds(directoryQuery.data),
-    pending: healthQuery.isPending || (pluginsEnabled && directoryQuery.isPending),
-  }), [directoryQuery.data, directoryQuery.isPending, healthQuery.isPending, pluginsEnabled]);
+    pending: directoryQuery.isPending,
+  }), [directoryQuery.data, directoryQuery.isPending]);
 }

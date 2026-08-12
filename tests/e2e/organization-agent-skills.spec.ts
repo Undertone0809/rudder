@@ -446,7 +446,7 @@ test.describe("Organization and agent skills", () => {
     await disableSyncResponse;
   });
 
-  test("opens the Library skill import helper and agent install path", async ({ page }) => {
+  test("routes Library skill creation through Hub Chat or upload", async ({ page }) => {
     const organizationName = `Org-Skills-External-Links-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -456,7 +456,7 @@ test.describe("Organization and agent skills", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as {
       id: string;
-      issuePrefix: string;
+      urlKey: string;
     };
 
     await page.goto("/");
@@ -464,19 +464,16 @@ test.describe("Organization and agent skills", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/library?directory=skills`);
+    await page.goto(`/${organization.urlKey}/library?directory=skills`);
     await page.getByTestId("org-workspaces-skills-add-button").click();
-    const dialog = page.getByRole("dialog", { name: "Add skill to Library" });
-    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/hub\\?tab=skills$`));
+    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create Skill" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Add skill to Library" })).toHaveCount(0);
 
-    const sourceInput = dialog.getByRole("textbox", { name: "Skill source, one per line" });
-    await expect(sourceInput).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Import skill" })).toBeDisabled();
-    await expect(dialog.getByRole("button", { name: "Scan local skills" })).toBeEnabled();
-
-    await dialog.getByRole("button", { name: "Ask Agent to install" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat\\?prefill=`));
-    await expect.poll(() => new URL(page.url()).searchParams.get("prefill") ?? "").toContain("Install or import");
+    await page.getByRole("button", { name: "Create Skill" }).click();
+    await expect(page.getByRole("menuitem", { name: "Create via Chat" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Upload Skill" })).toBeVisible();
   });
 
   test("shows agent skills above organization skills and edits both through Library", async ({ page }) => {

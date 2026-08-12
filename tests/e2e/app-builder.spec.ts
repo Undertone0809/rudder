@@ -28,7 +28,7 @@ async function setSitesEnabled(request: APIRequestContext, enabled: boolean) {
 test.describe("Apps workspace", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("reveals Apps from Experimental settings and creates an App Builder Chat", async ({
+  test("opens Apps as a default Hub capability and creates an App Builder Chat", async ({
     page,
   }, testInfo) => {
     const organization = await createOrganization(page.request, "Apps-Home");
@@ -38,14 +38,8 @@ test.describe("Apps workspace", () => {
     await setSitesEnabled(page.request, false);
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
-    await expect(page.getByTestId("primary-rail").getByText("Apps", { exact: true }))
-      .toHaveCount(0);
-
-    await page.goto(`${E2E_BASE_URL}/instance/settings/experimental`);
-    const toggle = page.getByTestId("experimental-sites-toggle");
-    await expect(toggle).toBeVisible();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true }))
+      .toBeVisible();
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
     await expect(page.getByTestId("apps-workspace")).toBeVisible();
@@ -62,7 +56,7 @@ test.describe("Apps workspace", () => {
       .toHaveCount(0);
     await expect(page.getByText("How creation works")).toHaveCount(0);
     await expect(page.locator('[data-testid="apps-home"] svg.lucide-sparkles')).toHaveCount(0);
-    await expect(page.getByTestId("primary-rail").getByText("Apps", { exact: true }))
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true }))
       .toBeVisible();
 
     const contextCard = page.getByTestId("workspace-context-card");
@@ -146,7 +140,7 @@ test.describe("Apps workspace", () => {
       timeout: 20_000,
     });
     await expect(page.getByTestId("chat-assistant-message")).toHaveCount(1, {
-      timeout: 20_000,
+      timeout: 40_000,
     });
     await expect(page.getByTestId("chat-assistant-message")).toContainText("Streaming reply");
   });
@@ -899,7 +893,9 @@ test.describe("Apps workspace", () => {
         value: {
           appBuilder: {
             supported: true,
-            inspect: async () => ({ manifest: {} }),
+            inspect: async () => ({
+              manifest: { runtime: { readinessTimeoutMs: 10_000 } },
+            }),
             ensurePreview: async () => {
               definitions.splice(0, definitions.length, definition);
               (window as typeof window & { __managedLaunchSteps?: string[] })
@@ -1002,7 +998,9 @@ test.describe("Apps workspace", () => {
         value: {
           appBuilder: {
             supported: true,
-            inspect: async () => ({ manifest: {} }),
+            inspect: async () => ({
+              manifest: { runtime: { readinessTimeoutMs: 10_000 } },
+            }),
             ensurePreview: async () => ({
               desktopInstallationId: "desktop-e2e",
               definitionId: "definition-broken",

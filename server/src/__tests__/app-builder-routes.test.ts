@@ -109,7 +109,7 @@ describe("App Builder routes", () => {
     activeServers.clear();
   });
 
-  it("rejects App Builder API access while Plugins is disabled", async () => {
+  it("keeps App Builder available when a legacy Plugin flag is false", async () => {
     mockInstanceSettingsService.getGeneral.mockResolvedValueOnce({
       experimentalPluginsEnabled: false,
     });
@@ -123,8 +123,8 @@ describe("App Builder routes", () => {
 
     const response = await request(app).get(`/api/orgs/${orgId}/app-builder`);
 
-    expect(response.status).toBe(403);
-    expect(mockAppBuilderService.listForOrganization).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mockAppBuilderService.listForOrganization).toHaveBeenCalledWith(orgId);
   });
 
   it("lists only Apps in an organization the actor can access", async () => {

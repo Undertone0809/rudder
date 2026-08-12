@@ -169,6 +169,32 @@ describe("organization skill local installations", () => {
     return { skillSvc, skill };
   }
 
+  it("installs an uploaded root SKILL.md from its in-memory package", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Uploaded Skill Org",
+      urlKey: `uploaded-skill-${orgId.slice(0, 8)}`,
+      issuePrefix: "USO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const markdown = "---\nname: Uploaded Brief Writer\ndescription: Creates concise briefs.\n---\n\n# Uploaded Brief Writer\n";
+
+    const result = await skillSvc.importUploadedSkill(orgId, {
+      files: [{ path: "SKILL.md", content: markdown }],
+    });
+
+    expect(result.imported).toHaveLength(1);
+    expect(result.imported[0]).toMatchObject({
+      name: "Uploaded Brief Writer",
+      compatibility: "compatible",
+    });
+    const installedFile = await skillSvc.readFile(orgId, result.imported[0]!.id, "SKILL.md");
+    expect(installedFile?.content).toBe(markdown);
+  });
+
   it("installs the complete remote tree once and reuses it offline", { timeout: 30_000 }, async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

@@ -93,7 +93,7 @@ export function BreadcrumbBar({
   const isAutomationDetailRoute = useMemo(() => /^\/automations\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
   const isPrimaryRailPage = useMemo(
-    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
+    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar|hub|plugins)(?:\/|$)/.test(relativePath),
     [relativePath],
   );
   const isAgentDetailRoute = useMemo(
@@ -112,6 +112,7 @@ export function BreadcrumbBar({
     if (/^\/goals(?:\/|$)/.test(relativePath)) return "Goals";
     if (/^\/automations(?:\/|$)/.test(relativePath)) return "Automations";
     if (/^\/calendar(?:\/|$)/.test(relativePath)) return "Calendar";
+    if (/^\/(?:hub|plugins)(?:\/|$)/.test(relativePath)) return "Hub";
     return null;
   }, [activeIssueSource, isIssueDetailRoute, relativePath]);
   const { data: visibleProjects } = useQuery({

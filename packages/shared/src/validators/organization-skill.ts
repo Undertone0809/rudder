@@ -80,6 +80,13 @@ export const organizationSkillImportSchema = z.object({
   source: z.string().min(1),
 });
 
+export const organizationSkillUploadSchema = z.object({
+  files: z.array(z.object({
+    path: z.string().min(1).max(512),
+    content: z.string().max(1_048_576),
+  })).min(1).max(128),
+});
+
 export const organizationSkillProjectScanRequestSchema = z.object({
   projectIds: z.array(z.string().uuid()).optional(),
   workspaceIds: z.array(z.string().uuid()).optional(),
@@ -173,6 +180,7 @@ export const organizationSkillFileUpdateSchema = z.object({
 });
 
 export type OrganizationSkillImport = z.infer<typeof organizationSkillImportSchema>;
+export type OrganizationSkillUpload = z.infer<typeof organizationSkillUploadSchema>;
 export type OrganizationSkillProjectScan = z.infer<typeof organizationSkillProjectScanRequestSchema>;
 export type OrganizationSkillLocalScan = z.infer<typeof organizationSkillLocalScanRequestSchema>;
 export type OrganizationSkillCreate = z.infer<typeof organizationSkillCreateSchema>;

@@ -5,6 +5,7 @@ import {
   organizationSkillImportSchema,
   organizationSkillLocalScanRequestSchema,
   organizationSkillProjectScanRequestSchema,
+  organizationSkillUploadSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import { forbidden } from "../errors.js";
@@ -182,6 +183,35 @@ export function organizationSkillRoutes(db: Db) {
         entityId: orgId,
         details: {
           source,
+          importedCount: result.imported.length,
+          importedSlugs: result.imported.map((skill) => skill.slug),
+          warningCount: result.warnings.length,
+        },
+      });
+
+      res.status(201).json(result);
+    },
+  );
+
+  router.post(
+    "/orgs/:orgId/skills/upload",
+    validate(organizationSkillUploadSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      await assertCanMutateOrganizationSkills(req, orgId);
+      const result = await svc.importUploadedSkill(orgId, req.body);
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "organization.skills_uploaded",
+        entityType: "organization",
+        entityId: orgId,
+        details: {
           importedCount: result.imported.length,
           importedSlugs: result.imported.map((skill) => skill.slug),
           warningCount: result.warnings.length,

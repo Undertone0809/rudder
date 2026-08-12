@@ -63,7 +63,6 @@ test.describe("Settings sidebar", () => {
     await page.getByTestId("primary-rail").getByRole("link", { name: "Organization" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
     await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
-
     await page.evaluate(() => {
       window.localStorage.setItem("rudder.lastWorkspacePath", "/org?legacy=1#old");
     });
@@ -209,7 +208,7 @@ test.describe("Settings sidebar", () => {
     await expect(modalSidebar.locator('a[href$="/instance/settings/notifications"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/instance/settings/about"]')).toBeVisible();
-    await expect(modalSidebar.locator('a[href$="/instance/settings/experimental"]')).toHaveCount(0);
+    await expect(modalSidebar.locator('a[href$="/instance/settings/experimental"]')).toBeVisible();
 
     await modalSidebar.locator('a[href$="/instance/settings/general"]').click();
 
@@ -721,7 +720,7 @@ test.describe("Settings sidebar", () => {
     await expect(issueToggle).toHaveAttribute("aria-checked", "false");
   });
 
-  test("shows plugins as the only built-in integration setting", async ({ page }) => {
+  test("keeps Hub out of settings because it is a primary capability", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Integration Settings ${Date.now()}`,
@@ -736,10 +735,8 @@ test.describe("Settings sidebar", () => {
 
     const modal = page.getByTestId("settings-modal-shell");
     const sidebar = modal.getByTestId("workspace-sidebar");
-    const integrationSection = sidebar.getByText("Integrations", { exact: true }).locator("..");
-
-    await expect(integrationSection.getByRole("link", { name: "Plugins", exact: true })).toBeVisible();
-    await expect(integrationSection.getByRole("link")).toHaveCount(1);
+    await expect(sidebar.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
+    await expect(sidebar.getByRole("link", { name: "Hub", exact: true })).toHaveCount(0);
   });
 
   test("opens the modal shell immediately and shows a skeleton while profile settings load", async ({ page }) => {

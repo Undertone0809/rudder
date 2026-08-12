@@ -428,6 +428,16 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("Calendar");
   });
 
+  it("renders Hub as a primary workspace title", () => {
+    pathname = "/RUD/hub";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("<h1");
+    expect(html).toContain("Hub");
+    expect(html).not.toContain("justify-end");
+  });
+
   it("omits the Dashboard and Calendar switcher from the main header on the nested calendar page", () => {
     pathname = "/RUD/dashboard/calendar";
 

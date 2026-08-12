@@ -31,19 +31,13 @@ function stripLegacyGitIdentity(raw: unknown): unknown {
 }
 
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
-  const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
-    ? raw as Record<string, unknown>
-    : {};
   const parsed = instanceGeneralSettingsSchema.safeParse(stripLegacyGitIdentity(raw) ?? {});
   if (parsed.success) {
-    const experimentalPluginsEnabled = typeof rawRecord.experimentalPluginsEnabled === "boolean"
-      ? rawRecord.experimentalPluginsEnabled
-      : parsed.data.experimentalSitesEnabled ?? false;
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
-      experimentalPluginsEnabled,
-      experimentalSitesEnabled: experimentalPluginsEnabled,
+      experimentalPluginsEnabled: true,
+      experimentalSitesEnabled: true,
       experimentalGoalsEnabled: parsed.data.experimentalGoalsEnabled ?? false,
       experimentalComputerUseEnabled: parsed.data.experimentalComputerUseEnabled ?? false,
       locale: parsed.data.locale ?? "en",
@@ -54,8 +48,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   return {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
-    experimentalPluginsEnabled: false,
-    experimentalSitesEnabled: false,
+    experimentalPluginsEnabled: true,
+    experimentalSitesEnabled: true,
     experimentalGoalsEnabled: false,
     experimentalComputerUseEnabled: false,
     locale: "en",
@@ -133,13 +127,15 @@ export function instanceSettingsService(db: Db) {
   async function updateGeneralJson(patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> {
     const current = await getOrCreateRow();
     const now = new Date();
-    const compatiblePatch = patch.experimentalPluginsEnabled === undefined
-      ? patch
-      : { ...patch, experimentalSitesEnabled: patch.experimentalPluginsEnabled };
+    const {
+      experimentalPluginsEnabled: _experimentalPluginsEnabled,
+      experimentalSitesEnabled: _experimentalSitesEnabled,
+      ...supportedPatch
+    } = patch;
     const [updated] = await db
       .update(instanceSettings)
       .set({
-        general: sql`${instanceSettings.general} || ${JSON.stringify(compatiblePatch)}::jsonb`,
+        general: sql`${instanceSettings.general} || ${JSON.stringify(supportedPatch)}::jsonb`,
         updatedAt: now,
       })
       .where(eq(instanceSettings.id, current.id))

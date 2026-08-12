@@ -50,12 +50,12 @@ authoring. Do not add a Rudder-specific worker entry point.
 
 ## Import And Review
 
-Enable **Settings > Experimental > Enable Plugins**, open **Plugins**, and use
-the folder or ZIP import action. A team marketplace can use an ordered
-`marketplace.json` with local Plugin paths; Rudder also accepts an HTTPS GitHub
-marketplace pinned to a full commit SHA. Rudder computes a digest and displays
-compatibility before installation. Marketplace `INSTALLED_BY_DEFAULT` policy
-never bypasses Rudder review.
+Open **Hub > Plugins** and use **Import** to select the package folder or ZIP.
+A team marketplace can use an ordered `marketplace.json` with local Plugin
+paths; Rudder also accepts an HTTPS GitHub marketplace pinned to a full commit
+SHA. Hub is a default Rudder capability and does not require an experimental
+flag. Rudder computes a digest and displays compatibility before installation.
+Marketplace `INSTALLED_BY_DEFAULT` policy never bypasses Rudder review.
 
 Import inspection never executes package content. It rejects unsafe paths,
 case collisions, oversize packages, invalid manifests, missing component
@@ -73,8 +73,8 @@ After installation:
 - Codex `.app.json` aliases remain visible but are not treated as Rudder Local
   Apps or endpoint discovery;
 - Rudder Local Apps continue to be built and run by App Builder/Desktop and
-  appear as app-only Plugins under Yours. New App revisions wait for explicit
-  update review while the current revision stays active.
+  appear as app-only entries under **Hub > Plugins**. New App revisions wait
+  for explicit update review while the current revision stays active.
 
 ## Verification
 

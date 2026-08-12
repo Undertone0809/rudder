@@ -22,6 +22,12 @@ describe("organization-routes", () => {
     expect(toOrganizationRelativePath("/ACM/messenger?prefill=hello%20world")).toBe("/messenger?prefill=hello%20world");
   });
 
+  it("treats Hub and its legacy Plugins alias as organization board routes", () => {
+    expect(applyOrganizationPrefix("/hub?tab=skills", "ACM")).toBe("/ACM/hub?tab=skills");
+    expect(toOrganizationRelativePath("/ACM/hub?tab=skills")).toBe("/hub?tab=skills");
+    expect(toOrganizationRelativePath("/ACM/plugins?tab=plugins")).toBe("/plugins?tab=plugins");
+  });
+
   it("treats resources as an unprefixed board route", () => {
     expect(applyOrganizationPrefix("/resources?path=skills%2FSKILL.md", "ACM")).toBe(
       "/ACM/resources?path=skills%2FSKILL.md",

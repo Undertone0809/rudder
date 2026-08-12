@@ -1,7 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { appBuilderApi } from "@/api/app-builder";
 import { chatsApi } from "@/api/chats";
-import { healthApi } from "@/api/health";
 import { Button } from "@/components/ui/button";
 import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import { useChatGenerationActions } from "@/context/ChatGenerationContext";
@@ -52,7 +51,6 @@ import {
   MessageSquare,
   Play,
   Plus,
-  Settings,
 } from "lucide-react";
 import {
   createElement,
@@ -560,23 +558,14 @@ export function Apps() {
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousOrganizationId = useRef(selectedOrganizationId);
 
-  const healthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-  });
-  const sitesEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
-    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const {
     entries,
     registryReady,
-  } = useAppRegistry(sitesEnabled);
+  } = useAppRegistry(true);
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
-    enabled: Boolean(
-      selectedOrganizationId
-      && sitesEnabled,
-    ),
+    enabled: Boolean(selectedOrganizationId),
   });
   const entryByKey = useMemo(
     () => new Map(entries.map((entry) => [entry.key, entry])),
@@ -930,36 +919,6 @@ export function Apps() {
   useEffect(() => {
     setFocusedTabKey(activeKey);
   }, [activeKey]);
-
-  if (healthQuery.isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />
-        Loading Apps…
-      </div>
-    );
-  }
-
-  if (!sitesEnabled) {
-    return (
-      <div className="flex h-full items-center justify-center bg-[color:var(--surface-panel)] px-6">
-        <div className="max-w-md text-center">
-          <Settings className="mx-auto h-9 w-9 text-muted-foreground" aria-hidden />
-          <h1 className="mt-4 text-lg font-semibold text-foreground">Enable Plugins to open this workspace</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Enabling Plugins adds App Builder, registered local Apps, and the Apps workspace.
-          </p>
-          <Button
-            className="mt-5"
-            type="button"
-            onClick={() => navigate("/instance/settings/experimental")}
-          >
-            Open Experimental settings
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <section

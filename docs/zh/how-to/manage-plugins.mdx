@@ -12,64 +12,77 @@ hreflang_en: "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 ---
 
-Rudder 插件是由技能、MCP 服务器、应用或它们的组合构成的能力包。Rudder 可以读取
-Codex 插件目录格式，并在安装前显示兼容性报告。
+Rudder Plugin 是由 Skill、MCP Server、App 或它们的组合构成的能力包。Rudder
+可以读取 Codex Plugin 目录格式，并在安装前显示兼容性报告。
+
+<a id="completed-state" />
 
 ## 你将完成什么
 
-启用插件，导入一个本地 Codex 插件目录或 ZIP，或者添加本地/固定 GitHub 提交的
-Codex Marketplace。检查 Rudder 可以使用的内容，把它安装到组织，并完成必要的
-Agent 或 MCP 设置。
+打开 Hub，导入本地 Codex Plugin 目录或 ZIP，或者添加本地/固定 GitHub commit 的
+Codex Marketplace。检查 Rudder 可以使用的内容，把它安装到 Organization，并完成
+必要的 Agent 或 MCP 设置。
+
+<a id="prerequisites" />
 
 ## 开始前
 
-准备一个包含 `.codex-plugin/plugin.json` 以及至少一个技能或受支持 MCP 定义的目录。
-不要把凭据写入清单或 MCP 配置；请使用环境变量引用，并在 Rudder 的托管 MCP 设置中
-完成认证。
+准备一个包含 `.codex-plugin/plugin.json` 以及至少一个 Skill 或受支持 MCP 定义的
+目录。不要把凭据写入 manifest 或 MCP 配置；请使用环境变量引用，并在 Rudder 的
+Managed MCP 设置中完成认证。
+
+<a id="case-backed-steps" />
 
 ## 安装和设置
 
-1. 打开 **Settings > Experimental**，启用 **Enable Plugins**。
-2. 在主导航栏中选择 **Plugins**，打开 **Discover** 或 **Yours**。
-3. 选择 **Folder** 或 **ZIP** 检查单个插件。在 **Discover** 中可添加本地 Marketplace
-   目录，或添加使用完整 commit SHA 固定的 GitHub Marketplace。
-4. 检查软件包身份、内容摘要、技能、MCP 定义、应用引用、技能中的可执行文件，以及浏览器扩展、定时任务模板和钩子等不支持的能力。检查过程不会执行任何内容。
-5. 如果 Skill 与现有组织 Skill 冲突，显式选择保留现有版本、替换，或重命名后同时
-   安装。然后把软件包安装到当前组织。
-6. 对于技能，选择 **Add to Agent**，再选择可以使用它的 Agent。
-7. 对于 MCP 定义，选择 **Set up**，然后在托管 MCP 设置中继续认证、启用和 Agent 访问配置。
-8. 本地应用可以从 **Plugins > Yours** 直接打开。Codex `.app.json` 中的应用别名会被保留，但不是可执行的 Rudder 本地应用。
-9. 如果已启用的托管 MCP 连接提供网页界面资源，可以从 MCP 组件中打开。Rudder 会在禁止网络访问的沙箱中渲染。
+1. 在 Primary Rail 中选择 **Hub**，打开 **Plugins**。
+2. 选择 **Import**，然后选择 **Plugin folder** 或 **Plugin ZIP**。也可以添加
+   **Local marketplace** 或 **Pinned GitHub marketplace**；GitHub 来源必须使用完整
+   commit SHA。
+3. 检查软件包身份、digest、Skill、MCP 定义、App 引用、Skill 中的可执行文件，
+   以及 browser extension、scheduled task template 和 hook 等不支持的能力。检查
+   过程不会执行任何内容。
+4. 如果 Skill 与现有 Organization Skill 冲突，显式选择保留现有版本、替换，或
+   重命名后同时安装。然后把软件包安装到当前 Organization。
+5. 对于 Skill，选择 **Add to Agent**，再选择可以使用它的 Agent。
+6. 对于 MCP 定义，选择 **Set up**，然后在 Managed MCP 设置中继续认证、启用和 Agent 访问配置。
+7. Local App 可以从 **Hub > Plugins** 直接打开。Codex `.app.json` alias 会被保留，但不是可执行的 Rudder Local App。
+8. 如果已启用的 Managed MCP 连接提供 HTML UI resource，可以从 MCP 组件中打开。
+   Rudder 会在禁止网络访问的 sandbox 中渲染。
 
-Marketplace 策略只作为来源信息保留。即使条目声明 `INSTALLED_BY_DEFAULT`，也仍会
-出现在 Discover 中并要求用户检查，不会静默安装。
+Marketplace 策略只作为来源信息保留。即使条目声明 `INSTALLED_BY_DEFAULT`，也仍会在
+Hub 中出现并要求用户检查，不会静默安装。
+
+<a id="success-signal" />
 
 ## 检查结果
 
-插件详情应显示“就绪”或“需要设置”，并展示准确版本、来源、内容摘要和组件状态。
-软件包中的技能应成为只读、由软件包管理的组织技能，而且只会分配给所选 Agent。
-MCP 连接在正常设置完成前保持为未启用草稿。
+Plugin 详情应显示 Ready 或 Setup required，并展示准确版本、来源、digest 和组件状态。
+软件包中的 Skill 应成为只读、由软件包管理的 Organization Skill，而且只会分配给
+所选 Agent。MCP 连接在正常设置完成前保持为 disabled draft。
 
-当前组织至少有一个可用的已安装能力后，可以使用 **Try in Chat**。如果要独立编辑
-某个技能，选择 **Customize**。Rudder 会创建带来源信息的本地托管组织技能副本，
-之后的插件生命周期操作不会修改或删除它。
+当前 Organization 至少有一个可用的已安装能力后，可以使用 **Try in Chat**。如果要
+独立编辑某个 Skill，选择 **Customize**。Rudder 会创建带来源信息的 managed-local
+Organization Skill 副本，之后的 Plugin 生命周期操作不会修改或删除它。
+
+<a id="recovery" />
 
 ## 更新或回滚
 
 导入并检查新版本后再选择 **Apply update**。Rudder 会展示新旧执行面；如果更新新增或
-改变可执行技能或 MCP 访问，必须显式确认权限扩张。之后 Rudder 会先准备新版本的组件
-投影，再切换当前安装。如果准备失败，现有版本继续生效，这次检查也可以重试。
+改变可执行 Skill 或 MCP 访问，必须显式确认权限扩张。之后 Rudder 会先准备新版本的
+组件投影，再切换当前安装。如果准备失败，现有版本继续生效，这次检查也可以重试。
 
 更新成功后，可以选择 **Roll back** 重新启用保留的上一份不可变软件包。回滚不会
 改写任何一个软件包快照。
 
-App Builder 产生新的本地应用 revision 时，**Yours** 会显示 **Update review**。当前
-revision 会继续运行，直到用户在插件详情中选择 **Apply update**。
+App Builder 产生新的 Local App revision 时，Hub 会显示 **Update review**。当前
+revision 会继续运行，直到用户在 Plugin 详情中选择 **Apply update**。
 
 ## 禁用或卸载
 
-禁用插件会阻止其能力进入新的工作，但不会删除软件包、外部连接、应用源码或应用
-数据。重新启用会恢复之前的技能分配。
+禁用 Plugin 会阻止其能力进入新的工作，但不会删除软件包、外部连接、App 源码或
+App 数据。重新启用会恢复之前的 Skill 分配。
 
-卸载会移除软件包拥有的技能投影和当前安装记录，不会删除用户目标、自动化、文档、
-外部 MCP 连接、本地应用源码或业务数据。之后仍可重新检查并安装该软件包。
+卸载会移除软件包拥有的 Skill 投影和当前安装记录，不会删除用户 Goal、Automation、
+Document、外部 MCP 连接、Local App 源码或业务数据。之后仍可重新检查并安装该软件包。

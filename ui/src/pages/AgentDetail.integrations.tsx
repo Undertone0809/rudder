@@ -592,7 +592,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
       onValueChange={(next) => setIntegrationsView(next as IntegrationsView)}
       className="max-w-5xl gap-5"
     >
-      <TabsList aria-label="Agent integrations">
+      <TabsList aria-label="Agent tools">
         <TabsTrigger value="discover" onClick={() => setIntegrationsView("discover")}>
           Discover
         </TabsTrigger>
@@ -732,8 +732,8 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               </div>
             ) : (
               <div className="rounded-md border border-dashed border-border bg-background/30 px-4 py-8 text-center">
-                <p className="text-sm font-medium text-foreground">No other connected integrations</p>
-                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect messaging or legacy custom tools.</p>
+                <p className="text-sm font-medium text-foreground">No connected tools</p>
+                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect messaging, MCP, or custom tools.</p>
               </div>
             )}
           </div>

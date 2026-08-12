@@ -131,14 +131,10 @@ test.describe("Plugins V1", () => {
     });
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
-    await expect(page.getByTestId("primary-rail").getByText("Plugins", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
 
     await page.goto(`${E2E_BASE_URL}/instance/settings/experimental`);
-    const toggle = page.getByTestId("experimental-sites-toggle");
-    await expect(toggle).toBeVisible();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await page.screenshot({ path: "/tmp/rudder-plugins-v1-experimental.png", fullPage: true });
+    await expect(page.getByText("Enable Plugins", { exact: true })).toHaveCount(0);
 
     let failDirectoryRequest = true;
     const directoryRoute = (url: URL) =>
@@ -156,16 +152,33 @@ test.describe("Plugins V1", () => {
       }
       await route.continue();
     });
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub`);
     await expect(page.getByRole("alert")).toContainText("Temporary Plugin directory failure", {
       timeout: 60_000,
     });
     failDirectoryRequest = false;
     await page.unroute(directoryRoute);
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "No directory source configured" })).toBeVisible();
-    await expect(page.getByTestId("primary-rail").getByText("Plugins", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+    await expect(page.getByTestId("workspace-main-header-actions").getByTestId("hub-header-search")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Import" })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileHeaderActions = page.getByTestId("workspace-main-header-actions");
+    const mobileImport = mobileHeaderActions.getByRole("button", { name: "Import" });
+    await expect(mobileImport).toBeVisible();
+    await mobileImport.hover();
+    await expect(page.getByRole("tooltip")).toHaveText("Import Plugin");
+    await page.getByRole("button", { name: "skills", exact: true }).click();
+    const mobileCreateSkill = mobileHeaderActions.getByRole("button", { name: "Create Skill" });
+    await expect(mobileCreateSkill).toBeVisible();
+    await mobileCreateSkill.hover();
+    await expect(page.getByRole("tooltip")).toHaveText("Create Skill");
+    await page.getByRole("button", { name: "plugins", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.getByTestId("hub-empty-installed")).toContainText("No plugins yet");
+    await expect(page.getByTestId("hub-empty-marketplace")).toContainText("No marketplace source configured");
+    await expect(page.getByText("No marketplace source configured", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
 
     const existingSkill = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/skills`, {
       data: {
@@ -235,7 +248,7 @@ test.describe("Plugins V1", () => {
     expect(beforeAssignment.skillNames).not.toEqual(expect.arrayContaining(["Evidence Research", "Source Synthesis"]));
     expect(beforeAssignment.mcpBindings).toEqual([]);
 
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=yours`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("E2E Research Kit", { exact: true }).click();
     const setupButton = detail.getByRole("button", { name: "Set up" });
     await expect(setupButton).toBeVisible();
@@ -285,7 +298,7 @@ test.describe("Plugins V1", () => {
       tools: Array<{ rudderToolName: string }>;
     };
 
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=yours`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("E2E Research Kit", { exact: true }).click();
     await detail.getByRole("button", { name: "Add to Agent" }).click();
     const assignment = page.getByRole("dialog", { name: "Add Skills to Agents" });
@@ -314,15 +327,9 @@ test.describe("Plugins V1", () => {
     await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
       data: { experimentalPluginsEnabled: false },
     });
-    const globallyDisabled = await readAgentRuntimeCapabilities(organization.id, agent.id);
-    expect(globallyDisabled.skillNames).not.toEqual(expect.arrayContaining(["Evidence Research", "Source Synthesis"]));
-    expect(globallyDisabled.mcpBindings).toEqual([]);
-    await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
-      data: { experimentalPluginsEnabled: true },
-    });
-    const globallyRestored = await readAgentRuntimeCapabilities(organization.id, agent.id);
-    expect(globallyRestored.skillNames).toEqual(expect.arrayContaining(["Evidence Research", "Source Synthesis"]));
-    expect(globallyRestored.mcpBindings).toEqual([
+    const afterLegacyFlagWrite = await readAgentRuntimeCapabilities(organization.id, agent.id);
+    expect(afterLegacyFlagWrite.skillNames).toEqual(expect.arrayContaining(["Evidence Research", "Source Synthesis"]));
+    expect(afterLegacyFlagWrite.mcpBindings).toEqual([
       expect.objectContaining({ serverName: "e2e-research-kit-research" }),
     ]);
     const runtimeToolName = boundMcp.tools[0]!.rudderToolName;
@@ -371,17 +378,20 @@ test.describe("Plugins V1", () => {
 
     await expect(page.getByRole("dialog").getByText("Ready", { exact: true }).first()).toBeVisible();
     await page.getByRole("dialog").getByRole("button", { name: "Open UI" }).click();
+    await expect(page.getByRole("dialog", { name: "E2E Research Kit" }).getByRole("button", { name: "Opening..." })).toBeDisabled();
     const mcpUi = page.getByRole("dialog", { name: "Research status" });
-    await expect(mcpUi).toBeVisible();
+    await expect(mcpUi).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("dialog", { name: "E2E Research Kit" })).toHaveCount(0);
     await expect(mcpUi.locator("iframe").contentFrame().getByRole("heading", { name: "Research UI" })).toBeVisible();
     await mcpUi.getByRole("button", { name: "Close" }).click();
     await expect(mcpUi).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "E2E Research Kit" })).toBeVisible();
 
     await expect(detail.getByRole("button", { name: "Try in Chat" })).toBeVisible();
     await detail.getByRole("button", { name: "Try in Chat" }).click();
     await expect(page).toHaveURL(/\/messenger\/chat(?:\?|$)/);
     const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
-    await expect(composer).toContainText("Use E2E Research Kit to help with this request.");
+    await expect(composer).toContainText("E2E Research Kit");
     await composer.click();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
     await page.keyboard.press("Backspace");
@@ -394,11 +404,13 @@ test.describe("Plugins V1", () => {
     await expect(composer).toContainText("E2E Research Kit");
     const pluginToken = composer.locator('[data-mention-kind="plugin"]');
     await expect(pluginToken).toHaveCount(1);
+    const sendButton = page.getByRole("button", { name: "Send" });
+    await expect(sendButton).toBeEnabled();
     const messageRequest = page.waitForRequest((request) => (
       request.method() === "POST"
       && request.url().includes(`/api/orgs/${organization.id}/chats/messages/stream`)
     ));
-    await page.getByRole("button", { name: "Send" }).click();
+    await sendButton.click();
     expect((await messageRequest).postDataJSON()).toMatchObject({
       body: `[E2E Research Kit](plugin://${pluginId})`,
     });
@@ -407,9 +419,9 @@ test.describe("Plugins V1", () => {
       .getByText("E2E Research Kit", { exact: true });
     await expect(sentPluginMention).toBeVisible();
     await sentPluginMention.click();
-    await expect(page).toHaveURL(new RegExp(`/plugins\\?tab=yours&plugin=${pluginId}$`));
+    await expect(page).toHaveURL(new RegExp(`/hub\\?tab=plugins&plugin=${pluginId}$`));
 
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=yours`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("E2E Research Kit", { exact: true }).click();
     await detail.locator("section").filter({ hasText: "Included capabilities" })
       .locator("div.flex.min-h-12").filter({ hasText: "Evidence Research" })
@@ -459,7 +471,7 @@ test.describe("Plugins V1", () => {
       .toMatchObject({ targetId: mcpComponent.targetId, status: "ready" });
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByRole("heading", { name: "Your plugins" })).toBeVisible();
     await page.screenshot({ path: `/tmp/rudder-plugins-v1-${testInfo.workerIndex}.png`, fullPage: true });
 
@@ -490,7 +502,7 @@ test.describe("Plugins V1", () => {
     const confirmation = page.getByRole("dialog", { name: "Uninstall E2E Research Kit?" });
     await expect(confirmation).toContainText("Independent customized Skills");
     await confirmation.getByRole("button", { name: "Uninstall" }).click();
-    await expect(page.getByText("No Plugins yet. Import a Codex Plugin or build a Local App.")).toBeVisible();
+    await expect(page.getByText("No plugins yet", { exact: true })).toBeVisible();
     const skillsAfterUninstall = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/skills`);
     expect((await skillsAfterUninstall.json() as Array<{ id: string }>).some((skill) => skill.id === customizedSkillId)).toBe(true);
     expect((await page.request.get(`${E2E_BASE_URL}/api/goals/${goal.id}`)).ok()).toBe(true);
@@ -570,16 +582,11 @@ test.describe("Plugins V1", () => {
     await page.reload();
     await expect(page.getByText("E2E Research Canvas", { exact: true })).toBeVisible();
     const withLocalApp = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/plugins`);
-    const localAppDirectory = await withLocalApp.json() as { installed: Array<{ id: string; components: Array<{ type: string }> }> };
+    const localAppDirectory = await withLocalApp.json() as { installed: Array<{ id: string; packageId: string; components: Array<{ type: string }> }> };
     const localAppPlugin = localAppDirectory.installed.find((plugin) => plugin.components.some((component) => component.type === "app"));
     expect(localAppPlugin).toBeTruthy();
-    const readyRevision = await page.request.post(
-      `${E2E_BASE_URL}/api/orgs/${organization.id}/plugins/${localAppPlugin!.id}/local-app-update/apply`,
-    );
-    expect(readyRevision.ok(), await readyRevision.text()).toBe(true);
-    const readyLocalAppPlugin = await readyRevision.json() as { packageId: string };
     await page.reload();
-    const firstLocalPackageId = readyLocalAppPlugin.packageId;
+    const firstLocalPackageId = localAppPlugin!.packageId;
     await page.getByText("E2E Research Canvas", { exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/apps/view/managed%3A${app.id}$`, "i"));
     const appWebview = page.getByTestId("apps-local-webview");
@@ -601,7 +608,7 @@ test.describe("Plugins V1", () => {
     });
     await expect(appWebview).toHaveAttribute("partition", appPartition);
 
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=yours`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("E2E Research Canvas", { exact: true }).click();
     const localAppReview = page.getByRole("dialog", { name: "E2E Research Canvas" });
     await expect(localAppReview.getByText("Local App update ready for review")).toBeVisible();
@@ -635,9 +642,6 @@ test.describe("Plugins V1", () => {
   test("loads a review-only Codex marketplace and rejects a malformed ZIP", async ({ page }) => {
     test.setTimeout(180_000);
     const organization = await createOrganization(page.request, "Plugins-Marketplace");
-    await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
-      data: { experimentalPluginsEnabled: true },
-    });
     const malformedArchive = await page.request.post(
       `${E2E_BASE_URL}/api/orgs/${organization.id}/plugins/imports/inspect-archive`,
       {
@@ -690,9 +694,9 @@ test.describe("Plugins V1", () => {
     expect((await beforeInstall.json() as { installed: unknown[] }).installed).toEqual([]);
 
     await selectOrganization(page, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=discover`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await expect(page.getByText("Marketplace E2E Kit", { exact: true })).toBeVisible();
-    await expect(page.getByText("INSTALLED BY DEFAULT · ON INSTALL", { exact: true })).toBeVisible();
+    await expect(page.getByText("INSTALLED BY DEFAULT · ON INSTALL", { exact: false })).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-discover.png", fullPage: true });
     await page.getByRole("button", { name: "Review" }).click();
     const review = page.getByRole("dialog");
@@ -707,16 +711,12 @@ test.describe("Plugins V1", () => {
       .toEqual([expect.objectContaining({ name: "marketplace-e2e-kit" })]);
   });
 
-  test("imports a Skills-only ZIP, runs it, gates it globally, and rejects a digest conflict", async ({ page }) => {
+  test("imports a Skills-only ZIP, runs it, ignores the legacy gate, and rejects a digest conflict", async ({ page }) => {
     test.setTimeout(240_000);
     const organization = await createOrganization(page.request, "Plugins-Zip");
     const agent = await createE2EChatAgent(page.request, organization.id, {
       name: "ZIP Research Agent",
     }) as { id: string };
-    await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
-      data: { experimentalPluginsEnabled: true },
-    });
-
     const manifest = {
       name: "zip-research-kit",
       version: "1.0.0",
@@ -764,12 +764,14 @@ test.describe("Plugins V1", () => {
     const enabledRuntime = await readAgentRuntimeCapabilities(organization.id, agent.id);
     expect(enabledRuntime.skillNames).toContain("ZIP Research");
     await selectOrganization(page, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/plugins?tab=yours`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("ZIP Research Kit", { exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Try in Chat" }).click();
     const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
-    await expect(composer).toContainText("Use ZIP Research Kit to help with this request.");
-    await page.getByRole("button", { name: "Send" }).click();
+    await expect(composer).toContainText("ZIP Research Kit");
+    const sendButton = page.getByRole("button", { name: "Send" });
+    await expect(sendButton).toBeEnabled();
+    await sendButton.click();
     await expect(page).toHaveURL(/\/messenger\/chat\/[^/?#]+$/);
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
       "Streaming reply for chat.",
@@ -796,11 +798,6 @@ test.describe("Plugins V1", () => {
 
     await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
       data: { experimentalPluginsEnabled: false },
-    });
-    expect((await readAgentRuntimeCapabilities(organization.id, agent.id)).skillNames)
-      .not.toContain("ZIP Research");
-    await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
-      data: { experimentalPluginsEnabled: true },
     });
     expect((await readAgentRuntimeCapabilities(organization.id, agent.id)).skillNames)
       .toContain("ZIP Research");

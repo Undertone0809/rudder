@@ -17,6 +17,7 @@ const mockAccessService = vi.hoisted(() => ({
 
 const mockCompanySkillService = vi.hoisted(() => ({
   importFromSource: vi.fn(),
+  importUploadedSkill: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
@@ -59,6 +60,10 @@ describe("organization skill mutation permissions", () => {
       imported: [],
       warnings: [],
     });
+    mockCompanySkillService.importUploadedSkill.mockResolvedValue({
+      imported: [{ id: "skill-1", slug: "brief-writer", name: "Brief Writer" }],
+      warnings: [],
+    });
     mockLogActivity.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(false);
@@ -87,6 +92,33 @@ describe("organization skill mutation permissions", () => {
       "organization-1",
       "https://github.com/vercel-labs/agent-browser",
     );
+  });
+
+  it("uploads a Skill package and records the organization mutation", async () => {
+    const payload = {
+      files: [{
+        path: "brief-writer/SKILL.md",
+        content: "---\nname: Brief Writer\n---\n\n# Brief Writer",
+      }],
+    };
+    const res = await request(await createApp({
+      type: "board",
+      userId: "local-board",
+      orgIds: ["organization-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/skills/upload")
+      .send(payload);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.importUploadedSkill).toHaveBeenCalledWith("organization-1", payload);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId: "organization-1",
+      action: "organization.skills_uploaded",
+      entityType: "organization",
+      details: expect.objectContaining({ importedCount: 1, importedSlugs: ["brief-writer"] }),
+    }));
   });
 
   it("allows same-organization agents to mutate organization skills by default", async () => {
