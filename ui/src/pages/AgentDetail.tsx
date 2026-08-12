@@ -34,7 +34,6 @@ import {
   type BudgetPolicySummary,
   type CostTrendPoint,
   type HeartbeatRun,
-  type OrganizationSkillCreateRequest
 } from "@rudderhq/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -47,12 +46,14 @@ import {
   FolderOpen,
   Key,
   Loader2,
+  MessageCircle,
   MessageSquare,
   MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
-  Trash2
+  Trash2,
+  Upload
 } from "lucide-react";
 import {
   useCallback,
@@ -127,7 +128,6 @@ import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
 import {
   compactSkillText,
-  CreateAgentSkillDialog,
   formatCacheRatio,
   formatCompactTokenLabel,
   formatDateInputValue,
@@ -532,10 +532,11 @@ export function AgentDetail() {
         crumbs.push({ label: `Run ${urlRunId.slice(0, 8)}` });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
-      // } else if (activeView === "skills") { // TODO: bring back later
-      //   crumbs.push({ label: "Skills" });
+      } else if (activeView === "skills") {
+        crumbs.push({ label: "Skills" });
       } else if (activeView === "integrations") {
-        crumbs.push({ label: "Integrations" });
+        crumbs.push({ label: "Skills", href: agentRunPath(`/agents/${canonicalAgentRef}/skills`) });
+        crumbs.push({ label: "Tools" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
       } else {
@@ -753,7 +754,7 @@ export function AgentDetail() {
       </div>
 
       <Tabs
-        value={activeView}
+        value={activeView === "integrations" ? "skills" : activeView}
         onValueChange={handleDetailTabChange}
       >
         <div className="agent-detail-tabs-row flex min-w-0 items-start justify-between gap-4">
@@ -766,11 +767,10 @@ export function AgentDetail() {
                 ? [{ value: "instructions", label: "Instructions" }]
                 : []),
               { value: "skills", label: "Skills" },
-              { value: "integrations", label: "Integrations" },
               { value: "runs", label: "Runs" },
               { value: "issues", label: "Issues" },
             ]}
-            value={activeView}
+            value={activeView === "integrations" ? "skills" : activeView}
             onValueChange={handleDetailTabChange}
           />
           </div>
@@ -906,18 +906,34 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "skills" && (
-        <AgentSkillsTab
-          agent={agent}
-          orgId={resolvedCompanyId ?? undefined}
-        />
-      )}
-
-      {activeView === "integrations" && (
-        <AgentIntegrationsTab
-          agent={agent}
-          orgId={resolvedCompanyId ?? undefined}
-        />
+      {(activeView === "skills" || activeView === "integrations") && (
+        <div className="space-y-5">
+          <div className="flex border-b" role="tablist" aria-label="Agent capabilities">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "skills"}
+              className={cn("border-b-2 px-3 py-2 text-sm font-medium", activeView === "skills" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              onClick={() => handleDetailTabChange("skills")}
+            >
+              Skills
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "integrations"}
+              className={cn("border-b-2 px-3 py-2 text-sm font-medium", activeView === "integrations" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              onClick={() => handleDetailTabChange("integrations")}
+            >
+              Tools
+            </button>
+          </div>
+          {activeView === "skills" ? (
+            <AgentSkillsTab agent={agent} orgId={resolvedCompanyId ?? undefined} />
+          ) : (
+            <AgentIntegrationsTab agent={agent} orgId={resolvedCompanyId ?? undefined} />
+          )}
+        </div>
       )}
 
       {activeView === "runs" && (
@@ -1794,12 +1810,11 @@ function AgentSkillsTab({
   };
 
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
+  const navigate = useNavigate();
   const [skillDraft, setSkillDraft] = useState<string[]>([]);
   const [lastSavedSkills, setLastSavedSkills] = useState<string[]>([]);
   const [skillFilter, setSkillFilter] = useState("");
   const [externalSectionOpen, setExternalSectionOpen] = useState(false);
-  const [createSkillOpen, setCreateSkillOpen] = useState(false);
   const externalSkillsScrollRef = useScrollbarActivityRef(`rudder:agent-skills:external:${agent.id}`);
   const skillDraftRef = useRef<string[]>([]);
   const lastSavedSkillsRef = useRef<string[]>([]);
@@ -1838,20 +1853,6 @@ function AgentSkillsTab({
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) }),
       ]);
-    },
-  });
-
-  const createPrivateSkill = useMutation({
-    mutationFn: (payload: OrganizationSkillCreateRequest) =>
-      agentsApi.createPrivateSkill(agent.id, payload, orgId),
-    onSuccess: async (entry) => {
-      setCreateSkillOpen(false);
-      setSkillFilter("");
-      pushToast({
-        title: `Created ${entry.key}`,
-        body: "Enable it from the Agent skills section when you want Rudder to load it.",
-      });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.skills(agent.id) });
     },
   });
 
@@ -2340,16 +2341,32 @@ function AgentSkillsTab({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setCreateSkillOpen(true)}
-              disabled={skillSnapshot?.mode === "unsupported" || createPrivateSkill.isPending}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Create agent skill</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2" disabled={skillSnapshot?.mode === "unsupported"}>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add Skill</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+                <DropdownMenuItem onClick={() => navigate("/hub?tab=skills")}>
+                  <Search className="h-4 w-4" />Browse Hub
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                  const params = new URLSearchParams({
+                    prefill: `Use the skill-creator skill to help me create a reusable Skill for ${agent.name}. Start by asking what outcome this Agent needs, then build and validate the Skill with me.`,
+                    agentId: agent.id,
+                  });
+                  navigate(`/messenger/chat?${params.toString()}`);
+                }}>
+                  <MessageCircle className="h-4 w-4" />Create via Chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/hub?tab=skills&create=upload")}>
+                  <Upload className="h-4 w-4" />Upload Skill
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {saveStatusLabel ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {syncSkills.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -2538,13 +2555,6 @@ function AgentSkillsTab({
         </>
       )}
 
-      <CreateAgentSkillDialog
-        open={createSkillOpen}
-        onOpenChange={setCreateSkillOpen}
-        onCreate={(payload) => createPrivateSkill.mutate(payload)}
-        isPending={createPrivateSkill.isPending}
-        error={createPrivateSkill.error instanceof Error ? createPrivateSkill.error.message : null}
-      />
     </div>
   );
 }

@@ -32,8 +32,8 @@ and package-component links. They do not own execution.
   App references, and host-native Local Apps.
 - Editable Skill fork provenance and managed MCP UI resource entry points,
   while their execution remains owned by Skills and Managed MCP.
-- The Plugins Primary Rail surface: Discover, Yours, Build, import review, and
-  setup entry points.
+- The default Hub Primary Rail surface: Plugins, Skills, and Showcase views,
+  plus import, creation, review, assignment, and setup entry points.
 
 ## Does Not Own
 

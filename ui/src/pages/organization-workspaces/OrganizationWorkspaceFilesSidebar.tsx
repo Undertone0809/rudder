@@ -58,7 +58,6 @@ import {
   parentWorkspaceDirectoryPath,
   projectResourceFolderPath,
 } from "../../lib/workspace-tree-policy";
-import { SkillLibraryAddDialog } from "./SkillLibraryAddDialog";
 import { WorkspaceTreeNode, didDragLeaveCurrentTarget, parseWorkspaceDragEntry } from "./WorkspaceFileTree";
 import {
   copyWorkspaceText,
@@ -94,7 +93,6 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
-  const [skillAddDialogOpen, setSkillAddDialogOpen] = useState(false);
   const [rootDropActive, setRootDropActive] = useState(false);
   const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
@@ -903,7 +901,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                       onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                       onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
                       onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
-                      onOpenSkillAddDialog={() => setSkillAddDialogOpen(true)}
+                      onOpenSkillAddDialog={() => navigate("/hub?tab=skills")}
                       unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                       expandedDirectories={expandedDirectories}
                       workspaceLaunchTargets={workspaceLaunchTargets}
@@ -1079,11 +1077,6 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
         </DialogContent>
       </Dialog>
 
-      <SkillLibraryAddDialog
-        open={skillAddDialogOpen}
-        orgId={viewedOrganizationId}
-        onOpenChange={setSkillAddDialogOpen}
-      />
     </>
   );
 }

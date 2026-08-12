@@ -57,12 +57,11 @@ edit_policy: user_confirmed_only
 App Builder turns a natural-language request into a new or improved local web
 product that can be used as a Rudder App. New Apps use one maintained full-stack
 scaffold by default; existing web projects keep their framework and conventions.
-It is an experimental, instance-level capability enabled through **Settings >
-Experimental > Enable Plugins**. Enabling Plugins makes the capability-bundled
-`app-builder` Skill available, permits Desktop Local App loading, and adds the
-top-level **Plugins** destination to the Primary Rail. Local Apps appear as
-app-only Plugins under **Plugins > Yours** and remain directly openable through
-their existing `/apps/...` workspace routes.
+It is a default Rudder capability. The top-level **Hub** destination is always
+available in the Primary Rail, while the Apps workspace owns building, loading,
+and running local Apps. Local Apps appear as app-only Plugins in **Hub >
+Plugins** and remain directly openable through their existing `/apps/...`
+workspace routes.
 
 To the operator, these websites are **Rudder Apps**. Underneath, they remain
 ordinary local webpages rather than a new executable or packaging format.
@@ -104,14 +103,14 @@ direct application access without forcing users to create a Project.
 
 The Server cannot safely own machine commands, absolute paths, ports, PIDs,
 live URLs, or App business rows. Desktop therefore owns local execution and
-attestation. A click on an App entry in **Plugins > Yours** or its Apps
+attestation. A click on an App entry in **Hub > Plugins** or its Apps
 workspace is direct operator intent to open its reviewed revision; a Server
 record, Skill availability, background route hydration, or Messenger Saved
 View remains non-authoritative.
 
 ### Actors / Objects / State
 
-- **Operator**: enables Plugins, describes an App, receives the verified result
+- **Operator**: describes an App, receives the verified result
   opened automatically, and uses Chat or the More menu for later improvements
   and infrequent management actions. Manual Local Apps still require definition
   review.
@@ -144,11 +143,9 @@ promotion, or production rollback UI.
 
 ### Entry Points / Inputs
 
-- Instance **Settings > Experimental > Enable Plugins**.
-- Top-level **Plugins** Primary Rail destination with **Discover**, **Yours**,
-  and **Build** views.
-- **Plugins > Build** opens the Apps workspace request composer: **Turn ideas
-  into applications**.
+- Top-level **Hub** Primary Rail destination with **Plugins**, **Skills**, and
+  **Showcase** views.
+- The Apps workspace request composer: **Turn ideas into applications**.
 - Registered App list and sidebar **Add an App** menu:
   - **Build with Agent** opens a new Chat with an editable `$app-builder` brief.
   - **Add local web project** opens Desktop folder selection and definition
@@ -160,44 +157,39 @@ promotion, or production rollback UI.
 
 ### Product Logic Flow
 
-1. Plugins is off by default. While it is off, Plugins is absent from the
-   Primary Rail, App Builder Server mutations are rejected, the `app-builder`
-   Skill is excluded from run projection, and Desktop rejects Local App/App
-   Builder operations.
-2. Enabling Plugins exposes the Plugins destination and the capability-bundled
-   Skill for all organizations on the instance. It does not start a process or
-   create an App.
-3. The Apps execution workspace uses Rudder's established workspace shell:
+1. Hub is available by default in the Primary Rail. Opening Hub, Plugins, or
+   Apps never starts a process or creates an App.
+2. The Apps execution workspace uses Rudder's established workspace shell:
    Home/search/registered Apps
    in the context sidebar, established Rudder tabs in the header, and Home or
    the active full-bleed webpage in the main content. App management is
    progressively disclosed through a hover/focus More menu on each sidebar
    row; Apps has no persistent right runtime-control column. Subtle
    entry/tab/status motion respects reduced-motion preferences.
-4. The context-sidebar **Add an App** menu separates creation from loading:
+3. The context-sidebar **Add an App** menu separates creation from loading:
    **Build with Agent** navigates to a normal new Chat with an editable, unsent
    `$app-builder` prompt, while **Add local web project** opens the Desktop
    folder picker and existing definition-review flow. The menu explains that
    common local web projects can be loaded and used directly in Rudder.
-5. Sending a brief from Apps Home reserves one organization-scoped App record under a unique
+4. Sending a brief from Apps Home reserves one organization-scoped App record under a unique
    `apps/<slug>` root, starts an ordinary Chat with `$app-builder` and the
    assigned App ID and source root in its first message, attaches the
    acknowledged Chat, and navigates to that Chat. The composer discloses that
    Rudder will build, verify, start locally, and open the App when ready. This
    flow neither creates nor requires a Project.
-6. For new source, the Skill uses the maintained scaffold and implements the
+5. For new source, the Skill uses the maintained scaffold and implements the
    requested business workflow. For an existing local web project, it first
    inspects and preserves the framework, package manager, scripts, data
    boundary, and tests, then adds only the minimal launch/readiness configuration
    needed by Desktop discovery. If Chat cannot be acknowledged, a reserved App
    becomes failed rather than pretending that work started.
-7. The Skill reports `building` with the authenticated run ID when work begins.
+6. The Skill reports `building` with the authenticated run ID when work begins.
    It reports `verified_source_ready` only after development, debugging,
    required review, rendered verification, persistence checks, and durable
    evidence pass. The signal is tied to the originating App, Chat/source root,
    organization, and authenticated run. A prose response ending, question,
    blocker, cancellation, or partial result is never a completion signal.
-8. A globally mounted Desktop coordinator claims `verified_source_ready` with
+7. A globally mounted Desktop coordinator claims `verified_source_ready` with
    compare-and-set semantics, validates the assigned source and manifest,
    installs and checks the locked graph, starts the owned generation, waits for
    readiness, and proves the loopback listener belongs to that generation.
@@ -206,31 +198,26 @@ promotion, or production rollback UI.
    improvements can continue in the originating Chat. No second registration
    button or blocking confirmation is required because the local execution
    behavior was disclosed when the build request was submitted.
-9. If Desktop verification or startup fails, Rudder stops and removes only
+8. If Desktop verification or startup fails, Rudder stops and removes only
    newly owned runtime material, preserves source and App data, marks the App
    `launch_failed`, and offers retry plus **Continue in Chat** recovery. It
    never claims the App opened.
-10. Registered managed Apps and manually loaded local Apps appear together in
+9. Registered managed Apps and manually loaded local Apps appear together in
    the Apps navigation. Opening one creates or focuses a closable Apps header
    tab and directly opens its reviewed revision. Rudder reuses a running
    generation or automatically starts one, attests its listener, and renders
    the active webpage full-bleed through its isolated Desktop webview.
    Multiple Apps may remain tabbed and running.
-11. Closing or switching an Apps tab closes or parks only the view. It does not
+10. Closing or switching an Apps tab closes or parks only the view. It does not
    stop the App. The process remains available in the background until Desktop
-   shutdown, Plugins is disabled, a bounded failure occurs, or the operator uses
+   shutdown, a bounded failure occurs, or the operator uses
    **Stop App** in the sidebar row's More menu. Background route hydration and
    Messenger Saved View navigation remain unable to start it.
-12. The sidebar More menu contains settings and infrequent lifecycle actions.
+11. The sidebar More menu contains settings and infrequent lifecycle actions.
     While an App is running, **Copy App link** copies its current attested
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
     to the system browser. It works only on the same computer while that
     generation remains available.
-13. Disabling Plugins immediately blocks new App Builder and Local App admission,
-    reconciles Desktop into the disabled state, stops running/transitioning
-    Desktop-owned Apps, hides Plugins from the Primary Rail, and removes the Skill from later run
-    projection. It preserves source, definitions, App records, bindings, and
-    App-owned data so re-enabling can recover them.
 
 ### State And Meaning
 
@@ -272,7 +259,6 @@ ownership-unverified failure handling.
 
 | Situation | Required behavior | Forbidden behavior |
 | --- | --- | --- |
-| Plugins is disabled | Hide Plugins, exclude Skill, reject admission, stop owned Apps | Leave a runnable hidden capability |
 | User requests a CRM | Use maintained defaults and ask only material business/risk questions | Ask them to choose framework or process topology |
 | User selects Build with Agent | Open a normal new Chat with an editable, unsent `$app-builder` brief | Send automatically, create a run, or start local code |
 | User selects Add local web project | Open folder selection, discover the project, and show the existing launch-definition review | Run the project on folder selection or require the maintained scaffold |
@@ -289,12 +275,10 @@ ownership-unverified failure handling.
 | Apps tab closes or switches | Close/park the view and keep the generation resident | Stop or restart the App |
 | Background hydration or Messenger Saved View opens | Restore navigation state only | Start the App |
 | User copies or externally opens the link | Use current attested loopback URL | Describe it as public, stable, or cross-device |
-| Plugins is disabled with Apps running | Stop owned Apps and preserve durable material | Delete App source or business data |
 | User requests a public URL | Explain that V1 has no publication path | Create a tunnel or cloud deployment |
 
 ### Actor-Visible Input
 
-- Experimental **Enable Plugins** toggle.
 - App name/brief through Apps Home.
 - Sidebar Add menu with Build with Agent and Add local web project.
 - Selected organization and available Agent.
@@ -305,7 +289,7 @@ ownership-unverified failure handling.
 
 ### Operator-Visible Output
 
-- Conditional Plugins Primary Rail entry and an Apps execution workspace
+- Default Hub Primary Rail entry and an Apps execution workspace
   without a persistent right runtime-control column.
 - Searchable registered App list, Home composer, and multiple closable tabs.
 - A clear choice between starting an App Builder Chat and loading an existing
@@ -339,8 +323,8 @@ URLs, App business rows, or Secret values.
 
 #### Cold-email manager
 
-The operator enables Plugins, opens **Plugins > Build**, and describes contacts,
-sequences, replies, and follow-ups in Apps Home. Rudder opens a normal
+The operator opens Apps Home and describes contacts, sequences, replies, and
+follow-ups. Rudder opens a normal
 `$app-builder` Chat, the Skill
 creates and verifies the App, and Desktop automatically verifies, starts, and
 opens its local webpage. The operator can return to the same Chat to improve
@@ -370,12 +354,6 @@ More menu to copy the attested link and open the same page in a regular browser
 on that computer. Stopping or restarting the App may invalidate the copied
 address.
 
-#### Disable Plugins
-
-Running Apps are stopped and Plugins disappears from the Primary Rail.
-Re-enabling Plugins restores discovery of the preserved records and definitions;
-nothing passively restarts.
-
 ### Invariants / Non-Goals
 
 - App identity and list access are organization-scoped.
@@ -395,8 +373,8 @@ nothing passively restarts.
 
 ### Drift Boundaries
 
-- The Plugins gate controls all three surfaces together: Skill availability,
-  Plugins navigation, and Desktop Local App/App Builder admission.
+- Hub discovery, Skill availability, and Desktop Local App/App Builder
+  admission are default capabilities with independent owning lifecycles.
 - The managed exception remains fixed-template and fixed-runner scoped.
 - Adding arbitrary stack or launch-command selection to the non-technical path
   requires a new product decision.

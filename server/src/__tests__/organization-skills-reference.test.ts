@@ -527,7 +527,7 @@ describe("organization skill references", () => {
     expect(snapshot.desiredSkills).not.toContain("bundled:rudder/rudder");
   });
 
-  it("removes the Browser bundled projection when the instance capability is disabled", { timeout: 30000 }, async () => {
+  it("removes only the Browser bundled projection when the instance capability is disabled", { timeout: 30000 }, async () => {
     const orgId = randomUUID();
     await db.insert(organizations).values({
       id: orgId,
@@ -550,7 +550,7 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
     expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
-    expect(skills.map((skill) => skill.key)).not.toContain("rudder/app-builder");
+    expect(skills.map((skill) => skill.key)).toContain("rudder/app-builder");
     expect(skills.map((skill) => skill.key)).toContain("rudder/rudder-docs");
   });
 

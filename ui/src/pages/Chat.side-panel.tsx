@@ -2,7 +2,6 @@ import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
-import { healthApi } from "@/api/health";
 import { issuesApi } from "@/api/issues";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
@@ -1955,15 +1954,7 @@ export function ChatSidePanel({
   }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
-  const sitesHealthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-  });
-  const localAppsAvailable = Boolean(
-    readDesktopShell()?.localApps?.supported
-    && (sitesHealthQuery.data?.features?.experimentalPluginsEnabled
-      ?? sitesHealthQuery.data?.features?.experimentalSitesEnabled),
-  );
+  const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
   useEffect(() => {
     if (!contextReady
       || !target

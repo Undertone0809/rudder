@@ -1412,6 +1412,7 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
         ne(installedPlugins.lifecycleState, "uninstalled"),
       ));
     for (const app of apps) {
+      if (app.buildStatus !== "ready") continue;
       const packageName = `local-app-${app.id}`;
       const revision = {
         appId: app.id,
@@ -1815,13 +1816,24 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     componentId: string,
     uri: string,
   ) {
-    const resources = await listMcpUiResources(orgId, pluginId, componentId);
-    const resource = resources.find((entry) => entry.uri === uri);
-    if (!resource) throw notFound("MCP UI resource not found");
     const plugin = await getInstalled(orgId, pluginId);
-    const component = plugin!.components.find((entry) => entry.id === componentId)!;
+    if (!plugin?.enabled) throw unprocessable("Enable the Plugin before opening MCP UI resources");
+    const component = plugin.components.find((entry) => entry.id === componentId && entry.type === "mcp");
+    if (!component?.targetId || component.status !== "ready") {
+      throw unprocessable("Complete Managed MCP setup before opening UI resources");
+    }
     const client = await mcpConnections.openRuntimeClient(orgId, component.targetId!);
     try {
+      const resource = (await client.listResources())
+        .filter((entry) => entry.mimeType?.toLowerCase().startsWith("text/html"))
+        .map((entry) => ({
+          uri: entry.uri,
+          name: entry.title ?? entry.name ?? entry.uri,
+          description: entry.description ?? null,
+          mimeType: entry.mimeType!,
+        }))
+        .find((entry) => entry.uri === uri);
+      if (!resource) throw notFound("MCP UI resource not found");
       const result = await client.readResource(uri);
       const content = result.contents.find((entry) => entry.uri === uri && typeof entry.text === "string");
       if (!content?.text) throw unprocessable("MCP UI resource did not return HTML text content");

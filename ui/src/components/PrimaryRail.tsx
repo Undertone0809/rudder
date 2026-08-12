@@ -199,8 +199,6 @@ export function PrimaryRail({
     queryFn: () => healthApi.get(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
-  const pluginsEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
-    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const goalsEnabled = healthQuery.data?.features?.experimentalGoalsEnabled === true;
   const pinnedLocalAppsQuery = useQuery({
     queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
@@ -209,10 +207,7 @@ export function PrimaryRail({
       primaryRailPinned: true,
       limit: 100,
     }),
-    enabled: Boolean(
-      selectedOrganizationId
-      && pluginsEnabled,
-    ),
+    enabled: Boolean(selectedOrganizationId),
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -232,7 +227,7 @@ export function PrimaryRail({
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
-  const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/plugins");
+  const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/hub");
   const railItems: RailItem[] = [
     {
       key: "messenger",
@@ -274,16 +269,14 @@ export function PrimaryRail({
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
-    ...(pluginsEnabled
-      ? [{
-          key: "plugins",
-          to: pluginsEntryPath,
-          label: "Plugins",
-          icon: Blocks,
-          active: /^\/(?:plugins|apps)(?:\/|$)/.test(relativePath)
-            && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
-        }]
-      : []),
+    {
+      key: "plugins",
+      to: pluginsEntryPath,
+      label: "Hub",
+      icon: Blocks,
+      active: /^\/(?:hub|plugins|apps)(?:\/|$)/.test(relativePath)
+        && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
+    },
     {
       key: "organization",
       to: organizationEntryPath,
@@ -299,8 +292,7 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = pluginsEnabled
-    ? (pinnedLocalAppsQuery.data?.items ?? [])
+  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
     .filter((savedView) => savedView.targetPayload.kind === "local_app")
     .map((savedView) => ({
       key: `saved-view:${savedView.id}`,
@@ -309,8 +301,7 @@ export function PrimaryRail({
       icon: MessageSquare,
       localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
       active: relativePath === localAppSavedViewRoute(savedView.id),
-    }))
-    : [];
+    }));
   const activeFixedRailIndex = railItems.findIndex((item) => item.active);
   const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
   const activeRailIndex = activeFixedRailIndex >= 0

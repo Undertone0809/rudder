@@ -6,12 +6,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Link } from "@/lib/router";
+import { Link, useNavigate } from "@/lib/router";
 import {
   getBundledRudderSkillSlug,
   type Agent,
-  type AgentSkillEntry,
-  type OrganizationSkillCreateRequest
+  type AgentSkillEntry
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,9 +18,11 @@ import {
   ChevronRight,
   FolderOpen,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
   Plus,
-  Search
+  Search,
+  Upload
 } from "lucide-react";
 import {
   useCallback,
@@ -36,7 +37,6 @@ import {
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { AgentSkillsOnboarding } from "../components/AgentSkillsOnboarding";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { useToast } from "../context/ToastContext";
 import {
   arraysEqual,
   canManageSkillEntry,
@@ -48,7 +48,7 @@ import {
 import { queryKeys } from "../lib/queryKeys";
 import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { cn } from "../lib/utils";
-import { compactSkillText, CreateAgentSkillDialog, isGenericSkillLocationLabel, isGenericSkillRuntimeDetail, resolveSkillSummaryText, shouldHideExternalSkillEntry, SkillSwitch } from "./AgentDetail.helpers";
+import { compactSkillText, isGenericSkillLocationLabel, isGenericSkillRuntimeDetail, resolveSkillSummaryText, shouldHideExternalSkillEntry, SkillSwitch } from "./AgentDetail.helpers";
 
 export function AgentSkillsTab({
   agent,
@@ -75,12 +75,11 @@ export function AgentSkillsTab({
   };
 
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
+  const navigate = useNavigate();
   const [skillDraft, setSkillDraft] = useState<string[]>([]);
   const [lastSavedSkills, setLastSavedSkills] = useState<string[]>([]);
   const [skillFilter, setSkillFilter] = useState("");
   const [externalSectionOpen, setExternalSectionOpen] = useState(false);
-  const [createSkillOpen, setCreateSkillOpen] = useState(false);
   const skillDraftRef = useRef<string[]>([]);
   const lastSavedSkillsRef = useRef<string[]>([]);
   const hasHydratedSkillSnapshotRef = useRef(false);
@@ -118,20 +117,6 @@ export function AgentSkillsTab({
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) }),
       ]);
-    },
-  });
-
-  const createPrivateSkill = useMutation({
-    mutationFn: (payload: OrganizationSkillCreateRequest) =>
-      agentsApi.createPrivateSkill(agent.id, payload, orgId),
-    onSuccess: async (entry) => {
-      setCreateSkillOpen(false);
-      setSkillFilter("");
-      pushToast({
-        title: `Created ${entry.key}`,
-        body: "Enable it from the Agent skills section when you want Rudder to load it.",
-      });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.skills(agent.id) });
     },
   });
 
@@ -618,16 +603,32 @@ export function AgentSkillsTab({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setCreateSkillOpen(true)}
-              disabled={skillSnapshot?.mode === "unsupported" || createPrivateSkill.isPending}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Create agent skill</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2" disabled={skillSnapshot?.mode === "unsupported"}>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add Skill</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+                <DropdownMenuItem onClick={() => navigate("/hub?tab=skills")}>
+                  <Search className="h-4 w-4" />Browse Hub
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                  const params = new URLSearchParams({
+                    prefill: `Use the skill-creator skill to help me create a reusable Skill for ${agent.name}. Start by asking what outcome this Agent needs, then build and validate the Skill with me.`,
+                    agentId: agent.id,
+                  });
+                  navigate(`/messenger/chat?${params.toString()}`);
+                }}>
+                  <MessageCircle className="h-4 w-4" />Create via Chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/hub?tab=skills&create=upload")}>
+                  <Upload className="h-4 w-4" />Upload Skill
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {saveStatusLabel ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {syncSkills.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -812,13 +813,6 @@ export function AgentSkillsTab({
         </>
       )}
 
-      <CreateAgentSkillDialog
-        open={createSkillOpen}
-        onOpenChange={setCreateSkillOpen}
-        onCreate={(payload) => createPrivateSkill.mutate(payload)}
-        isPending={createPrivateSkill.isPending}
-        error={createPrivateSkill.error instanceof Error ? createPrivateSkill.error.message : null}
-      />
     </div>
   );
 }

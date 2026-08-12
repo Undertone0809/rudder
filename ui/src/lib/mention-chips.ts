@@ -214,7 +214,7 @@ function parseInternalMentionRouteHref(href: string): ParsedMentionChip | null {
 }
 
 export function mentionChipNavigationPath(mention: ParsedMentionChip): string {
-  if (mention.kind === "plugin") return `/plugins?tab=yours&plugin=${encodeURIComponent(mention.pluginId)}`;
+  if (mention.kind === "plugin") return `/hub?tab=plugins&plugin=${encodeURIComponent(mention.pluginId)}`;
   if (mention.kind === "project") return `/projects/${mention.projectId}`;
   if (mention.kind === "automation") return `/automations/${mention.automationId}`;
   if (mention.kind === "issue") {

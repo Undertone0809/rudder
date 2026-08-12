@@ -182,11 +182,10 @@ Saved View identity and group placement.
     native review path as the catalog. A running, starting, or stopping
     definition is read-only until the operator explicitly chooses `Stop &
     edit`; opening or dismissing settings alone never stops the process.
-12. Experimental Plugins is the admission gate for both manually loaded Local
-    Apps in the Apps workspace and managed App Builder Apps. Disabling Plugins
-    rejects new operations, drains admitted operations, stops every
-    running/transitioning owned definition, and preserves definitions and data.
-    Re-enabling never passively restarts a definition.
+12. Local Apps and managed App Builder Apps are default capabilities. Their
+    admission remains governed by the explicit folder selection, launch review,
+    and managed App Builder handoff in this contract rather than an instance-wide
+    Plugin experiment.
 13. The Apps workspace is an application launcher, not a passive Saved View.
     Clicking a registered App is direct operator intent to open its reviewed
     revision. Rudder automatically reuses or starts its one generation,

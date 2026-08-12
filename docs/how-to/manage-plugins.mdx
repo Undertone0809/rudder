@@ -16,11 +16,15 @@ Rudder Plugins are capability packages composed from Skills, MCP servers, Apps,
 or a combination. Rudder accepts the Codex Plugin folder format and shows a
 compatibility report before installation.
 
+<a id="completed-state" />
+
 ## What you will do
 
-Enable Plugins, import a local Codex Plugin folder or ZIP, or add a local or
+Open Hub, import a local Codex Plugin folder or ZIP, or add a local or
 pinned-GitHub Codex marketplace. Review what Rudder can use, install it into an
 Organization, and finish any Agent or MCP setup.
+
+<a id="prerequisites" />
 
 ## Before you start
 
@@ -29,30 +33,33 @@ or supported MCP definition. Do not place credentials in the manifest or MCP
 configuration; use environment references and finish authentication through
 Rudder's Managed MCP settings.
 
+<a id="case-backed-steps" />
+
 ## Install and set up
 
-1. Open **Settings > Experimental** and turn on **Enable Plugins**.
-2. Select **Plugins** in the Primary Rail and open **Discover** or **Yours**.
-3. Choose **Folder** or **ZIP** to inspect one Plugin. In **Discover**, choose
-   **Add local marketplace** or **Add pinned GitHub** to load ordered
-   `marketplace.json` entries. GitHub sources require the full commit SHA.
-4. Review package identity, digest, Skills, MCP definitions, App references,
+1. Select **Hub** in the Primary Rail and open **Plugins**.
+2. Choose **Import**, then **Plugin folder** or **Plugin ZIP**, to inspect one
+   Plugin. You can also add a **Local marketplace** or **Pinned GitHub
+   marketplace**. GitHub sources require the full commit SHA.
+3. Review package identity, digest, Skills, MCP definitions, App references,
    executable Skill files, and unsupported surfaces such as browser extensions,
    scheduled-task templates, and hooks. Inspection executes nothing.
-5. Resolve any Skill collision explicitly: keep the existing Skill, replace it,
+4. Resolve any Skill collision explicitly: keep the existing Skill, replace it,
    or install both by renaming the Plugin copy. Then install the package into
    the current Organization.
-6. For Skills, choose **Add to Agent** and select the Agents that should use
+5. For Skills, choose **Add to Agent** and select the Agents that should use
    them.
-7. For MCP definitions, choose **Set up**, then continue authentication,
+6. For MCP definitions, choose **Set up**, then continue authentication,
    activation, and Agent access in Managed MCP settings.
-8. Open Local Apps directly from **Plugins > Yours**. Codex `.app.json` aliases
+7. Open Local Apps directly from **Hub > Plugins**. Codex `.app.json` aliases
    are preserved but are not executable Rudder Local Apps.
-9. If an active Managed MCP connection exposes an HTML UI resource, open it
+8. If an active Managed MCP connection exposes an HTML UI resource, open it
    from the MCP component. Rudder renders it in a network-disabled sandbox.
 
 Marketplace policy is provenance, not Rudder installation authority. An entry
-declared `INSTALLED_BY_DEFAULT` still appears in Discover and requires review.
+declared `INSTALLED_BY_DEFAULT` still appears in Hub and requires review.
+
+<a id="success-signal" />
 
 ## Check the result
 
@@ -67,6 +74,8 @@ current Organization. For a Skill you want to edit independently, choose
 **Customize**. Rudder creates a managed-local Organization Skill copy with
 provenance; Plugin lifecycle actions no longer change or remove that copy.
 
+<a id="recovery" />
+
 ## Update or roll back
 
 Import and review the newer package before choosing **Apply update**. Rudder
@@ -79,9 +88,9 @@ retried.
 After a successful update, choose **Roll back** to reactivate the retained
 previous immutable package. Rollback does not rewrite either package snapshot.
 
-When App Builder produces a new Local App revision, **Yours** shows **Update
-review**. The current revision stays active until you open the Plugin detail and
-choose **Apply update**.
+When App Builder produces a new Local App revision, Hub shows **Update review**.
+The current revision stays active until you open the Plugin detail and choose
+**Apply update**.
 
 ## Disable or uninstall
 

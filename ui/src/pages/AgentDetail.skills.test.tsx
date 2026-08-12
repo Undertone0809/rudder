@@ -64,6 +64,10 @@ vi.mock("../components/MarkdownBody", () => ({
   MarkdownBody: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock("./AgentDetail.integrations", () => ({
+  AgentIntegrationsTab: () => <div data-testid="agent-tools-content">Tool connections</div>,
+}));
+
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
@@ -116,7 +120,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderAgentDetail() {
+function renderAgentDetail(path = "/OUTA/agents/proof-agent/skills") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const queryClient = new QueryClient({
@@ -132,7 +136,7 @@ function renderAgentDetail() {
       <QueryClientProvider client={queryClient}>
         <I18nProvider>
           <OrganizationProvider>
-            <MemoryRouter initialEntries={["/OUTA/agents/proof-agent/skills"]}>
+            <MemoryRouter initialEntries={[path]}>
               <Routes>
                 <Route path="/:orgPrefix/agents/:agentId/:tab" element={<AgentDetail />} />
               </Routes>
@@ -235,6 +239,40 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
+  it("presents Tools inside Skills and offers Hub, Chat, or upload for adding a Skill", async () => {
+    const container = await renderAgentDetail();
+    await flushQueries();
+
+    expect(Array.from(container.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
+      .toEqual(expect.arrayContaining(["Skills", "Tools"]));
+    expect(Array.from(container.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
+      .not.toContain("Integrations");
+
+    const addSkill = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Add Skill"));
+    expect(addSkill).toBeDefined();
+    await act(async () => {
+      addSkill?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("Browse Hub");
+    expect(document.body.textContent).toContain("Create via Chat");
+    expect(document.body.textContent).toContain("Upload Skill");
+  });
+
+  it("opens the legacy integrations deep link as Skills > Tools", async () => {
+    const container = renderAgentDetail("/OUTA/agents/proof-agent/integrations");
+    await flushQueries();
+
+    const outerSkills = Array.from(container.querySelectorAll('[role="tab"]'))
+      .find((node) => node.textContent === "Skills" && node.closest(".agent-detail-tabs-row"));
+    const tools = Array.from(container.querySelectorAll('[role="tab"]'))
+      .find((node) => node.textContent === "Tools");
+    expect(outerSkills?.getAttribute("data-state")).toBe("active");
+    expect(tools?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="agent-tools-content"]')).not.toBeNull();
+  });
+
   it("introduces skill management and local Codex or Claude Code discovery on the first visit", async () => {
     renderAgentDetail();
     await flushQueries();

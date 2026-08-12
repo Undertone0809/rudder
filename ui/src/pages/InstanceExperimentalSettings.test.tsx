@@ -33,12 +33,6 @@ vi.mock("@/context/I18nContext", () => ({
       "common.experimental": "Experimental",
       "experimental.title": "Experimental",
       "experimental.description": "Try early Rudder features.",
-      "experimental.sites.section": "Plugins",
-      "experimental.sites.title": "Enable Plugins",
-      "experimental.sites.enabledDescription": "Plugins are enabled.",
-      "experimental.sites.disabledDescription": "Plugins are disabled.",
-      "experimental.sites.toggle": "Enable Plugins",
-      "experimental.sites.notice": "Imports are reviewed before installation.",
       "experimental.goals.section": "Goals",
       "experimental.goals.title": "Enable Goals",
       "experimental.goals.enabledDescription": "Goals are shown in the primary navigation.",
@@ -114,68 +108,18 @@ afterEach(() => {
 });
 
 describe("InstanceExperimentalSettings", () => {
-  it("enables Plugins while preserving the Apps compatibility setting", async () => {
+  it("does not expose Hub or Plugin as an experimental setting", async () => {
     const container = await renderPage();
     await act(async () => {
       await vi.waitFor(() => {
-        expect(container.querySelector('[data-testid="experimental-sites-toggle"]'))
+        expect(container.querySelector('[data-testid="experimental-goals-toggle"]'))
           .not.toBeNull();
-      });
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="experimental-sites-toggle"]')
-        ?.click();
-      await vi.waitFor(() => {
-        expect(mocks.updateGeneral).toHaveBeenCalledWith({
-          experimentalPluginsEnabled: true,
-          experimentalSitesEnabled: true,
-        });
       });
     });
 
-    expect(container.textContent).toContain("Enable Plugins");
+    expect(container.querySelector('[data-testid="experimental-sites-toggle"]')).toBeNull();
+    expect(container.textContent).not.toContain("Enable Plugins");
     expect(mocks.setBreadcrumbs).toHaveBeenCalled();
-  });
-
-  it("stops running Apps before disabling Sites", async () => {
-    mocks.getGeneral.mockResolvedValue({
-      censorUsernameInLogs: false,
-      showDeveloperDiagnostics: false,
-      experimentalSitesEnabled: true,
-      experimentalGoalsEnabled: false,
-      experimentalComputerUseEnabled: false,
-      locale: "en",
-    });
-    const stop = vi.fn().mockResolvedValue({ status: "stopped" });
-    Object.defineProperty(window, "desktopShell", {
-      configurable: true,
-      value: {
-        localApps: {
-          supported: true,
-          list: vi.fn().mockResolvedValue([{ id: "app-a" }]),
-          status: vi.fn().mockResolvedValue({ status: "running" }),
-          stop,
-        },
-      },
-    });
-    const container = await renderPage();
-
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(container.querySelector('[data-testid="experimental-sites-toggle"]'))
-          .not.toBeNull();
-      });
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="experimental-sites-toggle"]')
-        ?.click();
-      await vi.waitFor(() => {
-        expect(stop).toHaveBeenCalledWith("app-a");
-      });
-    });
-
-    expect(mocks.updateGeneral).toHaveBeenCalledWith({
-      experimentalPluginsEnabled: false,
-      experimentalSitesEnabled: false,
-    });
   });
 
   it("enables Goals from the dedicated experimental setting", async () => {

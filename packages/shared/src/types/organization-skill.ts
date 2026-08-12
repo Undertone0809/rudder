@@ -102,6 +102,15 @@ export interface OrganizationSkillImportResult {
   warnings: string[];
 }
 
+export interface OrganizationSkillUploadFileInput {
+  path: string;
+  content: string;
+}
+
+export interface OrganizationSkillUploadRequest {
+  files: OrganizationSkillUploadFileInput[];
+}
+
 export interface OrganizationSkillProjectScanRequest {
   projectIds?: string[];
   workspaceIds?: string[];

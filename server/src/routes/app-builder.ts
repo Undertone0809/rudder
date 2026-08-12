@@ -12,7 +12,6 @@ import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   appBuilderService,
-  instanceSettingsService,
   logActivity,
   projectService,
 } from "../services/index.js";
@@ -36,22 +35,6 @@ export function appBuilderRoutes(db: Db, options?: { onAppChanged?: (orgId: stri
   const router = Router();
   const projects = projectService(db);
   const apps = appBuilderService(db);
-  const settings = instanceSettingsService(db);
-
-  router.use(
-    [
-      "/orgs/:orgId/app-builder",
-      "/projects/:projectId/app-builder",
-      "/app-builder/:appId",
-    ],
-    async (_req, _res, next) => {
-      const general = await settings.getGeneral();
-      if (!general.experimentalPluginsEnabled) {
-        throw forbidden("Plugins is disabled in Experimental settings");
-      }
-      next();
-    },
-  );
 
   async function loadAuthorizedProject(req: Request) {
     const projectId = req.params.projectId as string;

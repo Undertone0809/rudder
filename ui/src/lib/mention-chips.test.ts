@@ -11,6 +11,14 @@ import {
 } from "./mention-chips";
 
 describe("mention chips", () => {
+  it("opens Plugin mentions in the Hub Plugin detail", () => {
+    const mention = parseMentionChipHref("plugin://plugin-123");
+    expect(mention).toEqual({ kind: "plugin", pluginId: "plugin-123" });
+    expect(mention ? mentionChipNavigationPath(mention) : null).toBe(
+      "/hub?tab=plugins&plugin=plugin-123",
+    );
+  });
+
   it("strips the legacy visible at-prefix from mention labels", () => {
     expect(stripMentionChipLabelPrefix("@rudder dev")).toBe("rudder dev");
     expect(stripMentionChipLabelPrefix("rudder dev")).toBe("rudder dev");

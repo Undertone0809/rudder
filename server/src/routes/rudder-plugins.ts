@@ -12,7 +12,7 @@ import {
 import { Router, type Request } from "express";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
-import { accessService, instanceSettingsService, logActivity } from "../services/index.js";
+import { accessService, logActivity } from "../services/index.js";
 import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed-connections.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -21,12 +21,6 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
   const router = Router();
   const plugins = rudderPluginService(db, mcpOptions);
   const access = accessService(db);
-  const settings = instanceSettingsService(db);
-
-  async function assertFeatureEnabled() {
-    const general = await settings.getGeneral();
-    if (!general.experimentalPluginsEnabled) throw forbidden("Plugins is disabled in Experimental settings");
-  }
 
   function assertCanRead(req: Request, orgId: string) {
     assertBoard(req);
@@ -58,11 +52,6 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
       details,
     });
   }
-
-  router.use("/orgs/:orgId/plugins", async (_req, _res, next) => {
-    await assertFeatureEnabled();
-    next();
-  });
 
   router.get("/orgs/:orgId/plugins", async (req, res) => {
     const orgId = req.params.orgId as string;
