@@ -42,7 +42,7 @@ describe("release workflow latency contracts", () => {
     expect(ciWorkflow).toContain('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
     expect(ciWorkflow).toContain('test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"');
     expect(releaseWorkflow).toContain(
-      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
+      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.resume_missing && github.repository == 'Undertone0809/rudder'",
     );
     expect(releaseWorkflow).toContain("environment: npm-stable");
     expect(releaseWorkflow).toContain("./scripts/release.sh canary --preflight");
@@ -63,6 +63,30 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain(
       "cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}",
     );
+  });
+
+  it("resumes partial stable releases from the locked source version", () => {
+    const resumeJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("\n  resume-stable:\n"),
+      releaseWorkflow.indexOf("\n  canary:\n"),
+    );
+
+    expect(resumeJob).toContain("Require locked stable source");
+    expect(resumeJob).toContain("needs: preflight");
+    expect(resumeJob).toContain("group: release-publish");
+    expect(resumeJob).toContain('echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"');
+    expect(resumeJob).toContain('set-publish-version "$RELEASE_VERSION"');
+    expect(resumeJob).toContain('test "$(wc -l < "$package_map" | xargs)" = "15"');
+    expect(resumeJob).toContain('echo "Skipping existing $pkg_name@$pkg_version"');
+    expect(resumeJob).toContain("npm publish --tag latest");
+    expect(resumeJob).toContain('tag="v${RELEASE_VERSION}"');
+    expect(resumeJob).toContain('test "$remote_tag_sha" = "$SOURCE_REF"');
+    expect(resumeJob).toContain("Wait for desktop release assets");
+    expect(resumeJob).toContain("Clean up obsolete canary releases");
+    expect(releaseWorkflow).toContain("needs.resume-stable.result == 'success'");
+    expect(releaseWorkflow).toContain("needs.resume-stable.outputs.version");
+    expect(resumeJob).not.toContain("v0.7.2");
+    expect(resumeJob).not.toContain('set-publish-version 0.7.2');
   });
 
   it("keeps publication behind the immutable-source preflight without the legacy upgrade gate", () => {
@@ -136,7 +160,7 @@ describe("release workflow latency contracts", () => {
   });
 
   it("serializes publication and advances the next patch base directly", () => {
-    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(2);
+    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(3);
     expect(releaseWorkflow).toMatch(/^  next-release-base:/m);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
     expect(releaseWorkflow).toContain("Advance main to the next patch version");
@@ -214,8 +238,12 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).not.toContain('test "$CONFIRM_DOCS" = "PUBLISH DOCS"');
     expect(releaseWorkflow).toContain("name: Publish stable changelog to docs production");
     expect(releaseWorkflow).toContain("uses: ./.github/workflows/docs-production.yml");
-    expect(releaseWorkflow).toContain("source_ref: v${{ needs.stable.outputs.version }}");
-    expect(releaseWorkflow).toContain("tag_name: docs/release/v${{ needs.stable.outputs.version }}");
+    expect(releaseWorkflow).toContain(
+      "source_ref: v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}",
+    );
+    expect(releaseWorkflow).toContain(
+      "tag_name: docs/release/v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}",
+    );
     expect(releaseWorkflow).toContain("release_docs_approved: true");
     expect(releaseWorkflow).toContain("needs.stable-docs.result == 'success'");
     expect(stableDocsIndex).toBeGreaterThan(-1);

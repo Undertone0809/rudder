@@ -30,7 +30,7 @@ jobs:
   preflight:
     name: Release preflight
     if: >-
-      (github.event_name == 'workflow_dispatch' && !inputs.resume_missing) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -96,6 +96,10 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
             version="$(./scripts/release.sh canary --preflight)"
+          elif [ "${{ inputs.resume_missing }}" = "true" ]; then
+            version="$(node -p "require('./cli/package.json').version")"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test -f "releases/v${version}.md"
           else
             version="$(./scripts/release.sh stable --preflight)"
           fi
@@ -105,6 +109,7 @@ jobs:
 
   resume-stable:
     name: Resume partial stable release
+    needs: preflight
     if: github.event_name == 'workflow_dispatch' && inputs.resume_missing && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
     permissions:
       actions: write
@@ -112,21 +117,31 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     environment: npm-stable
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    outputs:
+      version: ${{ steps.recovery-source.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
 
-      - name: Require locked v0.7.2 source
+      - name: Require locked stable source
+        id: recovery-source
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
+          PREFLIGHT_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_REF"
-          test "$(node -p "require('./cli/package.json').version")" = "0.7.2"
+          version="$(node -p "require('./cli/package.json').version")"
+          test "$version" = "$PREFLIGHT_VERSION"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v6
         with:
@@ -154,28 +169,18 @@ jobs:
             rm -rf "$pkg_dir/skills"
             cp -R server/resources/bundled-skills "$pkg_dir/skills"
           done
-          node - <<'NODE'
-          const fs = require("node:fs");
-          const file = "packages/agent-runtimes/hermes-gateway/package.json";
-          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-          pkg.repository = {
-            type: "git",
-            url: "https://github.com/Undertone0809/rudder",
-            directory: "packages/agent-runtimes/hermes-gateway",
-          };
-          fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
-          NODE
-          node scripts/release-package-map.mjs set-publish-version 0.7.2 --allow-source-mutation
+          node scripts/release-package-map.mjs set-publish-version "$RELEASE_VERSION" --allow-source-mutation
           ./scripts/build-npm.sh --skip-checks --skip-typecheck
 
       - name: Publish only missing packages and create release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           package_map="$(mktemp)"
           node scripts/release-package-map.mjs list > "$package_map"
-          test "$(wc -l < "$package_map" | xargs)" = "17"
+          test "$(wc -l < "$package_map" | xargs)" = "15"
 
           while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
             [ -n "$pkg_dir" ] || continue
@@ -197,10 +202,36 @@ jobs:
           done < "$package_map"
           rm -f "$package_map"
 
-          git tag v0.7.2 "${{ inputs.source_ref }}"
-          git push origin refs/tags/v0.7.2
-          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh 0.7.2
-          gh workflow run desktop-release.yml --ref main -f release_tag=v0.7.2 -f source_ref=v0.7.2
+          tag="v${RELEASE_VERSION}"
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
+          if [ -n "$remote_tag_sha" ]; then
+            test "$remote_tag_sha" = "$SOURCE_REF"
+            git tag --force "$tag" "$SOURCE_REF"
+          else
+            git tag "$tag" "$SOURCE_REF"
+            git push origin "refs/tags/$tag"
+          fi
+          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "$RELEASE_VERSION"
+          gh workflow run desktop-release.yml --ref main -f release_tag="$tag" -f source_ref="$tag"
+
+      - name: Wait for desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
+        run: |
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "v${RELEASE_VERSION}" \
+            --version "$RELEASE_VERSION"
+
+      - name: Clean up obsolete canary releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/cleanup-obsolete-canaries.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --remote origin \
+            --stable-version "$RELEASE_VERSION"
 
   canary:
     name: Publish npm canary
@@ -295,7 +326,7 @@ jobs:
   stable-dry-run:
     name: Preview stable release
     needs: preflight
-    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run && !inputs.resume_missing
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -328,7 +359,7 @@ jobs:
   stable:
     name: Publish stable release
     needs: preflight
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.resume_missing && github.repository == 'Undertone0809/rudder'
     permissions:
       actions: write
       contents: write
@@ -424,13 +455,14 @@ jobs:
     needs:
       - preflight
       - stable
-    if: needs.stable.result == 'success'
+      - resume-stable
+    if: always() && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       contents: write
     uses: ./.github/workflows/docs-production.yml
     with:
-      source_ref: v${{ needs.stable.outputs.version }}
-      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      source_ref: v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
       release_docs_approved: true
     secrets: inherit
 
@@ -439,8 +471,9 @@ jobs:
     needs:
       - preflight
       - stable
+      - resume-stable
       - stable-docs
-    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
+    if: always() && needs.stable-docs.result == 'success' && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       actions: write
       contents: write
@@ -460,7 +493,7 @@ jobs:
         id: next-release
         run: |
           node scripts/prepare-next-release.mjs \
-            --stable-version "${{ needs.stable.outputs.version }}"
+            --stable-version "${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
 
       - name: Start CI for the advanced release base
         if: steps.next-release.outputs.action == 'updated'
@@ -482,10 +515,11 @@ jobs:
     needs:
       - canary
       - stable
-    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success')
+      - resume-stable
+    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success' || needs.resume-stable.result == 'success')
     permissions:
       contents: read
     uses: ./.github/workflows/public-install-smoke.yml
     with:
-      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version }}"
+      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
       repo: ${{ github.repository }}
