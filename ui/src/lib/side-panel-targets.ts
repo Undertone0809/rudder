@@ -62,6 +62,7 @@ export type SidePanelTarget =
   | {
       kind: "run_feedback_chat";
       agentId: string;
+      preferredAgentId?: string | null;
       organizationId: string;
       conversationId: string | null;
       projectLocked?: boolean;

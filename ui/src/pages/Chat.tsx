@@ -23,6 +23,10 @@ import {
 } from "@/components/chat/ChatComposer";
 import { ChatConversationHeader } from "@/components/chat/ChatConversationHeader";
 import {
+  ChatProjectMenuContent,
+  ChatProjectSelectorButton,
+} from "@/components/chat/ChatProjectSelector";
+import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
   useResponseAnnotationEditorController,
@@ -30,7 +34,6 @@ import {
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
-import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import type { TranscriptAgentInspection, TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
@@ -202,8 +205,7 @@ import {
   Plus,
   RefreshCw,
   Square,
-  Trash2,
-  X
+  Trash2
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -2925,22 +2927,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         onKeyDown={agentMenuOpen ? handleChatAgentMenuKeyDown : undefined}
         position={composerMenuPosition}
       >
-        {projectMenuOpen && !projectSelectionLocked ? ( <>
-            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Project context</div>
-            <button type="button" role="menuitemradio" aria-checked={activeProjectId === NO_PROJECT_ID}
-              data-chat-composer-menu-item className="chat-composer-menu-row project-context-menu-item" onClick={() => applyProjectContext(NO_PROJECT_ID)} >
-              <span className="project-context-empty-swatch h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">No project</span> </button>
-            {visibleProjects.length > 0 ? (
-              <div className="my-1 border-t border-[color:var(--border-soft)] pt-1">
-                {visibleProjects.map((project) => (
-                  <button key={project.id} type="button" role="menuitemradio" aria-checked={activeProjectId === project.id}
-                    data-chat-composer-menu-item className="chat-composer-menu-row project-context-menu-item" onClick={() => applyProjectContext(project.id)} >
-                    <ProjectIcon color={project.color} icon={project.icon} size="xs" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{projectDisplayName(project)}</span>
-                    </span> </button>
-                ))} </div> ) : null} </> ) : null}
+        {projectMenuOpen && !projectSelectionLocked ? (
+          <ChatProjectMenuContent
+            projects={visibleProjects}
+            activeProjectId={activeProjectId === NO_PROJECT_ID ? null : activeProjectId}
+            onSelect={(projectId) => applyProjectContext(projectId ?? NO_PROJECT_ID)}
+          />
+        ) : null}
         {agentMenuOpen ? (
           <ChatAgentMenuContent agents={liveAgents} activeAgentId={activeAgentId} agentSelectionLocked={agentSelectionLocked} runtimeSelectionPending={runtimeSelectionPending} newConversationSendInFlight={newConversationSendInFlight} externalBound={selectedConversationExternalBound} adapterModels={adapterModelsQuery.data} overrides={activeRuntimeOverrides} runtimeLabel={runtimePillLabel} isLoading={adapterModelsQuery.isPending} error={adapterModelsQuery.error} modelSelectRef={runtimeModelSelectRef} onSelectAgent={applyPreferredAgent} onChangeRuntime={applyRuntimeOverrides} />
         ) : null}
@@ -3384,38 +3377,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           </ChatComposerAddMenu>
           {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
           {showProjectSelector ? (
-            <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
-              <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
-                  "chat-chip inline-flex w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
-                  projectSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
-                  projectMenuOpen && "bg-[color:var(--surface-active)]",
-                )} onClick={() => { if (projectSelectionLocked) return;
-                  if (projectMenuOpen) { closeComposerContextMenus();
-                    return; } openComposerContextMenu("project");
-                }} >
-                {hasSelectedProject ? (
-                  <ProjectIcon
-                    color={activeProject?.color}
-                    icon={activeProject?.icon}
-                    size="xs"
-                    testId="chat-project-icon"
-                    className={cn(
-                      "transition-opacity",
-                      !projectSelectionLocked && "group-focus-within/project:opacity-0 group-hover/project:opacity-0",
-                    )}
-                  />
-                ) : null}
-                <span className="min-w-0 truncate">{projectPillLabel}</span>
-              </button>
-              {hasSelectedProject && !projectSelectionLocked ? (
-                <button type="button" data-testid="chat-project-clear" aria-label={`Clear project context: ${projectPillLabel}`} title="Clear project context" className="absolute left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-[color:var(--surface-inset)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100" onClick={(event) => {
-                    event.stopPropagation();
-                    applyProjectContext(NO_PROJECT_ID);
-                  }} >
-                  <X className="h-4 w-4" strokeWidth={2.4} />
-                </button>
-              ) : null}
-            </div>
+            <ChatProjectSelectorButton
+              project={hasSelectedProject ? activeProject : null}
+              label={projectPillLabel}
+              expanded={projectMenuOpen}
+              disabled={projectSelectionLocked}
+              onClick={() => {
+                if (projectSelectionLocked) return;
+                if (projectMenuOpen) {
+                  closeComposerContextMenus();
+                  return;
+                }
+                openComposerContextMenu("project");
+              }}
+              onClear={() => applyProjectContext(NO_PROJECT_ID)}
+            />
           ) : null}
           <ChatAgentSelectorButton buttonRef={runtimeSelectorRef} agent={activeSkillAgent} label={agentPillLabel} expanded={agentMenuOpen} disabled={!agents || (!selectedConversation && newConversationSendInFlight)} onClick={() => {
               if (agentMenuOpen) { closeComposerContextMenus();

@@ -3,7 +3,7 @@ import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn, formatTokens } from "../../lib/utils";
 import { formatTranscriptLabel, TranscriptActivityRow, TranscriptEventRow, TranscriptMessageBlock, TranscriptRunAnnotationBlock, TranscriptStdoutRow, TranscriptThinkingBlock, TranscriptTodoListRow, TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatTurn } from "./RunTranscriptView.chat";
-import { isInternalAgentInstructionText, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext } from "./RunTranscriptView.common";
+import { isInternalAgentInstructionText, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSkillTarget } from "./RunTranscriptView.common";
 import { formatTodoListRaw, normalizeChatTranscriptTurns, parseClaudeSkillContext } from "./RunTranscriptView.normalize";
 import { formatToolPayload } from "./RunTranscriptView.semantic";
 
@@ -111,6 +111,8 @@ export function TranscriptDetailTimeline({
   onMarkdownLinkClick,
   runAnnotationContext,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -120,6 +122,8 @@ export function TranscriptDetailTimeline({
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   runAnnotationContext?: TranscriptRunAnnotationContext;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
 }) {
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(entries, streaming, { showDeveloperDiagnostics }),
@@ -194,6 +198,8 @@ export function TranscriptDetailTimeline({
               runAnnotationContext={runAnnotationContext}
               streaming={streaming}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
             />
           </div>
         );

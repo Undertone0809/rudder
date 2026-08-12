@@ -97,6 +97,26 @@ describe("chat response annotation state", () => {
       [first.id, 1],
       [second.id, 2],
     ]);
+    expect(validateChatResponseAnnotationAdd(afterFirst, duplicate)).toBe(
+      "This excerpt is already included in the feedback.",
+    );
+  });
+
+  it("matches the server duplicate-range rule when source content hashes drift", () => {
+    const first = runAnnotation(
+      "30000000-0000-4000-8000-000000000010",
+      "50000000-0000-4000-8000-000000000001",
+    );
+    const duplicate = {
+      ...first,
+      id: "30000000-0000-4000-8000-000000000011",
+      sourceHash: "c".repeat(64),
+    } satisfies RunAnnotationInput;
+
+    expect(validateChatResponseAnnotationAdd(
+      createChatResponseAnnotationState([first]),
+      duplicate,
+    )).toBe("This excerpt is already included in the feedback.");
   });
 
   it("keeps identical selected text from different agent runs", () => {

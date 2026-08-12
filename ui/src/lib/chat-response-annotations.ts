@@ -78,7 +78,6 @@ export function chatResponseAnnotationRangeKey(annotation: ChatInlineAnnotationI
     annotation.surface,
     generationKey,
     runKey,
-    annotation.sourceHash,
     annotation.start,
     annotation.end,
   ].join(":");
@@ -103,6 +102,14 @@ export function validateChatResponseAnnotationState(
 ): string | null {
   if (annotations.length > MAX_CHAT_INLINE_ANNOTATIONS) {
     return `A message can include at most ${MAX_CHAT_INLINE_ANNOTATIONS} annotations.`;
+  }
+  const sourceRanges = new Set<string>();
+  for (const annotation of annotations) {
+    const rangeKey = chatResponseAnnotationRangeKey(annotation);
+    if (sourceRanges.has(rangeKey)) {
+      return "This excerpt is already included in the feedback.";
+    }
+    sourceRanges.add(rangeKey);
   }
   const selectedTextTooLong = annotations.some(
     (annotation) => annotation.selectedText.length > MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH,
