@@ -13,6 +13,7 @@ const closeNewGoal = vi.fn();
 const randomUUID = vi.fn();
 let newGoalDefaults: Record<string, string> = {};
 let dispose: (() => void) | null = null;
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
 
 vi.mock("@/lib/router", () => ({ useNavigate: () => navigate }));
 vi.mock("@/components/ui/dialog", () => ({
@@ -135,11 +136,47 @@ function change(element: HTMLInputElement | HTMLTextAreaElement, value: string) 
   });
 }
 
+function targetTimeButton() {
+  const element = document.querySelector<HTMLButtonElement>('[aria-label="Target time"]');
+  if (!element) throw new Error("Missing target time picker");
+  return element;
+}
+
+async function setTargetTime(value: string) {
+  const date = new Date(value);
+  act(() => targetTimeButton().click());
+  await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
+
+  const dateLabel = date.toLocaleDateString();
+  const dateButton = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
+    .find((candidate) => candidate.dataset.day === dateLabel);
+  if (!dateButton) throw new Error(`Missing calendar day ${dateLabel}`);
+  act(() => dateButton.click());
+
+  const chooseOption = async (label: string, valueToChoose: string) => {
+    act(() => document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.click());
+    await waitUntil(() => expect(Array.from(document.querySelectorAll('[role="option"]')).some((option) => option.textContent?.trim() === valueToChoose)).toBe(true));
+    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+      .find((candidate) => candidate.textContent?.trim() === valueToChoose);
+    if (!option) throw new Error(`Missing ${label} option ${valueToChoose}`);
+    act(() => option.click());
+    expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull();
+  };
+
+  await chooseOption("Target hour", String(date.getHours()).padStart(2, "0"));
+  await chooseOption("Target minute", String(date.getMinutes()).padStart(2, "0"));
+  act(() => button("Done")?.click());
+}
+
 function button(label: string) {
   return Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === label) ?? null;
 }
 
 beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   vi.mocked(agentsApi.list).mockResolvedValue([agent, alternateAgent] as never);
   vi.mocked(goalsApi.previewStart).mockResolvedValue(validPreview as never);
   vi.mocked(goalsApi.start).mockResolvedValue({ id: "goal-1" } as never);
@@ -157,9 +194,47 @@ afterEach(() => {
   document.body.innerHTML = "";
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: originalScrollIntoView,
+  });
 });
 
 describe("NewGoalDialog", () => {
+  it("uses the shadcn date/time picker and can clear a selected target time", async () => {
+    const container = renderDialog();
+
+    expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
+    await setTargetTime("2026-08-20T10:00");
+    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+
+    act(() => targetTimeButton().click());
+    await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
+    const pendingDate = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
+      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T10:00").toLocaleDateString());
+    expect(pendingDate).not.toBeUndefined();
+    act(() => pendingDate?.click());
+    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+    act(() => button("Done")?.click());
+    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+
+    act(() => targetTimeButton().click());
+    await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
+    const cancelledDate = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
+      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T10:00").toLocaleDateString());
+    expect(cancelledDate).not.toBeUndefined();
+    act(() => cancelledDate?.click());
+    act(() => targetTimeButton().click());
+    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+
+    act(() => targetTimeButton().click());
+    await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
+    act(() => button("Clear")?.click());
+
+    expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
+    expect(targetTimeButton().textContent).toContain("Set a target time");
+  });
+
   it("changes the Markdown document identity between create sessions", () => {
     renderDialog();
     const firstIdentity = field("Expected result").dataset.documentIdentity;
@@ -251,7 +326,7 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
 
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
-    change(field("Target time"), "2026-08-25T14:30");
+    await setTargetTime("2026-08-25T14:30");
 
     expect(button("Start Goal")?.disabled).toBe(true);
     act(() => button("Start Goal")?.click());
@@ -272,7 +347,7 @@ describe("NewGoalDialog", () => {
     expect(container.querySelector("[role=alert]")).toBeNull();
   });
 
-  it("keeps the eligible Goal-owner menu portaled and excludes invalid defaults", async () => {
+  it("keeps the eligible Goal-owner menu inside the dialog below its trigger and excludes invalid defaults", async () => {
     const pendingAgent = { id: "agent-pending", name: "Pending owner", title: null, role: "engineer", status: "pending_approval" };
     const terminatedAgent = { id: "agent-terminated", name: "Terminated owner", title: null, role: "engineer", status: "terminated" };
     newGoalDefaults = { ownerAgentId: pendingAgent.id };
@@ -283,8 +358,8 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe("No assignee"));
     const assignee = container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')!;
 
-    expect(assignee.dataset.disablePortal).toBe("false");
-    expect(assignee.dataset.side).toBe("top");
+    expect(assignee.dataset.disablePortal).toBe("true");
+    expect(assignee.dataset.side).toBe("bottom");
     act(() => assignee.click());
     await waitUntil(() => expect(assignee.textContent).toBe(agent.name));
     act(() => assignee.click());
@@ -330,7 +405,7 @@ describe("NewGoalDialog", () => {
     } as never);
     const container = renderDialog();
     change(field("Goal"), "Explore");
-    change(field("Target time"), "2026-08-20T10:00");
+    await setTargetTime("2026-08-20T10:00");
     await waitUntil(() => {
       expect(button("Save draft")).not.toBeNull();
       expect(button("Save draft")?.disabled).toBe(false);
@@ -414,7 +489,7 @@ describe("NewGoalDialog", () => {
       expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe(agent.name);
     });
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
-    change(field("Target time"), "2026-08-25T14:30");
+    await setTargetTime("2026-08-25T14:30");
     await waitUntil(() => {
       expect(button("Save draft")?.disabled).toBe(false);
       expect(vi.mocked(goalsApi.previewStart)).toHaveBeenLastCalledWith("org-1", expect.objectContaining({ ownerAgentId: "agent-2" }));

@@ -121,6 +121,40 @@ async function createAgent(
   return response.json() as Promise<Agent>;
 }
 
+async function setGoalTargetTime(page: Page, value: string) {
+  const target = new Date(value);
+  const dayKey = await page.evaluate((timestamp) => new Date(timestamp).toLocaleDateString(), target.getTime());
+  const hour = String(target.getHours()).padStart(2, "0");
+  const minute = String(target.getMinutes()).padStart(2, "0");
+
+  await page.getByRole("button", { name: "Target time", exact: true }).click();
+  const targetTimePopover = page.locator('[data-slot="popover-content"]').filter({
+    has: page.locator('[data-slot="calendar"]'),
+  });
+  await expect(targetTimePopover).toBeVisible();
+  await targetTimePopover.locator(`[data-day="${dayKey}"]`).click();
+
+  await targetTimePopover.getByRole("combobox", { name: "Target hour" }).click();
+  await page.getByRole("option", { name: hour, exact: true }).click();
+  await targetTimePopover.getByRole("combobox", { name: "Target minute" }).click();
+  await page.getByRole("option", { name: minute, exact: true }).click();
+  await targetTimePopover.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(targetTimePopover).toBeHidden();
+}
+
+async function gotoAppRoute(page: Page, url: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      return;
+    } catch (error) {
+      const aborted = error instanceof Error && error.message.includes("net::ERR_ABORTED");
+      if (!aborted || attempt === 1) throw error;
+      if (page.url() === url) return;
+    }
+  }
+}
+
 async function createAgentKey(request: APIRequestContext, agentId: string, name: string) {
   const response = await request.post(`/api/agents/${agentId}/keys`, { data: { name } });
   expect(response.ok()).toBe(true);
@@ -315,30 +349,48 @@ test.describe("Goal Workspace v2", () => {
 
   test("creates and starts from one plain-language confirmation, then preserves feedback and progress", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
+    const goalTitle = "Publish a verified Goal Workspace release candidate without changing the modal geometry";
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
 
     const organization = await createOrganization(page.request, `Goal-workspace-ui-${Date.now()}`);
     const owner = await createAgent(page.request, organization.id, "Workspace owner");
+    const replacementOwner = await createAgent(page.request, organization.id, "Replacement owner");
+    for (let index = 1; index <= 8; index += 1) {
+      await createAgent(page.request, organization.id, `Available owner ${index}`);
+    }
     const ownerKey = await createAgentKey(page.request, owner.id, "goal-workspace-owner-run");
-    await page.goto("/");
-    await page.evaluate((orgId) => {
+    await page.addInitScript((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(`/${organization.urlKey}/goals`);
 
     await page.getByRole("button", { name: "New Goal" }).first().click();
-    await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Publish a verified Goal Workspace release candidate");
+    const goalDialog = page.locator('[data-slot="dialog-content"]');
+    const dialogBeforeTyping = await goalDialog.boundingBox();
+    expect(dialogBeforeTyping).not.toBeNull();
+    await page.getByRole("textbox", { name: "Goal", exact: true }).fill(goalTitle);
     await page.getByLabel("Expected result").fill(
       "The result must be inspectable, restart-safe, and ready for user acceptance.",
     );
+    await expect.poll(async () => {
+      const box = await goalDialog.boundingBox();
+      if (!box) return Number.POSITIVE_INFINITY;
+      return Math.max(
+        Math.abs(box.x - dialogBeforeTyping!.x),
+        Math.abs(box.y - dialogBeforeTyping!.y),
+        Math.abs(box.width - dialogBeforeTyping!.width),
+        Math.abs(box.height - dialogBeforeTyping!.height),
+      );
+    }).toBeLessThanOrEqual(8);
+    await expect(goalDialog.locator('input[type="datetime-local"]')).toHaveCount(0);
     await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
     const assigneeTrigger = page.getByRole("button", { name: "Assignee", exact: true });
     await assigneeTrigger.click();
     const assigneeMenu = page.locator('[data-slot="popover-content"]');
     await expect(assigneeMenu).toBeVisible();
-    await expect(assigneeMenu).toHaveAttribute("data-side", "top");
+    await expect(assigneeMenu).toHaveAttribute("data-side", "bottom");
     const [assigneeMenuGeometry, assigneeTriggerGeometry, dialogGeometry] = await Promise.all([
       assigneeMenu.boundingBox(),
       assigneeTrigger.boundingBox(),
@@ -347,13 +399,19 @@ test.describe("Goal Workspace v2", () => {
     expect(assigneeMenuGeometry).not.toBeNull();
     expect(assigneeTriggerGeometry).not.toBeNull();
     expect(dialogGeometry).not.toBeNull();
-    expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
-      .toBeLessThanOrEqual(assigneeTriggerGeometry!.y + 1);
+    expect(assigneeMenuGeometry!.y)
+      .toBeGreaterThanOrEqual(assigneeTriggerGeometry!.y + assigneeTriggerGeometry!.height - 1);
     expect(assigneeMenuGeometry!.y).toBeGreaterThanOrEqual(dialogGeometry!.y);
     expect(assigneeMenuGeometry!.y + assigneeMenuGeometry!.height)
       .toBeLessThanOrEqual(dialogGeometry!.y + dialogGeometry!.height);
+    await expect(assigneeMenu.getByPlaceholder("Search Agents...")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(assigneeMenu).toBeHidden();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(assigneeTrigger).toBeFocused();
+    await assigneeTrigger.click();
     await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
-    await page.getByLabel("Target time").fill("2026-08-20T10:00");
+    await setGoalTargetTime(page, "2026-08-20T10:00");
 
     await expect(page.getByText("Success criteria", { exact: true })).toBeVisible();
     await expect(page.getByText("First action", { exact: true })).toBeVisible();
@@ -375,7 +433,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(goalsRailLink).toHaveAttribute("href", new RegExp(`/${organization.urlKey}/goals$`));
     await goalsRailLink.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals$`));
-    await page.goto(goalDetailUrl);
+    await gotoAppRoute(page, goalDetailUrl);
     const goalsBreadcrumb = page.getByTestId("primary-detail-breadcrumb")
       .getByRole("link", { name: "Goals", exact: true });
     await expect(goalsBreadcrumb).toBeVisible();
@@ -415,6 +473,25 @@ test.describe("Goal Workspace v2", () => {
     }
 
     const goalId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const ownerSelector = page.getByRole("button", { name: "Change Goal owner", exact: true });
+    await expect(ownerSelector).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit Goal target time", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Goal target time", { exact: true })).toHaveCount(0);
+    await ownerSelector.click();
+    await page.getByRole("option", { name: new RegExp(replacementOwner.name, "i") }).click();
+    await expect(ownerSelector).toContainText(replacementOwner.name);
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/goals/${goalId}`);
+      return (await response.json() as Goal).ownerAgentId;
+    }).toBe(replacementOwner.id);
+    await ownerSelector.click();
+    await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
+    await expect(ownerSelector).toContainText(owner.name);
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/goals/${goalId}`);
+      return (await response.json() as Goal).ownerAgentId;
+    }).toBe(owner.id);
+
     const startRequest = (await e2eDb.select().from(goalStartRequests)).find((row) => row.goalId === goalId)!;
     const startWakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
       row.orgId === organization.id
@@ -511,9 +588,9 @@ test.describe("Goal Workspace v2", () => {
     const retryFeedback = page.getByRole("button", { name: "Retry comment" });
     await retryFeedback.focus();
     await page.keyboard.press("Enter");
+    await expect.poll(() => feedbackAttempts).toBe(2);
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(feedbackInput).toBeFocused();
-    expect(feedbackAttempts).toBe(2);
     await page.unroute(`**/api/goals/${goalId}/feedback`);
 
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -588,12 +665,14 @@ test.describe("Goal Workspace v2", () => {
     });
     expect(progressResponse.status()).toBe(201);
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.getByRole("tab", { name: /Work/ }).click();
+    const workTabTrigger = page.getByRole("tab", { name: /Work/ });
+    await expect(workTabTrigger).toBeVisible({ timeout: 30_000 });
+    await workTabTrigger.click();
     const currentProgress = page.getByRole("tabpanel").getByText("Current progress", { exact: true }).locator("..");
     await expect(currentProgress.getByText(
       "The release candidate passed the real operator workflow.",
       { exact: true },
-    )).toBeVisible();
+    )).toBeVisible({ timeout: 30_000 });
     const progressEvidence = currentProgress.getByLabel("Supporting evidence");
     await expect(progressEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
     await expect(progressEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
@@ -657,7 +736,7 @@ test.describe("Goal Workspace v2", () => {
     const goalChatPanel = page.getByTestId("goal-chat-panel");
     await expect(page.getByTestId("chat-side-panel")).toBeVisible();
     await expect(goalChatPanel.getByText("Chat about Goal", { exact: true })).toBeVisible();
-    await expect(goalChatPanel.getByText("Publish a verified Goal Workspace release candidate", { exact: true })).toBeVisible();
+    await expect(goalChatPanel.getByText(goalTitle, { exact: true })).toBeVisible();
     await expect(goalChatPanel.getByText(owner.name, { exact: true })).toBeVisible();
     const goalChatEditor = goalChatPanel.getByTestId("goal-chat-composer").locator('[contenteditable="true"]');
     await goalChatEditor.fill(chatDraft);
@@ -673,14 +752,16 @@ test.describe("Goal Workspace v2", () => {
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    const mobileWorkTab = page.getByRole("tabpanel");
-    await expect(mobileWorkTab.getByText("Outcome", { exact: true })).toBeVisible();
-    await expect(mobileWorkTab.getByText("Current progress", { exact: true })).toBeVisible();
     const mobileTabs = page.getByRole("tablist", { name: "Goal detail views" });
+    await expect(mobileTabs).toBeVisible({ timeout: 30_000 });
     await expect(mobileTabs.getByRole("tab", { name: /Conversation/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Work/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Evidence/ })).toBeVisible();
+    await mobileTabs.getByRole("tab", { name: /Work/ }).click();
+    const mobileWorkTab = page.getByRole("tabpanel");
+    await expect(mobileWorkTab.getByText("Outcome", { exact: true })).toBeVisible();
+    await expect(mobileWorkTab.getByText("Current progress", { exact: true })).toBeVisible();
     const tabsFitViewport = await mobileTabs.evaluate((tablist) => {
       const viewportWidth = document.documentElement.clientWidth;
       return Array.from(tablist.querySelectorAll('[role="tab"]')).every((tab) => {
@@ -707,8 +788,7 @@ test.describe("Goal Workspace v2", () => {
 
     const organization = await createOrganization(page.request, `Goal-draft-alignment-${Date.now()}`);
     const owner = await createAgent(page.request, organization.id, "Alignment owner");
-    await page.goto("/");
-    await page.evaluate((orgId) => {
+    await page.addInitScript((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 960 });
@@ -727,13 +807,14 @@ test.describe("Goal Workspace v2", () => {
     const dialogFooter = dialog.locator(":scope > div").last();
     const startPreview = page.getByLabel("Goal start preview");
     await expect(startPreview.getByText("Select an Agent above to own and start this Goal.", { exact: true })).toBeVisible();
-    const [footerGeometry, previewGeometry] = await Promise.all([
-      dialogFooter.boundingBox(),
-      startPreview.boundingBox(),
-    ]);
-    expect(footerGeometry).not.toBeNull();
-    expect(previewGeometry).not.toBeNull();
-    expect(previewGeometry!.y + previewGeometry!.height).toBeLessThanOrEqual(footerGeometry!.y);
+    await expect.poll(async () => {
+      const [footerGeometry, previewGeometry] = await Promise.all([
+        dialogFooter.boundingBox(),
+        startPreview.boundingBox(),
+      ]);
+      if (!footerGeometry || !previewGeometry) return Number.POSITIVE_INFINITY;
+      return previewGeometry.y + previewGeometry.height - footerGeometry.y;
+    }).toBeLessThanOrEqual(0);
     await page.getByRole("button", { name: "Choose Owner Agent", exact: true }).click();
     await expect(page.getByPlaceholder("Search Agents...")).toBeVisible();
     await page.keyboard.press("Escape");
