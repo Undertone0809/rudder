@@ -166,14 +166,14 @@ describe("App Builder managed runner", () => {
       "--store-dir",
       expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
     );
-    const verification = process.platform === "win32"
-      ? [
-          ["run", "ui:check"],
-          ["run", "typecheck"],
-          ["run", "test"],
-          ["exec", "next", "build", "--webpack"],
-        ]
-      : [["run", "verify"]];
+    const verification = [
+      ["run", "ui:check"],
+      ["run", "typecheck"],
+      ["run", "test"],
+      process.platform === "win32"
+        ? ["exec", "next", "build", "--webpack"]
+        : ["exec", "next", "build"],
+    ];
     expect((await calls(logPath)).map((call) => call.argv)).toEqual([
       install,
       ...verification,
@@ -198,16 +198,14 @@ describe("App Builder managed runner", () => {
       "--store-dir",
       expect.stringContaining(`${path.win32.sep}Rudder${path.win32.sep}ab${path.win32.sep}s`) as string,
     );
-    const verification = process.platform === "win32"
-      ? [
-          ["run", "ui:check"],
-          ["run", "typecheck"],
-          ["run", "test"],
-          ["exec", "next", "build", "--webpack"],
-        ]
-      : [
-          ["run", "verify"],
-        ];
+    const verification = [
+      ["run", "ui:check"],
+      ["run", "typecheck"],
+      ["run", "test"],
+      process.platform === "win32"
+        ? ["exec", "next", "build", "--webpack"]
+        : ["exec", "next", "build"],
+    ];
     expect(recorded.map((call) => call.argv)).toEqual([
       install,
       ...verification,

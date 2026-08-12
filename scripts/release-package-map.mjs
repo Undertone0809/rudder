@@ -167,19 +167,79 @@ function applyPublishConfigFields(pkg) {
   return next;
 }
 
-function setPackageManifestVersion(packagePath, version) {
-  if (!existsSync(packagePath)) return;
+function preparePackageManifestVersion(packagePath, version) {
+  if (!existsSync(packagePath)) return [];
   const pkg = readJson(packagePath);
-  writeJson(packagePath, {
-    ...pkg,
-    version,
-  });
+  return [{
+    path: packagePath,
+    content: `${JSON.stringify({ ...pkg, version }, null, 2)}\n`,
+  }];
 }
 
-function setVersion(version, { publish = false } = {}) {
+function prepareCargoWorkspaceVersion(version) {
+  const manifestPath = join(repoRoot, "native", "Cargo.toml");
+  if (!existsSync(manifestPath)) return [];
+
+  const manifest = readFileSync(manifestPath, "utf8");
+  const workspacePackageSection = /(^\[workspace\.package\]\s*$)([\s\S]*?)(?=^\[|(?![\s\S]))/m;
+  const match = manifest.match(workspacePackageSection);
+  if (!match) {
+    throw new Error(`native Cargo workspace is missing [workspace.package]`);
+  }
+  if (!/^version\s*=\s*"[^"]+"\s*$/m.test(match[2])) {
+    throw new Error(`native Cargo workspace package is missing a version`);
+  }
+
+  const nextSection = `${match[1]}${match[2].replace(
+    /^version\s*=\s*"[^"]+"\s*$/m,
+    `version = "${version}"`,
+  )}`;
+  const nextManifest = manifest.replace(workspacePackageSection, nextSection);
+
+  const packageNames = new Set();
+  for (const relativeRoot of ["native/crates", "native/bins"]) {
+    const absoluteRoot = join(repoRoot, relativeRoot);
+    if (!existsSync(absoluteRoot)) continue;
+    for (const entry of readdirSync(absoluteRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const packageManifestPath = join(absoluteRoot, entry.name, "Cargo.toml");
+      if (!existsSync(packageManifestPath)) continue;
+      const packageManifest = readFileSync(packageManifestPath, "utf8");
+      const packageName = packageManifest.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1];
+      if (!packageName) {
+        throw new Error(`native package manifest is missing a name: ${packageManifestPath}`);
+      }
+      packageNames.add(packageName);
+    }
+  }
+
+  const lockPath = join(repoRoot, "native", "Cargo.lock");
+  if (!existsSync(lockPath)) {
+    throw new Error("native Cargo workspace is missing Cargo.lock");
+  }
+  let lock = readFileSync(lockPath, "utf8");
+  for (const packageName of packageNames) {
+    const escapedName = packageName.replace(/[-/\\^$*+?.()|[\]]/g, "\\$&");
+    const packageBlock = new RegExp(
+      `(^\\[\\[package\\]\\]\\s*$[\\s\\S]*?^name\\s*=\\s*"${escapedName}"\\s*$[\\s\\S]*?^version\\s*=\\s*)"[^"]+"`,
+      "m",
+    );
+    if (!packageBlock.test(lock)) {
+      throw new Error(`native Cargo.lock is missing workspace package ${packageName}`);
+    }
+    lock = lock.replace(packageBlock, `$1"${version}"`);
+  }
+  return [
+    { path: manifestPath, content: nextManifest },
+    { path: lockPath, content: lock },
+  ];
+}
+
+function prepareVersionUpdates(version, { publish = false } = {}) {
   const packages = sortTopologically(discoverPublicPackages());
   const internalPackageNames = new Set(packages.map((pkg) => pkg.name));
   const internalDependencyValue = publish ? version : "workspace:*";
+  const updates = [];
 
   for (const pkg of packages) {
     const nextPkg = {
@@ -191,10 +251,14 @@ function setVersion(version, { publish = false } = {}) {
       devDependencies: rewriteInternalDeps(pkg.pkg.devDependencies, internalPackageNames, internalDependencyValue),
     };
 
-    writeJson(pkg.pkgPath, publish ? applyPublishConfigFields(nextPkg) : nextPkg);
+    updates.push({
+      path: pkg.pkgPath,
+      content: `${JSON.stringify(publish ? applyPublishConfigFields(nextPkg) : nextPkg, null, 2)}\n`,
+    });
   }
 
-  setPackageManifestVersion(join(repoRoot, "desktop", "package.json"), version);
+  updates.push(...preparePackageManifestVersion(join(repoRoot, "desktop", "package.json"), version));
+  updates.push(...prepareCargoWorkspaceVersion(version));
 
   const cliEntryPath = join(repoRoot, "cli/src/program.ts");
   if (existsSync(cliEntryPath)) {
@@ -205,9 +269,22 @@ function setVersion(version, { publish = false } = {}) {
     );
 
     if (cliEntry !== nextCliEntry) {
-      writeFileSync(cliEntryPath, nextCliEntry);
+      updates.push({ path: cliEntryPath, content: nextCliEntry });
     }
   }
+
+  return updates;
+}
+
+function applyFileUpdates(updates) {
+  for (const update of updates) {
+    writeFileSync(update.path, update.content);
+  }
+}
+
+function setVersion(version, options = {}) {
+  const updates = prepareVersionUpdates(version, options);
+  applyFileUpdates(updates);
 }
 
 function listPackages() {

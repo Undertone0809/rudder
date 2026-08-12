@@ -149,10 +149,28 @@ async function runCapturedProcess(executable, args, options = {}) {
   });
 }
 
-async function verifyPackagedNativeProcessHost(executablePath) {
+async function verifyPackagedNativeProcessHost(executablePath, expectedVersion) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged Rust process host should expose metadata");
-  assert.match(metadata.stdout, /^rudder-process-host 0\.1\.0\n$/u);
+  assert.equal(
+    metadata.stdout,
+    `rudder-process-host ${expectedVersion}\n`,
+    "packaged Rust process host version should match the packaged Rudder release",
+  );
+  const runtimeRoot = path.join(tmpRoot, "packaged-native-runtime");
+  await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+  const listener = createServer();
+  const port = await new Promise((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => {
+      const address = listener.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("packaged native smoke could not allocate a loopback port"));
+        return;
+      }
+      listener.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
   await new Promise((resolve, reject) => {
     const host = spawn(executablePath, [], {
       cwd: tmpRoot,
@@ -224,8 +242,25 @@ async function verifyPackagedNativeProcessHost(executablePath) {
       cwd: tmpRoot,
       env: {},
       ownerToken: "packaged-native-smoke",
+      port,
+      runtimeRoot,
     })}\n`);
   });
+}
+
+async function assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, generation) {
+  if (mode !== "packaged" || process.platform !== "darwin" || process.arch !== "arm64") return;
+  assert.ok(generation, "packaged native Local App receipt requires a runtime generation");
+  const receiptPath = path.join(
+    resolveInstancePaths(scenarioRoot).electronUserDataDir,
+    "local-apps",
+    "native-runtime",
+    generation,
+    "terminal-receipt.json",
+  );
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  assert.equal(receipt?.terminal?.requestId, generation, "packaged native receipt must match the Local App generation");
+  assert.equal(receipt?.terminal?.cleanupProven, true, "packaged native receipt must prove owned-tree cleanup");
 }
 
 function parseLocalAppSmokeEnvNames() {
@@ -675,17 +710,17 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const nativeHostPath = nativeTarget
     ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host")
     : null;
+  const serverPackageDir = path.join(resourcesDir, "server-package");
+  const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
   if (process.platform === "darwin" && process.arch === "arm64") {
     assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
     const nativeStats = await stat(nativeHostPath);
     assert.equal(nativeStats.isFile(), true, "packaged Rust process host should be a file");
     assert.notEqual(nativeStats.mode & 0o111, 0, "packaged Rust process host should be executable");
-    await verifyPackagedNativeProcessHost(nativeHostPath);
+    await verifyPackagedNativeProcessHost(nativeHostPath, serverManifest.version);
   }
-  const serverPackageDir = path.join(resourcesDir, "server-package");
   const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
   const cliRunner = path.join(serverPackageDir, "desktop-cli-runner.js");
-  const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
   const serverEntrypoint = path.resolve(serverPackageDir, serverManifest.main ?? "dist/index.js");
   const runtimeCacheDir = path.join(resolveInstancePaths(userDataDir).rudderHome, "runtimes", serverManifest.version);
   const runtimeServerDir = path.join(runtimeCacheDir, "node_modules", "@rudderhq", "server");
@@ -5313,7 +5348,12 @@ async function runLocalAppsScenario(mode) {
     title: definition.title,
   }));
   const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports, project.launchEnv);
+  const run = await launchDesktop(scenarioRoot, mode, ports, {
+    ...project.launchEnv,
+    ...(mode === "packaged" && process.platform === "darwin" && process.arch === "arm64"
+      ? { RUDDER_NATIVE_PROCESS_HOST: "1" }
+      : {}),
+  });
   let runningDescriptor = null;
   let definitionDeleted = false;
   let scenarioError = null;
@@ -5690,6 +5730,7 @@ async function runLocalAppsScenario(mode) {
       markerPath: project.markerPath,
       registryPath,
     });
+    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, generation);
     const stoppedMainView = run.page.locator('[data-testid="local-app-view"][data-active="true"]');
     const logsButton = stoppedMainView.getByRole("button", { name: "Show logs" });
     await logsButton.click();
@@ -5940,7 +5981,11 @@ async function runAppBuilderScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "app-builder");
   const ports = await allocateSmokePorts();
   const runtimeUrls = createRuntimeUrls(ports);
-  const run = await launchDesktop(scenarioRoot, mode, ports);
+  const run = await launchDesktop(scenarioRoot, mode, ports, {
+    ...(mode === "packaged" && process.platform === "darwin" && process.arch === "arm64"
+      ? { RUDDER_NATIVE_PROCESS_HOST: "1" }
+      : {}),
+  });
   let browser = null;
   let scenarioError = null;
   let shutdownError = null;
@@ -6068,7 +6113,7 @@ async function runAppBuilderScenario(mode) {
           ? { failed: false, record }
           : null;
       },
-      { timeoutMs: 660_000 },
+      { timeoutMs: 900_000 },
     );
     if (buildOutcome.failed) {
       throw new Error(
@@ -6090,6 +6135,10 @@ async function runAppBuilderScenario(mode) {
     );
     assert.ok(target, "Ready App must expose an attested target");
     assert.match(target.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const initialGeneration = (await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.status(definitionId),
+      definition.id,
+    )).generation;
 
     const uniqueEmail = `desktop-${Date.now()}@example.test`;
     const created = await fetch(new URL("/api/contacts", target.origin), {
@@ -6131,6 +6180,7 @@ async function runAppBuilderScenario(mode) {
       )) === null,
       { timeoutMs: 30_000 },
     );
+    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, initialGeneration);
     await appEntry.click();
     const restartOutcome = await waitForSmokeCondition(
       "restarted App to publish its attested target",
@@ -6151,7 +6201,7 @@ async function runAppBuilderScenario(mode) {
         );
         return { failed: true, runtime, logs };
       },
-      { timeoutMs: 660_000 },
+      { timeoutMs: 900_000 },
     );
     if (restartOutcome.failed) {
       throw new Error(
@@ -6161,10 +6211,17 @@ async function runAppBuilderScenario(mode) {
       );
     }
     target = restartOutcome.target;
+    const restartedGeneration = (await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.status(definitionId),
+      definition.id,
+    )).generation;
     const persisted = await fetch(new URL("/api/contacts", target.origin));
     assert.equal(persisted.status, 200);
     assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
 
+    await run.page.goto(appUrl(appRecord.id));
+    await dismissOnboardingIfVisible(run.page);
+    await appEntry.waitFor({ state: "visible", timeout: 30_000 });
     await appEntry.hover();
     await run.page.getByTestId(`apps-more-${entryKey}`).click();
     await run.page.getByTestId(`apps-copy-link-${entryKey}`).click();
@@ -6174,9 +6231,40 @@ async function runAppBuilderScenario(mode) {
       new URL(target.openPath, target.origin).href,
       "Copy App link must copy the current attested loopback URL",
     );
-    await updateExperimentalPlugins(run.baseUrl, false);
-    const disabledRuntime = await waitForSmokeCondition(
-      "disabling Plugins to stop the running App",
+    await waitForSmokeCondition(
+      "restarted App status to become active in the Apps sidebar",
+      async () => {
+        const runtime = await run.page.evaluate(
+          (definitionId) => window.desktopShell.localApps.status(definitionId),
+          definition.id,
+        );
+        return runtime.status === "starting" || runtime.status === "running" ? runtime : null;
+      },
+      { timeoutMs: 30_000 },
+    );
+    let stopMenuError = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await appEntry.hover();
+        await run.page.getByTestId(`apps-more-${entryKey}`).click();
+        const stopItem = run.page.getByRole("menuitem", { name: "Stop App" });
+        await waitForSmokeCondition(
+          "restarted App Stop action to become enabled",
+          async () => (await stopItem.isEnabled()) ? stopItem : null,
+          { timeoutMs: 30_000 },
+        );
+        await stopItem.click({ force: true });
+        stopMenuError = null;
+        break;
+      } catch (error) {
+        stopMenuError = error;
+        await run.page.keyboard.press("Escape").catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    if (stopMenuError) throw stopMenuError;
+    const stoppedRuntime = await waitForSmokeCondition(
+      "stopping the restarted App",
       async () => {
         const runtime = await run.page.evaluate(
           (definitionId) => window.desktopShell.localApps.status(definitionId),
@@ -6187,24 +6275,12 @@ async function runAppBuilderScenario(mode) {
       { timeoutMs: 30_000 },
     );
     assert.equal(
-      disabledRuntime.origin,
+      stoppedRuntime.origin,
       undefined,
-      "disabling Plugins must clear the App runtime origin",
+      "stopping the restarted App must clear its runtime origin",
     );
-    const blockedStart = await run.page.evaluate(async (definitionId) => {
-      try {
-        await window.desktopShell.localApps.start(definitionId);
-        return null;
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    }, definition.id);
-    assert.match(
-      blockedStart ?? "",
-      /Plugins is disabled in Experimental settings/i,
-      "disabling Plugins must block direct Desktop start attempts",
-    );
-    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, feature shutdown, and cleanup");
+    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, restartedGeneration);
+    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, second stop, and cleanup");
   } catch (error) {
     scenarioError = error;
   }

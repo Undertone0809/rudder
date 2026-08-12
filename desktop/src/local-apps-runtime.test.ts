@@ -21,9 +21,20 @@ import {
 } from "./local-apps-runtime.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/local-app-http-fixture.mjs", import.meta.url));
+const floodFixturePath = fileURLToPath(new URL("./fixtures/local-app-http-flood-fixture.mjs", import.meta.url));
 const wildcardFixturePath = fileURLToPath(new URL("./fixtures/local-app-http-wildcard-fixture.mjs", import.meta.url));
 const watchdogPath = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
+const nativeCapabilities = [
+  "process_spawn",
+  "process_group_cleanup",
+  "parent_eof_cleanup",
+  "listener_owner_attestation",
+  "owner_receipt",
+  "output_order_index",
+  "stdout_relay",
+  "stderr_relay",
+];
 
 async function unusedLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -311,7 +322,13 @@ describe("Desktop Local App runtime", () => {
     "spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition",
     async () => {
       const { registry, definition } = await approvedFixture();
-      const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", maxLogBytes: 256 });
+      const events: Array<{ type: string; monotonicNs: bigint }> = [];
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        maxLogBytes: 256,
+        observeLifecycleEvent: (event) => events.push(event),
+      });
       const [first, second] = await Promise.all([manager.start(definition.id), manager.start(definition.id)]);
       expect(first.generation).toBe(second.generation);
       expect(first.status).toBe("running");
@@ -327,7 +344,10 @@ describe("Desktop Local App runtime", () => {
       const childEnvironment = await fetch(`${first.origin}/env`).then((response) => response.json()) as { path?: string };
       expect(childEnvironment.path?.split(path.delimiter)).toContain(path.dirname(process.execPath));
       expect((await manager.logs(definition.id)).join("\n").length).toBeLessThanOrEqual(256);
+      const stopStartedNs = process.hrtime.bigint();
       await manager.stop(definition.id);
+      expect(events.some((event) => event.type === "stop-accepted"
+        && event.monotonicNs >= stopStartedNs)).toBe(true);
       expect((await manager.status(definition.id)).status).toBe("stopped");
     },
   );
@@ -359,7 +379,7 @@ describe("Desktop Local App runtime", () => {
   );
 
   it("serializes a real start followed immediately by stop for one binding", async () => {
-    const { registry, definition } = await approvedFixture();
+    const { root, registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: "darwin",
@@ -798,7 +818,7 @@ describe("Desktop Local App runtime", () => {
       if (typed.type === "start") {
         queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
       }
-      if (typed.type === "stop") {
+      if (typed.type === "cleanup") {
         queueMicrotask(() => {
           helper.emit("message", { type: "stopped" });
           helper.emit("exit", 0, null);
@@ -821,7 +841,7 @@ describe("Desktop Local App runtime", () => {
     });
 
     await expect(manager.start(definition.id)).rejects.toThrow("readiness");
-    expect(messages).toContainEqual({ type: "stop" });
+    expect(messages).toContainEqual({ type: "cleanup" });
     expect(helper.stdin.end).not.toHaveBeenCalled();
     expect(processPlatform.terminate).not.toHaveBeenCalled();
     await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
@@ -883,7 +903,7 @@ describe("Desktop Local App runtime", () => {
       if (typed.type === "start") {
         queueMicrotask(() => helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881 }));
       }
-      if (typed.type === "stop") {
+      if (typed.type === "cleanup") {
         queueMicrotask(() => helper.emit("message", { type: "stopped" }));
         setTimeout(() => helper.emit("exit", 0, null), 25);
       }
@@ -1263,17 +1283,24 @@ describe("Desktop Local App runtime", () => {
   });
 
   it.skipIf(!nativeHostPath)("runs an approved Local App through the opt-in Rust process host", async () => {
-    const { registry, definition } = await approvedFixture();
+    const { root, registry, definition } = await approvedFixture();
+    const nativeRuntimeRoot = path.join(root, "native-runtime");
+    await mkdir(nativeRuntimeRoot);
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
       nativeProcessHostPath: nativeHostPath,
+      nativeRuntimeRoot,
       useNativeProcessHost: true,
       verifyListenerOwnership: async () => true,
     });
 
     const running = await manager.start(definition.id);
     expect(running.status).toBe("running");
+    expect(running.generation).toBeTruthy();
+    const operationRoot = path.join(nativeRuntimeRoot, running.generation!);
+    await expect(readFile(path.join(operationRoot, "owner-descriptor.json"), "utf8"))
+      .resolves.toContain(`"opaqueOwnerToken":"${running.generation}"`);
     await vi.waitFor(async () => {
       expect(await manager.logs(definition.id)).toEqual(expect.arrayContaining([
         expect.stringContaining("fixture listening"),
@@ -1282,12 +1309,231 @@ describe("Desktop Local App runtime", () => {
 
     await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
     await expect(manager.status(definition.id)).resolves.toMatchObject({ status: "stopped" });
+    const terminal = JSON.parse(await readFile(path.join(operationRoot, "terminal-receipt.json"), "utf8")) as {
+      terminal?: { status?: string; cleanupProven?: boolean };
+    };
+    expect(terminal.terminal).toMatchObject({ status: "succeeded", cleanupProven: true });
+    const outputIndex = (await readFile(path.join(operationRoot, "output-index.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { stream?: string; offset?: number; sha256?: string });
+    expect(outputIndex).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stream: "stdout", offset: 0, sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+    ]));
   });
+
+  it.skipIf(!nativeHostPath || process.platform !== "darwin" || process.arch !== "arm64")(
+    "keeps manager Stop responsive during a 10 MiB/s native Local App log flood",
+    async () => {
+      const { root, registry, definition } = await approvedFixture({ serverFixturePath: floodFixturePath });
+      const nativeRuntimeRoot = path.join(root, "native-runtime");
+      const events: Array<{ type: string; monotonicNs: bigint }> = [];
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: process.platform,
+        nativeProcessHostPath: nativeHostPath,
+        nativeRuntimeRoot,
+        useNativeProcessHost: true,
+        maxLogBytes: 64 * 1024,
+        observeLifecycleEvent: (event) => events.push(event),
+      });
+
+      const running = await manager.start(definition.id);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const stopStartNs = process.hrtime.bigint();
+      await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
+      const terminalNs = process.hrtime.bigint();
+      const stopAccepted = events.find((event) => event.type === "stop-accepted"
+        && event.monotonicNs >= stopStartNs);
+
+      expect(stopAccepted).toBeDefined();
+      expect(Number(stopAccepted!.monotonicNs - stopStartNs) / 1e6).toBeLessThan(250);
+      expect(Number(terminalNs - stopStartNs) / 1e6).toBeLessThan(5_000);
+      expect(Buffer.byteLength((await manager.logs(definition.id)).join("\n"))).toBeLessThanOrEqual(64 * 1024);
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
+      expect(running.generation).toBeTruthy();
+      const operationRoot = path.join(nativeRuntimeRoot, running.generation!);
+      const receipt = JSON.parse(await readFile(path.join(operationRoot, "terminal-receipt.json"), "utf8")) as {
+        terminal?: { cleanupProven?: boolean };
+      };
+      expect(receipt.terminal?.cleanupProven).toBe(true);
+      const index = (await readFile(path.join(operationRoot, "output-index.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { sequence: number; offset: number; length: number; stream: string });
+      expect(index.length).toBeGreaterThan(10);
+      expect(index.every((entry, position) => entry.sequence === position)).toBe(true);
+      const stdoutEntries = index.filter((entry) => entry.stream === "stdout");
+      expect(stdoutEntries.every((entry, position) => position === 0
+        || entry.offset === stdoutEntries[position - 1]!.offset + stdoutEntries[position - 1]!.length)).toBe(true);
+    },
+  );
+
+  it.runIf(process.platform === "darwin" && process.arch === "arm64")(
+    "uses the native host Stop protocol as the manager-level cleanup authority",
+    async () => {
+      const { root, registry, definition } = await approvedFixture();
+      const messages: Array<Record<string, unknown>> = [];
+      const healthServer = createHttpServer((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+      });
+      const native = nativeHostEmitting();
+      native.helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+        const typed = message as Record<string, unknown>;
+        messages.push(typed);
+        if (typed.type === "start") {
+          const protocolVersion = { major: 1, minor: 0 };
+          const requestId = typed.requestId as string;
+          const ownerToken = typed.ownerToken as string;
+          healthServer.listen(Number(typed.port), "127.0.0.1", () => queueMicrotask(() => {
+            native.helper.emit("message", {
+              type: "handshake",
+              protocolVersion,
+              requestId: "bootstrap",
+              capabilities: nativeCapabilities,
+            });
+            native.helper.emit("message", { type: "accepted", port: typed.port, protocolVersion, requestId, ownerToken });
+            native.helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881, protocolVersion, requestId, ownerToken });
+            native.helper.emit("message", { type: "listener-verified", port: typed.port, protocolVersion, requestId, ownerToken });
+          }));
+        } else if (typed.type === "stop") {
+          queueMicrotask(() => {
+            native.helper.emit("message", {
+              type: "stop-accepted",
+              protocolVersion: typed.protocolVersion,
+              requestId: typed.requestId,
+              ownerToken: typed.requestId,
+            });
+            native.helper.emit("message", {
+              type: "app-exit",
+              code: 0,
+              signal: null,
+              protocolVersion: typed.protocolVersion,
+              requestId: typed.requestId,
+              ownerToken: typed.requestId,
+            });
+            native.helper.emit("message", {
+              type: "stopped",
+              protocolVersion: typed.protocolVersion,
+              requestId: typed.requestId,
+              ownerToken: typed.requestId,
+            });
+            native.helper.emit("message", {
+              type: "terminal",
+              status: "succeeded",
+              cleanupProven: true,
+              receiptWritten: true,
+              protocolVersion: typed.protocolVersion,
+              requestId: typed.requestId,
+              ownerToken: typed.requestId,
+            });
+            native.helper.emit("disconnect");
+            native.emitExit(0);
+          });
+        }
+        callback?.(null);
+        return true;
+      });
+      const processPlatform = {
+        platform: "darwin" as const,
+        systemPathEntries: [],
+        terminate: vi.fn(async () => undefined),
+        probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+        verifyListenerOwnership: vi.fn(async () => true),
+      };
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        processPlatform,
+        nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        nativeRuntimeRoot: path.join(root, "native-runtime"),
+        useNativeProcessHost: true,
+        spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
+        verifyListenerOwnership: async () => true,
+      });
+
+      await expect(manager.start(definition.id)).resolves.toMatchObject({ status: "running" });
+      await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
+
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "stop", requestId: expect.any(String) }),
+      ]));
+      expect(processPlatform.terminate).not.toHaveBeenCalled();
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
+      await new Promise<void>((resolve, reject) => healthServer.close((error) => error ? reject(error) : resolve()));
+    },
+  );
+
+  it.runIf(process.platform === "darwin" && process.arch === "arm64")(
+    "keeps native ownership orphaned when manager Stop lacks terminal cleanup proof",
+    async () => {
+      const { root, registry, definition } = await approvedFixture();
+      const healthServer = createHttpServer((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+      });
+      const native = nativeHostEmitting();
+      native.helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+        const typed = message as Record<string, unknown>;
+        if (typed.type === "start") {
+          const protocolVersion = { major: 1, minor: 0 };
+          const requestId = typed.requestId as string;
+          const ownerToken = typed.ownerToken as string;
+          healthServer.listen(Number(typed.port), "127.0.0.1", () => queueMicrotask(() => {
+            native.helper.emit("message", {
+              type: "handshake",
+              protocolVersion,
+              requestId: "bootstrap",
+              capabilities: nativeCapabilities,
+            });
+            native.helper.emit("message", { type: "accepted", port: typed.port, protocolVersion, requestId, ownerToken });
+            native.helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881, protocolVersion, requestId, ownerToken });
+            native.helper.emit("message", { type: "listener-verified", port: typed.port, protocolVersion, requestId, ownerToken });
+          }));
+        }
+        callback?.(null);
+        return true;
+      });
+      const processPlatform = {
+        platform: "darwin" as const,
+        systemPathEntries: [],
+        terminate: vi.fn(async () => undefined),
+        probePersistedRuntime: vi.fn(async () => ({ pid: "alive" as const, processGroup: "alive" as const, listener: "alive" as const })),
+        verifyListenerOwnership: vi.fn(async () => true),
+      };
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        processPlatform,
+        nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        nativeRuntimeRoot: path.join(root, "native-runtime"),
+        useNativeProcessHost: true,
+        spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
+        verifyListenerOwnership: async () => true,
+        cleanupTimeoutMs: 20,
+      });
+
+      await expect(manager.start(definition.id)).resolves.toMatchObject({ status: "running" });
+      await expect(manager.stop(definition.id)).rejects.toThrow("process-host cleanup could not be verified");
+
+      expect(processPlatform.terminate).not.toHaveBeenCalled();
+      await expect(manager.status(definition.id)).resolves.toMatchObject({ status: "orphaned_unverified" });
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "orphaned_unverified",
+        pid: 88_881,
+        pgid: 88_881,
+      });
+      native.helper.emit("disconnect");
+      native.emitExit(1);
+      await new Promise<void>((resolve, reject) => healthServer.close((error) => error ? reject(error) : resolve()));
+    },
+  );
 
   it.skipIf(!nativeHostPath || process.platform !== "darwin" || process.arch !== "arm64")(
     "proves Rust process-host stop kills a surviving Local App descendant",
     async () => {
       const root = await mkdtemp(path.join(tmpdir(), "rudder-native-process-host-descendant-"));
+      const nativeRuntimeRoot = path.join(root, "native-runtime");
+      await mkdir(nativeRuntimeRoot);
       const descendantPath = path.join(root, "descendant.pid");
       const helper = spawnNativeProcessHost(nativeHostPath!, { cwd: root });
       const messages: Array<{ type?: unknown; pid?: unknown; pgid?: unknown }> = [];
@@ -1305,6 +1551,8 @@ describe("Desktop Local App runtime", () => {
         cwd: root,
         env: {},
         ownerToken: "descendant-stop",
+        port: await unusedLoopbackPort(),
+        runtimeRoot: nativeRuntimeRoot,
       });
       await vi.waitFor(async () => {
         expect((await readFile(descendantPath, "utf8")).trim()).toMatch(/^\d+$/u);
@@ -1334,6 +1582,8 @@ describe("Desktop Local App runtime", () => {
     "fails closed when a Local App exits while leaving a descendant",
     async () => {
       const root = await mkdtemp(path.join(tmpdir(), "rudder-native-process-host-natural-exit-"));
+      const nativeRuntimeRoot = path.join(root, "native-runtime");
+      await mkdir(nativeRuntimeRoot);
       const descendantPath = path.join(root, "descendant.pid");
       const helper = spawnNativeProcessHost(nativeHostPath!, { cwd: root });
       const messages: Array<{ type?: unknown; errorCode?: unknown }> = [];
@@ -1351,6 +1601,8 @@ describe("Desktop Local App runtime", () => {
         cwd: root,
         env: {},
         ownerToken: "natural-exit",
+        port: await unusedLoopbackPort(),
+        runtimeRoot: nativeRuntimeRoot,
       });
       await vi.waitFor(async () => {
         expect((await readFile(descendantPath, "utf8")).trim()).toMatch(/^\d+$/u);
@@ -1371,7 +1623,7 @@ describe("Desktop Local App runtime", () => {
   it.runIf(process.platform === "darwin" && process.arch === "arm64")(
     "records failed native child exits as failed when cleanup is proven",
     async () => {
-      const { registry, definition } = await approvedFixture();
+      const { root, registry, definition } = await approvedFixture();
       const generationMessages: Array<Record<string, unknown>> = [];
       const healthServer = createHttpServer((_request, response) => {
         response.writeHead(200, { "content-type": "application/json" });
@@ -1386,15 +1638,11 @@ describe("Desktop Local App runtime", () => {
             type: "handshake",
             protocolVersion,
             requestId: "bootstrap",
-            capabilities: [
-              "process_spawn",
-              "process_group_cleanup",
-              "parent_eof_cleanup",
-              "stdout_relay",
-              "stderr_relay",
-            ],
+            capabilities: nativeCapabilities,
           });
+          helper.emit("message", { type: "accepted", port: message.port, protocolVersion, requestId, ownerToken });
           helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881, protocolVersion, requestId, ownerToken });
+          helper.emit("message", { type: "listener-verified", port: message.port, protocolVersion, requestId, ownerToken });
         }));
         generationMessages.push({ ownerToken, requestId });
       });
@@ -1402,6 +1650,7 @@ describe("Desktop Local App runtime", () => {
         registry,
         platform: "darwin",
         nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        nativeRuntimeRoot: path.join(root, "native-runtime"),
         useNativeProcessHost: true,
         spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
         verifyListenerOwnership: async () => true,
@@ -1428,6 +1677,7 @@ describe("Desktop Local App runtime", () => {
         status: "failed",
         errorCode: "child_exit",
         cleanupProven: true,
+        receiptWritten: true,
         protocolVersion: { major: 1, minor: 0 },
         requestId: identity.requestId,
         ownerToken: identity.ownerToken,
@@ -1449,7 +1699,7 @@ describe("Desktop Local App runtime", () => {
   it.runIf(process.platform === "darwin" && process.arch === "arm64")(
     "keeps native cleanup untrusted after a post-start lifecycle identity violation",
     async () => {
-      const { registry, definition } = await approvedFixture();
+      const { root, registry, definition } = await approvedFixture();
       const healthServer = createHttpServer((_request, response) => {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({ ok: true }));
@@ -1461,13 +1711,21 @@ describe("Desktop Local App runtime", () => {
             type: "handshake",
             protocolVersion,
             requestId: "bootstrap",
-            capabilities: [
-              "process_spawn",
-              "process_group_cleanup",
-              "parent_eof_cleanup",
-              "stdout_relay",
-              "stderr_relay",
-            ],
+            capabilities: nativeCapabilities,
+          });
+          helper.emit("message", {
+            type: "accepted",
+            port: message.port,
+            protocolVersion,
+            requestId: message.requestId,
+            ownerToken: message.ownerToken,
+          });
+          helper.emit("message", {
+            type: "listener-verified",
+            port: message.port,
+            protocolVersion,
+            requestId: message.requestId,
+            ownerToken: message.ownerToken,
           });
           helper.emit("message", {
             type: "spawned",
@@ -1477,50 +1735,31 @@ describe("Desktop Local App runtime", () => {
             requestId: message.requestId,
             ownerToken: message.ownerToken,
           });
+          native.emitExit(1);
+          helper.emit("disconnect");
         }));
       });
+      const processPlatform = {
+        platform: "darwin" as const,
+        systemPathEntries: [],
+        terminate: vi.fn(async () => undefined),
+        probePersistedRuntime: vi.fn(async () => ({ pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const })),
+        verifyListenerOwnership: vi.fn(async () => true),
+      };
       const manager = new LocalAppRuntimeManager({
         registry,
-        platform: "darwin",
+        processPlatform,
         nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        nativeRuntimeRoot: path.join(root, "native-runtime"),
         useNativeProcessHost: true,
         spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
         verifyListenerOwnership: async () => true,
-        processPlatform: {
-          platform: "darwin",
-          systemPathEntries: [],
-          terminate: vi.fn(async () => undefined),
-          probePersistedRuntime: vi.fn(async () => ({ pid: "dead", processGroup: "dead", listener: "dead" })),
-          verifyListenerOwnership: vi.fn(async () => true),
-        },
       });
-      await expect(manager.start(definition.id)).resolves.toMatchObject({ status: "running" });
-      native.emitExit(0);
-      native.helper.emit("message", {
-        type: "app-exit",
-        code: 0,
-        signal: null,
-        protocolVersion: { major: 1, minor: 0 },
-        requestId: "wrong-generation",
-        ownerToken: "wrong-owner",
-      });
-      native.helper.emit("message", {
-        type: "terminal",
-        status: "succeeded",
-        cleanupProven: true,
-        protocolVersion: { major: 1, minor: 0 },
-        requestId: "wrong-generation",
-        ownerToken: "wrong-owner",
-      });
-      native.emitExit(0);
-      native.helper.emit("disconnect");
-      await vi.waitFor(async () => {
-        expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
-      });
+      await expect(manager.start(definition.id)).rejects.toThrow("listener frame is invalid or out of order");
+      expect(processPlatform.terminate).toHaveBeenCalledOnce();
+      expect(processPlatform.terminate).toHaveBeenCalledWith(88_881);
       await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
         status: "orphaned_unverified",
-        pid: 88_881,
-        pgid: 88_881,
       });
       await new Promise<void>((resolve, reject) => healthServer.close((error) => error ? reject(error) : resolve()));
     },

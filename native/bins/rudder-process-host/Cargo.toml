@@ -1,10 +1,11 @@
 [package]
 name = "rudder-process-host"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
 libc = "0.2"
 rudder-native-protocol = { path = "../../crates/native-protocol" }
 serde_json = "1.0"
+sha2 = "0.10"

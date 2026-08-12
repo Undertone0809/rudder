@@ -20,6 +20,7 @@ let appOwnerId = null;
 let appOwnerCreatedAt = null;
 let appIdentityPromise = null;
 let cleanupPromise = null;
+let stopAccepted = false;
 
 function send(message) {
   if (typeof process.send === "function" && process.connected) process.send(message);
@@ -69,8 +70,15 @@ process.once("SIGTERM", () => { void cleanupAndExit(); });
 process.once("SIGINT", () => { void cleanupAndExit(); });
 
 process.on("message", (message) => {
-  if (message?.type === "stop") {
+  if (message?.type === "cleanup") {
     void cleanupAndExit();
+    return;
+  }
+  if (message?.type === "stop") {
+    if (!stopAccepted) {
+      stopAccepted = true;
+      send({ type: "stop-accepted" });
+    }
     return;
   }
   if (appProcess || !isValidLocalAppWatchdogConfig(message)) {

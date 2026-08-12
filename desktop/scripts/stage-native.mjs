@@ -30,6 +30,26 @@ function run(command, args, cwd) {
   });
 }
 
+function capture(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal) return reject(new Error(`${command} exited with signal ${signal}`));
+      if (code !== 0) return reject(new Error(`${command} exited with code ${code ?? 1}: ${stderr.trim()}`));
+      resolve(stdout);
+    });
+  });
+}
+
 async function main() {
   if (!target) {
     throw new Error(`Rust native process host has no supported target mapping for ${process.platform}/${targetArch}`);
@@ -43,6 +63,17 @@ async function main() {
     ? path.join(nativeRoot, "target", requestedTarget, "release")
     : path.join(nativeRoot, "target", "release");
   const sourcePath = path.join(profileRoot, binaryName);
+  const desktopManifest = JSON.parse(await fs.readFile(path.join(desktopRoot, "package.json"), "utf8"));
+  const expectedVersion = desktopManifest.version;
+  if (typeof expectedVersion !== "string" || !expectedVersion) {
+    throw new Error("Desktop package version is missing");
+  }
+  const nativeVersion = (await capture(sourcePath, ["--version"], repoRoot)).trim();
+  if (nativeVersion !== `rudder-process-host ${expectedVersion}`) {
+    throw new Error(
+      `Rust native process host version mismatch: expected ${expectedVersion}, got ${nativeVersion || "<empty>"}`,
+    );
+  }
   const targetRoot = path.join(stagedNativeRoot, target);
   const destinationPath = path.join(targetRoot, binaryName);
   await fs.access(sourcePath);
@@ -50,7 +81,7 @@ async function main() {
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.copyFile(sourcePath, destinationPath);
   if (process.platform !== "win32") await fs.chmod(destinationPath, 0o755);
-  console.log(`[desktop:stage-native] staged ${target}/${binaryName}`);
+  console.log(`[desktop:stage-native] staged ${target}/${binaryName} v${expectedVersion}`);
 }
 
 void main().catch((error) => {

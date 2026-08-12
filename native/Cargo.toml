@@ -3,4 +3,10 @@ resolver = "2"
 members = [
   "crates/native-protocol",
   "bins/rudder-process-host",
+  "bins/rudder-process-tree-sampler",
 ]
+
+[workspace.package]
+version = "0.7.4"
+edition = "2024"
+publish = false

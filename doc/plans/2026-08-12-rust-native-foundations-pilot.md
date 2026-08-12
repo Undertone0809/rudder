@@ -477,6 +477,21 @@ The packaged verifier must:
 - run a no-network protocol fixture from a copied temporary App;
 - prove ZIP/archive publication preserves executable mode where relevant.
 
+### Release version alignment
+
+Every Rudder-owned Rust crate and binary inherits one version from
+`native/Cargo.toml` through `[workspace.package]`. That workspace version
+must equal the normal Rudder release version used by the public packages and
+Desktop artifact; Rust packages do not maintain an independent `0.x` line.
+
+Both normal next-version preparation and canary/stable release packaging update
+the Cargo workspace through the same release package-map command that updates
+the JavaScript packages. Release and packaged verification fail closed when
+the Cargo workspace version is absent or differs from the Desktop/server
+version. Acceptance packets record the synchronized product version in
+addition to binary hashes and protocol versions; protocol compatibility remains
+independent from the product release version.
+
 The current portable macOS `rudder start` path attempts to recursively remove
 quarantine from `Rudder.app`, but it only warns if that command fails. Therefore
 the initial claim is limited to the exact unsigned portable-alpha artifact
@@ -525,6 +540,8 @@ return failure; do not run both implementations against the same target.
   channel names and whose tests verify fd/handle closure independently.
 - Add target-aware binary resolution and capability handshake in TypeScript.
 - Add Desktop staging and packaged verification.
+- Make all Rust workspace packages inherit and verify the normal Rudder release
+  version through the existing release version workflow.
 - Add per-capability activation and diagnostics without changing user-visible
   behavior.
 - Record binary name, version, target, SHA-256, protocol, capability, and
@@ -556,6 +573,8 @@ it owns a product operation.
   succeeded and then executes the hashed helper from the installed App path.
 - Missing, wrong-architecture, wrong-version, oversized-frame, and corrupt
   binary cases fail before side effects.
+- Normal, canary, and stable version preparation keep Cargo metadata aligned
+  with the matching Rudder Desktop/public package version.
 
 ### Slice 1: Local App process host
 
@@ -1374,9 +1393,10 @@ real public workflow E2E.
 Before handoff of each implementation candidate:
 
 ```sh
-cargo fmt --check --manifest-path native/Cargo.toml
+cargo fmt --manifest-path native/Cargo.toml --all --check
 cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path native/Cargo.toml --all-targets
+pnpm exec vitest run scripts/release-package-map.test.mjs
 pnpm lint
 pnpm -r typecheck
 pnpm test:run
@@ -1489,22 +1509,24 @@ The pilot is complete only when:
 
 1. Every admitted slice has an exact source/binary/build/runtime acceptance
    packet.
-2. macOS arm64 packaged public workflows pass; other platforms are labeled no
+2. Every Rudder-owned Rust package reports the same version as the normal
+   Rudder release represented by that candidate.
+3. macOS arm64 packaged public workflows pass; other platforms are labeled no
    stronger than their real evidence.
-3. Node/Rust correctness and pressure benchmarks use comparable workloads and
+4. Node/Rust correctness and pressure benchmarks use comparable workloads and
    report process-tree RSS, latency, bytes, and reliability.
-4. `rudder-evals` stores the final `native_ab` campaign through immutable
+5. `rudder-evals` stores the final `native_ab` campaign through immutable
    packets, registry, API, reports, and Dashboard.
-5. The selected Rust candidate independently passes the blocking `live_eval`
+6. The selected Rust candidate independently passes the blocking `live_eval`
    cases and relevant real-runtime/Desktop acceptance.
-6. No new organization, permission, secret, path, evidence, terminal-state, or
+7. No new organization, permission, secret, path, evidence, terminal-state, or
    recovery regression remains.
-7. Each promoted slice meets its declared performance or reliability gate;
+8. Each promoted slice meets its declared performance or reliability gate;
    unsupported benefit claims are removed.
-8. Rollback has been exercised against the exact packaged candidate.
-9. Reviewer acceptance and verifier PASS apply to the same unchanged
+9. Rollback has been exercised against the exact packaged candidate.
+10. Reviewer acceptance and verifier PASS apply to the same unchanged
    candidate.
-10. Product Logic Registry changes, if any became necessary, are proposed and
+11. Product Logic Registry changes, if any became necessary, are proposed and
     explicitly approved separately before editing `doc/product/**`.
 
 ## Phase-Gated Implementation Decisions

@@ -1,11 +1,9 @@
 [package]
-name = "rudder-native-protocol"
+name = "rudder-process-tree-sampler"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-
-[dev-dependencies]
+libc = "0.2"
 serde_json = "1.0"
