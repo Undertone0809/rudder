@@ -58,6 +58,24 @@ describe("identity credential vault", () => {
     expect(fs.statSync(credentialPath).mode & 0o777).toBe(0o600);
   });
 
+  it("restores an encrypted credential after the vault is recreated", () => {
+    const credentialPath = temporaryCredentialPath();
+    const safeStorage = fakeSafeStorage();
+    createIdentityCredentialVault({
+      safeStorage,
+      platform: "darwin",
+      credentialPath,
+    }).write(credential);
+
+    const restartedVault = createIdentityCredentialVault({
+      safeStorage,
+      platform: "darwin",
+      credentialPath,
+    });
+
+    expect(restartedVault.read()).toEqual(credential);
+  });
+
   it("clears the durable credential without exposing its value", () => {
     const credentialPath = temporaryCredentialPath();
     const vault = createIdentityCredentialVault({

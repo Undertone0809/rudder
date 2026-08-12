@@ -23,8 +23,7 @@ export function desktopIdentityMemoryFallbackAllowed(options: {
   storageBackend: string;
 }): boolean {
   return !options.isPackaged
-    || options.platform === "linux"
-    || (options.platform === "darwin" && options.storageBackend === "mac_memory_only");
+    || options.platform === "linux";
 }
 
 /**
