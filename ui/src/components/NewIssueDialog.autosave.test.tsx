@@ -106,6 +106,15 @@ vi.mock("@/context/DialogContext", () => ({
   }),
 }));
 
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({
+    locale: "en",
+    t: (key: string) => key === "newIssue.agentRequest.accepted"
+      ? "Sent to Agent. You'll be notified in Inbox when it's done."
+      : key,
+  }),
+}));
+
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ pathname: "/issues", search: "" }),
   useNavigate: () => vi.fn(),
@@ -124,7 +133,20 @@ vi.mock("@/context/ToastContext", () => ({
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
+  Dialog: ({
+    open,
+    onOpenChange,
+    children,
+  }: {
+    open: boolean;
+    onOpenChange?: (open: boolean) => void;
+    children: ReactNode;
+  }) => (open ? (
+    <div>
+      {children}
+      <button type="button" aria-label="Dismiss new issue dialog" onClick={() => onOpenChange?.(false)} />
+    </div>
+  ) : null),
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -136,8 +158,27 @@ vi.mock("@/components/ui/popover", () => ({
 }));
 
 vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ value, onChange }: { value?: string; onChange?: (value: string) => void }) => (
-    <textarea aria-label="Description" value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
+  MarkdownEditor: ({
+    ariaLabel,
+    imageUploadHandler,
+    readOnly,
+    value,
+    onChange,
+  }: {
+    ariaLabel?: string;
+    imageUploadHandler?: (file: File) => Promise<string>;
+    readOnly?: boolean;
+    value?: string;
+    onChange?: (value: string) => void;
+  }) => (
+    <textarea
+      aria-label={ariaLabel ?? "Description"}
+      data-image-upload-enabled={imageUploadHandler ? "true" : undefined}
+      data-read-only={readOnly ? "true" : undefined}
+      readOnly={readOnly}
+      value={value ?? ""}
+      onChange={(event) => onChange?.(event.target.value)}
+    />
   ),
 }));
 
@@ -326,7 +367,7 @@ describe("NewIssueDialog autosave", () => {
     });
 
     const instruction = document.querySelector<HTMLTextAreaElement>(
-      '[data-slot="agent-issue-instruction"]',
+      '[aria-label="Instruction"]',
     );
     expect(instruction).not.toBeNull();
     await fillTextarea(instruction!, "Create an issue for the onboarding regression.");
@@ -359,7 +400,7 @@ describe("NewIssueDialog autosave", () => {
     expect(document.body.textContent).not.toContain("Save Draft");
   });
 
-  it("shows the exact accepted-request toast and closes after a deferred response", async () => {
+  it("uses the shared Markdown editor for Agent instructions and shows the localized accepted-request toast", async () => {
     mockState.agentMutationOutcome = "deferred";
     mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
 
@@ -367,8 +408,10 @@ describe("NewIssueDialog autosave", () => {
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
+    const instructionEditor = document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]');
+    expect(instructionEditor?.dataset.imageUploadEnabled).toBe("true");
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      instructionEditor!,
       "Create the deferred issue.",
     );
     await act(async () => {
@@ -378,7 +421,7 @@ describe("NewIssueDialog autosave", () => {
     });
 
     expect(mockState.pushToast).toHaveBeenCalledWith({
-      title: "已发送给 Agent，完成后会在 Inbox 通知你",
+      title: "Sent to Agent. You'll be notified in Inbox when it's done.",
       tone: "success",
     });
     expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
@@ -393,7 +436,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
       "Create the pending issue.",
     );
     const sendButton = [...document.querySelectorAll("button")]
@@ -405,11 +448,62 @@ describe("NewIssueDialog autosave", () => {
     });
 
     expect(sendButton?.disabled).toBe(true);
+    const pendingInstruction = document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]');
+    expect(pendingInstruction?.readOnly).toBe(true);
+    expect(pendingInstruction?.dataset.imageUploadEnabled).toBeUndefined();
+    await fillTextarea(pendingInstruction!, "A changed request must not replace the submitted instruction.");
     expect(mockState.mutationCalls).toHaveLength(1);
     await act(async () => {
       sendButton?.click();
     });
     expect(mockState.mutationCalls).toHaveLength(1);
+    expect(mockState.mutationCalls[0]?.variables.instruction).toBe("Create the pending issue.");
+  });
+
+  it("discards Agent-only state on close and returns to a clean Manual mode", async () => {
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
+      "This Agent request should be discarded.",
+    );
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close new issue dialog"]')?.click();
+    });
+
+    expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="true"]')?.textContent).toBe("Manual");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')?.value).toBe("");
+  });
+
+  it("discards Agent-only state through the Dialog dismissal path", async () => {
+    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+
+    await renderDialog();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    await fillTextarea(
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
+      "Dismiss this Agent request.",
+    );
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Dismiss new issue dialog"]')?.click();
+    });
+
+    expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="true"]')?.textContent).toBe("Manual");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
+    });
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')?.value).toBe("");
   });
 
   it("keeps the dialog open and exposes a failed Agent response", async () => {
@@ -421,7 +515,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
       "Create the failed issue.",
     );
     await act(async () => {
@@ -452,7 +546,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[data-slot="agent-issue-instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
       "Create the retryable issue.",
     );
 

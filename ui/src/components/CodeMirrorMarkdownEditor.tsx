@@ -1071,6 +1071,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const selectMentionRef = useRef<(option: MentionOption) => void>(() => undefined);
   const setPreviewFocusRef = useRef<((view: EditorView, focused: boolean) => void) | null>(null);
   const lineSeparatorCompartmentRef = useRef<Compartment | null>(null);
+  const readOnlyCompartmentRef = useRef<Compartment | null>(null);
   const lineSeparatorRef = useRef(sourceLineSeparator(value));
   const mountedRef = useRef(false);
   const markdownBlockHoverRef = useRef<MarkdownBlockHoverState | null>(null);
@@ -1247,6 +1248,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   })();
 
   const handleMarkdownBlockAction = useCallback((action: MarkdownBlockAction) => {
+    if (propsRef.current.readOnly) return;
     const view = viewRef.current;
     const hover = markdownBlockHoverRef.current;
     if (!view || !hover) return;
@@ -1273,6 +1275,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, []);
 
   const handleTableCellCommit = useCallback((commit: MarkdownTableCellCommit) => {
+    if (propsRef.current.readOnly) return;
     const view = viewRef.current;
     if (!view) return;
     const from = Math.max(0, Math.min(view.state.doc.length, commit.from));
@@ -1375,6 +1378,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, [setActiveMentionIndex]);
 
   const selectMention = useCallback((option: MentionOption) => {
+    if (propsRef.current.readOnly) return;
     const view = viewRef.current;
     const state = mentionStateRef.current;
     if (!view || !state) return;
@@ -1496,7 +1500,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     },
     insertTextAtSelection: (text: string) => {
       const view = viewRef.current;
-      if (!view) return false;
+      if (!view || propsRef.current.readOnly) return false;
       view.dispatch(view.state.replaceSelection(text));
       view.focus();
       setPreviewFocusRef.current?.(view, true);
@@ -1508,11 +1512,11 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     },
     undo: () => {
       const view = viewRef.current;
-      return view ? undo(view) : false;
+      return view && !propsRef.current.readOnly ? undo(view) : false;
     },
     redo: () => {
       const view = viewRef.current;
-      return view ? redo(view) : false;
+      return view && !propsRef.current.readOnly ? redo(view) : false;
     },
     canUndo: () => {
       const view = viewRef.current;
@@ -1566,10 +1570,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     const setPreviewPointerSelection = StateEffect.define<boolean>();
     const lineSeparatorCompartment = new Compartment();
     lineSeparatorCompartmentRef.current = lineSeparatorCompartment;
+    const readOnlyCompartment = new Compartment();
+    readOnlyCompartmentRef.current = readOnlyCompartment;
     setPreviewFocusRef.current = (view, focused) => {
       view.dispatch({ effects: setPreviewFocus.of(focused) });
     };
     const activateBlock = (block: MarkdownPreviewBlock, view: EditorView) => {
+      if (propsRef.current.readOnly) return;
       view.focus();
       view.dispatch({
         selection: EditorSelection.cursor(block.from),
@@ -1705,6 +1712,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     });
 
     const handleImageUploads = async (files: File[], view: EditorView, from: number, to: number) => {
+      if (propsRef.current.readOnly) return;
       const upload = propsRef.current.imageUploadHandler;
       if (!upload || files.length === 0) return;
       const requestId = ++imageUploadRequestIdRef.current;
@@ -1720,6 +1728,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       pendingImageUploadsRef.current.delete(requestId);
       if (
         !pending
+        || propsRef.current.readOnly
         || viewRef.current !== view
         || view.state.sliceDoc(pending.from, pending.to) !== pending.expectedSource
       ) {
@@ -1749,6 +1758,10 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     };
 
     const handleSmartPaste = (event: ClipboardEvent, view: EditorView) => {
+      if (propsRef.current.readOnly) {
+        event.preventDefault();
+        return true;
+      }
       const imageFiles = clipboardImageFiles(event.clipboardData);
       if (imageFiles.length > 0 && propsRef.current.imageUploadHandler) {
         event.preventDefault();
@@ -1862,6 +1875,10 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       lineSeparatorCompartment.of(
         EditorState.lineSeparator.of(lineSeparatorRef.current),
       ),
+      readOnlyCompartment.of([
+        EditorState.readOnly.of(Boolean(propsRef.current.readOnly)),
+        EditorView.editable.of(!propsRef.current.readOnly),
+      ]),
       EditorView.atomicRanges.of((view) => (
         view.state.field(previewField).atomic
       )),
@@ -2123,6 +2140,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         },
         paste: handleSmartPaste,
         dragover: (event) => {
+          if (propsRef.current.readOnly) return false;
           if (
             propsRef.current.imageUploadHandler
             && Array.from(event.dataTransfer?.items ?? []).some((item) => (
@@ -2135,6 +2153,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return false;
         },
         drop: (event, view) => {
+          if (propsRef.current.readOnly) return false;
           const files = Array.from(event.dataTransfer?.files ?? [])
             .filter((candidate) => candidate.type.startsWith("image/"));
           if (files.length === 0 || !propsRef.current.imageUploadHandler) return false;
@@ -2206,6 +2225,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       viewRef.current = null;
       setPreviewFocusRef.current = null;
       lineSeparatorCompartmentRef.current = null;
+      readOnlyCompartmentRef.current = null;
       testEditorViews.delete(rootElement);
       view.destroy();
     };
@@ -2243,10 +2263,31 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     });
   }, [value]);
 
+  useEffect(() => {
+    const view = viewRef.current;
+    const readOnlyCompartment = readOnlyCompartmentRef.current;
+    if (!view || !readOnlyCompartment) return;
+    if (props.readOnly) {
+      pendingTitlesRef.current.clear();
+      pendingImageUploadsRef.current.clear();
+      mentionStateRef.current = null;
+      dismissedMentionStateRef.current = null;
+      setMentionState(null);
+      closeMarkdownBlockHover();
+    }
+    view.dispatch({
+      effects: readOnlyCompartment.reconfigure([
+        EditorState.readOnly.of(Boolean(props.readOnly)),
+        EditorView.editable.of(!props.readOnly),
+      ]),
+    });
+  }, [closeMarkdownBlockHover, props.readOnly]);
+
   return (
     <div
       ref={rootRef}
       data-editor-engine="codemirror-live-preview"
+      data-read-only={props.readOnly ? "true" : undefined}
       onMouseMove={handleMarkdownEditorMouseMove}
       onMouseLeave={scheduleMarkdownBlockClose}
       className={cn(

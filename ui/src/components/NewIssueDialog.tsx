@@ -6,6 +6,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { useI18n } from "@/context/I18nContext";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
@@ -20,8 +21,6 @@ import {
   FileText,
   ListTree,
   Loader2,
-  Maximize2,
-  Minimize2,
   Minus,
   MoreHorizontal,
   Paperclip,
@@ -214,6 +213,7 @@ export function NewIssueDialog() {
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
@@ -234,7 +234,6 @@ export function NewIssueDialog() {
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
   const [assigneeThinkingEffort, setAssigneeThinkingEffort] = useState("");
   const [assigneeChrome, setAssigneeChrome] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
@@ -258,6 +257,7 @@ export function NewIssueDialog() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  const agentInstructionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -561,7 +561,7 @@ export function NewIssueDialog() {
       clearIssueAutosave();
       deleteIssueDraft(activeSavedIssueDraftId);
       pushToast({
-        title: "已发送给 Agent，完成后会在 Inbox 通知你",
+        title: t("newIssue.agentRequest.accepted"),
         tone: "success",
       });
       reset();
@@ -831,7 +831,6 @@ export function NewIssueDialog() {
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
-    setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
@@ -844,10 +843,17 @@ export function NewIssueDialog() {
 
   function handleCloseNewIssue() {
     flushPendingDraftSave();
+    setCreationMode("manual");
+    setAgentCreationAgentId("");
+    setAgentInstruction("");
+    setDocumentSessionId((current) => current + 1);
+    agentIssueIdempotencyKeyRef.current = null;
+    agentIssueSubmissionInFlightRef.current = false;
     closeNewIssue();
   }
 
   function handleCompanyChange(orgId: string) {
+    if (isCreatingOrRedirecting) return;
     if (orgId === effectiveCompanyId) return;
     setDialogCompanyId(orgId);
     setAssigneeValue("");
@@ -1286,10 +1292,7 @@ export function NewIssueDialog() {
         showCloseButton={false}
         aria-describedby={undefined}
         className={cn(
-          "motion-new-issue-dialog p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)]",
-          expanded
-            ? "sm:max-w-[1040px]"
-            : "sm:max-w-[920px]",
+          "motion-new-issue-dialog p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)] sm:max-w-[920px]",
           redirectingIssueRef && "motion-new-issue-dialog--created",
         )}
         data-redirecting={redirectingIssueRef ? "true" : undefined}
@@ -1319,7 +1322,7 @@ export function NewIssueDialog() {
         <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
         <div className="flex items-center justify-center border-b border-border/60 px-4 py-2 shrink-0">
           <div
-            className="inline-flex items-center rounded-md border border-border bg-muted/30 p-0.5"
+            className="grid h-8 w-40 grid-cols-2 overflow-hidden rounded-lg border border-border bg-muted/30 p-0.5"
             role="tablist"
             aria-label="Issue creation mode"
           >
@@ -1330,7 +1333,7 @@ export function NewIssueDialog() {
                 role="tab"
                 aria-selected={creationMode === mode}
                 className={cn(
-                  "rounded px-3 py-1 text-xs font-medium transition-colors",
+                  "flex h-7 min-w-0 items-center justify-center rounded-[6px] px-3 text-xs font-medium transition-colors",
                   creationMode === mode
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
@@ -1360,8 +1363,9 @@ export function NewIssueDialog() {
             <Popover open={companyOpen} onOpenChange={setCompanyOpen}>
               <PopoverTrigger asChild>
                 <button
+                  disabled={isCreatingOrRedirecting}
                   className={cn(
-                    "px-1.5 py-0.5 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity",
+                    "px-1.5 py-0.5 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity disabled:cursor-wait disabled:opacity-60",
                     !dialogCompany?.brandColor && "bg-muted",
                   )}
                   style={
@@ -1418,15 +1422,7 @@ export function NewIssueDialog() {
               variant="ghost"
               size="icon-xs"
               className="text-muted-foreground"
-              onClick={() => setExpanded(!expanded)}
-              disabled={isCreatingOrRedirecting}
-            >
-              {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
+              aria-label="Close new issue dialog"
               onClick={handleCloseNewIssue}
               disabled={isCreatingOrRedirecting}
             >
@@ -1453,60 +1449,49 @@ export function NewIssueDialog() {
         ) : null}
 
         {creationMode === "agent" ? (
-          <div className="min-h-0 overflow-y-auto px-4 py-5">
-            <div className="mx-auto w-full max-w-2xl space-y-5">
-              <div className="space-y-1.5">
-                <div className="text-xs font-medium text-muted-foreground">Agent</div>
-                <InlineEntitySelector
-                  value={agentCreationAgentId}
-                  options={agentCreationOptions}
-                  placeholder="Select an Agent"
-                  noneLabel="Select an Agent"
-                  searchPlaceholder="Search Agents..."
-                  emptyMessage="No callable Agents found."
-                  variant="field"
-                  className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                  disablePortal
-                  onChange={(value) => {
-                    setAgentCreationAgentId(value);
-                    if (value) trackRecentAssignee(value);
-                  }}
-                  renderTriggerValue={(option) =>
-                    option && agentCreationAgent ? (
-                      <AgentMenuLabel agent={agentCreationAgent} agentAvatarStyle="bare" />
-                    ) : (
-                      <span className="text-muted-foreground">Select an Agent</span>
-                    )
-                  }
-                  renderOption={(option) => {
-                    if (!option.id) return <span className="truncate">{option.label}</span>;
-                    const agent = (agents ?? []).find((candidate) => candidate.id === option.id);
-                    return agent
-                      ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
-                      : <span className="truncate">{option.label}</span>;
-                  }}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground" htmlFor="agent-issue-instruction">
-                  Instruction
-                </label>
-                <textarea
-                  id="agent-issue-instruction"
-                  data-slot="agent-issue-instruction"
-                  className="min-h-36 w-full resize-y rounded-md border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
-                  placeholder="Describe the Issue you want the Agent to create..."
-                  value={agentInstruction}
-                  onChange={(event) => setAgentInstruction(event.target.value)}
-                  readOnly={isCreatingOrRedirecting}
-                  autoFocus
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <fieldset
+            data-slot="agent-issue-composer"
+            className="m-0 flex min-h-[360px] min-w-0 flex-1 flex-col border-0 p-0 disabled:cursor-wait"
+            disabled={isCreatingOrRedirecting}
+          >
+            <div className="shrink-0 px-4 pb-3 pt-4">
+              <div className={cn("grid grid-cols-1 gap-2", goalsEnabled ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
                 <div className="min-w-0 space-y-1">
-                  <div className="text-[11px] font-medium text-muted-foreground">Project context</div>
+                  <div className="text-[11px] font-medium text-muted-foreground">Agent</div>
+                  <InlineEntitySelector
+                    value={agentCreationAgentId}
+                    options={agentCreationOptions}
+                    placeholder="Select an Agent"
+                    noneLabel="Select an Agent"
+                    searchPlaceholder="Search Agents..."
+                    emptyMessage="No callable Agents found."
+                    variant="field"
+                    className={ISSUE_METADATA_SELECTOR_CLASSNAME}
+                    disablePortal
+                    onConfirm={() => agentInstructionEditorRef.current?.focus()}
+                    onChange={(value) => {
+                      if (isCreatingOrRedirecting) return;
+                      setAgentCreationAgentId(value);
+                      if (value) trackRecentAssignee(value);
+                    }}
+                    renderTriggerValue={(option) =>
+                      option && agentCreationAgent ? (
+                        <AgentMenuLabel agent={agentCreationAgent} agentAvatarStyle="bare" />
+                      ) : (
+                        <span className="text-muted-foreground">Select an Agent</span>
+                      )
+                    }
+                    renderOption={(option) => {
+                      if (!option.id) return <span className="truncate">{option.label}</span>;
+                      const agent = (agents ?? []).find((candidate) => candidate.id === option.id);
+                      return agent
+                        ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
+                        : <span className="truncate">{option.label}</span>;
+                    }}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <div className="text-[11px] font-medium text-muted-foreground">Project</div>
                   <InlineEntitySelector
                     ref={projectSelectorRef}
                     value={projectId}
@@ -1518,7 +1503,9 @@ export function NewIssueDialog() {
                     emptyMessage="No projects found."
                     variant="field"
                     className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                    onChange={handleProjectChange}
+                    onChange={(value) => {
+                      if (!isCreatingOrRedirecting) handleProjectChange(value);
+                    }}
                     renderTriggerValue={(option) =>
                       option && currentProject ? (
                         <>
@@ -1533,7 +1520,7 @@ export function NewIssueDialog() {
                 </div>
                 {goalsEnabled ? (
                   <div className="min-w-0 space-y-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">Goal context</div>
+                    <div className="text-[11px] font-medium text-muted-foreground">Goal</div>
                     <InlineEntitySelector
                       value={goalId}
                       options={goalOptions}
@@ -1544,7 +1531,9 @@ export function NewIssueDialog() {
                       emptyMessage="No goals found."
                       variant="field"
                       className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                      onChange={setGoalId}
+                      onChange={(value) => {
+                        if (!isCreatingOrRedirecting) setGoalId(value);
+                      }}
                       renderTriggerValue={(option) =>
                         option && currentGoal ? (
                           <>
@@ -1560,7 +1549,34 @@ export function NewIssueDialog() {
                 ) : null}
               </div>
             </div>
-          </div>
+            <div
+              data-slot="agent-issue-instruction"
+              className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3"
+            >
+              <MarkdownEditor
+                ref={agentInstructionEditorRef}
+                engine="codemirror"
+                documentIdentity={`new-issue-agent:${effectiveCompanyId ?? "none"}:${documentSessionId}`}
+                value={agentInstruction}
+                onChange={(value) => {
+                  if (!isCreatingOrRedirecting) setAgentInstruction(value);
+                }}
+                readOnly={isCreatingOrRedirecting}
+                ariaLabel="Instruction"
+                placeholder="Describe the Issue you want the Agent to create..."
+                bordered={false}
+                mentions={mentionOptions}
+                onMentionQueryChange={setLibraryFileMentionQuery}
+                contentClassName="min-h-[180px] pb-12 text-sm text-muted-foreground"
+                imageUploadHandler={isCreatingOrRedirecting
+                  ? undefined
+                  : async (file) => {
+                      const asset = await uploadDescriptionImage.mutateAsync(file);
+                      return asset.contentPath;
+                    }}
+              />
+            </div>
+          </fieldset>
         ) : (
           <>
         {/* Title */}
