@@ -98,7 +98,6 @@ jobs:
             test: cli-start
     env:
       CI: true
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,6 +113,13 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install dependencies
+        if: matrix.test == 'full'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install dependencies without Electron binary
+        if: matrix.test != 'full'
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: pnpm install --frozen-lockfile
 
       - name: Product logic registry
