@@ -7,8 +7,19 @@ import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { openPath, previewLocalFile, readDesktopShell, updateLocalFile } = vi.hoisted(() => ({
+const {
+  listWorkspaceLaunchTargets,
+  openPath,
+  openWorkspaceFileInIde,
+  openWorkspaceFileLocation,
+  previewLocalFile,
+  readDesktopShell,
+  updateLocalFile,
+} = vi.hoisted(() => ({
+  listWorkspaceLaunchTargets: vi.fn(),
   openPath: vi.fn(),
+  openWorkspaceFileInIde: vi.fn(),
+  openWorkspaceFileLocation: vi.fn(),
   previewLocalFile: vi.fn(),
   readDesktopShell: vi.fn(),
   updateLocalFile: vi.fn(),
@@ -90,6 +101,131 @@ describe("TranscriptLocalFilePreview", () => {
     expect(container.textContent).not.toContain("/private/tmp");
     expect(container.querySelector("[data-testid='chat-side-panel-local-file-view'] [title='/private/tmp/evidence.md']")?.textContent)
       .toBe("evidence.md");
+  });
+
+  it("offers the installed Desktop open targets for a local transcript file", async () => {
+    readDesktopShell.mockReturnValue({
+      listWorkspaceLaunchTargets,
+      openPath,
+      openWorkspaceFileInIde,
+      openWorkspaceFileLocation,
+      previewLocalFile,
+      updateLocalFile,
+    });
+    listWorkspaceLaunchTargets.mockResolvedValue([
+      { id: "cursor", label: "Cursor", kind: "ide" },
+      { id: "vscode", label: "VS Code", kind: "ide" },
+      { id: "terminal", label: "Terminal", kind: "terminal" },
+      { id: "finder", label: "Finder", kind: "folder" },
+    ]);
+    previewLocalFile.mockResolvedValue({
+      canonicalPath: "/private/tmp/evidence.md",
+      fileName: "evidence.md",
+      parentPath: "/private/tmp",
+      contentType: "text/markdown; charset=utf-8",
+      previewKind: "markdown",
+      content: "# Evidence",
+      base64: null,
+      sizeBytes: 10,
+      modifiedAt: "2026-07-21T00:00:00.000Z",
+      truncated: false,
+      writeCapability: "preview-capability",
+    });
+
+    const container = await renderPreview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const trigger = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-side-panel-local-file-open-menu']",
+    );
+    expect(trigger).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']"));
+    expect(menuItems.map((item) => item.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining("Default app"),
+      expect.stringContaining("Cursor"),
+      expect.stringContaining("VS Code"),
+      expect.stringContaining("Terminal"),
+      expect.stringContaining("Finder"),
+    ]));
+
+    await act(async () => {
+      menuItems.find((item) => item.textContent?.includes("Default app"))?.click();
+      await Promise.resolve();
+    });
+    expect(openPath).toHaveBeenCalledWith("/private/tmp/evidence.md");
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    const reopenedMenuItems = Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']"));
+    await act(async () => {
+      reopenedMenuItems.find((item) => item.textContent?.includes("Cursor"))?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith("/private/tmp", "evidence.md", "cursor");
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+      Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']"))
+        .find((item) => item.textContent?.includes("Terminal"))
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileLocation).toHaveBeenCalledWith("/private/tmp", "evidence.md", "terminal");
+    expect(openPath).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["without target discovery", undefined],
+    ["when target discovery fails", new Error("target discovery unavailable")],
+  ])("keeps the legacy Open action %s", async (_label, discoveryError) => {
+    readDesktopShell.mockReturnValue({
+      ...(discoveryError ? { listWorkspaceLaunchTargets } : {}),
+      openPath,
+      openWorkspaceFileInIde,
+      previewLocalFile,
+      updateLocalFile,
+    });
+    if (discoveryError) listWorkspaceLaunchTargets.mockRejectedValue(discoveryError);
+    previewLocalFile.mockResolvedValue({
+      canonicalPath: "/private/tmp/evidence.md",
+      fileName: "evidence.md",
+      parentPath: "/private/tmp",
+      contentType: "text/markdown; charset=utf-8",
+      previewKind: "markdown",
+      content: "# Evidence",
+      base64: null,
+      sizeBytes: 10,
+      modifiedAt: "2026-07-21T00:00:00.000Z",
+      truncated: false,
+      writeCapability: "preview-capability",
+    });
+
+    const container = await renderPreview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel-local-file-open-menu']")).toBeNull();
+    const openButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("Open"));
+    expect(openButton).not.toBeUndefined();
+    await act(async () => {
+      openButton?.click();
+      await Promise.resolve();
+    });
+    expect(openPath).toHaveBeenCalledWith("/private/tmp/evidence.md");
   });
 
   it("conditionally saves an edited local Markdown file", async () => {
