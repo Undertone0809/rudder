@@ -197,9 +197,10 @@ jobs:
             rm -f "$view_error"
           done < "$package_map"
 
-          while IFS=$'\t' read -r _pkg_dir pkg_name pkg_version; do
-            test "$(npm view "$pkg_name@$pkg_version" version)" = "$pkg_version"
-          done < "$package_map"
+          . ./scripts/release-lib.sh
+          if ! wait_for_npm_package_versions "$(cat "$package_map")" 60 5; then
+            release_fail "publish completed but npm never exposed: $WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING"
+          fi
           rm -f "$package_map"
 
           tag="v${RELEASE_VERSION}"

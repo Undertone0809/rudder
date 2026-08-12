@@ -79,6 +79,8 @@ describe("release workflow latency contracts", () => {
     expect(resumeJob).toContain('test "$(wc -l < "$package_map" | xargs)" = "15"');
     expect(resumeJob).toContain('echo "Skipping existing $pkg_name@$pkg_version"');
     expect(resumeJob).toContain("npm publish --tag latest");
+    expect(resumeJob).toContain("wait_for_npm_package_versions");
+    expect(resumeJob).toContain("publish completed but npm never exposed");
     expect(resumeJob).toContain('tag="v${RELEASE_VERSION}"');
     expect(resumeJob).toContain('test "$remote_tag_sha" = "$SOURCE_REF"');
     expect(resumeJob).toContain("Wait for desktop release assets");
