@@ -181,7 +181,13 @@ describe("InstanceProfileSettings", () => {
     const identityRow = container.querySelector('[data-testid="profile-identity-row"]');
     expect(identityRow?.querySelector("#profile-nickname")).not.toBeNull();
     expect(identityRow?.querySelector("img")).not.toBeNull();
-    expect(identityRow?.textContent).toContain("Change avatar");
+    const avatarButton = identityRow?.querySelector<HTMLButtonElement>('button[aria-label="Change avatar"]');
+    const avatarInput = identityRow?.querySelector<HTMLInputElement>('[data-testid="account-avatar-input"]');
+    expect(avatarButton).not.toBeNull();
+    expect(identityRow?.textContent).not.toContain("Change avatar");
+    const inputClick = vi.spyOn(avatarInput!, "click");
+    avatarButton?.click();
+    expect(inputClick).toHaveBeenCalledOnce();
     expect(container.textContent).not.toContain("OAuth Provider Name");
     expect(container.textContent).not.toContain("Unable to load Rudder Account profile (404)");
     expect(container.textContent).toContain("zee@rudderhq.dev");

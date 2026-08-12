@@ -95,6 +95,7 @@ function AccountAvatar({
   ariaLabel,
   onClick,
   disabled,
+  pending,
 }: {
   name: string;
   email: string | null;
@@ -102,12 +103,14 @@ function AccountAvatar({
   ariaLabel: string;
   onClick: () => void;
   disabled: boolean;
+  pending: boolean;
 }) {
   return (
     <button
       type="button"
-      className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--border-soft)] bg-muted text-lg font-semibold text-muted-foreground transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
+      className="group relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--border-soft)] bg-muted text-lg font-semibold text-muted-foreground transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
       aria-label={ariaLabel}
+      aria-busy={pending}
       onClick={onClick}
       disabled={disabled}
     >
@@ -116,8 +119,10 @@ function AccountAvatar({
       ) : (
         avatarInitials(name, email)
       )}
-      <span className="absolute inset-0 flex items-center justify-center bg-foreground/55 text-background opacity-0 transition-opacity hover:opacity-100">
-        <Camera className="size-5" aria-hidden="true" />
+      <span className={`absolute inset-0 flex items-center justify-center bg-foreground/55 text-background transition-opacity ${pending ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"}`}>
+        {pending
+          ? <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          : <Camera className="size-5" aria-hidden="true" />}
       </span>
     </button>
   );
@@ -205,6 +210,7 @@ export function AccountAvatarControl({ nickname }: { nickname: string }) {
       ariaLabel={t("account.avatar.change")}
       onClick={() => account && avatarInputRef.current?.click()}
       disabled={!account || avatarPending}
+      pending={avatarPending}
     />
   );
 
@@ -220,21 +226,6 @@ export function AccountAvatarControl({ nickname }: { nickname: string }) {
         data-testid="account-avatar-input"
         onChange={(event) => void handleAvatarChange(event.target.files?.[0])}
       />
-      {account ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          disabled={avatarPending}
-          onClick={() => avatarInputRef.current?.click()}
-        >
-          {avatarPending
-            ? <LoaderCircle data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />
-            : <Camera data-icon="inline-start" />}
-          {avatarPending ? t("account.avatar.changing") : t("account.avatar.change")}
-        </Button>
-      ) : null}
       {avatarError ? <p role="alert" className="max-w-40 text-center text-xs leading-4 text-destructive">{avatarError}</p> : null}
     </div>
   );
