@@ -56,7 +56,6 @@ export function CommentThreadTimelineRows({
         if (item?.kind === "activity") return 48;
         return 168;
       }}
-      leadingOverscan={32}
       overscan={12}
       preventScrollBlanking
       scrollElementRef={scrollElementRef}
