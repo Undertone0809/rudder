@@ -26,6 +26,7 @@ import { RunFeedbackChatPanel } from "@/components/side-panel/RunFeedbackChatPan
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
 import { SubagentsPanelView } from "@/components/side-panel/SubagentsPanelView";
+import { TerminalPanelView } from "@/components/side-panel/TerminalPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusIcon } from "@/components/StatusIcon";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
@@ -128,6 +129,7 @@ import {
   Plus,
   Redo2,
   Table2,
+  TerminalSquare,
   Undo2,
   UserRound,
   Workflow,
@@ -300,6 +302,7 @@ function ChatSidePanelTabIcon({
   }
   if (tab.kind === "organization_skill_file") return <FileText aria-hidden className={iconClassName} />;
   if (tab.kind === "local_apps") return <AppWindow aria-hidden className={iconClassName} />;
+  if (tab.kind === "terminal") return <TerminalSquare aria-hidden className={iconClassName} />;
   if (tab.kind === "local_app") {
     return (
       <LocalAppIdentityIcon
@@ -351,11 +354,17 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
 function SidePanelEmptyState({
   browserAvailable,
   localAppsAvailable,
+  terminalAvailable,
+  organizationId,
+  agentId,
   sourceConversationId,
   onOpenTarget,
 }: {
   browserAvailable: boolean;
   localAppsAvailable: boolean;
+  terminalAvailable: boolean;
+  organizationId: string | null;
+  agentId: string | null;
   sourceConversationId: string | null;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
@@ -390,6 +399,18 @@ function SidePanelEmptyState({
       description: "Run a reviewed project service beside this workspace.",
       icon: AppWindow,
       target: { kind: "local_apps" as const, label: "Local apps" },
+    }] : []),
+    ...(terminalAvailable && organizationId && sourceConversationId ? [{
+      label: "Terminal",
+      description: "Open a shell in this Agent's workspace.",
+      icon: TerminalSquare,
+      target: {
+        kind: "terminal" as const,
+        organizationId,
+        agentId,
+        sessionId: crypto.randomUUID(),
+        label: "Terminal",
+      },
     }] : []),
     {
       label: "Library",
@@ -1906,6 +1927,10 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "local_app" }> => candidate.kind === "local_app"),
     [visibleTabs],
   );
+  const terminalTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "terminal" }> => candidate.kind === "terminal"),
+    [visibleTabs],
+  );
   const liveSurfaceTargets = useMemo(() => {
     if (!liveSurfaceRuntime || !selectedOrganizationId) return [];
     return visibleTabs.flatMap((candidate) => {
@@ -1956,6 +1981,7 @@ export function ChatSidePanel({
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
   const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
+  const terminalAvailable = Boolean(readDesktopShell()?.terminal?.supported);
   useEffect(() => {
     if (!contextReady
       || !target
@@ -2004,6 +2030,7 @@ export function ChatSidePanel({
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
   const localAppsTarget = activeTarget?.kind === "local_apps" ? activeTarget : null;
   const localAppTarget = activeTarget?.kind === "local_app" ? activeTarget : null;
+  const terminalTarget = activeTarget?.kind === "terminal" ? activeTarget : null;
   const activeLiveSurfaceTarget = activeTarget
     && liveSurfaceRuntime
     && sidePanelTargetSupportsSavedView(activeTarget)
@@ -2083,6 +2110,11 @@ export function ChatSidePanel({
     queryFn: () => chatsApi.get(chatTarget!.conversationId),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!chatTarget,
   });
+  const sourceConversationQuery = useQuery({
+    queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", sourceConversationId ?? "__none__"),
+    queryFn: () => chatsApi.get(sourceConversationId!),
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!sourceConversationId,
+  });
   const chatMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(selectedOrganizationId!, chatTarget!.conversationId),
@@ -2125,6 +2157,7 @@ export function ChatSidePanel({
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
   const agentMap = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent]));
   const chat = chatTarget ? chatQuery.data : null;
+  const sourceConversation = sourceConversationId ? sourceConversationQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
   const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
   const organizationSkillFile = organizationSkillFileTarget ? organizationSkillFileQuery.data : null;
@@ -2230,6 +2263,21 @@ export function ChatSidePanel({
       );
     }
     const tabKey = sidePanelTargetKey(tab);
+    if (tab.kind === "terminal") {
+      try {
+        const terminal = readDesktopShell()?.terminal;
+        if (!terminal?.supported) throw new Error("Desktop Terminal is unavailable.");
+        await terminal.close(tab.sessionId);
+        sidePanel.closeTarget(tabKey);
+      } catch (cause) {
+        pushToast({
+          title: "Terminal could not be closed",
+          body: cause instanceof Error ? cause.message : "Rudder could not confirm that the shell stopped.",
+          tone: "error",
+        });
+      }
+      return;
+    }
     if (tab.kind === "browser") {
       await browserSavedViewMetadata.flushTarget(tab);
       sidePanel.closeTarget(tabKey);
@@ -2565,7 +2613,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || goalChatTarget || subagentsTarget || subagentTarget
+          activeLiveSurfaceTarget || localAppsTarget || terminalTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || goalChatTarget || subagentsTarget || subagentTarget
             ? "flex h-full flex-col overflow-hidden"
             : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
@@ -2635,6 +2683,14 @@ export function ChatSidePanel({
               </div>
             );
           }) : null}
+          {terminalAvailable ? terminalTargets.map((target) => {
+            const active = sidePanelTargetKey(target) === activeTargetKey;
+            return (
+              <div key={sidePanelTargetKey(target)} className={cn("h-full min-h-0 min-w-0 w-full", active ? "block" : "hidden")} aria-hidden={!active}>
+                <TerminalPanelView active={active} target={target} />
+              </div>
+            );
+          }) : null}
           {selectedOrganizationId ? sideChatTargets.map((target) => {
             const active = sidePanelTargetKey(target) === activeTargetKey;
             return (
@@ -2658,6 +2714,9 @@ export function ChatSidePanel({
             <SidePanelEmptyState
               browserAvailable={browserAvailable}
               localAppsAvailable={localAppsAvailable}
+              terminalAvailable={terminalAvailable}
+              organizationId={selectedOrganizationId ?? null}
+              agentId={sourceConversation?.preferredAgentId ?? null}
               sourceConversationId={sourceConversationId}
               onOpenTarget={openSidePanelTarget}
             />
@@ -2713,7 +2772,7 @@ export function ChatSidePanel({
             </div>
           ) : localAppsTarget ? (
             <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
-          ) : placeholderTarget ? (
+          ) : terminalTarget ? null : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : sideChatTarget ? null : runFeedbackTarget && selectedOrganizationId ? (
             <RunFeedbackChatPanel

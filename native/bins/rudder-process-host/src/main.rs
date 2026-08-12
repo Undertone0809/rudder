@@ -1,3 +1,4 @@
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rudder_native_protocol::{
     CAPABILITIES, Command, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_VERSION,
 };
@@ -35,11 +36,14 @@ enum Input {
 
 enum MonitorCommand {
     Stop,
+    Input(Vec<u8>),
+    Resize { cols: u16, rows: u16 },
 }
 
 enum MonitorEvent {
     Exited {
-        status: ExitStatus,
+        code: Option<i32>,
+        signal: Option<&'static str>,
         was_stopped: bool,
         cleanup_proven: bool,
         had_surviving_group: bool,
@@ -55,6 +59,27 @@ struct ActiveChild {
     control: mpsc::Sender<MonitorCommand>,
     events: mpsc::Receiver<MonitorEvent>,
     output_done: Vec<mpsc::Receiver<bool>>,
+}
+
+struct TerminalStartError {
+    code: &'static str,
+    cleanup_proven: bool,
+}
+
+impl TerminalStartError {
+    fn before_spawn(code: &'static str) -> Self {
+        Self {
+            code,
+            cleanup_proven: true,
+        }
+    }
+
+    fn after_spawn(code: &'static str, cleanup: CleanupResult) -> Self {
+        Self {
+            code,
+            cleanup_proven: cleanup.proven,
+        }
+    }
 }
 
 fn main() {
@@ -118,7 +143,8 @@ fn main() {
         if let Some(child) = active.as_ref() {
             match child.events.try_recv() {
                 Ok(MonitorEvent::Exited {
-                    status,
+                    code,
+                    signal,
                     was_stopped,
                     cleanup_proven,
                     had_surviving_group,
@@ -130,13 +156,12 @@ fn main() {
                                 matches!(output_done.recv_timeout(TERM_TIMEOUT), Ok(true));
                         }
                     }
-                    let code = status.code();
                     send(
                         &lifecycle,
                         json!({
                             "type": "app-exit",
                             "code": code,
-                            "signal": signal_name(&status),
+                            "signal": signal,
                         }),
                     );
                     if was_stopped && cleanup_proven {
@@ -286,7 +311,132 @@ fn main() {
                     }
                 }
             }
-            Ok(Input::Command(command @ Command::Stop { .. })) => {
+            Ok(Input::Command(Command::StartTerminal {
+                protocol_version,
+                request_id,
+                executable,
+                argv,
+                cwd,
+                env,
+                owner_token,
+                cols,
+                rows,
+            })) => {
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
+                let command = Command::StartTerminal {
+                    protocol_version,
+                    request_id,
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    cols,
+                    rows,
+                };
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(&command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    send(
+                        &lifecycle,
+                        terminal_message("failed", Some(code), true, started_at, &counters),
+                    );
+                    process_exit_code = 3;
+                    terminal_sent = true;
+                    continue;
+                }
+                let Command::StartTerminal {
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    cols,
+                    rows,
+                    ..
+                } = command
+                else {
+                    unreachable!()
+                };
+                let owner_token = owner_token.expect("validated owner token");
+                set_owner_token(&lifecycle, owner_token.clone());
+                send(
+                    &lifecycle,
+                    json!({"type":"accepted","ownerToken":owner_token,"mode":"pty"}),
+                );
+                match spawn_terminal(
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    cols,
+                    rows,
+                    stdout.clone(),
+                    counters.clone(),
+                ) {
+                    Ok((active_child, pid)) => {
+                        send(
+                            &lifecycle,
+                            json!({"type":"spawned","pid":pid,"ownerToken":owner_token,"mode":"pty"}),
+                        );
+                        active = Some(active_child);
+                    }
+                    Err(error) => {
+                        send_error(&lifecycle, error.code);
+                        send(
+                            &lifecycle,
+                            terminal_message(
+                                "failed",
+                                Some(error.code),
+                                error.cleanup_proven,
+                                started_at,
+                                &counters,
+                            ),
+                        );
+                        process_exit_code = 1;
+                        terminal_sent = true;
+                    }
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Input { ref data, .. })) => {
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(&command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Some(child) = active.as_ref() {
+                    let _ = child
+                        .control
+                        .send(MonitorCommand::Input(data.as_bytes().to_vec()));
+                } else {
+                    send_error(&lifecycle, "not_started");
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Resize { cols, rows, .. })) => {
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(&command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Some(child) = active.as_ref() {
+                    let _ = child.control.send(MonitorCommand::Resize { cols, rows });
+                } else {
+                    send_error(&lifecycle, "not_started");
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Stop { .. })) => {
                 set_request_id(
                     &lifecycle,
                     command_request_id(&command).unwrap_or_else(|| "local-app".to_string()),
@@ -481,6 +631,256 @@ fn spawn_child(
     ))
 }
 
+fn spawn_terminal(
+    executable: String,
+    argv: Vec<String>,
+    cwd: String,
+    env: BTreeMap<String, String>,
+    cols: u16,
+    rows: u16,
+    stdout: RawOutput,
+    counters: Arc<Counters>,
+) -> Result<(ActiveChild, u32), TerminalStartError> {
+    if !Path::new(&executable).exists() || !Path::new(&cwd).is_dir() {
+        return Err(TerminalStartError::before_spawn("launch_path_unavailable"));
+    }
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|_| TerminalStartError::before_spawn("pty_open_failed"))?;
+    let mut command = CommandBuilder::new(executable);
+    command.args(argv);
+    command.cwd(cwd);
+    command.env_clear();
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|_| TerminalStartError::before_spawn("spawn_failed"))?;
+    let pid = child.process_id().filter(|pid| *pid >= 2);
+    drop(pair.slave);
+    #[cfg(debug_assertions)]
+    let pid = if injected_pty_setup_failure("missing_pid") {
+        None
+    } else {
+        pid
+    };
+    let Some(pid) = pid else {
+        let cleanup = cleanup_spawned_pty_child(&mut child, None);
+        return Err(TerminalStartError::after_spawn(
+            "process_identity_unavailable",
+            cleanup,
+        ));
+    };
+    #[cfg(debug_assertions)]
+    if injected_pty_setup_failure("reader") {
+        let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+        return Err(TerminalStartError::after_spawn(
+            "stdout_unavailable",
+            cleanup,
+        ));
+    }
+    let reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(_) => {
+            let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+            return Err(TerminalStartError::after_spawn(
+                "stdout_unavailable",
+                cleanup,
+            ));
+        }
+    };
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(_) => {
+            let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+            return Err(TerminalStartError::after_spawn(
+                "stdin_unavailable",
+                cleanup,
+            ));
+        }
+    };
+    let output_done = relay(reader, stdout, counters);
+    let (control_tx, control_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut writer = writer;
+        let mut stopping = false;
+        let mut requested_cleanup = None;
+        loop {
+            while let Ok(control) = control_rx.try_recv() {
+                match control {
+                    MonitorCommand::Stop => {
+                        stopping = true;
+                        requested_cleanup = Some(request_pty_tree_termination(pid));
+                        let _ = child.kill();
+                    }
+                    MonitorCommand::Input(data) => {
+                        let _ = writer.write_all(&data);
+                        let _ = writer.flush();
+                    }
+                    MonitorCommand::Resize { cols, rows } => {
+                        let _ = pair.master.resize(PtySize {
+                            rows,
+                            cols,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        });
+                    }
+                }
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let cleanup = if stopping {
+                        finish_pty_tree_cleanup(
+                            pid,
+                            requested_cleanup.unwrap_or(CleanupResult {
+                                proven: false,
+                                had_surviving_group: false,
+                            }),
+                        )
+                    } else {
+                        cleanup_pty_descendants(pid)
+                    };
+                    let _ = event_tx.send(MonitorEvent::Exited {
+                        code: status.exit_code().try_into().ok(),
+                        signal: None,
+                        was_stopped: stopping,
+                        cleanup_proven: cleanup.proven,
+                        had_surviving_group: cleanup.had_surviving_group,
+                    });
+                    return;
+                }
+                Ok(None) => thread::sleep(POLL_INTERVAL),
+                Err(_) => {
+                    let _ = event_tx.send(MonitorEvent::Exited {
+                        code: Some(1),
+                        signal: None,
+                        was_stopped: stopping,
+                        cleanup_proven: false,
+                        had_surviving_group: false,
+                    });
+                    return;
+                }
+            }
+        }
+    });
+    Ok((
+        ActiveChild {
+            control: control_tx,
+            events: event_rx,
+            output_done: vec![output_done],
+        },
+        pid,
+    ))
+}
+
+#[cfg(debug_assertions)]
+fn injected_pty_setup_failure(stage: &str) -> bool {
+    if std::env::var("RUDDER_PROCESS_HOST_TEST_PTY_SETUP_FAILURE")
+        .ok()
+        .as_deref()
+        != Some(stage)
+    {
+        return false;
+    }
+    let delay = std::env::var("RUDDER_PROCESS_HOST_TEST_PTY_SETUP_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(1_000);
+    if delay > 0 {
+        thread::sleep(Duration::from_millis(delay));
+    }
+    true
+}
+
+fn cleanup_spawned_pty_child(
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    pid: Option<u32>,
+) -> CleanupResult {
+    let Some(pid) = pid.filter(|pid| *pid >= 2) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return CleanupResult {
+            // The child handle proves the root exited, but without a PID the
+            // host cannot prove that an owned descendant group is empty.
+            proven: false,
+            had_surviving_group: false,
+        };
+    };
+    let requested = request_pty_tree_termination(pid);
+    let _ = child.kill();
+    let waited = child.wait().is_ok();
+    let finished = finish_pty_tree_cleanup(pid, requested);
+    CleanupResult {
+        proven: waited && finished.proven,
+        had_surviving_group: finished.had_surviving_group,
+    }
+}
+
+fn request_pty_tree_termination(pid: u32) -> CleanupResult {
+    if pid < 2 {
+        return CleanupResult {
+            proven: false,
+            had_surviving_group: false,
+        };
+    }
+    #[cfg(unix)]
+    {
+        let had_surviving_group = process_group_exists(pid).unwrap_or(true);
+        if had_surviving_group {
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+        }
+        return CleanupResult {
+            proven: true,
+            had_surviving_group,
+        };
+    }
+    #[cfg(windows)]
+    {
+        let status = ProcessCommand::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+        return CleanupResult {
+            proven: status.is_ok_and(|status| status.success()),
+            had_surviving_group: true,
+        };
+    }
+}
+
+fn cleanup_pty_descendants(pid: u32) -> CleanupResult {
+    let requested = request_pty_tree_termination(pid);
+    finish_pty_tree_cleanup(pid, requested)
+}
+
+fn finish_pty_tree_cleanup(pid: u32, requested: CleanupResult) -> CleanupResult {
+    if pid < 2 {
+        return CleanupResult {
+            proven: false,
+            had_surviving_group: requested.had_surviving_group,
+        };
+    }
+    #[cfg(unix)]
+    {
+        if !requested.proven {
+            return requested;
+        }
+        return wait_for_process_group_cleanup(pid, requested.had_surviving_group);
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        return requested;
+    }
+}
+
 fn relay<R: Read + Send + 'static>(
     mut input: R,
     output: RawOutput,
@@ -528,15 +928,20 @@ fn monitor_child(
     let mut stopping = false;
     let mut cleanup = None;
     loop {
-        if matches!(control.try_recv(), Ok(MonitorCommand::Stop)) {
-            stopping = true;
-            cleanup = Some(terminate_owned_process(child, pgid));
+        match control.try_recv() {
+            Ok(MonitorCommand::Stop) => {
+                stopping = true;
+                cleanup = Some(terminate_owned_process(child, pgid));
+            }
+            Ok(MonitorCommand::Input(_)) | Ok(MonitorCommand::Resize { .. }) => {}
+            Err(_) => {}
         }
         match child.try_wait() {
             Ok(Some(status)) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
                 let _ = events.send(MonitorEvent::Exited {
-                    status,
+                    code: status.code(),
+                    signal: signal_name(&status),
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
@@ -547,7 +952,8 @@ fn monitor_child(
             Err(_) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
                 let _ = events.send(MonitorEvent::Exited {
-                    status: synthetic_failure_status(),
+                    code: Some(1),
+                    signal: None,
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
@@ -620,6 +1026,12 @@ fn cleanup_after_child_exit(pgid: u32) -> CleanupResult {
 
 #[cfg(unix)]
 fn process_group_exists(pgid: u32) -> io::Result<bool> {
+    if pgid < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "process group identity is invalid",
+        ));
+    }
     let result = unsafe { libc::kill(-(pgid as libc::pid_t), 0) };
     if result == 0 {
         return Ok(true);
@@ -674,15 +1086,6 @@ fn wait_for_process_group_cleanup(pgid: u32, had_surviving_group: bool) -> Clean
         proven: !process_group_exists(pgid).unwrap_or(true),
         had_surviving_group,
     }
-}
-
-fn synthetic_failure_status() -> ExitStatus {
-    // A monitor failure cannot provide a real child status. The process host
-    // reports the failure through its terminal frame; this value only keeps
-    // the event shape total on platforms where ExitStatus cannot be built.
-    ProcessCommand::new(if cfg!(windows) { "cmd" } else { "/bin/false" })
-        .status()
-        .expect("system failure command must be available")
 }
 
 fn lifecycle_writer() -> io::Result<Lifecycle> {
@@ -761,7 +1164,11 @@ fn set_owner_token(writer: &Lifecycle, owner_token: String) {
 
 fn command_request_id(command: &Command) -> Option<String> {
     match command {
-        Command::Start { request_id, .. } | Command::Stop { request_id, .. } => request_id.clone(),
+        Command::Start { request_id, .. }
+        | Command::StartTerminal { request_id, .. }
+        | Command::Input { request_id, .. }
+        | Command::Resize { request_id, .. }
+        | Command::Stop { request_id, .. } => request_id.clone(),
     }
 }
 

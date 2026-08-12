@@ -8,6 +8,9 @@ pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "process_group_cleanup",
     "parent_eof_cleanup",
+    "pty",
+    "pty_input",
+    "pty_resize",
     "stdout_relay",
     "stderr_relay",
 ];
@@ -15,6 +18,9 @@ pub const CAPABILITIES: &[&str] = &[
 pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "parent_eof_cleanup",
+    "pty",
+    "pty_input",
+    "pty_resize",
     "stdout_relay",
     "stderr_relay",
 ];
@@ -60,6 +66,38 @@ pub enum Command {
         protocol_version: Option<ProtocolVersion>,
         #[serde(rename = "requestId", default)]
         request_id: Option<String>,
+    },
+    StartTerminal {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        executable: String,
+        #[serde(default)]
+        argv: Vec<String>,
+        cwd: String,
+        #[serde(default)]
+        env: std::collections::BTreeMap<String, String>,
+        #[serde(default)]
+        #[serde(rename = "ownerToken")]
+        owner_token: Option<String>,
+        cols: u16,
+        rows: u16,
+    },
+    Input {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        data: String,
+    },
+    Resize {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        cols: u16,
+        rows: u16,
     },
 }
 
@@ -127,31 +165,119 @@ impl Command {
                 }
                 Ok(())
             }
+            Self::StartTerminal {
+                protocol_version,
+                request_id,
+                executable,
+                argv,
+                cwd,
+                env,
+                owner_token,
+                cols,
+                rows,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                validate_launch(executable, argv, cwd, env, owner_token)?;
+                validate_size(*cols, *rows)
+            }
             Self::Stop {
                 protocol_version,
                 request_id,
+            } => validate_protocol_identity(protocol_version, request_id),
+            Self::Input {
+                protocol_version,
+                request_id,
+                data,
             } => {
-                if protocol_version.is_none() {
-                    return Err("protocol_version_required");
-                }
-                if request_id.is_none() {
-                    return Err("request_id_required");
-                }
-                if protocol_version.as_ref().is_some_and(|version| {
-                    version.major != PROTOCOL_MAJOR || version.minor > PROTOCOL_MINOR
-                }) {
-                    return Err("protocol_version_mismatch");
-                }
-                if request_id
-                    .as_ref()
-                    .is_some_and(|id| id.is_empty() || id.len() > 256)
-                {
-                    return Err("invalid_request_id");
+                validate_protocol_identity(protocol_version, request_id)?;
+                if data.len() > 48 * 1024 || data.contains('\0') {
+                    return Err("invalid_terminal_input");
                 }
                 Ok(())
             }
+            Self::Resize {
+                protocol_version,
+                request_id,
+                cols,
+                rows,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                validate_size(*cols, *rows)
+            }
         }
     }
+}
+
+fn validate_protocol_identity(
+    protocol_version: &Option<ProtocolVersion>,
+    request_id: &Option<String>,
+) -> Result<(), &'static str> {
+    if protocol_version.is_none() {
+        return Err("protocol_version_required");
+    }
+    if request_id.is_none() {
+        return Err("request_id_required");
+    }
+    if protocol_version
+        .as_ref()
+        .is_some_and(|version| version.major != PROTOCOL_MAJOR || version.minor > PROTOCOL_MINOR)
+    {
+        return Err("protocol_version_mismatch");
+    }
+    if request_id
+        .as_ref()
+        .is_some_and(|id| id.is_empty() || id.len() > 256)
+    {
+        return Err("invalid_request_id");
+    }
+    Ok(())
+}
+
+fn validate_launch(
+    executable: &str,
+    argv: &[String],
+    cwd: &str,
+    env: &std::collections::BTreeMap<String, String>,
+    owner_token: &Option<String>,
+) -> Result<(), &'static str> {
+    if executable.is_empty() || executable.len() > 4_096 {
+        return Err("invalid_executable");
+    }
+    if cwd.is_empty() || cwd.len() > 4_096 {
+        return Err("invalid_cwd");
+    }
+    if !std::path::Path::new(executable).is_absolute() || !std::path::Path::new(cwd).is_absolute() {
+        return Err("paths_must_be_absolute");
+    }
+    if argv.len() > 64 || argv.iter().any(|item| item.len() > 4_096) {
+        return Err("invalid_arguments");
+    }
+    if env.len() > 128
+        || env.iter().any(|(name, value)| {
+            name.is_empty()
+                || name.len() > 256
+                || value.len() > 16_384
+                || name.contains('=')
+                || name.contains('\0')
+                || value.contains('\0')
+        })
+    {
+        return Err("invalid_environment");
+    }
+    let Some(owner_token) = owner_token.as_ref() else {
+        return Err("owner_token_required");
+    };
+    if owner_token.is_empty() || owner_token.len() > 256 {
+        return Err("invalid_owner_token");
+    }
+    Ok(())
+}
+
+fn validate_size(cols: u16, rows: u16) -> Result<(), &'static str> {
+    if !(2..=1_000).contains(&cols) || !(1..=1_000).contains(&rows) {
+        return Err("invalid_terminal_size");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -233,5 +359,26 @@ mod tests {
             base(Some(String::new())).validate(),
             Err("invalid_owner_token")
         );
+    }
+
+    #[test]
+    fn validates_terminal_commands() {
+        let start: Command = serde_json::from_str(
+            r#"{"type":"startTerminal","protocolVersion":{"major":1,"minor":0},"requestId":"terminal-1","executable":"/bin/sh","argv":["-l"],"cwd":"/tmp","env":{"TERM":"xterm-256color"},"ownerToken":"opaque","cols":80,"rows":24}"#,
+        )
+        .expect("valid terminal start");
+        assert_eq!(start.validate(), Ok(()));
+
+        let resize: Command = serde_json::from_str(
+            r#"{"type":"resize","protocolVersion":{"major":1,"minor":0},"requestId":"terminal-1","cols":1,"rows":24}"#,
+        )
+        .expect("parse resize");
+        assert_eq!(resize.validate(), Err("invalid_terminal_size"));
+
+        let input: Command = serde_json::from_str(
+            "{\"type\":\"input\",\"protocolVersion\":{\"major\":1,\"minor\":0},\"requestId\":\"terminal-1\",\"data\":\"bad\\u0000input\"}",
+        )
+        .expect("parse input");
+        assert_eq!(input.validate(), Err("invalid_terminal_input"));
     }
 }

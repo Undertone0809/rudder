@@ -428,6 +428,20 @@ export type DesktopShellApi = {
     logs(id: string): Promise<string[]>;
     attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
   };
+  terminal?: {
+    supported: boolean;
+    create(input: { orgId: string; agentId: string; sessionId: string; cols: number; rows: number }): Promise<{
+      sessionId: string;
+      replay: string;
+      status: "running" | "exited";
+      agentName?: string;
+    }>;
+    input(sessionId: string, data: string): Promise<void>;
+    resize(sessionId: string, cols: number, rows: number): Promise<void>;
+    close(sessionId: string): Promise<void>;
+    onOutput(listener: (event: { sessionId: string; data: string }) => void): () => void;
+    onExit(listener: (event: { sessionId: string; code: number | null; signal: string | null; error: string | null }) => void): () => void;
+  };
   appBuilder?: {
     supported: boolean;
     inspect(input: DesktopAppBuilderLocation): Promise<{ manifest: DesktopAppBuilderManifest }>;

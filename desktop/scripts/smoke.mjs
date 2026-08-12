@@ -3,7 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -60,6 +60,18 @@ const localAppSmokeScreenshotPath = localAppSmokeScreenshotOverride
 const localAppDeleteSmokeScreenshotPath = path.join(
   os.tmpdir(),
   `rudder-desktop-local-app-delete-smoke-${smokeMode}.png`,
+);
+const terminalSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-agent-terminal-smoke-${smokeMode}.png`,
+);
+const terminalConstrainedSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-agent-terminal-smoke-${smokeMode}-constrained.png`,
+);
+const terminalFailureSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-agent-terminal-smoke-${smokeMode}-failure.png`,
 );
 const expectedBrowserToolNames = [
   "rudder_browser_tabs",
@@ -224,6 +236,72 @@ async function verifyPackagedNativeProcessHost(executablePath) {
       cwd: tmpRoot,
       env: {},
       ownerToken: "packaged-native-smoke",
+    })}\n`);
+  });
+  if (process.platform === "win32") return;
+  await new Promise((resolve, reject) => {
+    const host = spawn(executablePath, [], {
+      cwd: tmpRoot,
+      stdio: ["pipe", "ignore", "pipe", "pipe", "pipe", "pipe"],
+    });
+    const lifecycle = host.stdio[3];
+    const output = host.stdio[4];
+    if (!lifecycle || !output || !host.stdin) {
+      host.kill("SIGKILL");
+      reject(new Error("packaged Rust PTY host did not expose managed channels"));
+      return;
+    }
+    let lifecycleBuffer = "";
+    let terminalOutput = "";
+    let inputSent = false;
+    const timeout = setTimeout(() => {
+      host.kill("SIGKILL");
+      reject(new Error("packaged Rust PTY probe timed out"));
+    }, 5_000);
+    lifecycle.setEncoding("utf8");
+    output.setEncoding("utf8");
+    lifecycle.on("data", (chunk) => {
+      lifecycleBuffer += chunk;
+      if (!inputSent && lifecycleBuffer.includes('"type":"spawned"')) {
+        inputSent = true;
+        host.stdin.write(`${JSON.stringify({
+          type: "resize",
+          protocolVersion: { major: 1, minor: 0 },
+          requestId: "packaged-native-pty-smoke",
+          cols: 96,
+          rows: 32,
+        })}\n`);
+        host.stdin.write(`${JSON.stringify({
+          type: "input",
+          protocolVersion: { major: 1, minor: 0 },
+          requestId: "packaged-native-pty-smoke",
+          data: "pwd\nexit\n",
+        })}\n`);
+      }
+    });
+    output.on("data", (chunk) => { terminalOutput += chunk; });
+    host.once("error", reject);
+    host.once("exit", (code) => {
+      clearTimeout(timeout);
+      try {
+        assert.equal(code, 0, "packaged Rust PTY probe should exit successfully");
+        assert.match(terminalOutput, new RegExp(tmpRoot.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+    host.stdin.write(`${JSON.stringify({
+      type: "startTerminal",
+      protocolVersion: { major: 1, minor: 0 },
+      requestId: "packaged-native-pty-smoke",
+      executable: "/bin/sh",
+      argv: ["-l"],
+      cwd: tmpRoot,
+      env: { HOME: tmpRoot, PATH: process.env.PATH ?? "/usr/bin:/bin", TERM: "xterm-256color" },
+      ownerToken: "packaged-native-pty-smoke",
+      cols: 80,
+      rows: 24,
     })}\n`);
   });
 }
@@ -1054,6 +1132,24 @@ async function createChat(baseUrl, companyId) {
   });
   if (response.status !== 201) {
     throw new Error(`create chat failed (${response.status}): ${await response.text()}`);
+  }
+  return await response.json();
+}
+
+async function createAgentTerminalChat(baseUrl, companyId, agentId) {
+  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/chats`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Desktop Agent Terminal smoke chat",
+      preferredAgentId: agentId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: { body: "Open the Agent workspace Terminal." },
+    }),
+  });
+  if (response.status !== 201) {
+    throw new Error(`create Agent Terminal chat failed (${response.status}): ${await response.text()}`);
   }
   return await response.json();
 }
@@ -4683,6 +4779,7 @@ async function runCleanScenario(mode) {
       ceo,
       packagedRuntime,
     );
+    await verifyAgentWorkspaceTerminal(firstRun.electronApp, firstRun.page, firstRun.baseUrl, company, ceo);
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
@@ -4884,6 +4981,27 @@ async function runBrowserScenario(mode) {
   }
 }
 
+async function runTerminalScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "terminal");
+  if (mode === "packaged") {
+    await preparePackagedExternalRuntimeFixture(scenarioRoot);
+    console.log("[desktop-smoke] packaged Agent Terminal native PTY passed");
+    return;
+  }
+  const ports = await allocateSmokePorts();
+  const run = await launchDesktop(scenarioRoot, mode, ports);
+  try {
+    const company = await createCompany(run.baseUrl);
+    const agent = await createCeo(run.baseUrl, company.id);
+    await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    console.error("[desktop-smoke] Terminal scenario failed", error);
+    await closeDesktop(run.electronApp).catch(() => {});
+    throw error;
+  }
+}
+
 async function readDesktopLocalAppStatus(page, definitionId) {
   return page.evaluate((id) => window.desktopShell.localApps.status(id), definitionId);
 }
@@ -4906,6 +5024,135 @@ async function openSmokeSidePanel(page) {
   await page.getByTestId("global-side-panel-trigger").click();
   await sidePanel.waitFor({ state: "visible", timeout: 15_000 });
   return sidePanel;
+}
+
+async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company, agent) {
+  console.log("[desktop-smoke] verifying Agent workspace Terminal");
+  const chat = await createAgentTerminalChat(baseUrl, company.id, agent.id);
+  const companyRouteKey = company.urlKey ?? company.issuePrefix;
+  await page.goto(new URL(`/${companyRouteKey}/messenger/chat/${chat.id}`, baseUrl).href);
+  await page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/chat/${chat.id}$`), { timeout: 30_000 });
+  await page.waitForLoadState("networkidle");
+  await dismissOnboardingIfVisible(page);
+  const sidePanel = await openSmokeSidePanel(page);
+  const target = sidePanel.getByTestId("chat-side-panel-empty-terminal-target");
+  await target.waitFor({ state: "visible", timeout: 15_000 });
+  await target.click();
+  const terminal = sidePanel.getByTestId("terminal-panel-view");
+  await terminal.waitFor({ state: "visible", timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const panel = document.querySelector("[data-testid='terminal-panel-view']");
+    return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
+  }, null, { timeout: 15_000 });
+
+  const xtermInput = terminal.locator(".xterm-helper-textarea");
+  await xtermInput.waitFor({ state: "attached", timeout: 10_000 });
+  const initialLayout = await terminal.evaluate((panel) => {
+    const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+    const screen = panel.querySelector(".xterm-screen");
+    return {
+      hostWidth: host?.getBoundingClientRect().width ?? 0,
+      screenWidth: screen?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  assert.ok(initialLayout.hostWidth >= 240, "Agent Terminal should have a usable visible host width");
+  assert.ok(
+    initialLayout.screenWidth >= initialLayout.hostWidth - 32,
+    `Agent Terminal screen should fit its host (${JSON.stringify(initialLayout)})`,
+  );
+  await xtermInput.pressSequentially("printf 'RUDDER_AGENT_HOME=%s\\n' \"$AGENT_HOME\"; pwd", { delay: 2 });
+  await xtermInput.press("Enter");
+  await waitForSmokeCondition("Agent Terminal command output", async () => {
+    const text = await terminal.locator(".xterm-rows").innerText();
+    return text.includes("RUDDER_AGENT_HOME=") ? text : null;
+  });
+  const output = await terminal.locator(".xterm-rows").innerText();
+  const agentHome = output.match(/RUDDER_AGENT_HOME=([^\r\n]+)/u)?.[1]?.trim();
+  assert.ok(agentHome, "Terminal should print its trusted AGENT_HOME");
+  assert.ok(output.includes(agentHome), "pwd should resolve to the same Agent workspace root");
+
+  await sidePanel.getByTestId("chat-side-panel-collapse").click();
+  await sidePanel.waitFor({ state: "hidden", timeout: 5_000 });
+  await openSmokeSidePanel(page);
+  await terminal.waitFor({ state: "visible", timeout: 10_000 });
+  await mkdir(path.dirname(terminalSmokeScreenshotPath), { recursive: true });
+  await page.screenshot({ path: terminalSmokeScreenshotPath, fullPage: true });
+  console.log(`[desktop-smoke] Agent Terminal screenshot: ${terminalSmokeScreenshotPath}`);
+
+  const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getSize());
+  assert.ok(originalWindowSize, "Agent Terminal resize smoke should find the Desktop window");
+  await electronApp.evaluate(({ BrowserWindow }, size) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
+  }, [1_280, 900]);
+  await waitForSmokeCondition("Agent Terminal constrained layout", async () => {
+    const layout = await terminal.evaluate((panel) => {
+      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+      const screen = panel.querySelector(".xterm-screen");
+      return {
+        hostWidth: host?.getBoundingClientRect().width ?? 0,
+        screenWidth: screen?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    return layout.hostWidth >= 240
+      && layout.hostWidth < initialLayout.hostWidth
+      && layout.screenWidth >= layout.hostWidth - 32
+      ? layout
+      : null;
+  });
+  await xtermInput.pressSequentially("printf 'TERMINAL_RESIZED=yes\\n'", { delay: 2 });
+  await xtermInput.press("Enter");
+  await waitForSmokeCondition("Agent Terminal output after resize", async () => {
+    const text = await terminal.locator(".xterm-rows").innerText();
+    return text.includes("TERMINAL_RESIZED=yes") ? text : null;
+  });
+  await page.screenshot({ path: terminalConstrainedSmokeScreenshotPath, fullPage: true });
+  console.log(`[desktop-smoke] Agent Terminal constrained screenshot: ${terminalConstrainedSmokeScreenshotPath}`);
+  await electronApp.evaluate(({ BrowserWindow }, size) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
+  }, originalWindowSize);
+
+  const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
+  await terminalTab.hover();
+  await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+  await terminal.waitFor({ state: "detached", timeout: 10_000 });
+
+  const listingResponse = await fetch(`${baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
+  assert.equal(listingResponse.ok, true, "Agent workspace listing should be readable for failure recovery smoke");
+  const listing = await listingResponse.json();
+  const workspaceEntry = listing.entries?.find((entry) => entry.entityType === "agent_workspace" && entry.agentId === agent.id);
+  assert.ok(workspaceEntry?.workspaceKey && listing.rootPath, "Agent workspace listing should identify the canonical workspace");
+  const workspacePath = path.join(listing.rootPath, "agents", workspaceEntry.workspaceKey);
+  const unavailablePath = `${workspacePath}.terminal-smoke-unavailable`;
+  const restoreWorkspace = async () => {
+    if (!(await access(unavailablePath).then(() => true).catch(() => false))) return;
+    await rm(workspacePath, { recursive: true, force: true });
+    await rename(unavailablePath, workspacePath);
+  };
+  await rename(workspacePath, unavailablePath);
+  try {
+    const recoveredSidePanel = await openSmokeSidePanel(page);
+    await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
+    const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
+    await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
+    await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
+    await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
+    console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
+    await restoreWorkspace();
+    await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
+    await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
+    const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
+    await restartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
+    await restartedInput.press("Enter");
+    await waitForSmokeCondition("Agent Terminal restart output", async () => {
+      const text = await failedTerminal.locator(".xterm-rows").innerText();
+      return text.includes("TERMINAL_RESTARTED=yes") ? text : null;
+    });
+    await recoveredSidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
+    await recoveredSidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+    await failedTerminal.waitFor({ state: "detached", timeout: 10_000 });
+  } finally {
+    await restoreWorkspace();
+  }
 }
 
 async function openLocalAppsSmokeCatalog(page) {
@@ -6239,6 +6486,7 @@ function resolveScenarioList(mode, scenario) {
     || scenario === "clean"
     || scenario === "upgrade"
     || scenario === "browser"
+    || scenario === "terminal"
     || scenario === "local-apps"
     || scenario === "agent-browser"
     || scenario === "app-builder") {
@@ -6264,6 +6512,8 @@ try {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {
       await runBrowserScenario(smokeMode);
+    } else if (scenario === "terminal") {
+      await runTerminalScenario(smokeMode);
     } else if (scenario === "local-apps") {
       await runLocalAppsScenario(smokeMode);
     } else if (scenario === "agent-browser") {
