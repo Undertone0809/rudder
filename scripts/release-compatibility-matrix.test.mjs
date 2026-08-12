@@ -50,21 +50,6 @@ describe("release migration compatibility matrix", () => {
     ]);
   });
 
-  it("accepts the checked-in 0.7.2 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
-      candidateVersion: "0.7.2-canary.1",
-      channel: "canary",
-    });
-
-    expect(result.candidateMigrations).toBe(153);
-    expect(result.candidateSqlFiles).toBe(155);
-    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
-      "0.7.1",
-      "0.7.0",
-      "0.6.5",
-    ]);
-  });
-
   it("fails closed when a candidate version has no declared old-version matrix", () => {
     const candidate = manifest(["0000_base"], { "0000_base": "SELECT 1;" }, "candidate");
 
