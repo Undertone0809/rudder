@@ -142,7 +142,7 @@ export function VirtualizedActivityTimeline<T>({
     directDomUpdates: preventScrollBlanking && !baselineMode,
     directDomUpdatesMode: "transform" as const,
     directDomPrepaintRows: preventScrollBlanking && !baselineMode
-      ? Math.max(SCROLL_PREPAINT_RUNWAY_ROWS, leadingOverscan)
+      ? SCROLL_PREPAINT_RUNWAY_ROWS
       : 0,
     useFlushSync: false,
   };
