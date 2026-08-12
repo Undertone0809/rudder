@@ -1,6 +1,8 @@
 import express from "express";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAccessService = vi.hoisted(() => ({
   isInstanceAdmin: vi.fn(),
@@ -24,6 +26,7 @@ const mockBoardAuthService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const activeServers = new Set<Server>();
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -41,33 +44,43 @@ vi.mock("../services/index.js", () => ({
   deduplicateAgentName: vi.fn((name: string) => name),
 }));
 
-function createApp(actor: any) {
+async function createApp(actor: any) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.actor = actor;
     next();
   });
-  return import("../routes/access.js").then(({ accessRoutes }) =>
-    import("../middleware/index.js").then(({ errorHandler }) => {
-      app.use(
-        "/api",
-        accessRoutes({} as any, {
-          deploymentMode: "authenticated",
-          deploymentExposure: "private",
-          bindHost: "127.0.0.1",
-          allowedHostnames: [],
-        }),
-      );
-      app.use(errorHandler);
-      return app;
-    })
+  const [{ accessRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/access.js"),
+    import("../middleware/index.js"),
+  ]);
+  app.use(
+    "/api",
+    accessRoutes({} as any, {
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      bindHost: "127.0.0.1",
+      allowedHostnames: [],
+    }),
   );
+  app.use(errorHandler);
+  const server = app.listen(0, "127.0.0.1");
+  activeServers.add(server);
+  await once(server, "listening");
+  return server;
 }
 
 describe("cli auth routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+    activeServers.clear();
   });
 
   it("creates a CLI auth challenge with approval metadata", async () => {
@@ -152,7 +165,6 @@ describe("cli auth routes", () => {
       orgIds: ["organization-1"],
     });
     const res = await request(app).get("/api/cli-auth/challenges/challenge-1?token=fixture-token");
-
     expect(res.status).toBe(200);
     expect(res.body.approvedByUser.email).toBe("user@example.com");
     expect(res.headers["cache-control"]).toBe("private, no-store, max-age=0");
@@ -188,7 +200,6 @@ describe("cli auth routes", () => {
     const res = await request(app)
       .post("/api/cli-auth/challenges/challenge-1/approve")
       .send({ token: "pcp_cli_auth_secret" });
-
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       approved: true,

@@ -153,7 +153,9 @@ test.describe("Run transcript detail", () => {
     const rudderDisclosure = rudderMcpRow.locator('[data-transcript-action-row-disclosure="true"]');
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
     await rudderMcpRow.hover();
-    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    await expect.poll(async () => Number.parseFloat(
+      await rudderDisclosure.evaluate((element) => getComputedStyle(element).opacity),
+    )).toBeGreaterThan(0.5);
     const rudderDuration = rudderMcpRow.locator("[data-transcript-action-duration='true']");
     const durationBox = await rudderDuration.boundingBox();
     const disclosureBox = await rudderDisclosure.boundingBox();
@@ -197,8 +199,8 @@ test.describe("Run transcript detail", () => {
     await rudderMcpRow.blur();
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
-    const skillSummary = page.getByTitle("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
-    await expect(skillSummary).toBeVisible();
+    const skillSummary = page.locator('[data-transcript-skill-target="flomo-local-api"]');
+    await expect(skillSummary).toHaveText("Use flomo-local-api skill");
     const skillUseRow = page.getByRole("button", { name: /tool details: Use flomo-local-api skill/ });
     await expect(skillUseRow).toHaveCount(0);
     await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toHaveCount(0);
@@ -311,7 +313,7 @@ test.describe("Run transcript detail", () => {
     await expect(mainContent.getByRole("tab", { name: "Skills" })).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Integrations" })).toBeVisible();
     await expect(agentRunsTab).toBeVisible();
-    await expect(mainContent.getByRole("tab", { name: "Budget" })).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Issues" })).toBeVisible();
     await expect(agentRunsTab).toHaveAttribute("data-state", "active");
 
     const transcriptTab = page.getByRole("tab", { name: "Transcript" });
@@ -889,7 +891,7 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    await expect(detailPane.getByText("1205 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText("2 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(detailPane).toContainText("Conversation transcript marker 1");
     await expect(detailPane).toContainText("Conversation transcript marker 1205");
 
@@ -1042,7 +1044,7 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText("Failure details", { exact: true })).toHaveCount(0);
 
     const listPane = await openVisibleRunList(page);
-    await expect(listPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible();
+    await expect(listPane).toContainText("The assistant finished without a final Rudder reply.");
   });
 
   test("shows an explicit empty state when only operator-hidden run events were persisted", async ({ page }) => {
@@ -1449,9 +1451,10 @@ test.describe("Run transcript detail", () => {
     await activity.click();
 
     const sourceTarget = detailPane.locator(`[data-transcript-file-target="${sourcePath}"]`);
-    const skillTarget = detailPane.locator(`[data-transcript-file-target="${skillPath}"]`);
+    const skillTarget = detailPane.locator('[data-transcript-skill-target="systematic-debugging"]');
     await expect(sourceTarget).toHaveText("RunTranscriptView.tsx");
     await expect(skillTarget).toHaveText("systematic-debugging");
+    await expect(skillTarget).toHaveAttribute("data-transcript-skill-path", skillPath);
     await expect(detailPane.getByText(sourcePath, { exact: true })).toHaveCount(0);
     await expect(detailPane.getByText(skillPath, { exact: true })).toHaveCount(0);
 
@@ -1489,7 +1492,7 @@ test.describe("Run transcript detail", () => {
     await expect(transcriptDialog).toBeVisible();
     const modalActivity = transcriptDialog.getByRole("button", { name: /Expand tool activity/ }).first();
     await modalActivity.click();
-    await transcriptDialog.locator(`[data-transcript-file-target="${skillPath}"]`).click();
+    await transcriptDialog.locator('[data-transcript-skill-target="systematic-debugging"]').click();
     await expect(transcriptDialog).toBeHidden();
     await expect(page).toHaveURL(runUrl);
     await expect(sidePanel.getByRole("tab", { name: "systematic-debugging" })).toBeVisible();

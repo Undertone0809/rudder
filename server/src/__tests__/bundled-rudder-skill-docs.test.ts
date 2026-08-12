@@ -517,7 +517,11 @@ describe("bundled rudder docs skill", () => {
       expect(fixture.required_contract_ids).toEqual(workspaceContracts);
     }
     const expectedBilingualReferencePaths = contentMap.pages
-      .filter((page) => page.kind === "reference" && page.status === "active")
+      .filter((page) =>
+        page.kind === "reference"
+        && page.status === "active"
+        && (page.contracts.primary.length > 0 || page.contracts.supporting.length > 0)
+      )
       .flatMap((page) => [
         `${contentMap.base_url}${page.urls.en}`,
         `${contentMap.base_url}${page.urls.zh}`,

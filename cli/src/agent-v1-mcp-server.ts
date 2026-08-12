@@ -1,15 +1,11 @@
 import {
   RUDDER_BROWSER_MCP_SERVER_NAME,
-  RUDDER_MCP_CONTRACT_VERSION,
-  RUDDER_MCP_SERVER_NAME,
-  rudderMcpSemanticToolContract,
-} from "@rudderhq/agent-runtime-utils";
-import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
-import {
   RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY,
+  RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_MODERN_PROTOCOL_VERSION,
   RUDDER_MCP_PROTOCOL_VERSION_META_KEY,
   RUDDER_MCP_SERVER_INFO_META_KEY,
+  RUDDER_MCP_SERVER_NAME,
   RUDDER_MCP_SUPPORTED_PROTOCOL_VERSIONS,
   hasConflictingMcpProtocolVersions,
   hasModernMcpRequestEnvelope,
@@ -17,7 +13,9 @@ import {
   modernMcpResult,
   negotiateRudderMcpProtocolVersion,
   protocolVersionFromMcpParams,
-} from "@rudderhq/agent-runtime-utils/rudder-mcp-protocol";
+  rudderMcpSemanticToolContract,
+} from "@rudderhq/agent-runtime-utils";
+import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
 import {
   COMPUTER_USE_MCP_SERVER_NAME,
   COMPUTER_USE_MCP_TOOLS,

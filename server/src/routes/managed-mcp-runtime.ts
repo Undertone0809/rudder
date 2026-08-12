@@ -12,7 +12,7 @@ import {
   isRudderMcpModernProtocolVersion,
   modernMcpResult,
   protocolVersionFromMcpParams,
-} from "@rudderhq/agent-runtime-utils/rudder-mcp-protocol";
+} from "@rudderhq/agent-runtime-utils";
 import { Router, type Request } from "express";
 import { HttpError } from "../errors.js";
 import { markHttpRequestBodySensitive } from "../middleware/logger.js";
