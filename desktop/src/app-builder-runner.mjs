@@ -115,15 +115,17 @@ function runPnpm(pnpmCli, args, appRoot, environment) {
 }
 
 async function verifyApp(pnpmCli, appRoot, environment) {
-  if (process.platform !== "win32") {
-    await runPnpm(pnpmCli, ["run", "verify"], appRoot, environment);
-    return;
-  }
-
   await runPnpm(pnpmCli, ["run", "ui:check"], appRoot, environment);
   await runPnpm(pnpmCli, ["run", "typecheck"], appRoot, environment);
   await runPnpm(pnpmCli, ["run", "test"], appRoot, environment);
-  await runPnpm(pnpmCli, ["exec", "next", "build", "--webpack"], appRoot, environment);
+  await runPnpm(
+    pnpmCli,
+    process.platform === "win32"
+      ? ["exec", "next", "build", "--webpack"]
+      : ["exec", "next", "build"],
+    appRoot,
+    environment,
+  );
 }
 
 async function main() {
