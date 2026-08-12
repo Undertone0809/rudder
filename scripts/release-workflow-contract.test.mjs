@@ -214,6 +214,7 @@ describe("release workflow latency contracts", () => {
   });
 
   it("opens the packaged macOS account gate before publishing Desktop artifacts", () => {
+    expect(desktopWorkflow).not.toContain("--scenario=upgrade");
     expect(desktopWorkflow).toContain("matrix.platform == 'macos' && matrix.arch == 'arm64'");
     expect(desktopWorkflow).toContain(
       "node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate",
