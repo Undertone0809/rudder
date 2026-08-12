@@ -76,7 +76,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [技能](https://docs.rudderhq.dev/zh/concepts/skills): 把已经验证过、会反复出现的做法整理成 Agent 可以复用的指令。
 - [自动化](https://docs.rudderhq.dev/zh/concepts/automations): 按日程、Webhook 或手动触发，重复运行一项已经稳定的 Agent 任务。
 - [评审、反馈和改进](https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning): 判断结果，说明哪里应该改变，并把已经验证的经验用于未来的 Agent 工作。
-- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 安装由技能、MCP Server 和应用组成的 Codex 兼容能力包。
+- [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 安装由技能、MCP 服务端和应用组成的 Codex 兼容能力包。
 
 ### How-to guides
 - [让 Issue 从开始走到完成](https://docs.rudderhq.dev/zh/how-to/issue-lifecycle): 写清任务，指定一个负责人，评审结果，并让重要信息留在完成记录里。
@@ -85,7 +85,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [评审 Agent 工作](https://docs.rudderhq.dev/zh/how-to/review-agent-work): 打开真实结果，对照任务要求，并记录下一位负责人也能理解的结论。
 - [给 Agent 提供项目文件和上下文](https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library): 连接项目文件夹，选择 Agent 应该收到的来源资料，并保存最终结果。
 - [把组织迁移到另一个 Rudder 实例](https://docs.rudderhq.dev/zh/how-to/export-import-organization): 导出受支持的组织数据，预览导入内容，再安全地创建一份新副本。
-- [安装和管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 检查 Codex Plugin 软件包，安装支持的能力，并配置技能或 MCP 访问。
+- [安装和管理插件](https://docs.rudderhq.dev/zh/how-to/manage-plugins): 检查 Codex 插件软件包，安装支持的能力，并配置技能或 MCP 访问。
 - [把 Agent 连接到飞书或 Lark](https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration): 授权飞书或 Lark 机器人，发送测试消息，再从 Rudder 找到同一段对话。
 - [配置 Agent 运行工具](https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime): 连接真正执行 Agent 工作的程序，完成测试，再用一件真实小任务验证。
 
