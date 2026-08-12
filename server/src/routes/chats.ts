@@ -144,8 +144,7 @@ export function chatRoutes(
     organizations: organizationsSvc,
     issues: issuesSvc,
     projects: projectsSvc,
-    agents: agentsSvc,
-    goals: goalsSvc,
+    agents: agentsSvc, goals: goalsSvc,
     assistant: assistantSvc,
   });
   const {

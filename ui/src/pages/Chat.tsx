@@ -3851,7 +3851,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     replyingAgentId={activeStream.replyingAgentId}
                                     conversation={selectedConversation}
                                     agents={agents} onCopyMessageText={copyChatMessageText}
-                                    localizeText={localizeChatProcessText}
                                     skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} />
                                 </Fragment>
                               );
