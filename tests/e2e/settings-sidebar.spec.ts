@@ -10,6 +10,106 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Settings sidebar", () => {
+  test("keeps organization appearance and tab changes direct and stable", async ({ page }) => {
+    const captureDir = process.env.RUDDER_SETTINGS_CAPTURE_DIR?.trim();
+    const capture = async (name: string) => {
+      if (!captureDir) return;
+      await page.screenshot({ path: `${captureDir}/${name}.png`, fullPage: true });
+    };
+    const organizationName = `Direct Organization Settings ${Date.now()}`;
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: organizationName,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+
+    await page.goto(`/${organization.issuePrefix}/organization/settings`);
+    const settingsPage = page.getByTestId("organization-settings-page");
+    await expect(settingsPage).toBeVisible();
+
+    await expect(settingsPage.getByText("The display name for your organization.", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByText("Upload a PNG, JPEG, WEBP, GIF, or SVG logo image.", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByText("Sets the hue for the organization icon. Leave empty for auto-generated color.", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByText("Choose file", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByText("No file chosen", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
+
+    const logoUploadResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/logo`)
+      && response.ok(),
+    );
+    const logoUpdateResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/orgs/${organization.id}`)
+      && response.ok(),
+    );
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await settingsPage.getByRole("button", { name: "Change organization logo" }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      name: "organization-logo.svg",
+      mimeType: "image/svg+xml",
+      buffer: Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="#157f71"/></svg>',
+      ),
+    });
+    await logoUploadResponse;
+    await logoUpdateResponse;
+    await expect(settingsPage.getByRole("img", { name: `${organizationName} logo` })).toBeVisible();
+    await capture("general-avatar-direct-upload");
+
+    await page.evaluate(() => {
+      const settings = document.querySelector('[data-testid="organization-settings-page"]');
+      const state = { minimumActivePanels: Number.POSITIVE_INFINITY, transparentFrames: 0, frames: 0 };
+      (window as typeof window & { __settingsTransitionState?: typeof state }).__settingsTransitionState = state;
+      const sample = () => {
+        const activePanels = Array.from(settings?.querySelectorAll<HTMLElement>('[data-slot="tabs-content"][data-state="active"]') ?? []);
+        state.minimumActivePanels = Math.min(state.minimumActivePanels, activePanels.length);
+        if (activePanels.some((panel) => Number.parseFloat(getComputedStyle(panel).opacity) < 1)) {
+          state.transparentFrames += 1;
+        }
+        state.frames += 1;
+        if (state.frames < 30) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await settingsPage.getByRole("tab", { name: "Chat", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings\\?view=chat$`));
+    await expect(settingsPage.getByText("Archived conversations", { exact: true })).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() =>
+      (window as typeof window & {
+        __settingsTransitionState?: { minimumActivePanels: number; transparentFrames: number };
+      }).__settingsTransitionState,
+    )).toEqual(expect.objectContaining({ minimumActivePanels: 1, transparentFrames: 0 }));
+    const chatPanel = settingsPage.locator('[data-slot="tabs-content"][data-state="active"]');
+    await expect(chatPanel).not.toHaveClass(/rudder-tabs-content-motion/);
+    await expect(chatPanel).toHaveCSS("animation-name", "none");
+    await capture("chat-stable-panel");
+
+    await settingsPage.getByRole("tab", { name: "Intelligence", exact: true }).click();
+    await expect(settingsPage.getByText("Test before enabling to verify the selected runtime and fallbacks.")).toHaveCount(0);
+    await expect(page.getByText("Titles, short summaries, classification", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Issue AI search, reranking, complex summaries", { exact: true })).toHaveCount(0);
+    const fastHelp = settingsPage.getByRole("button", { name: "About Fast intelligence profile" });
+    await fastHelp.hover();
+    const fastTooltip = page.getByRole("tooltip", { name: "Titles, short summaries, classification" });
+    await expect(fastTooltip).toBeVisible();
+    await settingsPage.getByRole("tab", { name: "General", exact: true }).hover();
+    await expect(fastTooltip).toBeHidden();
+    const smartHelp = settingsPage.getByRole("button", { name: "About Smart intelligence profile" });
+    await smartHelp.focus();
+    const smartTooltip = page.getByRole("tooltip", { name: "Issue AI search, reranking, complex summaries" });
+    await expect(smartTooltip).toBeVisible();
+    await capture("intelligence-smart-tooltip");
+    await page.keyboard.press("Tab");
+    await expect(smartTooltip).toBeHidden();
+  });
+
   test("does not reopen settings from stale Organization rail and workspace memory", async ({ page }) => {
     const otherOrgRes = await page.request.post("/api/orgs", {
       data: {

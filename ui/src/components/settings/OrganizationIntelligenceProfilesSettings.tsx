@@ -18,6 +18,7 @@ import {
   runtimeProviderRailClassName,
 } from "@/components/AgentConfigForm.helpers";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { queryKeys } from "@/lib/queryKeys";
 import { blockingRuntimeEnvironmentMessage } from "@/lib/runtime-models";
 import { cn } from "@/lib/utils";
@@ -42,7 +43,7 @@ import type {
   OrganizationSecret,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, LoaderCircle, Plus } from "lucide-react";
+import { CircleHelp, FlaskConical, LoaderCircle, Plus } from "lucide-react";
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from "react";
 
 type ProfileDraft = {
@@ -454,9 +455,24 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
               className="space-y-3 rounded-lg border border-border/70 bg-background/35 p-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <div className="text-sm font-medium">{copy.label}</div>
-                  <div className="text-xs text-muted-foreground">{copy.description}</div>
+                  <TooltipProvider>
+                    <Tooltip disableHoverableContent>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`About ${copy.label} intelligence profile`}
+                          className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <CircleHelp className="size-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" sideOffset={6}>
+                        {copy.description}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
                 <div className="flex items-center gap-2.5">
                   <span className={cn(
@@ -534,11 +550,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                       />
                     ),
                   )
-                ) : (
-                  <div className="rounded-md border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
-                    Test before enabling to verify the selected runtime and fallbacks.
-                  </div>
-                )}
+                ) : null}
               </div>
 
               <DndContext

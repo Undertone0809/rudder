@@ -75,12 +75,13 @@ function TabsTrigger({
 
 function TabsContent({
   className,
+  motion = true,
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.Content>) {
+}: React.ComponentProps<typeof TabsPrimitive.Content> & { motion?: boolean }) {
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("rudder-tabs-content-motion flex-1 outline-none", className)}
+      className={cn(motion && "rudder-tabs-content-motion", "flex-1 outline-none", className)}
       {...props}
     />
   )

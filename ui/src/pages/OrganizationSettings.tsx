@@ -102,22 +102,16 @@ export function OrganizationSettings() {
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [logoFileName, setLogoFileName] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
   const [defaultChatIssueCreationMode, setDefaultChatIssueCreationMode] = useState<"manual_approval" | "auto_create">("manual_approval");
   const [archivedChatSearch, setArchivedChatSearch] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#6366f1");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; color: string }>>({});
-  const [activeView, setActiveView] = useState<OrganizationSettingsView>(() =>
-    settingsViewFromSearch(location.search));
-
-  useEffect(() => {
-    setActiveView(settingsViewFromSearch(location.search));
-  }, [location.search]);
+  const activeView = settingsViewFromSearch(location.search);
 
   const changeActiveView = (view: OrganizationSettingsView) => {
-    setActiveView(view);
+    if (view === activeView) return;
     const params = new URLSearchParams(location.search);
     if (view === "general") params.delete("view");
     else params.set("view", view);
@@ -346,19 +340,7 @@ export function OrganizationSettings() {
         .then((asset) => organizationsApi.update(viewedOrganizationId!, { logoAssetId: asset.assetId })),
     onSuccess: (organization) => {
       syncLogoState(organization.logoUrl);
-      setLogoFileName("");
       setLogoUploadError(null);
-    },
-    onError: () => {
-      setLogoFileName("");
-    },
-  });
-
-  const clearLogoMutation = useMutation({
-    mutationFn: () => organizationsApi.update(viewedOrganizationId!, { logoAssetId: null }),
-    onSuccess: (organization) => {
-      setLogoUploadError(null);
-      syncLogoState(organization.logoUrl);
     },
   });
 
@@ -366,13 +348,8 @@ export function OrganizationSettings() {
     const file = event.target.files?.[0] ?? null;
     event.currentTarget.value = "";
     if (!file) return;
-    setLogoFileName(file.name);
     setLogoUploadError(null);
     logoUploadMutation.mutate(file);
-  }
-
-  function handleClearLogo() {
-    clearLogoMutation.mutate();
   }
 
   useEffect(() => {
@@ -543,17 +520,15 @@ export function OrganizationSettings() {
             mobileMode="scrollable-tabs"
             items={settingsViews}
             value={activeView}
-            onValueChange={(value) => changeActiveView(value as OrganizationSettingsView)}
           />
         </div>
 
-        <TabsContent value="general" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="general" motion={false} className="flex min-w-0 flex-col gap-6">
           <SettingsSection title={t("organizationSettings.section.general")}>
             <SettingsGroup>
               <SettingsField
                 htmlFor="organization-settings-name"
                 label={t("organizationSettings.general.name.label")}
-                description={t("organizationSettings.general.name.hint")}
               >
                 <Input
                   id="organization-settings-name"
@@ -568,75 +543,45 @@ export function OrganizationSettings() {
             <SettingsGroup>
               <SettingsField
                 label={t("organizationSettings.appearance.logo.label")}
-                description={t("organizationSettings.appearance.logo.hint")}
               >
-                <div className="grid min-w-0 gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
-                  <OrganizationPatternIcon
-                    organizationName={organizationName || viewedOrganization.name}
-                    logoUrl={logoUrl || null}
-                    brandColor={brandColor || null}
-                    className="size-14 rounded-lg"
+                <div className="flex min-w-0 flex-col items-start gap-2">
+                  <input
+                    ref={logoFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    onChange={handleLogoFileChange}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    className="hidden"
                   />
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <input
-                      ref={logoFileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                      onChange={handleLogoFileChange}
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      className="hidden"
+                  <button
+                    type="button"
+                    aria-label="Change organization logo"
+                    className="rounded-lg outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+                    onClick={() => logoFileInputRef.current?.click()}
+                    disabled={logoUploadMutation.isPending}
+                  >
+                    <OrganizationPatternIcon
+                      organizationName={organizationName || viewedOrganization.name}
+                      logoUrl={logoUrl || null}
+                      brandColor={brandColor || null}
+                      className="size-14 rounded-lg"
                     />
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => logoFileInputRef.current?.click()}
-                      >
-                        {t("organizationSettings.appearance.logo.chooseFile")}
-                      </Button>
-                      <span className="min-w-0 truncate text-xs text-muted-foreground">
-                        {logoFileName || t("organizationSettings.appearance.logo.noFileChosen")}
-                      </span>
-                      {logoUrl ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={handleClearLogo}
-                          disabled={clearLogoMutation.isPending}
-                        >
-                          {clearLogoMutation.isPending
-                            ? t("organizationSettings.appearance.logo.removing")
-                            : t("organizationSettings.appearance.logo.remove")}
-                        </Button>
-                      ) : null}
-                    </div>
-                    {logoUploadMutation.isPending ? (
-                      <span className="text-xs text-muted-foreground">
-                        {t("organizationSettings.appearance.logo.uploading")}
-                      </span>
-                    ) : null}
-                    {logoUploadMutation.isError || logoUploadError ? (
-                      <span className="text-xs text-destructive">
-                        {logoUploadError ??
-                          (logoUploadMutation.error instanceof Error
-                            ? logoUploadMutation.error.message
-                            : t("organizationSettings.appearance.logo.uploadFailed"))}
-                      </span>
-                    ) : null}
-                    {clearLogoMutation.isError ? (
-                      <span className="text-xs text-destructive">{clearLogoMutation.error.message}</span>
-                    ) : null}
-                  </div>
+                  </button>
+                  {logoUploadMutation.isError || logoUploadError ? (
+                    <span className="text-xs text-destructive">
+                      {logoUploadError ??
+                        (logoUploadMutation.error instanceof Error
+                          ? logoUploadMutation.error.message
+                          : t("organizationSettings.appearance.logo.uploadFailed"))}
+                    </span>
+                  ) : null}
                 </div>
               </SettingsField>
 
               <SettingsField
                 htmlFor="organization-settings-brand-color"
                 label={t("organizationSettings.appearance.brandColor.label")}
-                description={t("organizationSettings.appearance.brandColor.hint")}
               >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <input
@@ -725,7 +670,7 @@ export function OrganizationSettings() {
           </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="workspace" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="workspace" motion={false} className="flex min-w-0 flex-col gap-6">
           <SettingsSection title={t("organizationSettings.section.workspace")}>
             <SettingsGroup>
               <SettingsItem
@@ -923,7 +868,7 @@ export function OrganizationSettings() {
           </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="intelligence" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="intelligence" motion={false} className="flex min-w-0 flex-col gap-6">
           <SettingsSection
             title="Intelligence"
             description="Organization-level AI profiles for product features that are not agent work."
@@ -934,7 +879,7 @@ export function OrganizationSettings() {
           </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="chat" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="chat" motion={false} className="flex min-w-0 flex-col gap-6">
           <SettingsSection title={t("organizationSettings.section.chat")}>
             <SettingsGroup>
               <SettingsField
@@ -1095,11 +1040,11 @@ export function OrganizationSettings() {
           </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="integrations" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="integrations" motion={false} className="flex min-w-0 flex-col gap-6">
           <OrganizationMcpSettings orgId={viewedOrganizationId!} />
         </TabsContent>
 
-        <TabsContent value="access" className="flex min-w-0 flex-col gap-6">
+        <TabsContent value="access" motion={false} className="flex min-w-0 flex-col gap-6">
           <SettingsSection
             title={t("organizationSettings.section.invites")}
             description={t("organizationSettings.invites.description")}

@@ -285,6 +285,21 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     document.body.innerHTML = "";
   });
 
+  it("defers profile descriptions to help controls and omits empty test prompts", async () => {
+    const rendered = await renderComponent();
+    await vi.waitFor(() => {
+      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
+    });
+
+    expect(rendered.host.querySelector('button[aria-label="About Fast intelligence profile"]')).not.toBeNull();
+    expect(rendered.host.querySelector('button[aria-label="About Smart intelligence profile"]')).not.toBeNull();
+    expect(rendered.host.textContent).not.toContain(
+      "Test before enabling to verify the selected runtime and fallbacks.",
+    );
+
+    rendered.cleanup();
+  });
+
   it("tests the selected organization intelligence profile runtime chain", async () => {
     const rendered = await renderComponent();
     await vi.waitFor(() => {
