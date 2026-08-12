@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "replace-with-root-delivery-id",
+  "status": "draft",
+  "owner": {
+    "root_id": "replace-with-root-id",
+    "agent_id": "replace-with-owner-id"
+  },
+  "intent": {
+    "raw_request": "Paste the user's request verbatim.",
+    "corrections": [],
+    "non_goals": [],
+    "authorization": "implementation | local_integration | release | publication"
+  },
+  "candidate": {
+    "branch": "replace-with-branch",
+    "source_ref": "replace-with-source-ref",
+    "source_sha": "replace-with-40-char-sha",
+    "dirty_fingerprint": "replace-with-scoped-dirty-fingerprint",
+    "changed_paths": [],
+    "build": {"id": "replace-with-build-id", "source_sha": "replace-with-40-char-sha"},
+    "runtime": {"id": "replace-with-runtime-id", "source_sha": "replace-with-40-char-sha"},
+    "organization_data": {"organization_id": "replace-with-org", "data_id": "replace-with-data"},
+    "workload_fixture": "replace-with-workload-or-not_applicable",
+    "budget_lease": {"id": "replace-with-budget-lease", "fingerprint": "replace-with-budget-fingerprint", "expires_at": "replace-with-iso-time"},
+    "acceptance_packet": {
+      "version": "1",
+      "fingerprint": "replace-with-packet-fingerprint",
+      "criteria": [],
+      "state_inventory": []
+    }
+  },
+  "receipts": {
+    "reviewer": {"verdict": "pending", "candidate_fingerprint": "replace-with-scoped-dirty-fingerprint", "source_sha": "replace-with-40-char-sha", "build_id": "replace-with-build-id", "runtime_id": "replace-with-runtime-id", "data_id": "replace-with-data", "packet_version": "1"},
+    "verifier": {"verdict": "pending", "candidate_fingerprint": "replace-with-scoped-dirty-fingerprint", "source_sha": "replace-with-40-char-sha", "build_id": "replace-with-build-id", "runtime_id": "replace-with-runtime-id", "data_id": "replace-with-data", "packet_version": "1"},
+    "final_review": {"verdict": "pending", "candidate_fingerprint": "replace-with-scoped-dirty-fingerprint", "source_sha": "replace-with-40-char-sha", "build_id": "replace-with-build-id", "runtime_id": "replace-with-runtime-id", "data_id": "replace-with-data", "packet_version": "1"}
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "replace-with-base-sha",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "replace-with-remote-sha",
+    "branch_refs": [],
+    "isolation_trigger": "none | conflict | concurrent_write_risk | destructive_risk | independent_runtime",
+    "isolated_worktree": null,
+    "patch_tree_sha": "replace-with-patch-tree-sha",
+    "expected_old_sha": "replace-with-expected-old-target-sha",
+    "cas": {"attempted": false, "succeeded": false, "observed_old_sha": null, "delivered_sha": null},
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": false,
+    "unrelated_dirty_paths": [],
+    "index_fingerprint_before": "replace-with-index-fingerprint",
+    "index_fingerprint_after": "replace-with-index-fingerprint",
+    "worktree_fingerprint_before": "replace-with-worktree-fingerprint",
+    "worktree_fingerprint_after": "replace-with-worktree-fingerprint",
+    "unrelated_paths_preserved": false,
+    "index_preserved": false,
+    "evidence": []
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

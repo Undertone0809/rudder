@@ -1,0 +1,7 @@
+interface:
+  display_name: "Delivery Lifecycle Maintainer"
+  short_description: "Coordinate exact candidate delivery and handoff"
+  default_prompt: "Use $delivery-lifecycle-maintainer to freeze, verify, integrate, and hand off this Rudder task with exact identity receipts."
+
+policy:
+  allow_implicit_invocation: true

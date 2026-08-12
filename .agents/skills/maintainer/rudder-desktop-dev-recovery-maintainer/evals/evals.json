@@ -115,6 +115,42 @@
         "Compiled policy and codesign output alone are not accepted as proof that the native dialog is absent.",
         "The missing observation authority is reported as BLOCKED."
       ]
+    },
+    {
+      "id": 14,
+      "prompt": "安装版当前是 v0.7.2，live migration journal 已验证到 0148。命名的 packaged candidate 是 v0.7.3，manifest 明确包含 forward migrations 0149_app_builder_verified_source_ready、0150_rudder_plugins_v1、0151_agent_issue_creation_requests。请先判断能否安全恢复同一个组织工作区，不能把单纯 candidate boot 当成恢复。",
+      "expected_output": "Compares the packaged manifest and live journal, classifies the relationship as forward-known for the named v0.7.3 candidate, requires a verified data-identity backup and isolated-copy forward validation, then verifies the installed app against the same workspace before RECOVERED.",
+      "files": [],
+      "expectations": [
+        "Compares the named packaged manifest with the verified live journal and classifies the relationship as forward-known.",
+        "Requires a verified pre-migration backup bound to the original data and organization identity before mutating it.",
+        "Requires forward migration validation on an isolated copy before attempting the installed app against the original workspace.",
+        "Withholds RECOVERED until the installed app proves the same organization workspace and required continuity; candidate boot alone is insufficient."
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "安装版的 live journal 在共同前缀后出现了本地 hotfix 分支，且 0148 的 SQL checksum 与 v0.7.3 packaged manifest 不同；现有 candidate 没有显式认识这条 fork。请排查，不能删 journal 或原地降级。",
+      "expected_output": "Classifies the history as checksum-mismatch and/or fork without a recognized named candidate, returns BLOCKED before mutation, and explicitly refuses journal deletion, published SQL rewriting, or in-place downgrade.",
+      "files": [],
+      "expectations": [
+        "Classifies the evidence as checksum-mismatch and fork or unknown history for the named candidate.",
+        "Returns BLOCKED before any mutation because the candidate does not explicitly recognize the history.",
+        "Explicitly refuses deleting or rewriting the live migration journal and published migration SQL.",
+        "Explicitly refuses in-place downgrade or ad hoc schema repair and names a forward-compatible recognized candidate or preserved-copy escalation as the next route."
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "历史关系是可识别的：v0.7.2 到 0148，候选 v0.7.3 只需前向执行 0149-0151。但已安装 app 的 release backup 丢失，数据库也没有足够空间生成并验证同身份的 pre-migration backup。能不能直接迁移原始工作区？",
+      "expected_output": "Returns BLOCKED at the backup/free-space prerequisite before mutating the original database, preserves migration history, and distinguishes any isolated candidate or partial backup evidence from RECOVERED.",
+      "files": [],
+      "expectations": [
+        "Returns BLOCKED at the verified backup and free-space prerequisite before mutating the original workspace.",
+        "Refuses to migrate the original database directly despite the forward-known history.",
+        "Preserves the live journal and original workspace rather than rewriting or downgrading them.",
+        "States that candidate-only, isolated-copy-only, or unverified partial-backup evidence cannot justify RECOVERED."
+      ]
     }
   ]
 }

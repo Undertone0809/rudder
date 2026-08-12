@@ -1,6 +1,6 @@
 ---
 name: rudder-desktop-dev-recovery-maintainer
-description: "Use when Rudder Desktop or its development shell will not launch, gets stuck at login/account gate, has pending device approval or local-session exchange, returns 401 during update, points at the wrong instance, fails during update/restart, triggers macOS Keychain/safeStorage alerts, or differs between dev and packaged execution. Recover one exact Desktop path and return RECOVERED or BLOCKED with runtime, identity, storage, and visible-workspace evidence."
+description: "Use when Rudder Desktop or its development shell will not launch, gets stuck at login/account gate, has pending device approval or local-session exchange, returns 401 during update, points at the wrong instance, hits migration-journal/schema-history divergence, needs a backup or rollback decision, fails during update/restart, triggers macOS Keychain/safeStorage alerts, or differs between dev and packaged execution. Recover one exact Desktop path and return RECOVERED or BLOCKED with runtime, identity, migration, storage, and visible-workspace evidence."
 ---
 
 # Rudder Desktop Dev Recovery Maintainer
@@ -57,6 +57,22 @@ pnpm desktop:verify
 
 In either mode, verify that health matches the expected `instanceId`,
 `localEnv`, and `runtimeOwnerKind` before inspecting product data.
+
+## Migration-History Recovery Route
+
+Use this route whenever startup, update, or recovery mentions pending
+migrations, the migration journal, schema history, a backup, rollback, or a
+candidate built from another history. Before inspecting or changing a
+non-empty instance, read `references/migration-history-recovery.md`. It defines
+the manifest/live-journal comparison, `forward-known`/`unknown`/
+`checksum-mismatch`/`fork` classifications, verified backup and free-space
+gates, isolated forward validation, installed-app and same-workspace proof, and
+the boundary between `RECOVERED` and candidate-only or backup-only evidence.
+
+Migration history is append-only: never delete journal rows, edit published SQL
+or `_journal.json` in place, or downgrade the original data directory. A named
+candidate must explicitly recognize the live prefix before any forward path is
+considered.
 
 ## Identity Continuity Route
 

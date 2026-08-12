@@ -1,0 +1,41 @@
+{
+  "skill_name": "delivery-lifecycle-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The Goal candidate passed review and the black-box verifier yesterday, but the approved budget changed from 4 hours to 90 minutes while a replacement worker updated the same branch. Produce the delivery packet and tell me whether it can be handed off now.",
+      "expected_output": "The packet preserves the raw request and records the budget lease change as candidate drift; the old reviewer/verifier receipts are invalidated, status is blocked or invalidated, and handoff requires refreeze plus fresh verifier PASS and final reviewer accept.",
+      "files": [],
+      "expectations": [
+        "Produces a structured delivery packet or packet-shaped artifact preserving raw request, candidate, budget, and receipt identities.",
+        "Records both the budget lease change and branch update as drift against the previously reviewed candidate.",
+        "Invalidates the old reviewer and verifier receipts and returns blocked or invalidated rather than handoff-ready.",
+        "Requires refreeze, a fresh exact-candidate verifier PASS, and final reviewer acceptance before handoff."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I prepared a changelog-only candidate on local main at 8e7c... from origin/main, but origin/main advanced to a new commit while the release notes were being reviewed. Can we fast-forward and call it delivered? Track the exact refs and next action.",
+      "expected_output": "The packet records the original base and observed remote movement, blocks the stale fast-forward/delivery claim, and requires refreezing against the new remote base with a new candidate identity and receipts before any release handoff.",
+      "files": [],
+      "expectations": [
+        "Records the candidate commit, original base, and newly observed remote ref as distinct exact identities without inventing hashes.",
+        "Classifies remote movement as base or candidate drift and refuses to call the stale candidate delivered.",
+        "Requires integration or transplant onto the new remote base followed by a new frozen candidate identity.",
+        "Requires fresh receipts for the refrozen candidate before release handoff rather than treating fast-forward mechanics as proof."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Six feature branches are ready to merge into a heavily dirty shared main checkout. Two branches touch overlapping files, three unrelated chat files are being edited concurrently, and the index contains user staging. Give me the exact delivery/integration packet and safe sequence for local integration without losing dirty paths or index state.",
+      "expected_output": "The packet records all six branch refs and dirty/index baselines, starts main-first, escalates to a detached isolated worktree only for the observed conflict/concurrent-write risk, validates the merge tree, performs CAS against expected-old main, never mutates the live index, and proves preservation before a delivered-ref receipt.",
+      "files": [],
+      "expectations": [
+        "Records all six source refs plus the expected old main ref, dirty-path baseline, and staged-index baseline in a packet or ledger.",
+        "Begins with a read-only main-first feasibility check and escalates to an isolated detached worktree because concrete overlap and concurrent-write risks exist.",
+        "Validates the integrated tree before updating main and uses a compare-and-swap check against the expected old main ref.",
+        "Never mutates the shared checkout live index; any optional index view uses an explicit alternate GIT_INDEX_FILE, and preservation is proved before a delivered-ref receipt."
+      ]
+    }
+  ]
+}

@@ -61,6 +61,42 @@
         "The review does not infer persisted restoration from Back or dismissal behavior and permits restoration after Reopen only under an intentional draft contract.",
         "The review explicitly names the safety-critical consequences and current-state context that must remain visible, or states that the packet lacks enough evidence to identify them."
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "Review a Budget UI change for final handoff. The raw request says: 'Put Budget inside Agent Configuration at the bottom, using the same visual language as the Permissions and API Keys sections; remove the standalone Budget tab.' The acceptance packet instead says only 'Add an Agent Detail Budget tab', shows a tab screenshot, and has no correction ledger or sibling comparison. Unit tests and a verifier PASS cover the tab candidate.",
+      "expected_output": "Builds a raw intent/correction ledger, translates inside/at the bottom/same visual language/remove into observable criteria, identifies the acceptance packet mismatch, and blocks acceptance or verifier reuse despite the narrower packet and verifier PASS.",
+      "files": [],
+      "expectations": [
+        "The review quotes or preserves the raw placement, adjacency/style, and standalone-tab removal requirements instead of substituting the implementer's tab paraphrase.",
+        "The review marks the packet as mismatch and treats that mismatch as a blocking finding, even though tests and a verifier PASS satisfy the narrower tab packet.",
+        "The review requires a comparative rendered frame containing Budget, Permissions, and API Keys before acceptance.",
+        "The convergence direction is to correct the acceptance packet and rerun the affected candidate review/verifier flow, not to polish or accept the tab candidate."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Review an aligned Rudder settings-panel candidate for a stage verdict. The raw request, correction ledger, and acceptance packet all say Budget belongs at the bottom of Agent Configuration, matches Permissions and API Keys, and has no standalone tab. The packet includes side-by-side light and dark screenshots with production-shaped data, open/empty/error states, a named sibling comparison, and no verifier run yet. The diff and tests show the same behavior.",
+      "expected_output": "Uses the ledger and comparative evidence without inventing a packet mismatch, judges the stage candidate on first principles and product quality, and permits a stage verdict while reserving final acceptance for the distinct verifier and final-review gates.",
+      "files": [],
+      "expectations": [
+        "The review explicitly records the raw intent, correction ledger, packet criteria, and evidence as aligned.",
+        "The review does not reject solely because the mandatory ledger and sibling comparison are present; it evaluates the candidate's actual behavior and UI quality.",
+        "The stage verdict may be accept when no blocking finding remains, but it does not claim final handoff acceptance without verifier PASS on the exact candidate.",
+        "The review checks that the comparative frame and state evidence cover the named sibling, light/dark, and risk-based open/empty/error states."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Review a Request card and long virtualized Issue timeline after implementation. The happy-path test passes, but the resolved card still says 'Need input' and exposes 'Attempt 3/3'; the cancelled card uses an internal retry label; opening Find leaves offscreen rows unmounted, and Load more jumps the scroll position and loses focus. The packet has only an open-state screenshot and no terminal-state or virtualization evidence.",
+      "expected_output": "Separates verifier ownership from reviewer judgment, identifies terminal-state language and virtualization continuity as blocking product/evidence gaps, and requests a state matrix plus rendered evidence for open/submitting/resolved/cancelled, refresh/reopen, Find, deep-link, and load-more behavior.",
+      "files": [],
+      "expectations": [
+        "The review flags action-needed copy and internal attempt metadata retained in resolved or cancelled cards as a user-facing terminal-language blocker.",
+        "The review identifies virtualization/search and load-more scroll/focus discontinuity as a product-quality or evidence blocker, not as a passing happy-path detail.",
+        "The review requests a state matrix covering open, submitting, completed/resolved, failed, cancelled or superseded, refresh/reopen, Find or deep-link, and load-more continuity as applicable.",
+        "The review does not claim to replace the verifier's black-box terminal judgment; it asks for a corrected packet and exact rendered evidence before final acceptance."
+      ]
     }
   ]
 }
