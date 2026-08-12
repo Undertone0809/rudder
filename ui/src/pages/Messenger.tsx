@@ -770,13 +770,12 @@ function MessengerApprovalCard({
       <div data-testid={`messenger-approval-card-${item.id}`}>
         <ApprovalCard
           approval={item.approval}
-          requesterAgent={requesterAgent}
+          requesterAgent={null}
           onApprove={() => decisionMutation.mutate("approve")}
           onReject={() => decisionMutation.mutate("reject")}
           onRequestRevision={pending ? () => decisionMutation.mutate("requestRevision") : undefined}
           detailLink={`/messenger/approvals/${item.approval.id}`}
           detailLabel="Open full approval"
-          supportingText={item.subtitle ?? "Approval update"}
           payloadContext={{
             agents,
             projects,
