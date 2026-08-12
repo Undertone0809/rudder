@@ -26,7 +26,7 @@ related_code:
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs: []
-updated_at: 2026-08-12
+updated_at: 2026-08-13
 ---
 
 # Rust Native Foundations Pilot
@@ -483,14 +483,23 @@ Every Rudder-owned Rust crate and binary inherits one version from
 `native/Cargo.toml` through `[workspace.package]`. That workspace version
 must equal the normal Rudder release version used by the public packages and
 Desktop artifact; Rust packages do not maintain an independent `0.x` line.
+Each first-party `native/**/Cargo.toml` must therefore use
+`version.workspace = true`; a literal crate or binary version is a release
+workflow error. The first-party package entries in `native/Cargo.lock`, the
+staged binary `--version` output, the Desktop/server package manifests, and
+the release tag must resolve to that same product version (including an
+intentional canary suffix when the release is a canary).
 
 Both normal next-version preparation and canary/stable release packaging update
 the Cargo workspace through the same release package-map command that updates
-the JavaScript packages. Release and packaged verification fail closed when
-the Cargo workspace version is absent or differs from the Desktop/server
-version. Acceptance packets record the synchronized product version in
-addition to binary hashes and protocol versions; protocol compatibility remains
-independent from the product release version.
+the JavaScript packages. `set-version` and `set-publish-version` are the only
+supported version-preparation paths; they must update the Cargo workspace and
+regenerate `native/Cargo.lock` alongside the JavaScript package manifests.
+Release and packaged verification fail closed when the Cargo workspace or
+lockfile version is absent or differs from the Desktop/server version.
+Acceptance packets record the synchronized product version and every checked
+version source in addition to binary hashes and protocol versions; protocol
+compatibility remains independent from the product release version.
 
 The current portable macOS `rudder start` path attempts to recursively remove
 quarantine from `Rudder.app`, but it only warns if that command fails. Therefore
