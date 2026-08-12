@@ -18,6 +18,38 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月13日" description="v0.7.4" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.4
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.4)
+
+这个版本新增实验性 Computer Use 和 Plugin V1，为 Agent 提供更清晰的人工协助与恢复路径，并改善 Chat、Goal、运行记录和 Issue 时间线的连续性。
+
+### 新功能
+
+- 为受支持的 macOS Rudder Desktop 增加实验性 Computer Use。该功能默认关闭，并需要授予设备权限。
+- 增加 Codex 兼容的 Plugin V1，可检查和安装由 Skill、MCP Server 与 Local App 组成的软件包。
+- 增加统一 Requests 工作区，在 Issue 详情、Inbox 和 Messenger 中集中处理 Agent 求助与审批。
+- 运行记录支持打开多个本地或生成的文件目标，同时保留当前运行上下文。
+
+### 改进
+
+- 改进 Goal 协作与验收，提供更清晰的工作状态、负责人和契约要求、进度、证据、变更提案与结果审阅。
+- 改进 Chat 和 Messenger 的导航连续性，提供更清晰的运行时与模型选择，并简化移动端 Chat 导航。
+- 改进 Markdown 编辑，支持直接编辑表格单元格，并提升图片粘贴、上传和预览的可靠性。
+- 改进 Issue 时间线的渐进式展开和双向加载。
+- 改进 Local App 的启动、停止和后台刷新行为。
+
+### 问题修复
+
+- 修复运行记录图片证据无法持久保存，以及本地文件预览无法保持上下文的问题。
+- 修复流式回复期间 Chat 输入框闪烁，以及窄屏 Side Panel 的部分状态问题。
+- 修复求助卡片和审批卡片显示与决策类型不匹配操作的问题。
+- 修复加载 Issue 时间线历史时出现活动缺失或重复的问题。
+
+</Update>
+
 <Update label="2026年8月11日" description="v0.7.3" tags={["改进","问题修复"]}>
 
 ## v0.7.3

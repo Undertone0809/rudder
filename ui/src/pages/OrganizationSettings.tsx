@@ -151,10 +151,8 @@ export function OrganizationSettings() {
     defaultChatIssueCreationMode !== (viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
 
   const generalMutation = useMutation({
-    mutationFn: (data: {
-      name: string;
-      brandColor: string | null;
-    }) => organizationsApi.update(viewedOrganizationId!, data),
+    mutationFn: (data: ReturnType<typeof buildOrganizationGeneralPatch>) =>
+      organizationsApi.update(viewedOrganizationId!, data),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
     },

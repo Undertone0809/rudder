@@ -115,13 +115,35 @@ jobs:
 
       - name: Install dependencies
         if: matrix.test == 'full'
-        run: pnpm install --frozen-lockfile
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "pnpm install failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "pnpm install attempt $attempt failed; retrying after backoff" >&2
+            sleep $((attempt * 10))
+          done
 
       - name: Install dependencies without Electron binary
         if: matrix.test != 'full'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: pnpm install --frozen-lockfile
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "pnpm install failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "pnpm install attempt $attempt failed; retrying after backoff" >&2
+            sleep $((attempt * 10))
+          done
 
       - name: Product logic registry
         if: matrix.os == 'ubuntu-latest'
