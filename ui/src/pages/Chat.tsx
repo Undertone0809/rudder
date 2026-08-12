@@ -642,6 +642,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   useEffect(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null); setRecentAskUserAnswerMessageId(null); setIssueProposalOverridesByMessageId({}); }, [conversationId]);
   useEffect(() => { setSkillMenuOpen(false); setSkillSearchQuery(""); }, [activeSkillAgentId]);
   useEffect(() => {
+    if (isMobile) {
+      closeComposerContextMenus();
+    }
+  }, [closeComposerContextMenus, isMobile]);
+  useEffect(() => {
     if (!composerContextMenuOpen) { setComposerMenuPosition(null);
       return; } const updatePosition = () => { const anchor = agentMenuOpen ? runtimeSelectorRef.current ?? composerSurfaceRef.current : composerSurfaceRef.current; if (!anchor) return; setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); }; updatePosition(); window.addEventListener("resize", updatePosition); window.addEventListener("scroll", updatePosition, true);
     return () => { window.removeEventListener("resize", updatePosition); window.removeEventListener("scroll", updatePosition, true); }; }, [agentMenuOpen, composerContextMenuOpen, runtimeSelectorRef]);
@@ -2477,7 +2482,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       tone: "info",
     });
   }, [chatSkillDetailsHrefByTarget, navigate, pushToast]); const filteredChatSkills = useMemo(
-    () => filterChatSkillOptions(availableChatSkills, skillSearchQuery), [availableChatSkills, skillSearchQuery], ); const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending); const showChatSkillsPicker = Boolean(activeSkillAgentId); const mentionOptions = useMemo<MentionOption[]>(
+    () => filterChatSkillOptions(availableChatSkills, skillSearchQuery), [availableChatSkills, skillSearchQuery], ); const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending); const showChatSkillsPicker = Boolean(activeSkillAgentId) && !isMobile; const mentionOptions = useMemo<MentionOption[]>(
     () => buildMarkdownMentionOptions({
       agents,
       projects: visibleProjects,
@@ -2926,7 +2931,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!showEmptyStateSupplementalContent) {
       setRecentProjectConversationLimit(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT);
     }
-  }, [showEmptyStateSupplementalContent]); const renderComposerContextMenu = () => { if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined") return null; const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "agent" : "skill";
+  }, [showEmptyStateSupplementalContent]); const renderComposerContextMenu = () => { if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined" || (isMobile && skillMenuOpen)) return null; const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "agent" : "skill";
     return createPortal(
       <ChatComposerContextMenu
         menuRef={composerContextMenuRef}
@@ -2945,7 +2950,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         {agentMenuOpen ? (
           <ChatAgentMenuContent agents={liveAgents} activeAgentId={activeAgentId} agentSelectionLocked={agentSelectionLocked} runtimeSelectionPending={runtimeSelectionPending} newConversationSendInFlight={newConversationSendInFlight} externalBound={selectedConversationExternalBound} adapterModels={adapterModelsQuery.data} overrides={activeRuntimeOverrides} runtimeLabel={runtimePillLabel} isLoading={adapterModelsQuery.isPending} error={adapterModelsQuery.error} modelSelectRef={runtimeModelSelectRef} onSelectAgent={applyPreferredAgent} onChangeRuntime={applyRuntimeOverrides} />
         ) : null}
-        {skillMenuOpen ? (
+        {skillMenuOpen && !isMobile ? (
           <ChatComposerSkillsMenuContent
             pending={chatSkillsPending}
             skills={availableChatSkills}
@@ -3494,7 +3499,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         <main
           ref={chatMainWorkspaceRef}
           data-testid="chat-main-workspace-card"
-          className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]"
+          className={cn(
+            "workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]",
+            isMobile && "workspace-main-card--frameless",
+          )}
         >
           {conversationId && macDesktopShell ? (
             <div

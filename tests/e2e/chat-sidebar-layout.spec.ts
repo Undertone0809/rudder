@@ -71,6 +71,7 @@ test.describe("Chat sidebar layout", () => {
       expect(hoverStyle.scale).not.toBe("none");
       expect(hoverStyle.transform).not.toBe("none");
     }
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(1);
 
     const headerBox = await header.boundingBox();
     const mainWorkspaceBox = await page.getByTestId("chat-main-workspace-card").boundingBox();
@@ -244,6 +245,19 @@ test.describe("Chat sidebar layout", () => {
 
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
     await expect(page.locator('[data-testid="chat-mobile-session-picker"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("chat-main-workspace-card")).toHaveClass(/workspace-main-card--frameless/);
+    const mobileCardStyles = await page.getByTestId("chat-main-workspace-card").evaluate((element) => {
+      const styles = getComputedStyle(element);
+      return {
+        backgroundColor: styles.backgroundColor,
+        borderTopWidth: styles.borderTopWidth,
+        boxShadow: styles.boxShadow,
+      };
+    });
+    expect(mobileCardStyles.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(mobileCardStyles.borderTopWidth).toBe("0px");
+    expect(mobileCardStyles.boxShadow).toBe("none");
     const mobileWidth = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
     expect(mobileWidth.scrollWidth).toBeLessThanOrEqual(mobileWidth.clientWidth);
     await page.getByRole("button", { name: "Open sidebar" }).click();
@@ -253,6 +267,7 @@ test.describe("Chat sidebar layout", () => {
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
     await expect(page.locator('[data-testid="chat-mobile-session-picker"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Close sidebar" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
   });
