@@ -1407,8 +1407,6 @@ describe("SideChatPanelView response annotations", () => {
         sourceMessageId: annotation.sourceMessageId,
         clientMutationId: target.clientMutationId,
         preferredAgentId: defaultAgent.id,
-        modelOverride: null,
-        effortOverride: null,
       },
     );
     expect(chatsApi.sendMessageStream).toHaveBeenCalledWith(

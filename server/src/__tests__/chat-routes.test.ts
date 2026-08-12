@@ -1285,8 +1285,6 @@ describe("chat routes", { retry: 2 }, () => {
         sourceMessageId,
         clientMutationId,
         preferredAgentId,
-        modelOverride: "gpt-5.6-sol",
-        effortOverride: "high",
       });
 
     expect(res.status).toBe(201);
@@ -1303,14 +1301,12 @@ describe("chat routes", { retry: 2 }, () => {
       orgId: "organization-1",
       userId: "user-1",
       preferredAgentId,
-      modelOverride: "gpt-5.6-sol",
-      effortOverride: "high",
     });
     expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith({
       orgId: "organization-1",
       preferredAgentId,
-      modelOverride: "gpt-5.6-sol",
-      effortOverride: "high",
+      modelOverride: null,
+      effortOverride: null,
       contextLinks: [],
       planMode: false,
     });
@@ -1878,11 +1874,21 @@ describe("chat routes", { retry: 2 }, () => {
       replyingAgentId: preferredAgentId,
       reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: preferredAgentId },
     });
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValueOnce({
+      ...conversation.chatRuntime,
+      sourceType: "agent",
+      sourceLabel: "Agent default",
+      model: "gpt-5.6-sol",
+      effort: "high",
+      available: true,
+    });
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats/messages/stream")
       .field("body", "Start with an attachment")
       .field("preferredAgentId", preferredAgentId)
+      .field("modelOverride", "__rudder_agent_default__")
+      .field("effortOverride", "__rudder_agent_default__")
       .field("issueCreationMode", "manual_approval")
       .field("planMode", "true")
       .field("contextLinks", JSON.stringify([{ entityType: "project", entityId: projectId }]))
@@ -1899,8 +1905,17 @@ describe("chat routes", { retry: 2 }, () => {
       "organization-1",
       expect.objectContaining({
         preferredAgentId,
+        modelOverride: null,
+        effortOverride: null,
         planMode: true,
         contextLinks: [expect.objectContaining({ entityType: "project", entityId: projectId })],
+      }),
+    );
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preferredAgentId,
+        modelOverride: null,
+        effortOverride: null,
       }),
     );
   });
@@ -3326,7 +3341,7 @@ describe("chat routes", { retry: 2 }, () => {
         model: "gpt-5.6-luna",
       }),
     });
-    expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).not.toHaveBeenCalled();
     expect(mockChatService.createQueuedMessage).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "chat.queue.created",
@@ -6819,6 +6834,62 @@ describe("chat routes", { retry: 2 }, () => {
         attachments: [expect.objectContaining({ id: "attachment-1" })],
       })],
     }));
+  });
+
+  it("uses explicit Agent defaults for multipart sends on legacy override conversations", async () => {
+    const conversation = createConversation({
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "xhigh",
+    });
+    const userMessage = createMessage("message-user", "user", "message", "Use Agent defaults");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Done.");
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValueOnce({
+      ...conversation.chatRuntime,
+      sourceType: "agent",
+      sourceLabel: "Agent default",
+      model: "gpt-5.6-sol",
+      effort: "high",
+      available: true,
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Done.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Done.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .field("body", "Use Agent defaults")
+      .field("modelOverride", "__rudder_agent_default__")
+      .field("effortOverride", "__rudder_agent_default__")
+      .attach("files", Buffer.from("prompt"), {
+        filename: "prompt.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      preferredAgentId: conversation.preferredAgentId,
+      modelOverride: null,
+      effortOverride: null,
+      contextLinks: conversation.contextLinks,
+      planMode: conversation.planMode,
+    });
+    expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSnapshot: "gpt-5.6-sol", effortSnapshot: "high" }),
+    );
   });
 
   it("binds multipart annotation files into the canonical user message before the stream ack", async () => {

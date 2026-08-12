@@ -1900,8 +1900,8 @@ export function chatRoutes(
     const availability = await assistantSvc.getDraftChatAssistantAvailability({
       orgId: existing.orgId,
       preferredAgentId,
-      modelOverride: req.body.modelOverride ?? null,
-      effortOverride: req.body.effortOverride ?? null,
+      modelOverride: null,
+      effortOverride: null,
       contextLinks: existing.contextLinks as ChatContextLink[],
       planMode: existing.planMode,
     });
@@ -1917,8 +1917,6 @@ export function chatRoutes(
       orgId: existing.orgId,
       userId,
       preferredAgentId,
-      modelOverride: req.body.modelOverride ?? null,
-      effortOverride: req.body.effortOverride ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {

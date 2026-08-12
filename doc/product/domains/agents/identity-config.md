@@ -232,29 +232,30 @@ Product model:
   `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and
   `gpt-5.2`; discovered OpenAI models do not augment or reorder it. Explicit
   custom model values may still be preserved where the editor supports them.
-- Chat conversation model and thinking-effort selection reuses the same
+- Chat next-message model and thinking-effort selection reuses the same
   runtime-owned catalogs, Codex fixed ordering, dynamic runtime discovery, and
   adapter-specific effort fields. The controls are nested under the currently
   selected or bound Agent; they never replace Agent identity or create a
   runtime choice outside that Agent's adapter capabilities. Switching the
-  draft Agent clears conversation overrides before deriving the new Agent's
+  draft Agent clears composer overrides before deriving the new Agent's
   defaults. A persisted unknown/custom current model may remain visible for
   compatibility, but Chat does not add a new free-input model editor or a
   second effort vocabulary.
 - The same hierarchy applies in provisional and persisted Side Chat composers.
   A Side Chat begins from its source Agent identity at that Agent's defaults,
   never from the source conversation's overrides. Its first Send persists the
-  explicitly selected Agent and nullable runtime overrides; afterward the Agent
-  is locked while Model / Thinking stays editable for later admissions.
+  explicitly selected Agent while Model / Thinking is frozen only for that
+  admitted message; afterward the Agent is locked and the same controls remain
+  available for the next message.
 - New Codex agent configurations default to `gpt-5.6-sol`, including the
   onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants
   offer Light, Medium, High, Extra High, Max, and Ultra; the remaining curated
   Codex models offer Low, Medium, High, and Extra High. Switching models clears
   an effort value that the new model does not support, including primary,
-  fallback, New Issue override, and derived Chat conversation surfaces. Chat
-  performs this compatibility fallback only in the derived conversation config
-  and never writes it back to the Agent.
+  fallback, New Issue override, and derived Chat message surfaces. Chat performs
+  this compatibility fallback only in the admitted message config and never
+  writes it back to the Agent or conversation.
 - Runtime environment test results are tri-state operator evidence: `pass` is
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
@@ -281,7 +282,7 @@ Product model:
 
 Flow:
 
-1. Agent config and Chat conversation overrides load the operator-facing
+1. Agent config and Chat composer overrides load the operator-facing
    runtime choices, the runtime-owned model and effort catalogs, and, when
    available, server-side CLI probe status.
 2. The runtime selector groups choices by setup state so the operator can see

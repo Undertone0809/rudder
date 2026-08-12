@@ -518,8 +518,6 @@ export function SideChatPanelView({
           sourceMessageId,
           clientMutationId: target.clientMutationId,
           preferredAgentId: selectedAgentId ?? undefined,
-          modelOverride: null,
-          effortOverride: null,
         });
         if (
           !setChatGenerationConversation(streamScopeKey, generationEpoch, created.id)

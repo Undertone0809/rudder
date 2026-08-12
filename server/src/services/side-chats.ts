@@ -152,8 +152,6 @@ export function sideChatService(db: Db) {
     orgId: string;
     userId: string;
     preferredAgentId?: string;
-    modelOverride?: string | null;
-    effortOverride?: string | null;
   }) {
     const createdId = await db.transaction(async (tx) => {
       const existing = await tx
@@ -173,14 +171,6 @@ export function sideChatService(db: Db) {
           || (
             input.preferredAgentId !== undefined
             && existing.preferredAgentId !== input.preferredAgentId
-          )
-          || (
-            input.modelOverride !== undefined
-            && existing.modelOverride !== input.modelOverride
-          )
-          || (
-            input.effortOverride !== undefined
-            && existing.effortOverride !== input.effortOverride
           )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
@@ -238,8 +228,8 @@ export function sideChatService(db: Db) {
           title: sideChatTitleFromSource(source.title),
           summary: source.summary,
           preferredAgentId: input.preferredAgentId ?? source.preferredAgentId,
-          modelOverride: input.modelOverride ?? null,
-          effortOverride: input.effortOverride ?? null,
+          modelOverride: null,
+          effortOverride: null,
           routedAgentId: input.preferredAgentId ?? source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,
@@ -271,14 +261,6 @@ export function sideChatService(db: Db) {
           || (
             input.preferredAgentId !== undefined
             && raced.preferredAgentId !== input.preferredAgentId
-          )
-          || (
-            input.modelOverride !== undefined
-            && raced.modelOverride !== input.modelOverride
-          )
-          || (
-            input.effortOverride !== undefined
-            && raced.effortOverride !== input.effortOverride
           )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");

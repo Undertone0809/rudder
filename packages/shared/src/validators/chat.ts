@@ -478,9 +478,7 @@ export const createSideChatSchema = z.object({
   sourceMessageId: z.string().uuid(),
   clientMutationId: z.string().trim().min(1).max(120),
   preferredAgentId: z.string().uuid().optional(),
-  modelOverride: chatModelOverrideSchema.optional(),
-  effortOverride: chatEffortOverrideSchema.optional(),
-});
+}).strict();
 
 export const addChatMessageSchema = z.object({
   body: z.string().trim().max(20000).default(""),

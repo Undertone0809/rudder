@@ -120,6 +120,17 @@ describe("inspectRudderPluginPackage", () => {
     ]))).toThrow("Unsafe Plugin file path");
   });
 
+  it("rejects platform-specific Windows absolute paths", () => {
+    const unsafePaths = process.platform === "win32"
+      ? ["C:\\outside.txt", "\\\\server\\share\\outside.txt"]
+      : ["C:/outside.txt", "//server/share/outside.txt"];
+    for (const unsafePath of unsafePaths) {
+      expect(() => inspectRudderPluginPackage(input([
+        { path: unsafePath, content: "unsafe" },
+      ]))).toThrow("Unsafe Plugin file path");
+    }
+  });
+
   it("rejects duplicate paths after case folding", () => {
     expect(() => inspectRudderPluginPackage(input([
       { path: "skills/research/SKILL.md", content: "name: Research" },

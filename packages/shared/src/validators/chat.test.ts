@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addChatMessageSchema,
   appendChatGenerationEventSchema,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
@@ -10,6 +11,7 @@ import {
   chatQueuedMessageStatusSchema,
   chatRichReferencesFromStructuredPayload,
   convertChatToIssueSchema,
+  createSideChatSchema,
   sanitizeChatStructuredPayload,
   steerChatQueuedMessageSchema,
   stopChatGenerationSchema,
@@ -37,6 +39,26 @@ describe("conversation model override", () => {
     expect(chatDraftSchema.parse({ effortOverride: null }).effortOverride).toBeNull();
     expect(chatDraftSchema.safeParse({ effortOverride: "   " }).success).toBe(false);
     expect(chatDraftSchema.safeParse({ effortOverride: "e".repeat(121) }).success).toBe(false);
+  });
+});
+
+describe("Side Chat runtime admission", () => {
+  it("keeps runtime overrides out of Side Chat creation and available to messages", () => {
+    const creation = createSideChatSchema.safeParse({
+      sourceMessageId: generationId,
+      clientMutationId: "side-chat-create",
+      preferredAgentId: controlActionId,
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "high",
+    });
+    expect(creation.success).toBe(false);
+
+    const message = addChatMessageSchema.safeParse({
+      body: "Use this runtime for the next message.",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "high",
+    });
+    expect(message.success).toBe(true);
   });
 });
 

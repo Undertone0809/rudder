@@ -225,17 +225,17 @@ Product model:
 - A new-chat draft exposes the organization Agent choice before the first
   message. The first accepted message atomically binds that Agent to the
   conversation. Afterward the Agent identity is locked, while its menu remains
-  inspectable and its conversation-scoped Model / Thinking controls remain
+  inspectable and its next-message Model / Thinking controls remain
   available on the bound Agent row.
-- A native conversation may persist nullable primary-model and thinking-effort
-  overrides. Both are scoped to that conversation, leave the Agent runtime
-  configuration unchanged, and are cleared when the preferred Agent changes.
-  New Chat drafts, other conversations, and Forks start from the selected Agent
-  defaults instead of inheriting either override. A provisional Side Chat
-  likewise starts from its inherited Agent identity and that Agent's defaults,
-  but exposes the same Agent → Model / Thinking hierarchy before first Send so
-  the operator may explicitly choose a different Agent or override. The first
-  Send binds that Side Chat Agent; no source-conversation override is copied.
+- Model and Thinking are nullable composer-draft overrides for the next message,
+  not durable conversation preferences. Selecting either value performs no
+  conversation mutation. The Send request carries the explicit choice and the
+  server freezes the resolved Agent, model, and effort at message or Queue
+  admission. After acknowledgement the composer returns to Agent defaults; a
+  rejection before acknowledgement preserves the complete draft for retry.
+  Legacy persisted conversation override fields remain readable for compatible
+  older clients, but current Messenger and Side Chat composers do not create or
+  update them.
 - Entry points that only establish context, such as Project `Chat`, open an
   unpersisted new-chat draft. They must not create an empty conversation merely
   because the operator opened the composer.
@@ -385,19 +385,20 @@ Flow:
    then a complete prompt suggestion before editing or sending the draft.
 3. Composer's primary identity control is the Agent. Before the first send the
    operator may choose another available organization Agent; changing it clears
-   draft model and effort overrides and restores that Agent's defaults. The
-   current Agent row alone exposes a compact Model / Thinking entry backed by
-   that Agent's runtime-owned catalogs.
+   draft model and effort overrides and restores that Agent's defaults. Before
+   every send, the current Agent row alone exposes a compact Model / Thinking
+   entry backed by that Agent's runtime-owned catalogs.
 4. Before the first send, the server performs a side-effect-free preflight for
    organization access, Agent/runtime/model support, context ownership, and
    attachment validity. A failure keeps the complete unpersisted draft.
 5. On the first accepted send, the server atomically persists the selected
-   Agent binding, optional model and effort overrides, context links, first
-   message, title, and activity before acknowledging the turn. The Agent then
-   becomes immutable for the conversation; other Agent rows remain visible but
-   disabled, while the bound row's runtime entry stays editable. Direct create
-   callers must supply a non-empty first message; the server derives its role
-   from the authenticated actor.
+   Agent binding, context links, first message, title, and activity before
+   acknowledging the turn, while freezing optional model and effort overrides
+   only for that admitted message. The Agent then becomes immutable for the
+   conversation; other Agent rows remain visible but disabled, while the bound
+   row's next-message runtime entry stays editable. Direct create callers must
+   supply a non-empty first message; the server derives its role from the
+   authenticated actor.
 6. If assistant startup or generation fails after acceptance, Rudder retains
    the accepted user message and durable, visible failure evidence.
 7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
@@ -493,18 +494,18 @@ Invariants:
   not present `No agent` as a valid chat state. Legacy or externally sourced
   records that cannot resolve an agent remain visible as `Agent unavailable`;
   legitimately unassigned split issues remain distinct as `Unassigned`.
-- Conversation model or effort changes affect only assistant invocations
-  admitted after the change. An in-flight invocation retains its admitted
-  runtime config, and queued or fallback-continuation work retains the Agent,
-  model, and effort snapshots stored at queue admission. Restoring either
-  control to `Agent default` clears only that persisted override.
-- Conversation overrides replace only the primary model and adapter-owned
+- Composer model or effort choices affect only the next message submitted with
+  those values. An in-flight invocation retains its admitted runtime config,
+  and queued or fallback-continuation work retains the Agent, model, and effort
+  snapshots stored at queue admission. Selecting `Agent default` clears only
+  the local composer override.
+- Per-message overrides replace only the primary model and adapter-owned
   effort field in the derived Chat runtime config. Secrets, workspace, skills,
   fallback models, and other Agent runtime settings remain inherited. A null
   effort override means Agent default; explicit `Auto` clears inherited effort
-  in the derived config. If the chosen model does not support the inherited or
-  overridden effort, the derived conversation config also uses Auto without
-  mutating the Agent.
+  in the admitted config. If the chosen model does not support the inherited or
+  overridden effort, the derived message config also uses Auto without mutating
+  the Agent or conversation.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
 - Assistant-created issue proposals must be grounded in an explicit latest
@@ -1882,9 +1883,9 @@ before the exploration proves useful.
 - Choose `Ask in side chat` on an eligible response selection.
 - Choose `Side Chat` from the Side Panel empty/add-target surface.
 - First Send posts the exact source assistant message, provisional mutation id,
-  selected Agent, and nullable Model / Thinking overrides to
-  `POST /api/chats/:sourceId/side-chats`, then uses the normal Chat message
-  stream route.
+  and selected Agent to `POST /api/chats/:sourceId/side-chats`, then carries the
+  nullable Model / Thinking draft overrides on the normal Chat message stream
+  route.
 - Closing a persisted Side Chat posts to `DELETE /api/chats/:id/side-chat`.
 - `Move to Messenger` in the Side Chat tab context menu posts to the
   compatibility endpoint `/api/chats/:id/side-chat/keep`.
@@ -1906,9 +1907,10 @@ before the exploration proves useful.
    first user message. Creation is idempotent for the organization, owner, and
    client mutation id. The persisted title snapshots the direct source title
    with the `Side chat from: ` prefix and stays within the 200-character Chat
-   title limit. The same creation boundary validates and persists the
-   provisional Agent, Model, and Thinking choice. A replay with the same
-   mutation id but different runtime input conflicts instead of silently
+   title limit. The creation boundary validates and persists the provisional
+   Agent. The following message admission validates and freezes Model and
+   Thinking for that message without persisting them on the Side Chat. A replay
+   with the same mutation id but a different Agent conflicts instead of silently
    rebinding the Side Chat.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
@@ -1916,8 +1918,8 @@ before the exploration proves useful.
 5. The user message and assistant response run through the normal Chat runtime
    and Agent Run evidence path. Once created, the Side Chat Agent is locked;
    its Agent menu remains inspectable and its Model / Thinking controls remain
-   mutable for future turns. Each persisted send while `active` refreshes the
-   two-hour send window.
+   available for the next message. Each persisted send while `active` refreshes
+   the two-hour send window.
 6. Hidden Side Chats are excluded from ordinary Chat lists, Messenger threads,
    recent chats, search results, and custom groups.
 7. Closing a provisional tab discards the unsent client draft. Closing a
