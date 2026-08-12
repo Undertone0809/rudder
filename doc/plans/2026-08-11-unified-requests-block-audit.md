@@ -77,6 +77,17 @@ The supported semantic variants are `info` (blue, attention or action needed),
 Color reinforces meaning but never carries status alone. UI Lab documents all
 three variants, long-content behavior, and action-footer states.
 
+An open Assistance Request may retain its input-oriented title. A terminal
+card must replace that title with the observed outcome, such as `Response
+received`, `Action completed`, or `Request cancelled`; it must never continue
+to say that input is needed. Block Audit attempt counts remain durable runtime
+evidence but are not rendered in the operator card.
+
+Issue Activity uses a virtualized timeline for long histories. Deep links,
+viewport resizing, and screenshot capture must retain enough rows above the
+viewport to avoid a blank leading region. The timeline keeps an explicit
+upward render runway while preserving the target comment and fixed composer.
+
 ### Compact state inventory
 
 | State | Current decision | Visible controls | Deferred controls | Continuity |

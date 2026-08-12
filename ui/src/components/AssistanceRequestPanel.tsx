@@ -33,6 +33,27 @@ export function assistanceRequestStatusLabel(request: AssistanceRequest): string
   return request.status.charAt(0).toUpperCase() + request.status.slice(1);
 }
 
+function requestSubject(title: string): string | null {
+  const subject = title.replace(/^Input needed for\s+/i, "").trim();
+  return subject && subject !== title.trim() ? subject : null;
+}
+
+export function assistanceRequestDisplayTitle(request: AssistanceRequest): string {
+  if (request.status === "open") return request.title;
+
+  const subject = requestSubject(request.title);
+  const suffix = subject ? ` for ${subject}` : "";
+  if (request.status === "resolved") {
+    if (request.resolution === "answered") return `Response received${suffix}`;
+    if (request.resolution === "action_completed") return `Action completed${suffix}`;
+    if (request.resolution === "cannot_help") return `Assistance unavailable${suffix}`;
+    return `Request completed${suffix}`;
+  }
+  if (request.status === "cancelled") return `Request cancelled${suffix}`;
+  if (request.status === "superseded") return `Request replaced${suffix}`;
+  return `Request closed${suffix}`;
+}
+
 function requestTimestamp(value: Date | string | null): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -93,7 +114,6 @@ export function AssistanceRequestPanel({
     ? responseState.value
     : loadRequestDraft(request.id);
   const isOpen = request.status === "open";
-  const attempt = Number(request.metadata.attempt ?? 1);
   const pendingLabel = issueStatus
     ? `${issueStatus === "blocked" ? "Blocked" : "In progress"} · Waiting on you`
     : "Waiting on you";
@@ -168,12 +188,11 @@ export function AssistanceRequestPanel({
   return (
     <SpecialMessageCard
       variant={variant}
-      title={showTitle ? request.title : "Assistance request"}
+      title={showTitle ? assistanceRequestDisplayTitle(request) : "Assistance request"}
       headerMeta={(
         <>
           <StatusIcon className="h-4 w-4" />
           <span>{isOpen ? pendingLabel : assistanceRequestStatusLabel(request)}</span>
-          <span className="opacity-70">Attempt {attempt}/3</span>
           {!isOpen && resolvedAt ? <span className="opacity-70">{resolvedAt}</span> : null}
         </>
       )}
