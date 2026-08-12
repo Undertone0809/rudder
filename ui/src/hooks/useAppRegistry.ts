@@ -77,21 +77,22 @@ export function useAppRegistry(enabled: boolean) {
     ),
     [appsQuery.data, otherAppsQueries],
   );
-  const managedCatalogComplete = Boolean(
+  // Keep the last successful catalog visible while a live update refetches it.
+  // Clearing entries during `isFetching` unmounts an active Local App webview.
+  const managedCatalogReady = Boolean(
     enabled
-    && appsQuery.isSuccess
-    && !appsQuery.isFetching
-    && otherAppsQueries.every((query) => query.isSuccess && !query.isFetching),
+    && appsQuery.data !== undefined
+    && otherAppsQueries.every((query) => query.data !== undefined),
   );
   const registryReady = Boolean(
-    managedCatalogComplete
+    managedCatalogReady
     && (
       !localApps?.supported
-      || (definitionsQuery.isSuccess && !definitionsQuery.isFetching)
+      || definitionsQuery.data !== undefined
     ),
   );
   const localEntries = useMemo<LocalAppEntry[]>(() => (
-    managedCatalogComplete
+    managedCatalogReady
       ? (definitionsQuery.data ?? [])
         .filter((definition) => !reservedManagedBindings.has(localBindingKey(
           definition.desktopInstallationId,
@@ -104,7 +105,7 @@ export function useAppRegistry(enabled: boolean) {
           definition,
         }))
       : []
-  ), [definitionsQuery.data, managedCatalogComplete, reservedManagedBindings]);
+  ), [definitionsQuery.data, managedCatalogReady, reservedManagedBindings]);
   const entries = useMemo<AppEntry[]>(
     () => [...managedEntries, ...localEntries],
     [localEntries, managedEntries],

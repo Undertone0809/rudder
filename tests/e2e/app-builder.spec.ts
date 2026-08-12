@@ -257,6 +257,42 @@ test.describe("Apps workspace", () => {
   }, testInfo) => {
     const organization = await createOrganization(page.request, "Apps-Tabs");
     await setSitesEnabled(page.request, true);
+    let appBuilderRequestCount = 0;
+    await page.route(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
+      async (route) => {
+        appBuilderRequestCount += 1;
+        if (appBuilderRequestCount > 4) {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "poll failed" }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([{
+            id: "preparing-app",
+            orgId: organization.id,
+            projectId: null,
+            conversationId: null,
+            name: "Preparing App",
+            sourceRoot: "apps/preparing-app",
+            scaffoldVersion: "1",
+            buildStatus: "preparing",
+            latestBuildRunId: null,
+            latestVerificationRunId: null,
+            desktopInstallationId: null,
+            appPublicId: null,
+            localBindingId: null,
+            createdAt: "2026-08-12T00:00:00.000Z",
+            updatedAt: "2026-08-12T00:00:00.000Z",
+          }]),
+        });
+      },
+    );
     await page.addInitScript(() => {
       const definitions = [
         {
@@ -314,6 +350,7 @@ test.describe("Apps workspace", () => {
           forceOpenExternal: async (target: string) => {
             (window as typeof window & { __openedExternal?: string }).__openedExternal = target;
           },
+          appBuilder: { supported: false },
           localApps: {
             supported: true,
             list: async () => definitions,
@@ -411,6 +448,31 @@ test.describe("Apps workspace", () => {
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps
     ))).toEqual(["definition-alpha"]);
+    await page.evaluate(() => {
+      const shell = (window as typeof window & {
+        desktopShell?: { appBuilder?: { supported?: boolean } };
+      }).desktopShell;
+      if (shell?.appBuilder) shell.appBuilder.supported = true;
+    });
+    await page.getByRole("link", { name: "Organization" }).click();
+    await page.getByRole("link", { name: "Hub" }).click();
+    await expect(page.getByTestId("apps-local-webview")).toBeAttached();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __startedApps?: string[] }).__startedApps
+    ))).toEqual(["definition-alpha"]);
+    const alphaWebview = page.getByTestId("apps-local-webview");
+    const alphaWebviewIdentity = await alphaWebview.evaluate((element) => {
+      const identity = crypto.randomUUID();
+      (element as HTMLElement & { __appsWebviewIdentity?: string }).__appsWebviewIdentity = identity;
+      return identity;
+    });
+    await expect.poll(() => appBuilderRequestCount, {
+      timeout: 5_000,
+    }).toBeGreaterThan(4);
+    await expect(alphaWebview).toBeAttached();
+    await expect.poll(() => alphaWebview.evaluate((element) => (
+      (element as HTMLElement & { __appsWebviewIdentity?: string }).__appsWebviewIdentity
+    ))).toBe(alphaWebviewIdentity);
     await betaEntry.click();
     await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
     await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
