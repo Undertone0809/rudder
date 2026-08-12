@@ -12,6 +12,7 @@ import { registerChatCommands } from "./commands/client/chat.js";
 import { registerCompanyCommands } from "./commands/client/company.js";
 import { registerContextCommands } from "./commands/client/context.js";
 import { registerDashboardCommands } from "./commands/client/dashboard.js";
+import { registerGoalCommands } from "./commands/client/goal.js";
 import { registerIssueCommands } from "./commands/client/issue.js";
 import { registerLibraryCommands } from "./commands/client/library.js";
 import { registerProjectCommands } from "./commands/client/project.js";
@@ -207,6 +208,7 @@ export function createProgram(): Command {
 
   registerContextCommands(program);
   registerCompanyCommands(program);
+  registerGoalCommands(program);
   registerIssueCommands(program);
   registerProjectCommands(program);
   registerAgentCommands(program);

@@ -1,5 +1,4 @@
 import { appBuilderApi } from "@/api/app-builder";
-import { healthApi } from "@/api/health";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
 import { launchManagedApp } from "@/lib/app-builder-launch";
@@ -25,17 +24,10 @@ export function AppBuilderAutoLaunchCoordinator() {
   const [launchSequence, setLaunchSequence] = useState(0);
   selectedOrganizationIdRef.current = selectedOrganizationId;
   const desktopShell = readDesktopShell();
-  const healthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-    enabled: Boolean(desktopShell?.appBuilder?.supported && desktopShell.localApps?.supported),
-  });
   const enabled = Boolean(
     selectedOrganizationId
     && desktopShell?.appBuilder?.supported
-    && desktopShell.localApps?.supported
-    && (healthQuery.data?.features?.experimentalPluginsEnabled
-      ?? healthQuery.data?.features?.experimentalSitesEnabled) === true,
+    && desktopShell.localApps?.supported,
   );
   const appsQuery = useQuery({
     queryKey: queryKeys.appBuilder.organization(selectedOrganizationId ?? "__none__"),

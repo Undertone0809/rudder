@@ -824,7 +824,6 @@ export function managedMcpBindingService(db: Db) {
   async function listRuntimeBindings(
     orgId: string,
     agentId: string,
-    options: { pluginCapabilitiesEnabled?: boolean } = {},
   ): Promise<ManagedExternalMcpBinding[]> {
     await assertAgentInOrg(orgId, agentId);
     const rows = await db.select({
@@ -906,8 +905,7 @@ export function managedMcpBindingService(db: Db) {
     const pluginBlockedConnectionIds = new Set(
       pluginLinks
         .filter((link) => (
-          options.pluginCapabilitiesEnabled === false
-          || !link.pluginEnabled
+          !link.pluginEnabled
           || link.pluginLifecycleState !== "installed"
           || link.componentStatus === "disabled"
         ))

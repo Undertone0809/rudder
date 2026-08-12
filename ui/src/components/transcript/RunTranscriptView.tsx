@@ -158,6 +158,8 @@ export function RunTranscriptView({
           onMarkdownLinkClick={handleMarkdownLinkClick}
           runAnnotationContext={runAnnotationContext}
           onOpenFile={handleOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
         />
       </div>
     );

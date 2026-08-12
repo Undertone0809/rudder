@@ -339,7 +339,7 @@ test("static verification times out stalled responses", async () => {
   }
 });
 
-test("public health, package scripts, CI, and staging cover static docs search", () => {
+test("public health, package scripts, stable release, and staging cover static docs search", () => {
   const healthCheck = fs.readFileSync(
     path.join(REPO_ROOT, "scripts/check-docs-public-health.mjs"),
     "utf8",
@@ -373,9 +373,9 @@ test("public health, package scripts, CI, and staging cover static docs search",
     "playwright test --config tests/docs-search/playwright.config.ts",
   );
 
-  const ci = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
-  assert.match(ci, /pnpm exec playwright install --with-deps chromium/);
-  assert.match(ci, /pnpm test:docs-search/);
+  const release = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/release.yml"), "utf8");
+  assert.match(release, /pnpm exec playwright install --with-deps chromium/);
+  assert.match(release, /pnpm test:docs-search/);
 
   const staging = fs.readFileSync(
     path.join(REPO_ROOT, ".github/workflows/docs-staging.yml"),

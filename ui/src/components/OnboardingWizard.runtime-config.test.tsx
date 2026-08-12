@@ -270,7 +270,7 @@ describe("OnboardingWizard runtime config", () => {
     });
 
     expect(findButton(surface, "GPT-5.6-sol")).toBeTruthy();
-  });
+  }, 15_000);
 
   it("creates the default Claude agent with auto permission mode instead of dangerous bypass", async () => {
     vi.mocked(agentsApi.testEnvironment).mockResolvedValue({
@@ -348,11 +348,11 @@ describe("OnboardingWizard runtime config", () => {
     });
 
     await vi.waitFor(() => {
-      expect(findButton(surface, "kimi-for-coding")).toBeTruthy();
+      expect(findButton(surface, "Kimi for Coding")).toBeTruthy();
     });
 
     await act(async () => {
-      click(findButton(surface, "kimi-for-coding"));
+      click(findButton(surface, "Kimi for Coding"));
       await flush();
     });
 

@@ -178,6 +178,22 @@ describe("BreadcrumbBar", () => {
     expect(html).not.toContain("<h1");
   });
 
+  it("uses goal detail breadcrumbs in the primary rail header", () => {
+    pathname = "/RUD/goals/goal-1";
+    mockBreadcrumbs = [
+      { label: "Goals", href: "/goals" },
+      { label: "Reach 1,000 GitHub stars by August 31" },
+    ];
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain('href="/goals"');
+    expect(html).toContain("Reach 1,000 GitHub stars by August 31");
+    expect(html).toContain("primary-detail-breadcrumb");
+    expect(html).toContain("list-none");
+    expect(html).not.toContain("<h1");
+  });
+
   it("keeps issue detail source state on ancestor breadcrumb links", () => {
     pathname = "/RUD/issues/RUD-197";
     locationState = { issueDetailBreadcrumb: { label: "Inbox", href: "/inbox?scope=recent" } };
@@ -410,6 +426,16 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("data-mode=\"dashboard\"");
     expect(html).toContain("Dashboard");
     expect(html).toContain("Calendar");
+  });
+
+  it("renders Hub as a primary workspace title", () => {
+    pathname = "/RUD/hub";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("<h1");
+    expect(html).toContain("Hub");
+    expect(html).not.toContain("justify-end");
   });
 
   it("omits the Dashboard and Calendar switcher from the main header on the nested calendar page", () => {

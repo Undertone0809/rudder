@@ -5,6 +5,13 @@ import { randomUUID } from "node:crypto";
 import { productAnalyticsRunTerminalEventName, recordProductAnalyticsEvent } from "../product-analytics.js";
 
 const TERMINAL_WAKEUP_STATUSES = ["completed", "failed", "cancelled", "timed_out", "skipped", "coalesced"];
+const UNBOUND_WAKEUP_STATUSES = [
+  "queued",
+  "deferred_issue_execution",
+  "deferred_agent_paused",
+  "deferred_goal_focus",
+  "deferred_goal_blocked",
+];
 export const RUN_EXECUTION_LEASE_MS = 5 * 60_000;
 export const RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS = 60_000;
 export const TERMINAL_EFFECT_MAX_ATTEMPTS = 5;
@@ -930,13 +937,20 @@ export async function setWakeupStatusMonotonic(
   patch?: Partial<typeof agentWakeupRequests.$inferInsert>,
 ) {
   if (!wakeupRequestId) return null;
+  const predicates = [
+    eq(agentWakeupRequests.id, wakeupRequestId),
+    notInArray(agentWakeupRequests.status, TERMINAL_WAKEUP_STATUSES),
+  ];
+  if (UNBOUND_WAKEUP_STATUSES.includes(status)) {
+    predicates.push(
+      inArray(agentWakeupRequests.status, UNBOUND_WAKEUP_STATUSES),
+      isNull(agentWakeupRequests.runId),
+    );
+  }
   return db
     .update(agentWakeupRequests)
     .set({ status, ...patch, updatedAt: new Date() })
-    .where(and(
-      eq(agentWakeupRequests.id, wakeupRequestId),
-      notInArray(agentWakeupRequests.status, TERMINAL_WAKEUP_STATUSES),
-    ))
+    .where(and(...predicates))
     .returning()
     .then((rows) => rows[0] ?? null);
 }

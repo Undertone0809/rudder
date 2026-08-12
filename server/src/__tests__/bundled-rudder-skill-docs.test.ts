@@ -471,7 +471,6 @@ describe("bundled rudder docs skill", () => {
         "required_contract_ids",
       ]);
       expect(item.expected_source_class).toBe("official_public_docs_primary");
-      expect(item.required_contract_ids.length).toBeGreaterThan(0);
       expect(item.illustrative_case_sufficient).toBe(false);
       expect(item.expected_public_path).not.toMatch(/\/concepts\/(?:control-plane|approvals-budgets-activity|chat|messenger)$/);
       expect(sourceMap).toContain(item.expected_public_path);
@@ -485,6 +484,11 @@ describe("bundled rudder docs skill", () => {
         ...(page?.contracts.primary ?? []),
         ...(page?.contracts.supporting ?? []),
       ];
+      if (declaredContracts.length === 0) {
+        expect(item.required_contract_ids, item.expected_public_path).toEqual([]);
+      } else {
+        expect(item.required_contract_ids.length, item.expected_public_path).toBeGreaterThan(0);
+      }
       if (item.expected_anchor) {
         expect(page?.anchors[item.locale] ?? [], item.expected_public_path).toContain(
           item.expected_anchor,
@@ -513,7 +517,12 @@ describe("bundled rudder docs skill", () => {
       expect(fixture.required_contract_ids).toEqual(workspaceContracts);
     }
     const expectedBilingualReferencePaths = contentMap.pages
-      .filter((page) => page.kind === "reference" && page.status === "active")
+      .filter(
+        (page) =>
+          page.kind === "reference" &&
+          page.status === "active" &&
+          page.contracts.primary.length + page.contracts.supporting.length > 0,
+      )
       .flatMap((page) => [
         `${contentMap.base_url}${page.urls.en}`,
         `${contentMap.base_url}${page.urls.zh}`,

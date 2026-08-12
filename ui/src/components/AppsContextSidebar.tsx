@@ -1,4 +1,3 @@
-import { healthApi } from "@/api/health";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { LocalAppDefinitionReviewDialog } from "@/components/side-panel/LocalAppsPanel";
 import { Button } from "@/components/ui/button";
@@ -424,13 +423,7 @@ export function AppsContextSidebar() {
     editId: string | null;
     editable: boolean;
   } | null>(null);
-  const healthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-  });
-  const sitesEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
-    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
-  const { entries, localApps } = useAppRegistry(sitesEnabled);
+  const { entries, localApps } = useAppRegistry(true);
   const activeKey = activeKeyFromPath(location.pathname);
   const filteredEntries = entries.filter((entry) => {
     const title = entry.kind === "managed"
@@ -501,7 +494,6 @@ export function AppsContextSidebar() {
                   variant="ghost"
                   title="Add an App"
                   aria-label="Add an App"
-                  disabled={!sitesEnabled}
                   data-testid="apps-add"
                 >
                   <Plus className="h-4 w-4" aria-hidden />

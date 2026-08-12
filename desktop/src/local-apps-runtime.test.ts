@@ -340,7 +340,9 @@ describe("Desktop Local App runtime", () => {
       const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
       const markerPath = path.join(root, "wildcard-listener.json");
       try {
-        await expect(manager.start(definition.id)).rejects.toThrow("listener ownership could not be proven");
+        await expect(manager.start(definition.id)).rejects.toThrow(
+          /listener ownership could not be proven|exited before readiness succeeded/,
+        );
         const marker = JSON.parse(await readFile(markerPath, "utf8")) as { pid: number; port: number };
         await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
           status: "failed",

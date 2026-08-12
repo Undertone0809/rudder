@@ -38,4 +38,3 @@ describe("Issue timeline initial readiness", () => {
     )).toEqual({ key: "issue-2", status: "pending" });
   });
 });
-

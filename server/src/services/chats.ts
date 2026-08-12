@@ -4516,7 +4516,7 @@ export function chatService(db: Db) {
   async function addContextLink(
       conversationId: string,
       orgId: string,
-      input: { entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null },
+      input: { entityType: "issue" | "project" | "agent" | "goal"; entityId: string; metadata?: Record<string, unknown> | null },
     ) {
       await db
         .insert(chatContextLinks)

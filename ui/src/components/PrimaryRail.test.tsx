@@ -104,6 +104,7 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
     openNewAgent: vi.fn(),
+    openNewGoal: vi.fn(),
     openNewProject: vi.fn(),
   }),
 }));
@@ -477,7 +478,7 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
     const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("5");
     expect(indicator).not.toBeNull();
   });
 
@@ -490,7 +491,7 @@ describe("PrimaryRail active motion indicator", () => {
     const dashboardLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Dashboard"));
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("5");
     expect(dashboardLink).toBeUndefined();
   });
 
@@ -529,18 +530,14 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
-  it("shows Plugins only after the experiment is enabled", async () => {
-    const view = await renderPrimaryRail();
-    expect(Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Plugins"))).toBeUndefined();
-
-    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
+  it("always shows Hub and keeps legacy App paths active under it", async () => {
     mockState.pathname = "/apps";
-    await view.rerender();
+    await renderPrimaryRail();
 
-    const pluginsLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Plugins"));
-    expect(pluginsLink?.getAttribute("href")).toBe("/plugins");
+    const hubLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Hub"));
+    expect(hubLink?.getAttribute("href")).toBe("/hub");
+    expect(hubLink?.getAttribute("aria-current")).toBe("page");
     expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
   });
 
@@ -603,7 +600,7 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const links = Array.from(document.querySelectorAll("a"));
-    const apps = links.find((link) => link.textContent === "Plugins");
+    const apps = links.find((link) => link.textContent === "Hub");
     const pinned = links.find((link) => link.textContent?.includes("MKT dashboard"));
     expect(apps?.hasAttribute("aria-current")).toBe(false);
     expect(pinned?.getAttribute("aria-current")).toBe("page");
@@ -626,6 +623,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("uses remembered section paths as primary rail destinations", async () => {
+    mockState.generalSettings.experimentalGoalsEnabled = true;
     mockState.primaryRailPaths = {
       messenger: "/messenger/issues/ZST-200",
       issues: "/issues/ZST-586",
@@ -643,7 +641,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(linkHref("Messenger")).toBe("/messenger/issues/ZST-200");
     expect(linkHref("Issue")).toBe("/issues/ZST-586");
-    expect(linkHref("Goals")).toBeUndefined();
+    expect(linkHref("Goals")).toBe("/goals");
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
     expect(linkHref("Organization")).toBe("/dashboard/calendar");

@@ -6,7 +6,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "../context/SidePanelContext";
-import { RunConversationListItem, RunRailList, RunsTab, type RunRailEntry } from "./AgentDetail.runs";
+import {
+  RunConversationListItem,
+  RunRailList,
+  RunsTab,
+  runFeedbackTargetForContext,
+  type RunFeedbackTarget,
+  type RunRailEntry,
+} from "./AgentDetail.runs";
 
 const testState = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -169,6 +176,56 @@ function SidePanelStateProbe() {
   );
 }
 
+describe("runFeedbackTargetForContext", () => {
+  const agentATarget: RunFeedbackTarget = {
+    kind: "run_feedback_chat",
+    agentId: "agent-a",
+    preferredAgentId: "reviewer-a",
+    organizationId: "org-1",
+    conversationId: null,
+    clientMutationId: "mutation-a",
+    projectId: null,
+    body: "Agent A draft",
+    inlineAnnotations: [],
+    label: "Run feedback",
+  };
+
+  it("does not reuse a cached feedback draft after switching agents", () => {
+    expect(runFeedbackTargetForContext(agentATarget, [], "org-1", "agent-b")).toBeNull();
+  });
+
+  it("selects the current agent tab instead of a stale cached target", () => {
+    const agentBTarget = {
+      ...agentATarget,
+      agentId: "agent-b",
+      clientMutationId: "mutation-b",
+      body: "Agent B draft",
+    };
+
+    expect(runFeedbackTargetForContext(
+      agentATarget,
+      [agentATarget, agentBTarget],
+      "org-1",
+      "agent-b",
+    )).toBe(agentBTarget);
+  });
+
+  it("prefers the latest same-agent tab over the cached draft", () => {
+    const latestAgentATarget = {
+      ...agentATarget,
+      conversationId: "conversation-a",
+      body: "",
+    };
+
+    expect(runFeedbackTargetForContext(
+      agentATarget,
+      [latestAgentATarget],
+      "org-1",
+      "agent-a",
+    )).toBe(latestAgentATarget);
+  });
+});
+
 describe("RunConversationListItem", () => {
   it("renders one accessible group row with representative run semantics and matching count", () => {
     act(() => {
@@ -299,30 +356,35 @@ describe("RunsTab shared rail branches", () => {
     expect(probe?.dataset.tabCount).toBe("0");
   });
 
-  it("renders grouped rows through the mobile list branch", () => {
+  it("keeps the current run primary on mobile and reveals grouped history on demand", async () => {
     testState.isMobile = true;
 
-    act(() => {
+    await act(async () => {
       root.render(
-        <SidePanelProvider>
-          <RunsTab
-            runs={groupedRuns}
-            orgId="org-1"
-            agentId="agent-1"
-            agentRouteId="agent-route"
-            selectedRunId={null}
-            agentRuntimeType="codex_local"
-          />
-        </SidePanelProvider>,
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={null}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
       );
     });
 
-    expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
-    expect(container.querySelectorAll("[data-testid='agent-run-conversation-group-row']")).toHaveLength(1);
-    expect(container.textContent).toContain("2 runs");
+    expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).not.toBeNull();
+    const trigger = container.querySelector<HTMLButtonElement>("[data-testid='agent-runs-history-trigger']");
+    expect(trigger).not.toBeNull();
+    await act(async () => trigger?.click());
+    expect(document.body.querySelector("[data-testid='agent-runs-history-popover']")).not.toBeNull();
+    expect(document.body.querySelectorAll("[data-testid='agent-run-conversation-group-row']").length).toBeGreaterThan(0);
   });
 
-  it("uses the first member produced by the active oldest-first sort", () => {
+  it("uses the first member produced by the active oldest-first sort as the mobile detail", async () => {
     testState.isMobile = true;
     testState.searchParams = new URLSearchParams("runSort=oldest");
     const newest = run({
@@ -336,24 +398,29 @@ describe("RunsTab shared rail branches", () => {
       createdAt: new Date("2026-07-21T10:00:00.000Z"),
     });
 
-    act(() => {
+    await act(async () => {
       root.render(
-        <SidePanelProvider>
-          <RunsTab
-            runs={[newest, oldest]}
-            orgId="org-1"
-            agentId="agent-1"
-            agentRouteId="agent-route"
-            selectedRunId={null}
-            agentRuntimeType="codex_local"
-          />
-        </SidePanelProvider>,
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={[newest, oldest]}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={null}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
       );
     });
 
-    const row = container.querySelector<HTMLElement>("[data-testid='agent-run-conversation-group-row']");
-    expect(row?.textContent).toContain("Oldest sorted result");
-    expect(row?.textContent).not.toContain("Newest sorted result");
+    expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).not.toBeNull();
+    const trigger = container.querySelector<HTMLButtonElement>("[data-testid='agent-runs-history-trigger']");
+    await act(async () => trigger?.click());
+    const selectedRow = document.body.querySelector<HTMLElement>("[data-testid='agent-run-conversation-group-row'][aria-current='page']");
+    expect(selectedRow?.textContent).toContain("Oldest sorted result");
+    expect(selectedRow?.textContent).not.toContain("Newest sorted result");
   });
 
   it("renders grouped rows through the desktop no-selection branch", () => {

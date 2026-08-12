@@ -4,17 +4,23 @@ import { chatsApi } from "@/api/chats";
 import { healthApi } from "@/api/health";
 import { projectsApi } from "@/api/projects";
 import {
+  ChatComposerContextMenu,
   ChatComposerEditor,
   ChatComposerSendButton,
   ChatComposerSurface,
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
 import {
+  ChatProjectMenuContent,
+  ChatProjectSelectorButton,
+} from "@/components/chat/ChatProjectSelector";
+import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
-import { ProjectIcon } from "@/components/ProjectIdentity";
 import { useToast } from "@/context/ToastContext";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
 import {
   canSubmitChatResponseAnnotations,
@@ -30,6 +36,12 @@ import { useNavigate } from "@/lib/router";
 import { consumeRunFeedbackPendingFiles } from "@/lib/run-feedback-pending-files";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
+import {
+  ChatAgentMenuContent,
+  ChatAgentSelectorButton,
+  handleChatAgentMenuKeyDown,
+} from "@/pages/Chat.model-selector";
+import { composerMenuPositionForAnchor } from "@/pages/Chat.parts";
 import type {
   ChatConversation,
   ChatInlineAnnotationInput,
@@ -46,7 +58,9 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 
 type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
 
@@ -134,6 +148,8 @@ export function RunFeedbackChatPanel({
   const navigate = useNavigate();
   const [draft, setDraft] = useState(target.body ?? "");
   const [projectId, setProjectId] = useState<string | null>(target.projectId ?? null);
+  const [composerMenu, setComposerMenu] = useState<"project" | "agent" | null>(null);
+  const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null);
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stopIndeterminate, setStopIndeterminate] = useState(false);
@@ -148,6 +164,10 @@ export function RunFeedbackChatPanel({
   const [annotationsExpanded, setAnnotationsExpanded] = useState(false);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const annotationChipRef = useRef<HTMLButtonElement | null>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const composerMenuRef = useRef<HTMLDivElement | null>(null);
+  const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const agentSelectorRef = useRef<HTMLButtonElement | null>(null);
   const editingAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mutationKeyRef = useRef(target.clientMutationId || makeId());
   const targetRef = useRef(target);
@@ -265,9 +285,17 @@ export function RunFeedbackChatPanel({
     setProjectId(target.projectId ?? null);
   }, [target.projectId]);
 
+  const conversation = conversationQuery.data as ChatConversation | undefined;
+  const liveAgents = useMemo(
+    () => selectableChatAgents(agentsQuery.data),
+    [agentsQuery.data],
+  );
+  const activeAgentId = conversation?.preferredAgentId
+    ?? target.preferredAgentId
+    ?? target.agentId;
   const selectedAgent = useMemo(
-    () => (agentsQuery.data ?? []).find((agent) => agent.id === target.agentId) ?? null,
-    [agentsQuery.data, target.agentId],
+    () => liveAgents.find((agent) => agent.id === activeAgentId) ?? null,
+    [activeAgentId, liveAgents],
   );
   const selectedProject = useMemo(
     () => (projectsQuery.data ?? []).find((project) => project.id === projectId) ?? null,
@@ -277,6 +305,11 @@ export function RunFeedbackChatPanel({
     sending
     ||
     target.projectLocked
+    || target.conversationId
+    || messages.some((message) => message.role === "user"),
+  );
+  const agentLocked = Boolean(
+    sending
     || target.conversationId
     || messages.some((message) => message.role === "user"),
   );
@@ -419,6 +452,52 @@ export function RunFeedbackChatPanel({
     updateTarget({ projectId: next });
   };
 
+  const closeComposerMenu = useCallback(() => {
+    setComposerMenu(null);
+    setComposerMenuPosition(null);
+  }, []);
+  const openComposerMenu = useCallback((menu: "project" | "agent") => {
+    const anchor = menu === "project" ? projectSelectorRef.current : agentSelectorRef.current;
+    if (anchor) setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
+    setComposerMenu(menu);
+  }, []);
+  const handleAgentChange = (agentId: string) => {
+    if (agentLocked || !liveAgents.some((agent) => agent.id === agentId)) return;
+    updateTarget({ preferredAgentId: agentId });
+    closeComposerMenu();
+  };
+  useEffect(() => {
+    if (!composerMenu) return;
+    const updatePosition = () => {
+      const anchor = composerMenu === "project" ? projectSelectorRef.current : agentSelectorRef.current;
+      if (anchor) setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = event.target;
+      if (!(node instanceof Node)) return;
+      if (composerMenuRef.current?.contains(node)) return;
+      if (projectSelectorRef.current?.contains(node) || agentSelectorRef.current?.contains(node)) return;
+      closeComposerMenu();
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const restoreFocus = composerMenu === "project" ? projectSelectorRef.current : agentSelectorRef.current;
+      closeComposerMenu();
+      requestAnimationFrame(() => restoreFocus?.focus());
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeComposerMenu, composerMenu]);
+
   const handleSend = async () => {
     if (sending || stopping || stopIndeterminate || !canSend) return;
     const sendTarget = targetRef.current;
@@ -527,7 +606,7 @@ export function RunFeedbackChatPanel({
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
           signal: streamAbortController.signal,
-          preferredAgentId: sendTarget.agentId,
+          preferredAgentId: sendTarget.preferredAgentId ?? sendTarget.agentId,
           issueCreationMode: "manual_approval",
           planMode: false,
           modelOverride: null,
@@ -568,7 +647,6 @@ export function RunFeedbackChatPanel({
     }
   };
 
-  const conversation = conversationQuery.data as ChatConversation | undefined;
   const visibleMessages = messages;
   const currentStreamCanBeStopped = sending
     && Boolean(activeConversationIdRef.current)
@@ -656,7 +734,7 @@ export function RunFeedbackChatPanel({
         </div>
       ) : null}
       <div className="shrink-0 px-4 pb-4">
-        <ChatComposerSurface className="mx-auto max-w-3xl" testId="run-feedback-composer">
+        <ChatComposerSurface ref={composerSurfaceRef} className="mx-auto max-w-3xl" testId="run-feedback-composer">
           {annotationCount > 0 ? (
             <div className="mb-3 flex flex-col items-start gap-2">
               <DraftResponseAnnotationsPopover
@@ -750,22 +828,70 @@ export function RunFeedbackChatPanel({
               />
             )}
           >
-            <span className="inline-flex min-w-0 max-w-[min(100%,14rem)] items-center gap-1.5 text-xs text-muted-foreground" title={projectLocked ? "Project context is locked after conversation starts." : (selectedProject?.name ?? "No project")}>
-              {selectedProject ? <ProjectIcon color={selectedProject.color} icon={selectedProject.icon} size="xs" label={selectedProject.name} /> : <span className="h-3.5 w-3.5 shrink-0 rounded border border-dashed border-muted-foreground/50" aria-hidden="true" />}
-              <select
-                aria-label="Project"
-                value={projectId ?? ""}
-                disabled={projectLocked || projectsQuery.isPending || sending}
-                aria-disabled={projectLocked || projectsQuery.isPending || sending}
-                onChange={(event) => handleProjectChange(event.currentTarget.value)}
-                className="min-w-0 max-w-[10rem] truncate bg-transparent text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <option value="">No project</option>
-                {(projectsQuery.data ?? []).map((project: Project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-            </span>
+            <ChatProjectSelectorButton
+              project={selectedProject}
+              label={selectedProject?.name ?? "No project"}
+              expanded={composerMenu === "project"}
+              disabled={projectLocked || projectsQuery.isPending}
+              buttonRef={projectSelectorRef}
+              testId="run-feedback-project-selector"
+              iconTestId="run-feedback-project-icon"
+              clearTestId="run-feedback-project-clear"
+              onClick={() => {
+                if (composerMenu === "project") closeComposerMenu();
+                else openComposerMenu("project");
+              }}
+              onClear={() => handleProjectChange("")}
+            />
+            <ChatAgentSelectorButton
+              buttonRef={agentSelectorRef}
+              agent={selectedAgent}
+              label={selectedAgent ? formatChatAgentLabel(selectedAgent) : agentsQuery.isPending ? "Loading agents" : "No agent"}
+              expanded={composerMenu === "agent"}
+              disabled={agentLocked || agentsQuery.isPending}
+              onClick={() => {
+                if (composerMenu === "agent") closeComposerMenu();
+                else openComposerMenu("agent");
+              }}
+            />
           </ChatComposerToolbar>
         </ChatComposerSurface>
+        {composerMenu && composerMenuPosition && typeof document !== "undefined" ? createPortal(
+          <ChatComposerContextMenu
+            menuRef={composerMenuRef}
+            testId={`run-feedback-${composerMenu}-menu`}
+            ariaLabel={composerMenu === "agent" ? "Run feedback agent" : "Run feedback project"}
+            position={composerMenuPosition}
+            onKeyDown={composerMenu === "agent" ? handleChatAgentMenuKeyDown : undefined}
+          >
+            {composerMenu === "project" ? (
+              <ChatProjectMenuContent
+                projects={(projectsQuery.data ?? []) as Project[]}
+                activeProjectId={projectId}
+                onSelect={(nextProjectId) => {
+                  handleProjectChange(nextProjectId ?? "");
+                  closeComposerMenu();
+                }}
+              />
+            ) : (
+              <ChatAgentMenuContent
+                agents={liveAgents}
+                activeAgentId={activeAgentId}
+                agentSelectionLocked={agentLocked}
+                runtimeSelectionPending={false}
+                newConversationSendInFlight={sending && !conversation}
+                externalBound={false}
+                adapterModels={null}
+                overrides={{ modelOverride: null, effortOverride: null }}
+                runtimeLabel=""
+                showRuntimeControls={false}
+                onSelectAgent={handleAgentChange}
+                onChangeRuntime={() => undefined}
+              />
+            )}
+          </ChatComposerContextMenu>,
+          document.body,
+        ) : null}
       </div>
     </div>
   );

@@ -1115,14 +1115,14 @@ test("atomic writer reports restore failures and retains backup and temporary re
   }
 });
 
-test("docs structure test is a gate in general CI and both docs deployment workflows", () => {
+test("docs structure test is a gate in stable releases and both docs deployment workflows", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   assert.match(
     packageJson.scripts["docs:structure:test"],
     /scripts\/postprocess-docs-export\.test\.mjs/u,
     "docs:structure:test must include static export and verifier regressions",
   );
-  for (const workflow of ["ci.yml", "docs-staging.yml", "docs-production.yml"]) {
+  for (const workflow of ["release.yml", "docs-staging.yml", "docs-production.yml"]) {
     const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
     assert.match(source, /run: pnpm docs:structure:test/u, `${workflow} must run docs:structure:test`);
   }

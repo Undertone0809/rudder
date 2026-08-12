@@ -30,7 +30,7 @@ import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
-import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput } from "../components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput, type TranscriptSkillTarget } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { useSidePanel } from "../context/SidePanelContext";
@@ -117,6 +117,10 @@ export function LogViewer({
       label,
     );
   }, [openSidePanelTarget]);
+  const openTranscriptSkill = useCallback((target: TranscriptSkillTarget) => {
+    if (!target.path) return;
+    openTranscriptFile(target.path, target.name);
+  }, [openTranscriptFile]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const persistedEventCursorRef = useRef(0);
@@ -657,6 +661,8 @@ export function LogViewer({
                 onAnnotate: handleAnnotate,
               } : undefined}
               onOpenFile={openTranscriptFile}
+              onOpenSkill={openTranscriptSkill}
+              canOpenSkill={(target) => Boolean(target.path)}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -798,6 +804,8 @@ export function LogViewer({
                 onAnnotate: handleAnnotate,
               } : undefined}
               onOpenFile={openTranscriptFile}
+              onOpenSkill={openTranscriptSkill}
+              canOpenSkill={(target) => Boolean(target.path)}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">

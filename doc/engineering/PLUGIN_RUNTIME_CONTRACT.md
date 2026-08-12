@@ -66,11 +66,12 @@ described in `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`.
 - Uninstall removes package-owned Skill projections and the active installation
   identity. It does not delete external MCP connections, Local App source/data,
   or user-owned Rudder records.
-- The instance `Enable Plugins` flag is non-destructive and also controls the
-  Plugins Primary Rail destination.
-- Plugin and instance disablement exclude linked MCP connections and
-  Plugin-managed Skills from new Agent runtime context without deleting the
-  Managed MCP connection or immutable package.
+- Hub is always available in the Primary Rail. Legacy `experimentalPluginsEnabled`
+  and `experimentalSitesEnabled` fields are accepted for compatibility but no
+  longer gate Plugin, Skill, or App behavior.
+- Plugin disablement excludes linked MCP connections and Plugin-managed Skills
+  from new Agent runtime context without deleting the Managed MCP connection or
+  immutable package.
 - Historical legacy Plugin tables may remain for migration safety but no active
   route, service, CLI, SDK, worker, job, webhook, UI slot, state store, or tool
   RPC may depend on them.

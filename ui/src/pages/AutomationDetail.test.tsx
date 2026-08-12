@@ -652,6 +652,10 @@ describe("AutomationDetail", () => {
 
     await act(async () => {
       notifySwitch?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 760));
     });
 

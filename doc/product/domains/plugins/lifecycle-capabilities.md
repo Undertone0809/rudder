@@ -189,16 +189,16 @@ Invariants:
   error, reauthorization, and disablement reconcile back into component setup
   and Plugin health without duplicating MCP runtime state.
 - A Plugin-linked MCP connection is excluded from new Agent runtime context
-  whenever that Plugin is disabled or uninstalled, or the instance-wide Plugin
-  experiment is off. The preserved Managed MCP record is not execution access.
+  whenever that Plugin is disabled or uninstalled. The preserved Managed MCP
+  record is not execution access.
 - Plugin-managed Skills are likewise excluded from all new runtime
-  materialization whenever their Plugin is disabled or the instance-wide
-  Plugin experiment is off, even if an older Agent selection record remains.
+  materialization whenever their Plugin is disabled, even if an older Agent
+  selection record remains.
 - Updating or rolling back never mutates an immutable package snapshot. A
   failed update keeps the last known-good package and component targets active.
-- The experimental `Enable Plugins` setting is non-destructive. When enabled,
-  Plugins appears in the Primary Rail with Discover, Yours, and Build. Existing
-  `/apps/...` routes remain directly launchable and select the Plugins rail.
+- Hub is a default Primary Rail capability with Plugins, Skills, and Showcase
+  views. It is not controlled by an Experimental setting. Existing `/apps/...`
+  routes remain directly launchable and select the Hub rail.
 
 Evidence:
 

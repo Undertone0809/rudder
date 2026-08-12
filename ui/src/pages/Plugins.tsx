@@ -1,5 +1,5 @@
 import { agentsApi } from "@/api/agents";
-import { healthApi } from "@/api/health";
+import { organizationSkillsApi } from "@/api/organizationSkills";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,12 +10,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { appRoute } from "@/lib/apps-workspace";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
+import { buildLibrarySkillHref } from "@/lib/skill-library-routes";
 import { cn } from "@/lib/utils";
 import type {
   Agent,
@@ -29,6 +38,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   Blocks,
+  BookOpen,
   Bot,
   Box,
   ChevronRight,
@@ -36,18 +46,21 @@ import {
   Download,
   ExternalLink,
   FileCode2,
+  FolderOpen,
   Loader2,
+  MessageCircle,
   PackageOpen,
   Plus,
   Search,
-  Settings2,
   ShieldCheck,
+  Sparkles,
   Unplug,
+  Upload,
   Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type PluginTab = "discover" | "yours" | "build";
+type HubTab = "plugins" | "skills" | "showcase";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -66,6 +79,13 @@ async function selectedFolderFiles(files: readonly File[]): Promise<RudderPlugin
     path: file.webkitRelativePath.split("/").slice(1).join("/") || file.name,
     content: await fileToBase64(file),
     encoding: "base64" as const,
+  })));
+}
+
+async function selectedSkillFiles(files: readonly File[]) {
+  return Promise.all(files.map(async (file) => ({
+    path: file.webkitRelativePath || file.name,
+    content: await file.text(),
   })));
 }
 
@@ -91,7 +111,7 @@ export function sandboxedMcpHtml(html: string) {
   policy.httpEquiv = "Content-Security-Policy";
   policy.content = MCP_UI_CSP;
   parsed.head.prepend(policy);
-  return `<!doctype html>${parsed.documentElement.outerHTML}`;
+  return `<!doctype html>\n${parsed.documentElement.outerHTML}`;
 }
 
 function componentIcon(type: RudderPluginComponentLink["type"]) {
@@ -116,6 +136,7 @@ function PluginDetailDialog({
   onAssignSkills,
   onConfigureMcp,
   onOpenMcpUi,
+  openingMcpComponentId,
   onCustomizeSkill,
   onOpenApp,
   onTryChat,
@@ -131,6 +152,7 @@ function PluginDetailDialog({
   onAssignSkills: () => void;
   onConfigureMcp: (component: RudderPluginComponentLink) => void;
   onOpenMcpUi: (component: RudderPluginComponentLink) => void;
+  openingMcpComponentId: string | null;
   onCustomizeSkill: (component: RudderPluginComponentLink) => void;
   onOpenApp: (component: RudderPluginComponentLink) => void;
   onTryChat: () => void;
@@ -148,7 +170,7 @@ function PluginDetailDialog({
     ));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <div className="flex items-start gap-3 pr-8">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/45">
@@ -163,7 +185,7 @@ function PluginDetailDialog({
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-y py-4 text-sm sm:grid-cols-4">
           <div><div className="text-xs text-muted-foreground">Status</div><div className="mt-0.5 font-medium">{stateLabel(plugin)}</div></div>
-          <div><div className="text-xs text-muted-foreground">Version</div><div className="mt-0.5 font-medium">{plugin.version}</div></div>
+          <div className="min-w-0"><div className="text-xs text-muted-foreground">Version</div><div className="mt-0.5 break-all font-medium">{plugin.version}</div></div>
           <div><div className="text-xs text-muted-foreground">Publisher</div><div className="mt-0.5 truncate font-medium">{plugin.publisher ?? "Unknown"}</div></div>
           <div><div className="text-xs text-muted-foreground">Source</div><div className="mt-0.5 truncate font-medium">{plugin.sourceLabel}</div></div>
         </div>
@@ -174,7 +196,7 @@ function PluginDetailDialog({
             {plugin.components.map((component) => {
               const Icon = componentIcon(component.type);
               return (
-                <div key={component.id} className="flex min-h-12 items-center gap-3 px-3 py-2.5">
+                <div key={component.id} className="flex min-h-12 flex-wrap items-center gap-3 px-3 py-2.5 sm:flex-nowrap">
                   <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{component.displayName}</div>
@@ -191,8 +213,15 @@ function PluginDetailDialog({
                     </Button>
                   ) : null}
                   {component.type === "mcp" && component.targetId && component.status === "ready" ? (
-                    <Button size="sm" variant="outline" onClick={() => onOpenMcpUi(component)}>
-                      Open UI<ExternalLink className="h-3.5 w-3.5" />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={openingMcpComponentId === component.id}
+                      onClick={() => onOpenMcpUi(component)}
+                    >
+                      {openingMcpComponentId === component.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                      {openingMcpComponentId === component.id ? "Opening..." : "Open UI"}
+                      {openingMcpComponentId === component.id ? null : <ExternalLink className="h-3.5 w-3.5" />}
                     </Button>
                   ) : null}
                   {component.type === "skill" && component.targetId ? (
@@ -219,7 +248,7 @@ function PluginDetailDialog({
 
         {plugin.pendingUpdate ? (
           <section className="rounded-md border border-amber-600/30 bg-amber-500/5 px-3 py-3">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold">Local App update ready for review</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -236,7 +265,7 @@ function PluginDetailDialog({
 
         <DialogFooter className="justify-between sm:justify-between">
           <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onUninstall}>Uninstall</Button>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             {plugin.previousPackageId ? <Button variant="outline" onClick={onRollback}>Roll back</Button> : null}
             <Button variant="outline" onClick={onToggle}>{plugin.enabled ? "Disable" : "Enable"}</Button>
             {canTryInChat ? <Button onClick={onTryChat}><Bot className="h-4 w-4" />Try in Chat</Button> : null}
@@ -422,12 +451,13 @@ function ImportReviewDialog({
 
 export function Plugins() {
   const { selectedOrganizationId } = useOrganization();
+  const { setHeaderActions } = useBreadcrumbs();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedTab = searchParams.get("tab") as PluginTab | null;
+  const requestedTab = searchParams.get("tab") as HubTab | null;
   const requestedPluginId = searchParams.get("plugin");
-  const explicitTab = requestedTab && ["discover", "yours", "build"].includes(requestedTab) ? requestedTab : null;
+  const explicitTab = requestedTab && ["plugins", "skills", "showcase"].includes(requestedTab) ? requestedTab : null;
   const [search, setSearch] = useState("");
   const [importReport, setImportReport] = useState<RudderPluginImportReport | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<RudderInstalledPlugin | null>(null);
@@ -444,14 +474,20 @@ export function Plugins() {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const marketplaceInputRef = useRef<HTMLInputElement | null>(null);
+  const skillFileInputRef = useRef<HTMLInputElement | null>(null);
+  const skillFolderInputRef = useRef<HTMLInputElement | null>(null);
+  const [skillUploadOpen, setSkillUploadOpen] = useState(searchParams.get("create") === "upload");
+  const [uploadedSkills, setUploadedSkills] = useState<string[]>([]);
 
-  const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: () => healthApi.get() });
-  const enabled = (healthQuery.data?.features?.experimentalPluginsEnabled
-    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const directoryQuery = useQuery({
     queryKey: ["rudder-plugins", selectedOrganizationId],
     queryFn: () => rudderPluginsApi.directory(selectedOrganizationId!),
-    enabled: Boolean(selectedOrganizationId && enabled),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const skillsQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__"),
+    queryFn: () => organizationSkillsApi.list(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId),
   });
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
@@ -464,6 +500,22 @@ export function Plugins() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__") });
   };
   const mutationError = (error: unknown) => setActionError(error instanceof Error ? error.message : "Plugin action failed.");
+  const uploadSkillMutation = useMutation({
+    mutationFn: async (files: readonly File[]) => organizationSkillsApi.upload(
+      selectedOrganizationId!,
+      { files: await selectedSkillFiles(files) },
+    ),
+    onMutate: () => {
+      setActionError(null);
+      setUploadedSkills([]);
+    },
+    onSuccess: async (result) => {
+      setUploadedSkills(result.imported.map((skill) => skill.name));
+      await refresh();
+      setSearchParams({ tab: "skills" });
+    },
+    onError: mutationError,
+  });
   const inspectMutation = useMutation({
     mutationFn: async (files: readonly File[]) => rudderPluginsApi.inspect(
       selectedOrganizationId!,
@@ -490,7 +542,7 @@ export function Plugins() {
       setImportReport(null);
       setDetailPlugin(plugin);
       await refresh();
-      setSearchParams({ tab: "yours" });
+      setSearchParams({ tab: "plugins" });
     },
     onError: mutationError,
   });
@@ -524,7 +576,7 @@ export function Plugins() {
       setMarketplaceRepository("");
       setMarketplaceCommit("");
       await refresh();
-      setSearchParams({ tab: "discover" });
+      setSearchParams({ tab: "plugins" });
     },
     onError: mutationError,
   });
@@ -604,156 +656,176 @@ export function Plugins() {
     !normalizedSearch || app.name.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.localApps, normalizedSearch]);
   const discover = useMemo(() => (directoryQuery.data?.discover ?? []).filter((plugin) =>
     !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.discover, normalizedSearch]);
-  const hasOwnedPlugins = (directoryQuery.data?.installed.length ?? 0) + (directoryQuery.data?.localApps.length ?? 0) > 0;
-  const tab: PluginTab = explicitTab ?? (directoryQuery.isLoading || hasOwnedPlugins ? "yours" : "discover");
+  const skills = useMemo(() => (skillsQuery.data ?? []).filter((skill) =>
+    !normalizedSearch || `${skill.name} ${skill.description ?? ""} ${skill.sourceLabel ?? ""}`.toLowerCase().includes(normalizedSearch)), [skillsQuery.data, normalizedSearch]);
+  const tab: HubTab = explicitTab ?? "plugins";
+  const createSkillInChat = useCallback(() => navigate(`/messenger/chat?prefill=${encodeURIComponent(
+    "Use the skill-creator skill to help me create a reusable Skill. Start by asking what outcome this Skill should reliably produce, then build and validate it with me.",
+  )}`), [navigate]);
+  const openPluginDetail = (plugin: RudderInstalledPlugin) => {
+    setActionError(null);
+    setDetailPlugin(plugin);
+    setSearchParams({ tab: "plugins", plugin: plugin.id });
+  };
+  const closePluginDetail = () => {
+    setDetailPlugin(null);
+    setSearchParams({ tab: "plugins" });
+  };
   useEffect(() => {
     if (!requestedPluginId || detailPlugin?.id === requestedPluginId) return;
     const requestedPlugin = directoryQuery.data?.installed.find((plugin) => plugin.id === requestedPluginId);
     if (requestedPlugin) setDetailPlugin(requestedPlugin);
   }, [detailPlugin?.id, directoryQuery.data?.installed, requestedPluginId]);
 
-  if (!selectedOrganizationId) return <div className="p-6 text-sm text-muted-foreground">Select an Organization.</div>;
-  if (!enabled && !healthQuery.isLoading) {
-    return (
-      <div className="mx-auto flex min-h-[420px] max-w-xl flex-col items-center justify-center px-6 text-center">
-        <Blocks className="h-8 w-8 text-muted-foreground" />
-        <h1 className="mt-4 text-lg font-semibold">Plugins is disabled</h1>
-        <Button asChild className="mt-4"><Link to="/instance/settings/experimental"><Settings2 className="h-4 w-4" />Experimental settings</Link></Button>
-      </div>
+  useEffect(() => {
+    if (!selectedOrganizationId) {
+      setHeaderActions(null);
+      return;
+    }
+
+    setHeaderActions(
+      <>
+        <div className="relative hidden w-[min(17rem,28vw)] md:block">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search showcase"}
+            aria-label="Search Hub"
+            data-testid="hub-header-search"
+            className="h-8 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
+          />
+        </div>
+        {tab === "plugins" ? (
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label="Import"
+                    disabled={inspectMutation.isPending || archiveMutation.isPending || marketplaceMutation.isPending}
+                  >
+                    {inspectMutation.isPending || archiveMutation.isPending || marketplaceMutation.isPending
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <PackageOpen className="h-3.5 w-3.5" />}
+                    <span className="hidden sm:inline">Import</span>
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Import Plugin</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => folderInputRef.current?.click()}>
+                <FolderOpen className="h-4 w-4" />Plugin folder
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => archiveInputRef.current?.click()}>
+                <Download className="h-4 w-4" />Plugin ZIP
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => marketplaceInputRef.current?.click()}>
+                <PackageOpen className="h-4 w-4" />Local marketplace
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMarketplaceDialogOpen(true)}>
+                <Box className="h-4 w-4" />Pinned GitHub marketplace
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+        {tab === "skills" ? (
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" aria-label="Create Skill"><Plus className="h-3.5 w-3.5" /><span className="hidden sm:inline">Create Skill</span></Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Create Skill</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={createSkillInChat}>
+                <MessageCircle className="h-4 w-4" />Create via Chat
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setActionError(null); setUploadedSkills([]); setSkillUploadOpen(true); }}>
+                <Upload className="h-4 w-4" />Upload Skill
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </>,
     );
-  }
+  }, [
+    archiveMutation.isPending,
+    createSkillInChat,
+    inspectMutation.isPending,
+    marketplaceMutation.isPending,
+    search,
+    selectedOrganizationId,
+    setHeaderActions,
+    tab,
+  ]);
+
+  useEffect(() => () => setHeaderActions(null), [setHeaderActions]);
+
+  if (!selectedOrganizationId) return <div className="p-6 text-sm text-muted-foreground">Select an Organization.</div>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="border-b px-5 py-4 md:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">Plugins</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Capabilities for your Agent team</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative w-[min(260px,45vw)]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search plugins" className="h-9 pl-8" />
-            </div>
-            <input
-              ref={(node) => { folderInputRef.current = node; node?.setAttribute("webkitdirectory", ""); }}
-              type="file"
-              multiple
-              className="hidden"
-              data-testid="plugin-folder-input"
-              onChange={(event) => {
-                const files = [...(event.currentTarget.files ?? [])];
-                if (files.length) inspectMutation.mutate(files);
-                event.currentTarget.value = "";
-              }}
-            />
-            <input
-              ref={archiveInputRef}
-              type="file"
-              accept=".zip,application/zip"
-              className="hidden"
-              data-testid="plugin-archive-input"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                if (file) archiveMutation.mutate(file);
-                event.currentTarget.value = "";
-              }}
-            />
-            <input
-              ref={(node) => { marketplaceInputRef.current = node; node?.setAttribute("webkitdirectory", ""); }}
-              type="file"
-              multiple
-              className="hidden"
-              data-testid="plugin-marketplace-input"
-              onChange={(event) => {
-                const files = [...(event.currentTarget.files ?? [])];
-                if (files.length) marketplaceMutation.mutate({ files });
-                event.currentTarget.value = "";
-              }}
-            />
-            <Button variant="outline" onClick={() => folderInputRef.current?.click()} disabled={inspectMutation.isPending} aria-label="Import Plugin folder">
-              {inspectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageOpen className="h-4 w-4" />}
-              Folder
-            </Button>
-            <Button variant="outline" onClick={() => archiveInputRef.current?.click()} disabled={archiveMutation.isPending} aria-label="Import Plugin ZIP">
-              {archiveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              ZIP
-            </Button>
-          </div>
+    <div className="flex h-full min-h-0 flex-col bg-[color:color-mix(in_oklab,var(--surface-page)_58%,var(--surface-elevated))]">
+      <div className="shrink-0 border-b border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_72%,var(--surface-page))] px-4 py-2.5 md:px-6">
+        <div className="relative mb-2.5 md:hidden">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search showcase"}
+            aria-label="Search Hub"
+            className="h-8 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
+          />
         </div>
-        <nav className="mt-4 flex gap-1" aria-label="Plugin views">
-          {(["discover", "yours", "build"] as const).map((item) => (
+        <nav className="flex gap-1" aria-label="Hub views">
+          {(["plugins", "skills", "showcase"] as const).map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => setSearchParams({ tab: item })}
-              className={cn("rounded-sm px-3 py-1.5 text-sm font-medium capitalize transition-colors", tab === item ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+              className={cn(
+                "rounded-[var(--radius-sm)] px-3 py-1.5 text-sm font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                tab === item
+                  ? "bg-[color:var(--surface-active)] text-foreground"
+                  : "text-muted-foreground hover:bg-[color:var(--surface-inset)] hover:text-foreground",
+              )}
             >
               {item}
             </button>
           ))}
         </nav>
-      </header>
+      </div>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
-        {directoryQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{directoryQuery.error.message}</div> : null}
+      <main className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
+        {tab === "plugins" && directoryQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{directoryQuery.error.message}</div> : null}
+        {tab === "skills" && skillsQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{skillsQuery.error.message}</div> : null}
         {actionError && !detailPlugin && !importReport && !assigningPlugin ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
-        {directoryQuery.isLoading ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : null}
+        {(tab === "plugins" ? directoryQuery.isLoading : tab === "skills" ? skillsQuery.isLoading : false) ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : null}
 
-        {tab === "discover" && !directoryQuery.isLoading ? (
-          <div className="mx-auto max-w-5xl">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div><h2 className="text-sm font-semibold">Discover</h2><p className="mt-0.5 text-xs text-muted-foreground">Review before install. Marketplace defaults never install silently.</p></div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => marketplaceInputRef.current?.click()}><PackageOpen className="h-4 w-4" />Add local marketplace</Button>
-                <Button variant="outline" size="sm" onClick={() => setMarketplaceDialogOpen(true)}><Box className="h-4 w-4" />Add pinned GitHub</Button>
-              </div>
-            </div>
-            {discover.length === 0 ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center rounded-md border border-dashed text-center">
-                <Box className="h-8 w-8 text-muted-foreground" />
-                <h2 className="mt-4 text-base font-semibold">No directory source configured</h2>
-                <p className="mt-1 max-w-md text-sm text-muted-foreground">Add a local Codex marketplace folder or a GitHub marketplace locked to a full commit SHA.</p>
-              </div>
-            ) : (
-              <div className="grid gap-2 md:grid-cols-2">
-                {discover.map((plugin) => (
-                  <div key={plugin.reportId} className="flex min-h-[120px] items-start gap-3 rounded-md border bg-card p-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Blocks className="h-4.5 w-4.5" /></div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
-                      <div className="mt-2 text-[11px] text-muted-foreground">{plugin.sourceType === "git" ? "Pinned GitHub" : "Local marketplace"} · v{plugin.version}</div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {typeof plugin.policy.installation === "string" ? plugin.policy.installation.replaceAll("_", " ") : "AVAILABLE"}
-                        {typeof plugin.policy.authentication === "string" ? ` · ${plugin.policy.authentication.replaceAll("_", " ")}` : ""}
-                      </div>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={async () => {
-                      setActionError(null);
-                      try {
-                        const report = await rudderPluginsApi.getImportReport(selectedOrganizationId, plugin.reportId);
-                        setAccessExpansionConfirmed(false);
-                        setSkillConflictStrategy(null);
-                        setImportReport(report);
-                      } catch (error) {
-                        mutationError(error);
-                      }
-                    }}>Review</Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {tab === "yours" && !directoryQuery.isLoading ? (
+        {tab === "plugins" && !directoryQuery.isLoading ? (
           <div className="mx-auto max-w-5xl">
             <section>
-              <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Your plugins</h2><span className="text-xs text-muted-foreground">{installed.length + localApps.length}</span></div>
+              <div className="mb-3 flex items-end justify-between gap-3">
+                <div><h2 className="text-sm font-semibold">Your plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Installed packages and private Apps available to this Organization.</p></div>
+                <span className="text-xs text-muted-foreground">{installed.length + localApps.length}</span>
+              </div>
               {installed.length + localApps.length === 0 ? (
-                <div className="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No Plugins yet. Import a Codex Plugin or build a Local App.</div>
+                <div data-testid="hub-empty-installed" className="flex flex-col gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 py-4 sm:flex-row sm:items-center">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)]"><Blocks className="h-4 w-4 text-muted-foreground" /></div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">No plugins yet</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Import a Codex-compatible Plugin or build a private App.</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button size="sm" variant="outline" onClick={() => folderInputRef.current?.click()}><PackageOpen className="h-3.5 w-3.5" />Import Plugin</Button>
+                    <Button size="sm" variant="ghost" onClick={() => navigate("/apps")}><Wrench className="h-3.5 w-3.5" />Build App</Button>
+                  </div>
+                </div>
               ) : (
                 <div className="grid gap-2 md:grid-cols-2">
                   {installed.map((plugin) => (
@@ -761,11 +833,11 @@ export function Plugins() {
                       const app = plugin.components.length === 1 && plugin.components[0]?.type === "app" ? plugin.components[0] : null;
                       const appKey = typeof app?.metadata.appKey === "string" ? app.metadata.appKey : null;
                       if (appKey && !plugin.pendingUpdate) navigate(appRoute(appKey));
-                      else setDetailPlugin(plugin);
+                      else openPluginDetail(plugin);
                     }}>
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">{plugin.components.length === 1 && plugin.components[0]?.type === "app" ? <AppWindow className="h-4.5 w-4.5" /> : <Blocks className="h-4.5 w-4.5" />}</div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update review" : stateLabel(plugin)}</span></div>
+                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" && !plugin.pendingUpdate ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update review" : stateLabel(plugin)}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
                         <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                           {plugin.components.slice(0, 3).map((component) => <span key={component.id} className="capitalize">{component.type}</span>)}
@@ -789,19 +861,206 @@ export function Plugins() {
                 </div>
               )}
             </section>
+
+            <section className="mt-8 border-t pt-6">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div><h2 className="text-sm font-semibold">Discover plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Packages from configured marketplaces. Every install opens a capability review first.</p></div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => marketplaceInputRef.current?.click()}><PackageOpen className="h-4 w-4" />Local source</Button>
+                  <Button variant="outline" size="sm" onClick={() => setMarketplaceDialogOpen(true)}><Box className="h-4 w-4" />Pinned GitHub</Button>
+                </div>
+              </div>
+              {discover.length === 0 ? (
+                <div data-testid="hub-empty-marketplace" className="flex items-start gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,var(--surface-page))] px-4 py-3.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--surface-inset)]"><Box className="h-3.5 w-3.5 text-muted-foreground" /></div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">No marketplace source configured</p>
+                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Add a local marketplace folder or a GitHub repository pinned to a full commit SHA.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {discover.map((plugin) => (
+                    <div key={plugin.reportId} className="flex min-h-[120px] items-start gap-3 rounded-md border bg-card p-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Blocks className="h-4.5 w-4.5" /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
+                        <div className="mt-2 text-[11px] text-muted-foreground">{plugin.sourceType === "git" ? "Pinned GitHub" : "Local marketplace"} · v{plugin.version}</div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">
+                          {typeof plugin.policy.installation === "string" ? plugin.policy.installation.replaceAll("_", " ") : "available"}
+                          {typeof plugin.policy.authentication === "string" ? ` · ${plugin.policy.authentication.replaceAll("_", " ")}` : ""}
+                        </div>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={async () => {
+                        setActionError(null);
+                        try {
+                          const report = await rudderPluginsApi.getImportReport(selectedOrganizationId, plugin.reportId);
+                          setAccessExpansionConfirmed(false);
+                          setSkillConflictStrategy(null);
+                          setImportReport(report);
+                        } catch (error) {
+                          mutationError(error);
+                        }
+                      }}>Review</Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         ) : null}
 
-        {tab === "build" && !directoryQuery.isLoading ? (
-          <div className="mx-auto max-w-3xl">
-            <div className="flex items-center gap-4 border-b py-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-muted/40"><Plus className="h-5 w-5" /></div>
-              <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">Build App</h2><p className="mt-0.5 text-sm text-muted-foreground">Create a private interactive capability with App Builder.</p></div>
-              <Button onClick={() => navigate("/apps")}><Wrench className="h-4 w-4" />Build</Button>
+        {tab === "skills" && !skillsQuery.isLoading ? (
+          <div className="mx-auto max-w-5xl">
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div><h2 className="text-sm font-semibold">Organization skills</h2><p className="mt-0.5 text-xs text-muted-foreground">Reusable instructions that can be enabled for one or more Agents.</p></div>
+              <span className="text-xs text-muted-foreground">{skills.length}</span>
+            </div>
+            {skills.length === 0 ? (
+              <div data-testid="hub-empty-skills" className="flex flex-col gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 py-4 sm:flex-row sm:items-center">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)]"><BookOpen className="h-4 w-4 text-muted-foreground" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">No skills match this view</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Create one with Chat or upload an existing Skill package.</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" variant="outline" onClick={createSkillInChat}><MessageCircle className="h-3.5 w-3.5" />Create via Chat</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSkillUploadOpen(true)}><Upload className="h-3.5 w-3.5" />Upload Skill</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2">
+                {skills.map((skill) => (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    className="group flex min-h-[104px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35"
+                    onClick={() => navigate(buildLibrarySkillHref(skill.id))}
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><FileCode2 className="h-4.5 w-4.5" /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{skill.name}</span><span className="text-[11px] capitalize text-muted-foreground">{skill.sourceBadge}</span></div>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{skill.description ?? "No description provided."}</p>
+                      <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"><span>{skill.attachedAgentCount} {skill.attachedAgentCount === 1 ? "Agent" : "Agents"}</span><span>{skill.fileInventory.length} files</span><span className="ml-auto">{skill.compatibility}</span></div>
+                    </div>
+                    <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "showcase" ? (
+          <div className="mx-auto max-w-5xl">
+            <div className="mb-4"><h2 className="text-sm font-semibold">Showcase</h2><p className="mt-0.5 text-xs text-muted-foreground">Starting points from effective multi-Agent workflows.</p></div>
+            <div className="divide-y border-y">
+              {[
+                { icon: Sparkles, title: "Research brief", copy: "Combine a research Plugin with a reviewing Agent before the result returns to the team.", action: "Explore plugins", run: () => setSearchParams({ tab: "plugins" }) },
+                { icon: BookOpen, title: "Team writing standard", copy: "Turn an existing playbook into a Skill that every writing Agent can share.", action: "Create Skill", run: createSkillInChat },
+                { icon: AppWindow, title: "Internal operations console", copy: "Build a private App when the work needs an interactive surface, records, and repeated actions.", action: "Build App", run: () => navigate("/apps") },
+              ].filter((item) => !normalizedSearch || `${item.title} ${item.copy}`.toLowerCase().includes(normalizedSearch)).map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.title} className="flex items-center gap-4 py-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Icon className="h-4.5 w-4.5" /></div>
+                    <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">{item.title}</h3><p className="mt-0.5 text-sm text-muted-foreground">{item.copy}</p></div>
+                    <Button variant="outline" size="sm" onClick={item.run}>{item.action}<ChevronRight className="h-3.5 w-3.5" /></Button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
       </main>
+
+      <input
+        ref={(node) => { folderInputRef.current = node; node?.setAttribute("webkitdirectory", ""); }}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="plugin-folder-input"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          if (files.length) inspectMutation.mutate(files);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={archiveInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        data-testid="plugin-archive-input"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) archiveMutation.mutate(file);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={(node) => { marketplaceInputRef.current = node; node?.setAttribute("webkitdirectory", ""); }}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="plugin-marketplace-input"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          if (files.length) marketplaceMutation.mutate({ files });
+          event.currentTarget.value = "";
+        }}
+      />
+
+      <input
+        ref={skillFileInputRef}
+        type="file"
+        multiple
+        accept=".skill,.md,text/markdown,text/plain"
+        className="hidden"
+        data-testid="skill-file-input"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          if (files.length) uploadSkillMutation.mutate(files);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={(node) => { skillFolderInputRef.current = node; node?.setAttribute("webkitdirectory", ""); }}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="skill-folder-input"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          if (files.length) uploadSkillMutation.mutate(files);
+          event.currentTarget.value = "";
+        }}
+      />
+      <Dialog open={skillUploadOpen} onOpenChange={(open) => { setSkillUploadOpen(open); if (!open) { setActionError(null); setUploadedSkills([]); setSearchParams({ tab: "skills" }); } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload Skill</DialogTitle>
+            <DialogDescription>Choose a Skill file or a folder containing SKILL.md. Rudder validates the package before adding it to the Organization.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" className="flex min-h-28 flex-col items-start rounded-md border p-4 text-left transition-colors hover:bg-muted/35" onClick={() => skillFileInputRef.current?.click()} disabled={uploadSkillMutation.isPending}>
+              <FileCode2 className="h-5 w-5 text-muted-foreground" />
+              <span className="mt-3 text-sm font-semibold">Choose files</span>
+              <span className="mt-1 text-xs text-muted-foreground">A .skill file, SKILL.md, and optional supporting files.</span>
+            </button>
+            <button type="button" className="flex min-h-28 flex-col items-start rounded-md border p-4 text-left transition-colors hover:bg-muted/35" onClick={() => skillFolderInputRef.current?.click()} disabled={uploadSkillMutation.isPending}>
+              <FolderOpen className="h-5 w-5 text-muted-foreground" />
+              <span className="mt-3 text-sm font-semibold">Choose folder</span>
+              <span className="mt-1 text-xs text-muted-foreground">Upload a complete Skill directory.</span>
+            </button>
+          </div>
+          {uploadSkillMutation.isPending ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Validating and importing Skill...</div> : null}
+          {uploadedSkills.length > 0 ? <div className="rounded-md border border-emerald-600/25 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">Added {uploadedSkills.join(", ")}.</div> : null}
+          {actionError ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
+          <DialogFooter showCloseButton />
+        </DialogContent>
+      </Dialog>
 
       <ImportReviewDialog
         report={importReport}
@@ -817,8 +1076,8 @@ export function Plugins() {
       />
       <PluginDetailDialog
         plugin={detailPlugin}
-        open={Boolean(detailPlugin)}
-        onOpenChange={(open) => !open && setDetailPlugin(null)}
+        open={Boolean(detailPlugin) && !mcpUiResource}
+        onOpenChange={(open) => !open && closePluginDetail()}
         onAssignSkills={() => {
           setActionError(null);
           setAssigningPlugin(detailPlugin);
@@ -831,6 +1090,7 @@ export function Plugins() {
         }}
         onConfigureMcp={(component) => detailPlugin && mcpMutation.mutate({ plugin: detailPlugin, component })}
         onOpenMcpUi={(component) => detailPlugin && mcpUiMutation.mutate({ plugin: detailPlugin, component })}
+        openingMcpComponentId={mcpUiMutation.isPending ? mcpUiMutation.variables?.component.id ?? null : null}
         onCustomizeSkill={(component) => detailPlugin && customizeMutation.mutate({ plugin: detailPlugin, component })}
         onOpenApp={(component) => {
           const appKey = typeof component.metadata.appKey === "string" ? component.metadata.appKey : null;
@@ -842,7 +1102,7 @@ export function Plugins() {
             .filter((component) => component.type === "skill")
             .flatMap((component) => Array.isArray(component.metadata.enabledAgentIds) ? component.metadata.enabledAgentIds : [])
             .find((value): value is string => typeof value === "string");
-          const params = new URLSearchParams({ prefill: `Use ${detailPlugin.displayName} to help with this request.` });
+          const params = new URLSearchParams({ prefill: `[${detailPlugin.displayName}](plugin://${detailPlugin.id}) ` });
           if (agentId) params.set("agentId", agentId);
           navigate(`/messenger/chat?${params.toString()}`);
         }}
@@ -854,13 +1114,30 @@ export function Plugins() {
       />
       <Dialog open={marketplaceDialogOpen} onOpenChange={setMarketplaceDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add pinned GitHub marketplace</DialogTitle><DialogDescription>Rudder fetches one immutable GitHub archive and reviews each available local Plugin entry.</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Add pinned GitHub marketplace</DialogTitle>
+            <DialogDescription>Rudder fetches one immutable GitHub archive and makes its Plugins available for review. Nothing installs automatically.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-3">
-            <label className="block text-sm"><span className="mb-1 block font-medium">Repository URL</span><Input value={marketplaceRepository} onChange={(event) => setMarketplaceRepository(event.target.value)} placeholder="https://github.com/owner/repository" /></label>
-            <label className="block text-sm"><span className="mb-1 block font-medium">Full commit SHA</span><Input value={marketplaceCommit} onChange={(event) => setMarketplaceCommit(event.target.value)} placeholder="40 hexadecimal characters" className="font-mono" /></label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium">Repository URL</span>
+              <Input value={marketplaceRepository} onChange={(event) => setMarketplaceRepository(event.target.value)} placeholder="https://github.com/owner/repository" />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium">Full commit SHA</span>
+              <Input value={marketplaceCommit} onChange={(event) => setMarketplaceCommit(event.target.value)} placeholder="40 hexadecimal characters" className="font-mono" />
+            </label>
             {actionError ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
           </div>
-          <DialogFooter showCloseButton><Button disabled={marketplaceMutation.isPending || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/?$/.test(marketplaceRepository) || !/^[0-9a-f]{40}$/i.test(marketplaceCommit)} onClick={() => marketplaceMutation.mutate({ github: { repository: marketplaceRepository, commit: marketplaceCommit } })}>{marketplaceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Add marketplace</Button></DialogFooter>
+          <DialogFooter showCloseButton>
+            <Button
+              disabled={marketplaceMutation.isPending || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/?$/.test(marketplaceRepository) || !/^[0-9a-f]{40}$/i.test(marketplaceCommit)}
+              onClick={() => marketplaceMutation.mutate({ github: { repository: marketplaceRepository, commit: marketplaceCommit } })}
+            >
+              {marketplaceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Add marketplace
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(uninstallingPlugin)} onOpenChange={(open) => !open && setUninstallingPlugin(null)}>

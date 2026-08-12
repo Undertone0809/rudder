@@ -91,25 +91,34 @@ export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } fro
 export type {
   Goal,
   GoalActivity,
+  GoalAgentContext,
+  GoalAgentListLifecycle,
+  GoalAgentListResponse,
   GoalChangeProposal,
   GoalContinuation,
   GoalContractPatch,
   GoalContractSnapshot,
   GoalCriterion,
   GoalDependencies,
-  GoalDependencyPreview,
-  GoalEvaluationCandidate,
-  GoalFeedbackAttachment,
+  GoalDependencyPreview, GoalEvaluationCandidate, GoalEvidenceItem, GoalFeedbackAttachment,
   GoalFeedbackEntry,
+  GoalHistoryAttachment,
+  GoalHistoryItem,
+  GoalHistoryPage,
   GoalOwnerAssignment,
-  GoalPlan,
-  GoalResultProposal,
+  GoalPlan, GoalResultProposal,
   GoalResultReducerPreflight,
   GoalStartPacket,
   GoalStartPreview,
   GoalStartRequest,
   GoalWorkspaceCard,
-  GoalWorkspaceSummary
+  GoalWorkspaceSummary, PublicGoal,
+  PublicGoalActivity,
+  PublicGoalChangeProposal,
+  PublicGoalCriterion,
+  PublicGoalOwnerAssignment,
+  PublicGoalPlan,
+  PublicGoalResultProposal
 } from "./goal.js";
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
@@ -174,7 +183,7 @@ export type {
 export type {
   OrganizationSkill, OrganizationSkillCompatibility, OrganizationSkillCreateRequest, OrganizationSkillDetail, OrganizationSkillFileDetail, OrganizationSkillFileInventoryEntry, OrganizationSkillFileUpdateRequest, OrganizationSkillImportRequest,
   OrganizationSkillImportResult, OrganizationSkillListItem, OrganizationSkillLocalScanConflict, OrganizationSkillLocalScanRequest, OrganizationSkillLocalScanResult, OrganizationSkillLocalScanSkipped, OrganizationSkillProjectScanConflict, OrganizationSkillProjectScanRequest, OrganizationSkillProjectScanResult, OrganizationSkillProjectScanSkipped, OrganizationSkillSourceBadge, OrganizationSkillSourceType,
-  OrganizationSkillTrustLevel, OrganizationSkillUpdateStatus, OrganizationSkillUsageAgent, OrganizationSkillWorkspaceEditPath
+  OrganizationSkillTrustLevel, OrganizationSkillUpdateStatus, OrganizationSkillUploadFileInput, OrganizationSkillUploadRequest, OrganizationSkillUsageAgent, OrganizationSkillWorkspaceEditPath
 } from "./organization-skill.js";
 export type {
   LibraryEntry, Organization, OrganizationLegacyHeartbeatInstructionDeleteResult, OrganizationWorkspace, OrganizationWorkspaceDirectoryCreateRequest, OrganizationWorkspaceEntryCopyRequest, OrganizationWorkspaceEntryMoveRequest,

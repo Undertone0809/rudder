@@ -12,6 +12,8 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 ---
 
+<a id="definition" />
+
 ## One package for reusable capabilities
 
 A Rudder Plugin is a distribution package containing one or more Skills, MCP
@@ -22,6 +24,8 @@ Plugins organize capabilities that belong together. They do not introduce a
 separate Rudder runtime: Skills still run through an Agent, MCP servers still
 use Managed MCP setup and access policy, and Local Apps still launch through
 their existing App runtime.
+
+<a id="case" />
 
 ## What installation does
 
@@ -39,7 +43,7 @@ When a package Skill conflicts with an Organization Skill, installation pauses
 until the operator explicitly keeps the existing Skill, replaces it, or installs
 both under distinct identities.
 
-Local Apps also appear in **Plugins > Yours** as app-only entries. Their direct
+Local Apps also appear in **Hub > Plugins** as app-only entries. Their direct
 launch behavior and existing `/apps/...` routes remain unchanged. A new App
 Builder revision becomes a pending immutable update; the current revision stays
 active until the operator reviews and applies it.
@@ -51,6 +55,14 @@ by Plugin updates, disablement, or uninstall.
 In composer `@` search, an installed Plugin appears as one capability entry.
 Rudder does not list every Skill inside that Plugin as a separate result.
 Independent and customized Skills remain individually searchable.
+
+<a id="when-useful" />
+
+Use a Plugin when several capabilities belong to one reusable workflow, or when
+an App should be distributed as a single capability. Keep a standalone Skill
+independent when users need to find, assign, and evolve it on its own.
+
+<a id="operating-boundaries" />
 
 ## Lifecycle and trust
 

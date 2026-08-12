@@ -62,6 +62,7 @@ export type SidePanelTarget =
   | {
       kind: "run_feedback_chat";
       agentId: string;
+      preferredAgentId?: string | null;
       organizationId: string;
       conversationId: string | null;
       projectLocked?: boolean;
@@ -69,6 +70,16 @@ export type SidePanelTarget =
       projectId: string | null;
       body: string;
       inlineAnnotations: ChatInlineAnnotationInput[];
+      label: string;
+    }
+  | {
+      kind: "goal_chat";
+      goalId: string;
+      organizationId: string;
+      agentId: string | null;
+      conversationId: string | null;
+      clientMutationId: string;
+      body: string;
       label: string;
     }
   | {
@@ -189,6 +200,9 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "run_feedback_chat") {
     return `run-feedback-chat:${target.organizationId}:${target.agentId}`;
   }
+  if (target.kind === "goal_chat") {
+    return `goal-chat:${target.organizationId}:${target.goalId}`;
+  }
   if (target.kind === "library_document") return `library-document:${target.documentId}`;
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
@@ -272,6 +286,9 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     if (target.conversationId) return `/messenger/chat/${target.conversationId}`;
     const base = `/messenger/chat/${target.sourceConversationId}`;
     return target.sourceMessageId ? `${base}?messageId=${encodeURIComponent(target.sourceMessageId)}` : base;
+  }
+  if (target.kind === "goal_chat") {
+    return target.conversationId ? `/messenger/chat/${target.conversationId}` : null;
   }
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;

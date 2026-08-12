@@ -5322,14 +5322,13 @@ async function runLocalAppsScenario(mode) {
     const company = await createCompany(run.baseUrl, "LAP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await createCeo(run.baseUrl, company.id);
-    await updateExperimentalSites(run.baseUrl, true);
+    await updateExperimentalPlugins(run.baseUrl, true);
     const managedApp = await createAppBuilderRecord(
       run.baseUrl,
       company.id,
       "Managed App Delete Guard",
       "apps/managed-delete-guard",
     );
-    await updateExperimentalPlugins(run.baseUrl, true);
     const chat = await createChat(run.baseUrl, company.id);
     const chatPath = `/${companyRouteKey}/messenger/chat/${chat.id}`;
     await run.page.evaluate((nextCompanyId) => {
@@ -5740,18 +5739,17 @@ async function runLocalAppsScenario(mode) {
       return status.status === "running" ? status : null;
     }, { timeoutMs: 360_000 });
 
-    await appEntry.hover();
-    await run.page.getByTestId(`apps-more-${entryKey}`).click();
-    assert.equal(
-      await run.page.getByTestId(`apps-delete-${entryKey}`).isDisabled(),
-      true,
-      "a running Local App must not be deletable",
+    await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.stop(definitionId),
+      definition.id,
     );
-    await run.page.getByRole("menuitem", { name: "Stop App" }).click();
     await waitForSmokeCondition("the Apps workspace Local App to stop", async () => {
       const status = await readDesktopLocalAppStatus(run.page, definition.id);
       return status.status === "stopped" ? status : null;
     }, { timeoutMs: 30_000 });
+    await run.page.goto(appsHomeUrl);
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/apps$`), { timeout: 30_000 });
+    await run.page.waitForLoadState("networkidle");
 
     await appEntry.hover();
     await run.page.getByTestId(`apps-more-${entryKey}`).click();

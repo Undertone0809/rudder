@@ -10,7 +10,6 @@ export interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
   runAgentId?: string | null;
 }
-
 export interface CommentThreadActivityItem {
   id: string;
   createdAt: Date | string;
@@ -106,4 +105,3 @@ export function projectCommentThreadTimeline(
     ...resolve(selection.visibleTail),
   ];
 }
-

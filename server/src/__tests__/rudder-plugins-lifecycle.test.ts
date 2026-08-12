@@ -208,11 +208,9 @@ describe("Rudder Plugin V1 lifecycle", () => {
     });
     const runtimeSkills = organizationSkillService(db);
     const settings = instanceSettingsService(db);
-    await settings.updateGeneral({ experimentalPluginsEnabled: true });
     expect((await runtimeSkills.listRuntimeSkillEntries(org.id)).some((entry) => entry.key === skill!.key)).toBe(true);
     await settings.updateGeneral({ experimentalPluginsEnabled: false });
-    expect((await runtimeSkills.listRuntimeSkillEntries(org.id)).some((entry) => entry.key === skill!.key)).toBe(false);
-    await settings.updateGeneral({ experimentalPluginsEnabled: true });
+    expect((await runtimeSkills.listRuntimeSkillEntries(org.id)).some((entry) => entry.key === skill!.key)).toBe(true);
 
     await plugins.configureSkills(org.id, installed.id, [agent.id]);
     expect(await db.select().from(agentEnabledSkills)).toHaveLength(1);
@@ -423,7 +421,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
     });
   });
 
-  it("admits Plugin-linked MCP bindings only while the Plugin and global feature are enabled", async () => {
+  it("admits Plugin-linked MCP bindings only while the Plugin is enabled", async () => {
     const { org, agent } = await seedOrg("Mcp admission", "MAD");
     const command = process.execPath;
     const cwd = process.cwd();
@@ -443,19 +441,17 @@ describe("Rudder Plugin V1 lifecycle", () => {
     });
     const bindings = managedMcpBindingService(db);
 
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toHaveLength(1);
     await plugins.setEnabled(org.id, installed.id, false);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toEqual([]);
     expect((await db.select().from(mcpConnections).where(eq(mcpConnections.id, configured.targetId!)))[0])
       .toMatchObject({ status: "active", enabled: true });
 
     await plugins.setEnabled(org.id, installed.id, true);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toHaveLength(1);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: false }))
-      .resolves.toEqual([]);
   });
 
   it("discovers and reads only HTML MCP UI resources through the active managed connection", async () => {
@@ -491,7 +487,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
       html: "<main>Research UI</main>",
     });
     await expect(plugins.readMcpUiResource(org.id, installed.id, component.id, "data://research")).rejects.toThrow(/not found/i);
-    expect(close).toHaveBeenCalledTimes(4);
+    expect(close).toHaveBeenCalledTimes(3);
   });
 
   it("rejects oversized MCP HTML UI resources before returning them to the browser", async () => {
@@ -597,7 +593,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
       enabledToolIds: [],
     });
     const bindings = managedMcpBindingService(db);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toHaveLength(1);
 
     const updateReport = await plugins.inspect(org.id, pluginInput("MCP environment v2", {
@@ -626,7 +622,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
     const updated = await plugins.install(org.id, updateReport.id, false, true);
     expect(updated).toMatchObject({ version: "2.0.0", setupState: "setup_required" });
     expect(updated.components.find((component) => component.type === "mcp")?.targetId).toBeNull();
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toEqual([]);
     expect((await db.select().from(mcpConnections).where(eq(mcpConnections.id, configured.targetId!)))[0])
       .toMatchObject({ status: "active", enabled: true });
@@ -639,7 +635,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
       .toMatchObject({ targetId: configured.targetId, status: "ready" });
     expect(await db.select().from(pluginComponentLinks).where(eq(pluginComponentLinks.targetId, configured.targetId!)))
       .toEqual([expect.objectContaining({ componentKey: "mcp:evidence", status: "ready" })]);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toHaveLength(1);
   });
 
@@ -677,9 +673,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
     await plugins.install(org.id, removalReport.id);
 
     const bindings = managedMcpBindingService(db);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: true }))
-      .resolves.toEqual([]);
-    await expect(bindings.listRuntimeBindings(org.id, agent.id, { pluginCapabilitiesEnabled: false }))
+    await expect(bindings.listRuntimeBindings(org.id, agent.id))
       .resolves.toEqual([]);
     expect((await plugins.getInstalled(org.id, installed.id))?.components.some((component) => component.type === "mcp"))
       .toBe(false);
@@ -694,13 +688,21 @@ describe("Rudder Plugin V1 lifecycle", () => {
       name: "Research Canvas",
       sourceRoot: "apps/research-canvas",
       scaffoldVersion: "1",
-      buildStatus: "ready",
+      buildStatus: "preparing",
       desktopInstallationId: "desktop-1",
       appPublicId: "public-1",
       localBindingId: "binding-1",
     }).returning();
     const plugins = service();
     await plugins.syncAllLocalApps();
+
+    expect(await db.select().from(installedPlugins).where(eq(installedPlugins.orgId, org.id)))
+      .toHaveLength(0);
+
+    await db.update(appBuilderApps).set({
+      buildStatus: "ready",
+      updatedAt: new Date(app!.updatedAt.getTime() + 1_000),
+    }).where(eq(appBuilderApps.id, app!.id));
     await plugins.syncAllLocalApps();
 
     const installedBeforeDirectory = await db.select().from(installedPlugins)
@@ -731,7 +733,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
     await db.update(appBuilderApps).set({
       name: "Research Canvas V2",
       latestVerificationRunId: null,
-      updatedAt: new Date(app!.updatedAt.getTime() + 1_000),
+      updatedAt: new Date(app!.updatedAt.getTime() + 2_000),
     }).where(eq(appBuilderApps.id, app!.id));
     const revised = (await plugins.directory(org.id)).installed[0]!;
     expect(revised).toMatchObject({

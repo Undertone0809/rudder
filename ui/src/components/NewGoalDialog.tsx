@@ -1,15 +1,16 @@
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useNavigate } from "@/lib/router";
 import type { GoalStartPreview } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Loader2, Target, X } from "lucide-react";
+import { ArrowUp, Calendar, Check, Circle, Loader2, Target, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { useDialog, type NewGoalDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { fromDateTimeLocalValue } from "../lib/datetime-local";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { AgentMenuLabel } from "./AssigneeLabel";
@@ -23,6 +24,8 @@ type PreviewInput = {
   targetTime: string | null;
 };
 
+type GoalDialogAction = "save-draft" | "start";
+
 const EMPTY_NEW_GOAL_DEFAULTS: NewGoalDefaults = {};
 
 function useDebouncedValue<T>(value: T, delay: number) {
@@ -34,12 +37,6 @@ function useDebouncedValue<T>(value: T, delay: number) {
   }, [delay, value]);
 
   return debounced;
-}
-
-function toIsoTargetTime(value: string) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function PreviewRow({ label, value }: { label: string; value: string }) {
@@ -62,7 +59,9 @@ export function NewGoalDialog() {
   const [targetTime, setTargetTime] = useState("");
   const [documentSessionId, setDocumentSessionId] = useState(0);
   const requestRef = useRef<{ identity: string; key: string } | null>(null);
-  const contextEditorRef = useRef<MarkdownEditorRef>(null);
+  const contextRef = useRef<MarkdownEditorRef>(null);
+  const ownerSelectorRef = useRef<HTMLButtonElement>(null);
+  const contentScrollerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!newGoalOpen) return;
@@ -71,9 +70,16 @@ export function NewGoalDialog() {
     setOwnerAgentId(newGoalDefaults.ownerAgentId ?? "");
     setTargetTime(newGoalDefaults.targetTime ?? "");
     requestRef.current = null;
-  }, [newGoalDefaults, newGoalOpen]);
+  }, [
+    newGoalDefaults.context,
+    newGoalDefaults.draftId,
+    newGoalDefaults.ownerAgentId,
+    newGoalDefaults.targetTime,
+    newGoalDefaults.title,
+    newGoalOpen,
+  ]);
 
-  const { data: agents = [] } = useQuery({
+  const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: Boolean(newGoalOpen && selectedOrganizationId),
@@ -84,30 +90,37 @@ export function NewGoalDialog() {
       return assetsApi.uploadImage(selectedOrganizationId, file, "goals/drafts");
     },
   });
+  const agents = agentsQuery.data ?? [];
+  const agentsLoaded = agentsQuery.isSuccess;
+
+  const invokableAgents = useMemo(
+    () => agents.filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
+    [agents],
+  );
 
   useEffect(() => {
-    if (!newGoalOpen || ownerAgentId || agents.length === 0) return;
-    const suggested = agents.find((agent) => agent.status !== "paused") ?? agents[0];
-    setOwnerAgentId(suggested?.id ?? "");
-  }, [agents, newGoalOpen, ownerAgentId]);
+    if (!newGoalOpen || !agentsLoaded) return;
+    if (ownerAgentId && !invokableAgents.some((agent) => agent.id === ownerAgentId)) setOwnerAgentId("");
+  }, [agentsLoaded, invokableAgents, newGoalOpen, ownerAgentId]);
 
   const agentOptions = useMemo<InlineEntityOption[]>(
-    () => agents.map((agent) => ({
+    () => invokableAgents.map((agent) => ({
       id: agent.id,
       label: agent.name,
       searchText: `${agent.name} ${agent.title ?? ""} ${agent.role}`,
     })),
-    [agents],
+    [invokableAgents],
   );
-  const currentOwner = agents.find((agent) => agent.id === ownerAgentId) ?? null;
+  const currentOwner = invokableAgents.find((agent) => agent.id === ownerAgentId) ?? null;
 
   const previewInput = useMemo<PreviewInput>(() => ({
     title: goal.trim(),
     context: markdownDocumentOrUndefined(context) ?? null,
     ownerAgentId: ownerAgentId || null,
-    targetTime: toIsoTargetTime(targetTime),
+    targetTime: fromDateTimeLocalValue(targetTime),
   }), [context, goal, ownerAgentId, targetTime]);
   const debouncedPreviewInput = useDebouncedValue(previewInput, 250);
+  const currentPreviewFingerprint = JSON.stringify(previewInput);
   const previewFingerprint = JSON.stringify(debouncedPreviewInput);
   const previewQuery = useQuery({
     queryKey: ["goals", "start-preview", selectedOrganizationId, previewFingerprint],
@@ -118,7 +131,9 @@ export function NewGoalDialog() {
   });
 
   const preview = previewQuery.data;
-  const canStart = Boolean(preview?.valid && preview.packet && preview.packetHash);
+  const previewIsCurrent = currentPreviewFingerprint === previewFingerprint;
+  const previewCanStart = Boolean(preview?.valid && preview.packet && preview.packetHash);
+  const canStart = previewIsCurrent && previewCanStart;
 
   const requestKeyFor = (candidate: GoalStartPreview) => {
     const identity = `${previewFingerprint}:${candidate.packetHash ?? "draft"}`;
@@ -143,13 +158,18 @@ export function NewGoalDialog() {
   };
 
   const createGoal = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (action: GoalDialogAction) => {
       if (!selectedOrganizationId) throw new Error("Select an organization before creating a Goal.");
-      if (preview && canStart && preview.packet && preview.packetHash) {
+      if (action === "start") {
+        if (!previewIsCurrent) throw new Error("Goal details changed. Wait for the latest preview before continuing.");
+        if (!preview || !canStart || !preview.packet || !preview.packetHash) {
+          throw new Error("Complete the start requirements before starting this Goal.");
+        }
         return goalsApi.start(selectedOrganizationId, {
           requestKey: requestKeyFor(preview),
           packetHash: preview.packetHash,
           packet: preview.packet,
+          ...(preview.warning ? { allowCapabilityMismatch: true } : {}),
           ...(newGoalDefaults.draftId ? { draftGoalId: newGoalDefaults.draftId } : {}),
         });
       }
@@ -157,6 +177,8 @@ export function NewGoalDialog() {
         return goalsApi.update(newGoalDefaults.draftId, {
           title: goal.trim(),
           description: markdownDocumentOrUndefined(context),
+          ownerAgentId: ownerAgentId || null,
+          targetTime: fromDateTimeLocalValue(targetTime),
           alignmentQuestion: preview?.alignmentQuestion,
         });
       }
@@ -164,7 +186,7 @@ export function NewGoalDialog() {
         title: goal.trim(),
         description: markdownDocumentOrUndefined(context),
         ownerAgentId: ownerAgentId || null,
-        targetTime: toIsoTargetTime(targetTime),
+        targetTime: fromDateTimeLocalValue(targetTime),
         alignmentQuestion: preview?.alignmentQuestion,
       });
     },
@@ -180,23 +202,58 @@ export function NewGoalDialog() {
     },
   });
 
-  const actionLabel = canStart ? "Create and start" : "Save draft";
-  const pendingLabel = canStart ? "Starting..." : "Saving...";
-  const actionDisabled =
+  const startDisabled =
     !goal.trim()
+    || !previewIsCurrent
+    || !canStart
     || previewQuery.isFetching
+    || agentsQuery.isPending
+    || agentsQuery.isError
     || (!preview && !previewQuery.error)
     || createGoal.isPending;
+  const saveDisabled =
+    !goal.trim()
+    || createGoal.isPending
+    || previewQuery.isFetching
+    || (!previewIsCurrent && !previewQuery.error)
+    || (!preview && !previewQuery.error);
+  const previewBlockers = preview?.blockers ?? [];
+  const outcomeReady = Boolean(
+    canStart
+    || previewBlockers.every((blocker) => blocker.code !== "outcome_required"),
+  );
+  const ownerReady = Boolean(currentOwner && previewBlockers.every((blocker) => blocker.code !== "owner_required"));
+  const unresolvedCount = Number(!outcomeReady) + Number(!ownerReady);
+
+  useEffect(() => {
+    if (!newGoalOpen || !goal.trim() || !preview || unresolvedCount === 0) return;
+    let frame = 0;
+    const revealRequirements = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const contentScroller = contentScrollerRef.current;
+        if (contentScroller) {
+          contentScroller.scrollTop = contentScroller.scrollHeight;
+        }
+      });
+    };
+    revealRequirements();
+    window.addEventListener("resize", revealRequirements);
+    return () => {
+      window.removeEventListener("resize", revealRequirements);
+      cancelAnimationFrame(frame);
+    };
+  }, [goal, newGoalOpen, preview, unresolvedCount]);
 
   return (
     <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[min(46rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        className="h-[calc(100dvh-1.5rem)] max-h-[calc(100dvh-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:h-auto sm:max-h-[min(46rem,calc(100dvh-2rem))] sm:max-w-2xl"
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
-            if (!actionDisabled) createGoal.mutate();
+            if (!startDisabled) createGoal.mutate("start");
           }
         }}
       >
@@ -206,14 +263,21 @@ export function NewGoalDialog() {
               {selectedOrganization?.name.slice(0, 3).toUpperCase()}
             </span>
             <span aria-hidden="true">/</span>
-            <DialogTitle className="truncate text-sm font-medium text-foreground">New Goal</DialogTitle>
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-sm font-medium text-foreground">
+                {newGoalDefaults.draftId ? "Continue Goal" : "New Goal"}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                Describe the outcome you want and choose the Agent who should advance it.
+              </DialogDescription>
+            </div>
           </div>
           <Button type="button" variant="ghost" size="icon-xs" aria-label="Close" onClick={close} disabled={createGoal.isPending}>
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>
 
-        <div className="scrollbar-auto-hide min-h-0 overflow-x-hidden overflow-y-auto px-4 py-4">
+        <div ref={contentScrollerRef} className="scrollbar-auto-hide min-h-0 overscroll-contain overflow-x-hidden overflow-y-auto px-4 py-4">
           <div className="space-y-4">
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Goal</span>
@@ -231,20 +295,21 @@ export function NewGoalDialog() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
                     event.preventDefault();
-                    contextEditorRef.current?.focus();
+                    contextRef.current?.focus();
                   }
                 }}
                 autoFocus
               />
             </label>
 
-            <div className="block space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Context</span>
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Expected result</span>
               <MarkdownEditor
-                ref={contextEditorRef}
+                ref={contextRef}
                 engine="codemirror"
-                documentIdentity={`new-goal:${selectedOrganizationId ?? "none"}:${documentSessionId}`}
-                placeholder="Optional background or why this matters now"
+                documentIdentity={`new-goal:${selectedOrganizationId ?? "none"}:${newGoalDefaults.draftId ?? documentSessionId}`}
+                ariaLabel="Expected result"
+                placeholder="What should change, and how will someone verify it?"
                 value={context}
                 onChange={setContext}
                 bordered={false}
@@ -260,15 +325,16 @@ export function NewGoalDialog() {
               <div className="min-w-0 space-y-1.5">
                 <div className="text-xs font-medium text-muted-foreground">Assignee</div>
                 <InlineEntitySelector
+                  ref={ownerSelectorRef}
                   value={ownerAgentId}
                   options={agentOptions}
                   placeholder="Select an Agent"
                   noneLabel="No assignee"
                   searchPlaceholder="Search Agents..."
-                  emptyMessage="No Agents found."
+                  emptyMessage={agentsQuery.isError ? "Agents could not be loaded." : "No available Agents."}
                   ariaLabel="Assignee"
                   variant="field"
-                  disablePortal
+                  side="top"
                   onChange={setOwnerAgentId}
                   renderTriggerValue={(option) => option && currentOwner
                     ? <AgentMenuLabel agent={currentOwner} agentAvatarStyle="bare" />
@@ -284,6 +350,21 @@ export function NewGoalDialog() {
                     );
                   }}
                 />
+                {agentsQuery.isSuccess && invokableAgents.length === 0 ? (
+                  <p role="status" className="text-xs leading-5 text-muted-foreground">
+                    No available Agents yet. Add or activate an Agent before starting this Goal.
+                    <button
+                      type="button"
+                      className="ml-1 underline underline-offset-2 hover:text-foreground"
+                      onClick={() => {
+                        close();
+                        navigate("/agents");
+                      }}
+                    >
+                      Open Agents
+                    </button>
+                  </p>
+                ) : null}
               </div>
               <label className="min-w-0 space-y-1.5">
                 <span className="text-xs font-medium text-muted-foreground">Target time</span>
@@ -309,18 +390,75 @@ export function NewGoalDialog() {
                   </div>
                 ) : preview?.review ? (
                   <div>
+                    <div className="flex items-center gap-2 border-b border-border/60 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                      <Check className="h-4 w-4" />
+                      Ready to start
+                    </div>
+                    {preview.warning ? (
+                      <div role="alert" className="border-b border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm leading-5 text-foreground">
+                        {preview.warning}
+                      </div>
+                    ) : null}
                     <PreviewRow label="Outcome" value={preview.review.outcome} />
-                    <PreviewRow label="How we will know it worked" value={preview.review.success} />
                     <PreviewRow label="Owner" value={currentOwner?.name ?? preview.review.owner ?? "No Agent selected"} />
                     <PreviewRow label="Boundary" value={preview.review.boundary} />
+                    <PreviewRow label="Success criteria" value={preview.review.success} />
                     <PreviewRow label="First action" value={preview.review.firstAction} />
                   </div>
-                ) : preview?.alignmentQuestion ? (
-                  <div className="flex min-w-0 gap-3 py-3">
-                    <Target className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-muted-foreground">Needs alignment</div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm">{preview.alignmentQuestion}</p>
+                ) : preview ? (
+                  <div className="py-2.5">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Target className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      Complete before starting
+                    </div>
+                    <div className="mt-2 divide-y divide-border/60 border-y border-border/60">
+                      <button
+                        type="button"
+                        aria-label={outcomeReady ? "Expected result complete" : "Add expected result"}
+                        className="flex w-full min-w-0 items-start gap-2 py-2.5 text-left text-sm disabled:cursor-default"
+                        disabled={outcomeReady}
+                        onClick={() => contextRef.current?.focus()}
+                      >
+                        {outcomeReady
+                          ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+                          : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
+                          <div className="font-medium">Verifiable result</div>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                            {previewBlockers.find((blocker) => blocker.code === "outcome_required")?.message
+                              ?? "The Goal describes a result or decision that can be reviewed."}
+                          </p>
+                        </div>
+                        {!outcomeReady ? (
+                          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-foreground">
+                            Add above <ArrowUp className="h-3.5 w-3.5" />
+                          </span>
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={ownerReady ? "Owner Agent complete" : "Choose Owner Agent"}
+                        className="flex w-full min-w-0 items-start gap-2 py-2.5 text-left text-sm disabled:cursor-default"
+                        disabled={ownerReady}
+                        onClick={() => ownerSelectorRef.current?.focus()}
+                      >
+                        {ownerReady
+                          ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+                          : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
+                          <div className="font-medium">Owner Agent</div>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                            {currentOwner
+                              ? `${currentOwner.name} will own and start this Goal.`
+                              : "Select an Agent above to own and start this Goal."}
+                          </p>
+                        </div>
+                        {!ownerReady ? (
+                          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-foreground">
+                            Choose <ArrowUp className="h-3.5 w-3.5" />
+                          </span>
+                        ) : null}
+                      </button>
                     </div>
                   </div>
                 ) : null}
@@ -342,14 +480,41 @@ export function NewGoalDialog() {
                 </Button>
               </div>
             ) : null}
-            {createGoal.error ? <p role="alert" className="text-sm text-destructive">{createGoal.error.message}</p> : null}
+            {agentsQuery.isError ? (
+              <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+                <span>Available Agents could not be loaded. Try again before starting this Goal.</span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-sm"
+                  onClick={() => void agentsQuery.refetch()}
+                  disabled={agentsQuery.isFetching || createGoal.isPending}
+                >
+                  Retry Agents
+                </Button>
+              </div>
+            ) : null}
+            {createGoal.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {createGoal.variables === "save-draft" ? "Unable to save this draft right now. Try again." : "Unable to start this Goal right now. Try again."}
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex items-center justify-end border-t border-border px-4 py-2.5">
-          <Button type="button" size="sm" disabled={actionDisabled} onClick={() => createGoal.mutate()}>
-            {createGoal.isPending ? pendingLabel : actionLabel}
-          </Button>
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-4 py-2.5">
+          <span className="text-xs text-muted-foreground">
+            {goal.trim() && unresolvedCount > 0 ? `${unresolvedCount} ${unresolvedCount === 1 ? "requirement" : "requirements"} left to start` : ""}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={saveDisabled} onClick={() => createGoal.mutate("save-draft")}>
+              {createGoal.isPending && createGoal.variables === "save-draft" ? "Saving..." : "Save draft"}
+            </Button>
+            <Button type="button" size="sm" disabled={startDisabled} onClick={() => createGoal.mutate("start")}>
+              {createGoal.isPending && createGoal.variables === "start" ? "Starting..." : "Start Goal"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

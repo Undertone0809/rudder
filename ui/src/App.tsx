@@ -219,6 +219,7 @@ function boardRoutes() {
       <Route path="skills/*" element={<LegacySkillsRedirect />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
+      <Route path="hub" element={<Plugins />} />
       <Route path="plugins" element={<Plugins />} />
       <Route path="org" element={<Navigate to="../organization/settings" replace />} />
       <Route path="agents" element={<AgentsEntryRedirect />} />
@@ -636,6 +637,7 @@ export function App() {
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
           <Route path="apps/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="hub" element={<UnprefixedBoardRedirect />} />
           <Route path="plugins" element={<UnprefixedBoardRedirect />} />
           <Route path="calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />

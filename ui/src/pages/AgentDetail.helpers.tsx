@@ -1,14 +1,3 @@
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
 import {
@@ -18,7 +7,6 @@ import {
   type CostTrendPoint,
   type HeartbeatRun,
   type HeartbeatRunEvent,
-  type OrganizationSkillCreateRequest,
   type WorkspaceOperation
 } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -166,110 +154,6 @@ export function SkillSwitch({
         onCheckedChange(!checked);
       }}
     />
-  );
-}
-
-export function CreateAgentSkillDialog({
-  open,
-  onOpenChange,
-  onCreate,
-  isPending,
-  error,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreate: (payload: OrganizationSkillCreateRequest) => void;
-  isPending: boolean;
-  error: string | null;
-}) {
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [description, setDescription] = useState("");
-
-  useEffect(() => {
-    if (!open) {
-      setName("");
-      setSlug("");
-      setDescription("");
-    }
-  }, [open]);
-
-  function handleCreate() {
-    onCreate({
-      name,
-      slug: slug.trim() || null,
-      description: description.trim() || null,
-    });
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Create agent skill</DialogTitle>
-          <DialogDescription>
-            Create a private skill package for this agent under `AGENT_HOME/skills`. It will appear in the Agent skills section after creation.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <label htmlFor="create-agent-skill-name" className="text-sm font-medium text-foreground">
-                Name
-              </label>
-              <Input
-                id="create-agent-skill-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Skill name"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="create-agent-skill-slug" className="text-sm font-medium text-foreground">
-                Short name
-              </label>
-              <Input
-                id="create-agent-skill-slug"
-                value={slug}
-                onChange={(event) => setSlug(event.target.value)}
-                placeholder="optional-shortname"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="create-agent-skill-description" className="text-sm font-medium text-foreground">
-              Description
-            </label>
-            <Textarea
-              id="create-agent-skill-description"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Short description"
-              className="min-h-24"
-            />
-          </div>
-
-          {error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : null}
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleCreate}
-            disabled={isPending || name.trim().length === 0}
-          >
-            {isPending ? "Creating..." : "Create skill"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

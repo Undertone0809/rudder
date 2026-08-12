@@ -33,7 +33,6 @@ if (unknownProjects.length > 0) {
   throw new Error(`Unknown test project(s): ${unknownProjects.join(", ")}`);
 }
 const forwardedArgs = process.argv.slice(2).filter((arg, index) => index !== 0 || arg !== "--");
-const forwardedMaxWorkers = forwardedArgs.some((arg) => arg === "--maxWorkers" || arg.startsWith("--maxWorkers="));
 const activeChildren = new Set();
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -54,7 +53,8 @@ function runProject(project, testFiles = []) {
         project,
         "--config",
         "vitest.config.ts",
-        ...(forwardedMaxWorkers ? [] : ["--maxWorkers", "4"]),
+        "--maxWorkers",
+        "4",
         "--testTimeout",
         "15000",
         ...testFiles,

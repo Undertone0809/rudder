@@ -154,7 +154,6 @@ import {
   WORKSPACE_FLUSH_DRAFT_EVENT,
 } from "./organization-workspaces/organizationWorkspaceCapabilities";
 import { ProjectResourceDetailPanel } from "./organization-workspaces/ProjectResourceDetailPanel";
-import { SkillLibraryAddDialog } from "./organization-workspaces/SkillLibraryAddDialog";
 import { useWorkspaceFileSaveQueue } from "./organization-workspaces/useWorkspaceFileSaveQueue";
 import { CsvWorkspaceEditor, LegacyHeartbeatInstructionsDialog } from "./organization-workspaces/WorkspaceDocumentEditors";
 import {
@@ -285,7 +284,6 @@ function OrganizationWorkspaceBrowserForOrganization({
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
-  const [skillAddDialogOpen, setSkillAddDialogOpen] = useState(false);
   const [legacyHeartbeatDialogPath, setLegacyHeartbeatDialogPath] = useState<string | null>(
     isLegacyAgentHeartbeatInstructionPath(requestedFilePath) ? requestedFilePath : null,
   );
@@ -2285,7 +2283,7 @@ function OrganizationWorkspaceBrowserForOrganization({
                           onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                           onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
                           onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
-                          onOpenSkillAddDialog={() => setSkillAddDialogOpen(true)}
+                          onOpenSkillAddDialog={() => navigate("/hub?tab=skills")}
                           unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                           expandedDirectories={expandedDirectories}
                           workspaceLaunchTargets={workspaceLaunchTargets}
@@ -3058,11 +3056,6 @@ function OrganizationWorkspaceBrowserForOrganization({
         </DialogContent>
       </Dialog>
 
-      <SkillLibraryAddDialog
-        open={skillAddDialogOpen}
-        orgId={viewedOrganizationId}
-        onOpenChange={setSkillAddDialogOpen}
-      />
     </>
   );
 }

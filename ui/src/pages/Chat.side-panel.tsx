@@ -2,7 +2,6 @@ import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
-import { healthApi } from "@/api/health";
 import { issuesApi } from "@/api/issues";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
@@ -20,6 +19,7 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
 import { PriorityIcon } from "@/components/PriorityIcon";
+import { GoalChatPanel } from "@/components/side-panel/GoalChatPanel";
 import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
 import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
 import { RunFeedbackChatPanel } from "@/components/side-panel/RunFeedbackChatPanel";
@@ -284,7 +284,7 @@ function ChatSidePanelTabIcon({
   }
   if (tab.kind === "issue_proposal") return <CirclePlus aria-hidden className={iconClassName} />;
   if (tab.kind === "automation") return <Workflow aria-hidden className={iconClassName} />;
-  if (tab.kind === "chat" || tab.kind === "side_chat") {
+  if (tab.kind === "chat" || tab.kind === "side_chat" || tab.kind === "goal_chat") {
     return <MessageSquare aria-hidden className={iconClassName} />;
   }
   if (tab.kind === "subagents" || tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
@@ -1955,15 +1955,7 @@ export function ChatSidePanel({
   }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
-  const sitesHealthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-  });
-  const localAppsAvailable = Boolean(
-    readDesktopShell()?.localApps?.supported
-    && (sitesHealthQuery.data?.features?.experimentalPluginsEnabled
-      ?? sitesHealthQuery.data?.features?.experimentalSitesEnabled),
-  );
+  const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
   useEffect(() => {
     if (!contextReady
       || !target
@@ -2000,6 +1992,7 @@ export function ChatSidePanel({
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
   const runFeedbackTarget = activeTarget?.kind === "run_feedback_chat" ? activeTarget : null;
+  const goalChatTarget = activeTarget?.kind === "goal_chat" ? activeTarget : null;
   const subagentsTarget = activeTarget?.kind === "subagents" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
@@ -2572,7 +2565,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || subagentsTarget || subagentTarget
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || goalChatTarget || subagentsTarget || subagentTarget
             ? "flex h-full flex-col overflow-hidden"
             : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
@@ -2726,6 +2719,11 @@ export function ChatSidePanel({
             <RunFeedbackChatPanel
               organizationId={selectedOrganizationId}
               target={runFeedbackTarget}
+              onReplaceTarget={replaceSidePanelTarget}
+            />
+          ) : goalChatTarget ? (
+            <GoalChatPanel
+              target={goalChatTarget}
               onReplaceTarget={replaceSidePanelTarget}
             />
           ) : subagentsTarget && selectedOrganizationId ? (

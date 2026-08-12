@@ -10,6 +10,7 @@ import type {
   OrganizationSkillProjectScanRequest,
   OrganizationSkillProjectScanResult,
   OrganizationSkillUpdateStatus,
+  OrganizationSkillUploadRequest,
 } from "@rudderhq/shared";
 import { api } from "./client";
 
@@ -46,6 +47,11 @@ export const organizationSkillsApi = {
     api.post<OrganizationSkillImportResult>(
       `/orgs/${encodeURIComponent(orgId)}/skills/import`,
       { source },
+    ),
+  upload: (orgId: string, payload: OrganizationSkillUploadRequest) =>
+    api.post<OrganizationSkillImportResult>(
+      `/orgs/${encodeURIComponent(orgId)}/skills/upload`,
+      payload,
     ),
   scanProjects: (orgId: string, payload: OrganizationSkillProjectScanRequest = {}) =>
     api.post<OrganizationSkillProjectScanResult>(

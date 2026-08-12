@@ -149,13 +149,14 @@ export function SettingsSection({
   description,
   children,
   className,
+  ...props
 }: HTMLAttributes<HTMLElement> & {
   title: string;
   description?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section data-slot="settings-section" className={cn("flex flex-col gap-3", className)}>
+    <section {...props} data-slot="settings-section" className={cn("flex flex-col gap-3", className)}>
       <div className="flex flex-col gap-1">
         <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
         {description ? (

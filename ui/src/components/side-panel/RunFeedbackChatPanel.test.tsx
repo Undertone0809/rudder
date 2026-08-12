@@ -10,7 +10,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/agents", () => ({
-  agentsApi: { list: vi.fn(async () => [{ id: "agent-1", name: "Noah" }]) },
+  agentsApi: {
+    list: vi.fn(async () => [
+      { id: "agent-1", name: "Noah", role: "engineer", title: "Operator", status: "active" },
+      { id: "agent-2", name: "Sage", role: "researcher", title: "Reviewer", status: "active" },
+    ]),
+  },
 }));
 
 vi.mock("@/api/chats", () => ({
@@ -29,7 +34,7 @@ vi.mock("@/api/health", () => ({
 }));
 
 vi.mock("@/api/projects", () => ({
-  projectsApi: { list: vi.fn(async () => []) },
+  projectsApi: { list: vi.fn(async () => [{ id: "project-1", name: "Project Alpha", color: "blue", icon: null }]) },
 }));
 
 vi.mock("@/components/ProjectIdentity", () => ({
@@ -54,6 +59,9 @@ vi.mock("@/components/chat/ChatComposer", () => ({
   ),
   ChatComposerSurface: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatComposerToolbar: ({ actions, children }: { actions: ReactNode; children: ReactNode }) => <div>{children}{actions}</div>,
+  ChatComposerContextMenu: ({ children, testId, ariaLabel }: { children: ReactNode; testId: string; ariaLabel: string }) => (
+    <div role="menu" data-testid={testId} aria-label={ariaLabel}>{children}</div>
+  ),
 }));
 
 vi.mock("@/components/chat/ResponseAnnotations", () => ({
@@ -192,6 +200,76 @@ describe("RunFeedbackChatPanel stop control", () => {
     act(() => root.unmount());
     queryClient.clear();
     host.remove();
+  });
+
+  it("uses the shared Chat selectors and sends the chosen project and agent", async () => {
+    const onReplaceTarget = vi.fn();
+    let draftTarget = {
+      ...target,
+      conversationId: null,
+      projectLocked: false,
+      projectId: null,
+      preferredAgentId: "agent-1",
+    };
+    const renderTarget = () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel
+            organizationId="org-1"
+            target={draftTarget}
+            onReplaceTarget={onReplaceTarget}
+          />
+        </QueryClientProvider>,
+      );
+    };
+
+    await act(async () => renderTarget());
+    await act(async () => {
+      await vi.waitFor(() => expect(
+        (host.querySelector("[data-testid='run-feedback-project-selector']") as HTMLButtonElement | null)?.disabled,
+      ).toBe(false));
+    });
+
+    await act(async () => {
+      (host.querySelector("[data-testid='run-feedback-project-selector']") as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Project Alpha"));
+    });
+    const projectOption = Array.from(document.body.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']"))
+      .find((button) => button.textContent?.includes("Project Alpha"));
+    expect(projectOption).toBeDefined();
+    await act(async () => projectOption?.click());
+    draftTarget = onReplaceTarget.mock.calls.at(-1)?.[1];
+    expect(draftTarget.projectId).toBe("project-1");
+
+    await act(async () => renderTarget());
+    await act(async () => {
+      (host.querySelector("[data-testid='chat-agent-selector']") as HTMLButtonElement).click();
+    });
+    const sageOption = document.body.querySelector<HTMLButtonElement>("[data-testid='chat-agent-option-agent-2'] button");
+    expect(sageOption).not.toBeNull();
+    await act(async () => sageOption?.click());
+    draftTarget = onReplaceTarget.mock.calls.at(-1)?.[1];
+    expect(draftTarget.preferredAgentId).toBe("agent-2");
+
+    await act(async () => renderTarget());
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[aria-label="Send feedback"]')).not.toBeNull());
+    });
+    await act(async () => {
+      (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledTimes(1));
+    });
+    const sendOptions = vi.mocked(chatsApi.sendFirstMessageStream).mock.calls[0]?.[2];
+    expect(sendOptions?.preferredAgentId).toBe("agent-2");
+    expect(sendOptions?.contextLinks).toEqual([{ entityType: "project", entityId: "project-1" }]);
+    await act(async () => {
+      releaseFirstStream?.();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
   });
 
   it("exposes Stop while feedback streams and aborts only after the server accepts the cutoff", async () => {

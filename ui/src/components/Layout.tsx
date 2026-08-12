@@ -430,6 +430,9 @@ export function resolveSidePanelContextKey(relativePath: string): string | null 
   if (segments[0] === "agents" && segments[1] && segments[2] === "runs") {
     return `agent-runs:${decodeSidePanelRouteSegment(segments[1])}`;
   }
+  if (segments[0] === "goals" && segments[1]) {
+    return `goal:${decodeSidePanelRouteSegment(segments[1])}`;
+  }
   return null;
 }
 

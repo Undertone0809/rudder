@@ -14,6 +14,7 @@ import type {
   OrganizationSkillImportResult,
   OrganizationSkillListItem,
   OrganizationSkillUpdateStatus,
+  OrganizationSkillUploadRequest,
   OrganizationSkillUsageAgent,
 } from "@rudderhq/shared";
 import {
@@ -117,6 +118,7 @@ import {
 } from "./organization-skills.sources.js";
 
 const ORGANIZATION_SKILL_INSTALLATION_VERSION = 1;
+const MAX_SKILL_UPLOAD_BYTES = 4 * 1024 * 1024;
 const skillInstallationPromises = new Map<string, Promise<string>>();
 const skillMutationLocks = new Map<string, Promise<void>>();
 
@@ -548,17 +550,14 @@ export function organizationSkillService(
 
   async function ensureBundledSkills(orgId: string) {
     const settingsService = instanceSettingsService(db);
-    const [browserSettings, generalSettings] = await Promise.all([
-      settingsService.getBrowser(),
-      settingsService.getGeneral(),
-    ]);
+    const browserSettings = await settingsService.getBrowser();
     const browserCapability = resolveBrowserCapability({
       deploymentMode,
       browserEnabled: browserSettings.enabled,
     });
     const activeBundledSlugs = getActiveRudderBundledSkillSlugs(
       browserCapability.instanceEligible,
-      generalSettings.experimentalPluginsEnabled,
+      true,
     );
     const activeBundledKeys = activeBundledSlugs.map((slug) => `rudder/${slug}`);
     for (const skillsRoot of resolveBundledSkillsRoot()) {
@@ -1209,7 +1208,6 @@ export function organizationSkillService(
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
     const skills = await listFull(orgId);
-    const pluginsEnabled = (await instanceSettingsService(db).getGeneral()).experimentalPluginsEnabled;
     const skillByKey = new Map(skills.map((skill) => [skill.key, skill]));
     const catalogEntries = await buildAgentSkillCatalogEntries(orgId, agentId, agentRuntimeType, runtimeConfig, skills);
     const bySelectionKey = new Map(catalogEntries.map((entry) => [entry.selectionKey, entry]));
@@ -1221,12 +1219,6 @@ export function organizationSkillService(
       if (entry.organizationSkillKey) {
         const skill = skillByKey.get(entry.organizationSkillKey);
         if (!skill) continue;
-        if (
-          asString(skill.metadata?.sourceKind) === "plugin_managed"
-          && (!pluginsEnabled || skill.metadata?.pluginEnabled === false)
-        ) {
-          continue;
-        }
         let source = normalizeSkillDirectory(skill);
         if (
           source
@@ -1819,13 +1811,11 @@ export function organizationSkillService(
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
     const skills = await listFull(orgId);
-    const pluginsEnabled = (await instanceSettingsService(db).getGeneral()).experimentalPluginsEnabled;
-
     const out: RudderSkillEntry[] = [];
     for (const skill of skills) {
       if (
         asString(skill.metadata?.sourceKind) === "plugin_managed"
-        && (!pluginsEnabled || skill.metadata?.pluginEnabled === false)
+        && skill.metadata?.pluginEnabled === false
       ) {
         continue;
       }
@@ -1875,13 +1865,15 @@ export function organizationSkillService(
     if (importedSkills.length === 0) return [];
 
     for (const skill of importedSkills) {
-      const packageDir = skill.packageDir ? normalizePortablePath(skill.packageDir) : null;
-      if (!packageDir) continue;
+      const packageDir = skill.packageDir === null || skill.packageDir === undefined
+        ? null
+        : normalizePortablePath(skill.packageDir);
+      if (packageDir === null) continue;
       const packageFiles: Record<string, string> = {};
       for (const entry of skill.fileInventory) {
-        const sourcePath = entry.path === "SKILL.md"
-          ? `${packageDir}/SKILL.md`
-          : `${packageDir}/${entry.path}`;
+        const sourcePath = packageDir
+          ? `${packageDir}/${entry.path}`
+          : entry.path;
         const content = normalizedFiles[sourcePath];
         if (typeof content !== "string") {
           throw unprocessable(`Skill package did not provide declared file: ${sourcePath}`);
@@ -2087,6 +2079,57 @@ export function organizationSkillService(
     return { imported, warnings };
   }
 
+  async function importUploadedSkill(
+    orgId: string,
+    input: OrganizationSkillUploadRequest,
+  ): Promise<OrganizationSkillImportResult> {
+    const files: Record<string, string> = {};
+    const caseInsensitivePaths = new Map<string, string>();
+    let totalBytes = 0;
+
+    for (const file of input.files) {
+      const normalizedPath = normalizeSafeRelativeSkillPath(file.path);
+      if (!normalizedPath) {
+        throw unprocessable(`Invalid Skill upload path: ${file.path}`);
+      }
+      const collisionKey = normalizedPath.toLowerCase();
+      const conflictingPath = caseInsensitivePaths.get(collisionKey);
+      if (conflictingPath) {
+        throw unprocessable(`Skill upload contains a duplicate path: ${conflictingPath} and ${normalizedPath}`);
+      }
+      caseInsensitivePaths.set(collisionKey, normalizedPath);
+      totalBytes += Buffer.byteLength(file.content, "utf8");
+      if (totalBytes > MAX_SKILL_UPLOAD_BYTES) {
+        throw unprocessable("Skill upload exceeds the 4 MB package limit.");
+      }
+      files[normalizedPath] = file.content;
+    }
+
+    const hasSkillMarkdown = Object.keys(files).some(
+      (filePath) => path.posix.basename(filePath).toLowerCase() === "skill.md",
+    );
+    if (!hasSkillMarkdown && input.files.length === 1) {
+      const [onlyFile] = input.files;
+      if (onlyFile && onlyFile.path.toLowerCase().endsWith(".skill")) {
+        files["SKILL.md"] = onlyFile.content;
+      }
+    }
+    if (!Object.keys(files).some(
+      (filePath) => path.posix.basename(filePath).toLowerCase() === "skill.md",
+    )) {
+      throw unprocessable("Skill upload must include SKILL.md or one .skill file.");
+    }
+
+    const results = await importPackageFiles(orgId, files, { onConflict: "rename" });
+    if (results.length === 0) {
+      throw unprocessable("No valid Skills were found in the uploaded package.");
+    }
+    return {
+      imported: results.map((result) => result.skill),
+      warnings: results.flatMap((result) => result.reason ? [result.reason] : []),
+    };
+  }
+
   async function deleteSkill(orgId: string, skillId: string): Promise<OrganizationSkill | null> {
     const initial = await getById(skillId);
     if (!initial || initial.orgId !== orgId) return null;
@@ -2152,6 +2195,7 @@ export function organizationSkillService(
     deleteSkill,
     deletePluginManagedSkill,
     importFromSource,
+    importUploadedSkill,
     scanProjectWorkspaces,
     scanLocalSkillRoots,
     importPackageFiles,

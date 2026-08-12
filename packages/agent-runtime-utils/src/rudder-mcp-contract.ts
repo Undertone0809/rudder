@@ -256,6 +256,7 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
   });
 
   const issue = string("Issue UUID, identifier, or short reference.", { maxLength: 200 });
+  const goal = string("Goal UUID from the current Goal Runtime Context.", { maxLength: 200 });
   const project = string("Project UUID or shortname.", { maxLength: 200 });
   const approval = string("Approval UUID or short reference.", { maxLength: 200 });
   const automation = string("Automation UUID or short reference.", { maxLength: 200 });
@@ -297,6 +298,120 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
       return schema({ selectionRefs: strings("Skill selection references.", 100) }, ["selectionRefs"]);
     case "agent.skills.sync":
       return schema({ desiredSkills: string("Comma-separated desired skill references.", { maxLength: 20_000 }) }, ["desiredSkills"]);
+    case "goal.list":
+      return schema({
+        lifecycle: string("Goal lifecycle filter; active is the safe default.", {
+          enum: ["draft", "active", "closed", "all"],
+          maxLength: 20,
+        }),
+        focus: boolean("Filter by whether the Goal is the organization Focus Goal."),
+        facet: string("Current Goal workspace facet.", {
+          enum: ["agent_advancing", "needs_attention", "waiting_focus", "waiting_external", "ready_for_acceptance", "closed"],
+          maxLength: 40,
+        }),
+        limit: number("Maximum owned Goals to return.", 1, 100),
+      });
+    case "goal.context":
+      return schema({ goal: string("Goal UUID returned by rudder_goal_list.", { maxLength: 200 }) }, ["goal"]);
+    case "goal.progress":
+      return schema({
+        goal,
+        summary: string("Plain-language progress, observed change, or named blocker."),
+        activityKind: string("Progress classification.", { enum: ["progress", "evidence", "bottleneck"], maxLength: 30 }),
+        evidenceRefs: {
+          type: "array",
+          description: "URI-like references to artifacts, measurements, or other supporting evidence.",
+          minItems: 1,
+          maxItems: 100,
+          items: string("URI-like evidence reference.", { maxLength: 8_192 }),
+        },
+        idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
+      }, ["goal", "summary", "evidenceRefs", "idempotencyKey"]);
+    case "goal.change.propose":
+      return schema({
+        goal,
+        contractRevision: number("Current Goal contract revision.", 1, 1_000_000_000),
+        afterContract: {
+          type: "object",
+          description: "Only the Goal contract fields that should change.",
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            outcomeStatement: string("Proposed result-oriented outcome."),
+            objectiveMode: string("Proposed objective mode.", {
+              enum: ["target", "maximize", "maintain", "decide"],
+              maxLength: 20,
+            }),
+            criteria: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: schema({
+                id: string("Stable criterion id.", { maxLength: 500 }),
+                label: string("Plain-language success criterion."),
+                evaluator: string("Criterion evaluator.", {
+                  enum: ["artifact", "metric", "policy", "human"],
+                  maxLength: 20,
+                }),
+                evidenceRequirements: {
+                  type: "array",
+                  maxItems: 100,
+                  items: string("URI-like required evidence reference.", { maxLength: 8_192 }),
+                },
+              }, ["id", "label", "evaluator"]),
+            },
+            autonomyEnvelope: { type: "object", additionalProperties: true },
+            humanAuthorities: { type: "object", additionalProperties: true },
+            evaluationPolicy: { type: "object", additionalProperties: true },
+            actionDeadline: {
+              description: "Proposed ISO-8601 action deadline, or null to clear it.",
+              oneOf: [{ type: "string", format: "date-time" }, { type: "null" }],
+            },
+            evaluationDeadline: {
+              description: "Proposed ISO-8601 evaluation deadline, or null to clear it.",
+              oneOf: [{ type: "string", format: "date-time" }, { type: "null" }],
+            },
+          },
+        },
+        rationale: string("Why the current contract should change and what evidence invalidated it."),
+        evidenceRefs: {
+          type: "array",
+          description: "URI-like references supporting the proposed change.",
+          maxItems: 100,
+          items: string("URI-like evidence reference.", { maxLength: 8_192 }),
+        },
+        idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
+      }, ["goal", "contractRevision", "afterContract", "rationale", "idempotencyKey"]);
+    case "goal.result.propose":
+      return schema({
+        goal,
+        contractRevision: number("Current Goal contract revision.", 1, 1_000_000_000),
+        criteria: {
+          type: "array",
+          description: "Criterion outcomes for the current contract revision.",
+          minItems: 1,
+          maxItems: 100,
+          items: schema({
+            id: string("Criterion id from the Goal Runtime Context.", { maxLength: 500 }),
+            status: string("Observed criterion status.", { enum: ["met", "unmet", "breached", "unknown"], maxLength: 20 }),
+          }, ["id", "status"]),
+        },
+        evidenceRefs: {
+          type: "array",
+          description: "URI-like references supporting the proposed result.",
+          minItems: 1,
+          maxItems: 100,
+          items: string("URI-like evidence reference.", { maxLength: 8_192 }),
+        },
+        resultValue: {
+          description: "Optional measured result value.",
+          oneOf: [{ type: "string", maxLength: 100_000 }, { type: "number" }, { type: "boolean" }],
+        },
+        decision: string("Optional decision reached for decide-mode Goals."),
+        resultPayload: { type: "object", description: "Optional structured result details.", additionalProperties: true },
+        riskSummary: string("Known risks, limitations, or remaining gaps."),
+        idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
+      }, ["goal", "contractRevision", "criteria", "evidenceRefs", "riskSummary", "idempotencyKey"]);
     case "issue.list":
       return schema({
         status: string("Comma-separated issue statuses.", { maxLength: 500 }),

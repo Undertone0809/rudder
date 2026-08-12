@@ -40,25 +40,10 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(153);
-    expect(result.candidateSqlFiles).toBe(155);
+    expect(result.candidateMigrations).toBe(154);
+    expect(result.candidateSqlFiles).toBe(156);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.2",
-      "0.7.1",
-      "0.7.0",
-      "0.6.5",
-    ]);
-  });
-
-  it("accepts the checked-in 0.7.2 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
-      candidateVersion: "0.7.2-canary.1",
-      channel: "canary",
-    });
-
-    expect(result.candidateMigrations).toBe(153);
-    expect(result.candidateSqlFiles).toBe(155);
-    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.1",
       "0.7.0",
       "0.6.5",

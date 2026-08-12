@@ -23,6 +23,12 @@ if not defined RUDDER_APP_BUILDER_NODE_EXECUTABLE (\r
 set ELECTRON_RUN_AS_NODE=1\r
 "%RUDDER_APP_BUILDER_NODE_EXECUTABLE%" %*\r
 `;
+const posixPnpmShim = `#!/bin/sh
+exec "$(dirname "$0")/node" "$(dirname "$0")/../../pnpm/bin/pnpm.cjs" "$@"
+`;
+const windowsPnpmShim = `@echo off\r
+"%~dp0node.cmd" "%~dp0..\\..\\pnpm\\bin\\pnpm.cjs" %*\r
+`;
 
 async function main() {
   await fs.rm(destinationRoot, { recursive: true, force: true });
@@ -36,11 +42,14 @@ async function main() {
   await Promise.all([
     fs.writeFile(path.join(nodeBinRoot, "node"), posixNodeShim, { mode: 0o755 }),
     fs.writeFile(path.join(nodeBinRoot, "node.cmd"), windowsNodeShim),
+    fs.writeFile(path.join(nodeBinRoot, "pnpm"), posixPnpmShim, { mode: 0o755 }),
+    fs.writeFile(path.join(nodeBinRoot, "pnpm.cmd"), windowsPnpmShim),
   ]);
 
   await fs.access(path.join(destinationRoot, "bin", "pnpm.cjs"));
   await fs.access(path.join(destinationRoot, "dist", "pnpm.cjs"));
   await fs.access(path.join(nodeBinRoot, process.platform === "win32" ? "node.cmd" : "node"));
+  await fs.access(path.join(nodeBinRoot, process.platform === "win32" ? "pnpm.cmd" : "pnpm"));
 }
 
 void main().catch((error) => {

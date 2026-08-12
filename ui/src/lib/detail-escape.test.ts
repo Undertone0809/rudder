@@ -65,6 +65,14 @@ describe("shouldHandleDetailEscape", () => {
     expect(shouldHandleDetailEscape(keyboardEvent("Escape", document.body))).toBe(false);
   });
 
+  it("lets an active detail inline editor consume Escape before page navigation", () => {
+    const editor = document.createElement("div");
+    editor.setAttribute("data-detail-escape-layer", "true");
+    document.body.append(editor);
+
+    expect(shouldHandleDetailEscape(keyboardEvent("Escape", editor))).toBe(false);
+  });
+
   it("ignores hidden or closed overlay remnants", () => {
     const hiddenDialog = document.createElement("div");
     hiddenDialog.setAttribute("role", "dialog");

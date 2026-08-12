@@ -42,14 +42,23 @@ function createRuntime(input: {
   token?: string;
   requireLoopbackParent?: boolean;
   beforeFileOpen?: (canonicalTarget: string) => Promise<void>;
+  resolveOpenedFilePath?: (canonicalTarget: string) => Promise<string>;
 }) {
+  let canonicalTargetForOpen: string | undefined;
   return workspaceWebPreviewRuntime({} as never, {
     previewOrigin: "http://preview.localhost:3100",
     now: input.now,
     randomToken: () => input.token ?? "a".repeat(43),
     resolveWorkspaceRoot: () => input.rootPath,
     requireLoopbackParent: input.requireLoopbackParent,
-    beforeFileOpen: input.beforeFileOpen,
+    beforeFileOpen: async (canonicalTarget) => {
+      canonicalTargetForOpen = canonicalTarget;
+      await input.beforeFileOpen?.(canonicalTarget);
+    },
+    resolveOpenedFilePath: async () => {
+      if (!canonicalTargetForOpen) throw new Error("Expected a canonical target before file open");
+      return input.resolveOpenedFilePath?.(canonicalTargetForOpen) ?? canonicalTargetForOpen;
+    },
   });
 }
 
@@ -132,7 +141,7 @@ describe("workspace web preview policy", () => {
 });
 
 describe("workspace web preview runtime", () => {
-  it("serves only capability-scoped GET/HEAD assets on the Preview Host", { timeout: 15_000 }, async () => {
+  it("serves only capability-scoped GET/HEAD assets on the Preview Host", async () => {
     const fixture = await createFixture();
     const runtime = createRuntime(fixture);
     const session = await runtime.createSession({
@@ -212,12 +221,13 @@ describe("workspace web preview runtime", () => {
     })).resolves.toMatchObject({ networkMode: "offline" });
   });
 
-  it("rejects an artifact-directory swap between validation and file open", { timeout: 15_000 }, async () => {
+  it("rejects an artifact-directory swap between validation and file open", async () => {
     const fixture = await createFixture();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-web-preview-race-"));
     cleanupDirectories.push(outside);
     await fs.writeFile(path.join(outside, "styles.css"), "body { color: red; }", "utf8");
     let swapOnAssetOpen = false;
+    let openedPathOverride: string | undefined;
     const runtime = createRuntime({
       ...fixture,
       token: "f".repeat(43),
@@ -226,7 +236,9 @@ describe("workspace web preview runtime", () => {
         swapOnAssetOpen = false;
         await fs.rename(fixture.artifactPath, `${fixture.artifactPath}-original`);
         await fs.symlink(outside, fixture.artifactPath);
+        openedPathOverride = path.join(outside, "styles.css");
       },
+      resolveOpenedFilePath: async (canonicalTarget) => openedPathOverride ?? canonicalTarget,
     });
     const session = await runtime.createSession({
       orgId: "org-1",
@@ -285,10 +297,10 @@ describe("workspace web preview runtime", () => {
       networkMode: "offline",
       parentOrigin: "http://127.0.0.1:3100",
     });
-    await fs.symlink(
-      path.join(fixture.artifactPath, ".secret"),
-      path.join(fixture.artifactPath, "visible.txt"),
-    );
+    const hiddenTarget = path.join(fixture.artifactPath, ".secret");
+    const visibleAlias = path.join(fixture.artifactPath, "visible.txt");
+    await fs.symlink(hiddenTarget, visibleAlias);
+    await expect(fs.realpath(visibleAlias)).resolves.toBe(await fs.realpath(hiddenTarget));
     const previewPath = new URL(session.previewUrl).pathname;
     const tokenPath = previewPath.slice(0, previewPath.lastIndexOf("/") + 1);
 
@@ -333,7 +345,7 @@ describe("workspace web preview runtime", () => {
       .set("Host", "preview.localhost:3100")).status).toBe(404);
   });
 
-  it("rejects root-level entries, dotfiles, traversal, expiry, and root replacement", { timeout: 15_000 }, async () => {
+  it("rejects root-level entries, dotfiles, traversal, expiry, and root replacement", async () => {
     const fixture = await createFixture();
     let currentTime = Date.parse("2026-07-15T00:00:00.000Z");
     const runtime = createRuntime({ ...fixture, now: () => currentTime, token: "c".repeat(43) });

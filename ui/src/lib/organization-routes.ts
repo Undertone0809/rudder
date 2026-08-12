@@ -17,6 +17,8 @@ const BOARD_ROUTE_ROOTS = new Set([
   "automations",
   "calendar",
   "goals",
+  "hub",
+  "plugins",
   "costs",
   "usage",
   "activity",
