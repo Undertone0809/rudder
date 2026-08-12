@@ -19,6 +19,7 @@ import {
   parseLocalAppLsofListenerProcessRecords,
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
+import { resolveNativeTarget } from "./native-target.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -145,6 +146,85 @@ async function runCapturedProcess(executable, args, options = {}) {
       clearTimeout(timeout);
       resolve({ code: code ?? 1, signal, stdout, stderr });
     });
+  });
+}
+
+async function verifyPackagedNativeProcessHost(executablePath) {
+  const metadata = await runCapturedProcess(executablePath, ["--version"]);
+  assert.equal(metadata.code, 0, "packaged Rust process host should expose metadata");
+  assert.match(metadata.stdout, /^rudder-process-host 0\.1\.0\n$/u);
+  await new Promise((resolve, reject) => {
+    const host = spawn(executablePath, [], {
+      cwd: tmpRoot,
+      stdio: ["pipe", "ignore", "pipe", "pipe", "pipe", "pipe"],
+    });
+    const lifecycle = host.stdio[3];
+    const stdout = host.stdio[4];
+    const stderr = host.stdio[5];
+    if (!lifecycle || !stdout || !stderr || !host.stdin) {
+      host.kill("SIGKILL");
+      reject(new Error("packaged Rust process host did not expose managed channels"));
+      return;
+    }
+    let lifecycleBuffer = "";
+    let output = "";
+    let errorOutput = "";
+    const events = [];
+    let settled = false;
+    const timeout = setTimeout(() => finish(new Error("packaged Rust process host probe timed out")), 5_000);
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
+    lifecycle.setEncoding("utf8");
+    stdout.setEncoding("utf8");
+    stderr.setEncoding("utf8");
+    lifecycle.on("data", (chunk) => {
+      lifecycleBuffer += chunk;
+      const lines = lifecycleBuffer.split("\n");
+      lifecycleBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) events.push(JSON.parse(line));
+      }
+    });
+    stdout.on("data", (chunk) => { output += chunk; });
+    stderr.on("data", (chunk) => { errorOutput += chunk; });
+    host.once("error", finish);
+    host.once("exit", (code, signal) => {
+      if (lifecycleBuffer.trim()) events.push(JSON.parse(lifecycleBuffer));
+      try {
+        assert.equal(code, 0, "packaged Rust process host probe should exit successfully");
+        assert.equal(signal, null);
+        assert.equal(output, "packaged-native-smoke\n");
+        assert.equal(errorOutput, "");
+        assert.deepEqual(events.map((event) => event.type), [
+          "handshake",
+          "accepted",
+          "spawned",
+          "app-exit",
+          "terminal",
+        ]);
+        const terminal = events.at(-1);
+        assert.equal(terminal?.status, "succeeded");
+        assert.equal(terminal?.requestId, "packaged-native-smoke");
+        finish();
+      } catch (error) {
+        finish(error);
+      }
+    });
+    host.stdin.write(`${JSON.stringify({
+      type: "start",
+      protocolVersion: { major: 1, minor: 0 },
+      requestId: "packaged-native-smoke",
+      executable: "/bin/sh",
+      argv: ["-c", "printf 'packaged-native-smoke\\n'"],
+      cwd: tmpRoot,
+      env: {},
+      ownerToken: "packaged-native-smoke",
+    })}\n`);
   });
 }
 
@@ -591,6 +671,17 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const resourcesDir = process.platform === "darwin"
     ? path.resolve(path.dirname(executablePath), "..", "Resources")
     : path.resolve(path.dirname(executablePath), "resources");
+  const nativeTarget = resolveNativeTarget(process.platform, process.arch);
+  const nativeHostPath = nativeTarget
+    ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host")
+    : null;
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
+    const nativeStats = await stat(nativeHostPath);
+    assert.equal(nativeStats.isFile(), true, "packaged Rust process host should be a file");
+    assert.notEqual(nativeStats.mode & 0o111, 0, "packaged Rust process host should be executable");
+    await verifyPackagedNativeProcessHost(nativeHostPath);
+  }
   const serverPackageDir = path.join(resourcesDir, "server-package");
   const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
   const cliRunner = path.join(serverPackageDir, "desktop-cli-runner.js");
@@ -696,6 +787,7 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     sharedPostgresRoot,
     runtimeCacheDir,
     serverVersion: serverManifest.version,
+    nativeHostPath,
     staleMarker,
     userDataDir,
     env: {

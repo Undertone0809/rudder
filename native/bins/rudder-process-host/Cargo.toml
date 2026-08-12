@@ -1,0 +1,10 @@
+[package]
+name = "rudder-process-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+libc = "0.2"
+rudder-native-protocol = { path = "../../crates/native-protocol" }
+serde_json = "1.0"

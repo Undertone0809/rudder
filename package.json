@@ -62,6 +62,7 @@
     "docs:structure:test": "node --test scripts/docs-content-map.test.mjs scripts/postprocess-docs-export.test.mjs",
     "docs:health": "node scripts/check-docs-public-health.mjs",
     "desktop:build": "pnpm --filter @rudderhq/desktop build",
+    "native:build": "node desktop/scripts/stage-native.mjs",
     "desktop:dist": "pnpm --filter @rudderhq/desktop dist",
     "desktop:verify": "pnpm --filter @rudderhq/cli build && pnpm --filter @rudderhq/desktop build && pnpm --filter @rudderhq/desktop smoke && pnpm desktop:dist && node desktop/scripts/verify-computer-use-package.mjs && node desktop/scripts/smoke.mjs --mode=packaged && node desktop/scripts/app-builder-smoke.mjs --packaged",
     "landing:shots": "node cli/node_modules/tsx/dist/cli.mjs .agents/skills/maintainer/mock-data-maintainer/scripts/capture-landing-proof-shots.ts",

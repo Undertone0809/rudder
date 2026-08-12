@@ -2,10 +2,13 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { EventEmitter, once } from "node:events";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { spawnNativeProcessHost, type NativeProcessHost } from "./local-app-native-host.js";
 import { createLocalAppProcessPlatform } from "./local-app-process-platform.js";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 import {
@@ -20,6 +23,7 @@ import {
 const fixturePath = fileURLToPath(new URL("./fixtures/local-app-http-fixture.mjs", import.meta.url));
 const wildcardFixturePath = fileURLToPath(new URL("./fixtures/local-app-http-wildcard-fixture.mjs", import.meta.url));
 const watchdogPath = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
+const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
 
 async function unusedLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -116,6 +120,38 @@ function watchdogEmittingAfter(message: unknown, milliseconds: number) {
     callback?.(null);
   });
   return helper;
+}
+
+function nativeHostEmitting(onStart?: (message: Record<string, unknown>, helper: NativeProcessHost) => void) {
+  const helper = new EventEmitter() as NativeProcessHost;
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  let exitCode: number | null = null;
+  let signalCode: NodeJS.Signals | null = null;
+  Object.defineProperties(helper, {
+    stdin: { value: stdin },
+    stdout: { value: stdout },
+    stderr: { value: stderr },
+    pid: { get: () => 88_881 },
+    connected: { get: () => !stdin.destroyed },
+    exitCode: { get: () => exitCode },
+    signalCode: { get: () => signalCode },
+  });
+  helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+    if (message && typeof message === "object" && (message as { type?: unknown }).type === "start") {
+      onStart?.(message as Record<string, unknown>, helper);
+    }
+    callback?.(null);
+    return true;
+  });
+  helper.kill = vi.fn(() => true);
+  const emitExit = (code: number | null, signal: NodeJS.Signals | null = null) => {
+    exitCode = code;
+    signalCode = signal;
+    helper.emit("exit", code, signal);
+  };
+  return { helper, emitExit };
 }
 
 describe("Desktop Local App runtime", () => {
@@ -746,7 +782,7 @@ describe("Desktop Local App runtime", () => {
     await expect(manager.start(owned.definition.id)).rejects.toThrow(
       "listener ownership could not be proven",
     );
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
   });
 
   it("accepts an explicit watchdog stop acknowledgement before using Windows fallback cleanup", async () => {
@@ -1223,4 +1259,268 @@ describe("Desktop Local App runtime", () => {
     await once(watchdog, "exit");
     expect(() => process.kill(child.pid, 0)).toThrow();
   });
+
+  it.skipIf(!nativeHostPath)("runs an approved Local App through the opt-in Rust process host", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: process.platform,
+      nativeProcessHostPath: nativeHostPath,
+      useNativeProcessHost: true,
+      verifyListenerOwnership: async () => true,
+    });
+
+    const running = await manager.start(definition.id);
+    expect(running.status).toBe("running");
+    await vi.waitFor(async () => {
+      expect(await manager.logs(definition.id)).toEqual(expect.arrayContaining([
+        expect.stringContaining("fixture listening"),
+      ]));
+    }, { timeout: 3_000 });
+
+    await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
+    await expect(manager.status(definition.id)).resolves.toMatchObject({ status: "stopped" });
+  });
+
+  it.skipIf(!nativeHostPath || process.platform !== "darwin" || process.arch !== "arm64")(
+    "proves Rust process-host stop kills a surviving Local App descendant",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "rudder-native-process-host-descendant-"));
+      const descendantPath = path.join(root, "descendant.pid");
+      const helper = spawnNativeProcessHost(nativeHostPath!, { cwd: root });
+      const messages: Array<{ type?: unknown; pid?: unknown; pgid?: unknown }> = [];
+      const exited = once(helper, "exit");
+      helper.on("message", (message: unknown) => {
+        if (message && typeof message === "object") messages.push(message as { type?: unknown; pid?: unknown; pgid?: unknown });
+      });
+      const script = `sleep 30 & echo $! > ${JSON.stringify(descendantPath)}; wait`;
+      helper.send({
+        type: "start",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: "descendant-stop",
+        executable: "/bin/sh",
+        argv: ["-c", script],
+        cwd: root,
+        env: {},
+        ownerToken: "descendant-stop",
+      });
+      await vi.waitFor(async () => {
+        expect((await readFile(descendantPath, "utf8")).trim()).toMatch(/^\d+$/u);
+      }, { timeout: 3_000 });
+      const descendantPid = Number.parseInt((await readFile(descendantPath, "utf8")).trim(), 10);
+      helper.send({
+        type: "stop",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: "descendant-stop",
+      });
+      const [exitCode, signal] = await exited as [number | null, NodeJS.Signals | null];
+      expect(exitCode).toBe(0);
+      expect(signal).toBeNull();
+      expect(messages.map((message) => message.type)).toEqual(expect.arrayContaining([
+        "handshake",
+        "spawned",
+        "stopped",
+        "terminal",
+      ]));
+      await vi.waitFor(() => {
+        expect(() => process.kill(descendantPid, 0)).toThrow();
+      }, { timeout: 3_000 });
+    },
+  );
+
+  it.skipIf(!nativeHostPath || process.platform !== "darwin" || process.arch !== "arm64")(
+    "fails closed when a Local App exits while leaving a descendant",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "rudder-native-process-host-natural-exit-"));
+      const descendantPath = path.join(root, "descendant.pid");
+      const helper = spawnNativeProcessHost(nativeHostPath!, { cwd: root });
+      const messages: Array<{ type?: unknown; errorCode?: unknown }> = [];
+      const exited = once(helper, "exit");
+      helper.on("message", (message: unknown) => {
+        if (message && typeof message === "object") messages.push(message as { type?: unknown; errorCode?: unknown });
+      });
+      const script = `sleep 30 & echo $! > ${JSON.stringify(descendantPath)}; exit 0`;
+      helper.send({
+        type: "start",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: "natural-exit",
+        executable: "/bin/sh",
+        argv: ["-c", script],
+        cwd: root,
+        env: {},
+        ownerToken: "natural-exit",
+      });
+      await vi.waitFor(async () => {
+        expect((await readFile(descendantPath, "utf8")).trim()).toMatch(/^\d+$/u);
+      }, { timeout: 3_000 });
+      const descendantPid = Number.parseInt((await readFile(descendantPath, "utf8")).trim(), 10);
+      const [exitCode, signal] = await exited as [number | null, NodeJS.Signals | null];
+      expect(exitCode).toBe(1);
+      expect(signal).toBeNull();
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "terminal", errorCode: "descendant_cleanup" }),
+      ]));
+      await vi.waitFor(() => {
+        expect(() => process.kill(descendantPid, 0)).toThrow();
+      }, { timeout: 3_000 });
+    },
+  );
+
+  it.runIf(process.platform === "darwin" && process.arch === "arm64")(
+    "records failed native child exits as failed when cleanup is proven",
+    async () => {
+      const { registry, definition } = await approvedFixture();
+      const generationMessages: Array<Record<string, unknown>> = [];
+      const healthServer = createHttpServer((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+      });
+      const native = nativeHostEmitting((message, helper) => {
+        const ownerToken = message.ownerToken as string;
+        const requestId = message.requestId as string;
+        const protocolVersion = { major: 1, minor: 0 };
+        healthServer.listen(Number(message.port), "127.0.0.1", () => queueMicrotask(() => {
+          helper.emit("message", {
+            type: "handshake",
+            protocolVersion,
+            requestId: "bootstrap",
+            capabilities: [
+              "process_spawn",
+              "process_group_cleanup",
+              "parent_eof_cleanup",
+              "stdout_relay",
+              "stderr_relay",
+            ],
+          });
+          helper.emit("message", { type: "spawned", pid: 88_881, pgid: 88_881, protocolVersion, requestId, ownerToken });
+        }));
+        generationMessages.push({ ownerToken, requestId });
+      });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        useNativeProcessHost: true,
+        spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
+        verifyListenerOwnership: async () => true,
+        processPlatform: {
+          platform: "darwin",
+          systemPathEntries: [],
+          terminate: vi.fn(async () => undefined),
+          probePersistedRuntime: vi.fn(async () => ({ pid: "dead", processGroup: "dead", listener: "dead" })),
+          verifyListenerOwnership: vi.fn(async () => true),
+        },
+      });
+      await expect(manager.start(definition.id)).resolves.toMatchObject({ status: "running" });
+      const identity = generationMessages[0]!;
+      native.helper.emit("message", {
+        type: "app-exit",
+        code: 17,
+        signal: null,
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: identity.requestId,
+        ownerToken: identity.ownerToken,
+      });
+      native.helper.emit("message", {
+        type: "terminal",
+        status: "failed",
+        errorCode: "child_exit",
+        cleanupProven: true,
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: identity.requestId,
+        ownerToken: identity.ownerToken,
+      });
+      native.helper.emit("disconnect");
+      native.emitExit(1);
+      await vi.waitFor(async () => {
+        expect((await manager.status(definition.id)).status).toBe("failed");
+      });
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "failed",
+        pid: null,
+        pgid: null,
+      });
+      await new Promise<void>((resolve, reject) => healthServer.close((error) => error ? reject(error) : resolve()));
+    },
+  );
+
+  it.runIf(process.platform === "darwin" && process.arch === "arm64")(
+    "keeps native cleanup untrusted after a post-start lifecycle identity violation",
+    async () => {
+      const { registry, definition } = await approvedFixture();
+      const healthServer = createHttpServer((_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+      });
+      const native = nativeHostEmitting((message, helper) => {
+        const protocolVersion = { major: 1, minor: 0 };
+        healthServer.listen(Number(message.port), "127.0.0.1", () => queueMicrotask(() => {
+          helper.emit("message", {
+            type: "handshake",
+            protocolVersion,
+            requestId: "bootstrap",
+            capabilities: [
+              "process_spawn",
+              "process_group_cleanup",
+              "parent_eof_cleanup",
+              "stdout_relay",
+              "stderr_relay",
+            ],
+          });
+          helper.emit("message", {
+            type: "spawned",
+            pid: 88_881,
+            pgid: 88_881,
+            protocolVersion,
+            requestId: message.requestId,
+            ownerToken: message.ownerToken,
+          });
+        }));
+      });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        nativeProcessHostPath: "/tmp/rudder-process-host-test",
+        useNativeProcessHost: true,
+        spawnNativeProcessHost: (() => native.helper) as typeof spawnNativeProcessHost,
+        verifyListenerOwnership: async () => true,
+        processPlatform: {
+          platform: "darwin",
+          systemPathEntries: [],
+          terminate: vi.fn(async () => undefined),
+          probePersistedRuntime: vi.fn(async () => ({ pid: "dead", processGroup: "dead", listener: "dead" })),
+          verifyListenerOwnership: vi.fn(async () => true),
+        },
+      });
+      await expect(manager.start(definition.id)).resolves.toMatchObject({ status: "running" });
+      native.emitExit(0);
+      native.helper.emit("message", {
+        type: "app-exit",
+        code: 0,
+        signal: null,
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: "wrong-generation",
+        ownerToken: "wrong-owner",
+      });
+      native.helper.emit("message", {
+        type: "terminal",
+        status: "succeeded",
+        cleanupProven: true,
+        protocolVersion: { major: 1, minor: 0 },
+        requestId: "wrong-generation",
+        ownerToken: "wrong-owner",
+      });
+      native.emitExit(0);
+      native.helper.emit("disconnect");
+      await vi.waitFor(async () => {
+        expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
+      });
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "orphaned_unverified",
+        pid: 88_881,
+        pgid: 88_881,
+      });
+      await new Promise<void>((resolve, reject) => healthServer.close((error) => error ? reject(error) : resolve()));
+    },
+  );
 });

@@ -36,6 +36,7 @@ async function main() {
   await run(pnpmBin, ["--filter", "@rudderhq/server", "prepare:ui-dist"], repoRoot);
   await run(process.execPath, ["scripts/stage-server.mjs"], desktopRoot);
   await run(process.execPath, ["scripts/stage-cli.mjs"], desktopRoot);
+  await run(process.execPath, ["scripts/stage-native.mjs"], desktopRoot);
   await fs.rm(path.join(desktopRoot, "dist"), { recursive: true, force: true });
   await run(tscBin, ["-p", "tsconfig.json"], desktopRoot);
   await run(process.execPath, ["scripts/stage-app-builder-toolchain.mjs"], desktopRoot);

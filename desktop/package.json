@@ -13,6 +13,7 @@
     "prune:packaging-node-modules": "node scripts/prune-packaging-node-modules.mjs",
     "stage:server": "node scripts/stage-server.mjs",
     "stage:cli": "node scripts/stage-cli.mjs",
+    "stage:native": "node scripts/stage-native.mjs",
     "stage:app": "node scripts/stage-app.mjs",
     "stage:app-builder-toolchain": "node scripts/stage-app-builder-toolchain.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -67,6 +68,10 @@
       {
         "from": "../ui/public/rudder-logo.png",
         "to": "rudder-logo.png"
+      },
+      {
+        "from": ".packaged/native",
+        "to": "native"
       }
     ],
     "dmg": {

@@ -7,6 +7,12 @@ import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { localAppRuntimeArguments } from "./local-app-framework.js";
+import {
+  nativeProcessHostRuntimeSupported,
+  resolveNativeProcessHostPath,
+  spawnNativeProcessHost,
+  type NativeProcessHost,
+} from "./local-app-native-host.js";
 import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 import {
   createLocalAppProcessPlatform,
@@ -49,7 +55,7 @@ type RuntimeRecord = {
   status: LocalAppRuntimeStatus;
   generation: string;
   definition: LocalAppDefinition;
-  helper: ChildProcess | null;
+  helper: ChildProcess | NativeProcessHost | null;
   watchdog: WatchdogLifecycle | null;
   pid: number | null;
   pgid: number | null;
@@ -64,13 +70,18 @@ type WatchdogLifecycle = {
   stoppedAcknowledged: boolean;
   disconnected: boolean;
   exited: boolean;
+  nativeLifecycleInvalid: boolean;
+  terminalSeen: boolean;
+  cleanupProven: boolean;
   exitCode: number | null;
   exitSignal: NodeJS.Signals | null;
   spawnedPromise: Promise<void>;
   exitPromise: Promise<void>;
+  disconnectedPromise: Promise<void>;
   cleanupPromise: Promise<void>;
   resolveSpawned: () => void;
   resolveExit: () => void;
+  resolveDisconnected: () => void;
   resolveCleanup: () => void;
 };
 
@@ -101,6 +112,9 @@ type RuntimeManagerOptions = {
   cleanupTimeoutMs?: number;
   terminationOptions?: Omit<TerminationOptions, "killGroup">;
   processPlatform?: LocalAppProcessPlatform;
+  nativeProcessHostPath?: string;
+  useNativeProcessHost?: boolean;
+  spawnNativeProcessHost?: typeof spawnNativeProcessHost;
   probePersistedRuntimeLiveness?: (input: {
     pid: number | null;
     pgid: number | null;
@@ -311,6 +325,9 @@ export class LocalAppRuntimeManager {
     timeoutMs: number;
   }) => Promise<boolean>;
   private readonly spawnWatchdog: typeof spawn;
+  private readonly nativeProcessHostPath: string | null;
+  private readonly spawnNativeProcessHost: typeof spawnNativeProcessHost;
+  private readonly useNativeProcessHost: boolean;
   private readonly watchdogRunnerPath: string;
   private readonly watchdogStartTimeoutMs: number;
   private readonly listenerOwnershipRetryTimeoutMs: number;
@@ -346,6 +363,10 @@ export class LocalAppRuntimeManager {
     this.verifyListenerOwnership = options.verifyListenerOwnership
       ?? this.processPlatform.verifyListenerOwnership;
     this.spawnWatchdog = options.spawnWatchdog ?? spawn;
+    this.nativeProcessHostPath = options.nativeProcessHostPath ?? resolveNativeProcessHostPath();
+    this.spawnNativeProcessHost = options.spawnNativeProcessHost ?? spawnNativeProcessHost;
+    this.useNativeProcessHost = options.useNativeProcessHost
+      ?? process.env.RUDDER_NATIVE_PROCESS_HOST === "1";
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
     this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 10_000);
     this.listenerOwnershipRetryTimeoutMs = Math.max(
@@ -468,21 +489,28 @@ export class LocalAppRuntimeManager {
   private createWatchdogLifecycle(): WatchdogLifecycle {
     let resolveSpawned!: () => void;
     let resolveExit!: () => void;
+    let resolveDisconnected!: () => void;
     let resolveCleanup!: () => void;
     const spawnedPromise = new Promise<void>((resolve) => { resolveSpawned = resolve; });
     const exitPromise = new Promise<void>((resolve) => { resolveExit = resolve; });
+    const disconnectedPromise = new Promise<void>((resolve) => { resolveDisconnected = resolve; });
     const cleanupPromise = new Promise<void>((resolve) => { resolveCleanup = resolve; });
     return {
       stoppedAcknowledged: false,
       disconnected: false,
       exited: false,
+      nativeLifecycleInvalid: false,
+      terminalSeen: false,
+      cleanupProven: false,
       exitCode: null,
       exitSignal: null,
       spawnedPromise,
       exitPromise,
+      disconnectedPromise,
       cleanupPromise,
       resolveSpawned,
       resolveExit,
+      resolveDisconnected,
       resolveCleanup,
     };
   }
@@ -493,6 +521,12 @@ export class LocalAppRuntimeManager {
 
   private watchdogCleanupProven(lifecycle: WatchdogLifecycle): boolean {
     if (!lifecycle.exited) return false;
+    if (this.useNativeProcessHost) {
+      return !lifecycle.nativeLifecycleInvalid
+        && lifecycle.disconnected
+        && lifecycle.terminalSeen
+        && lifecycle.cleanupProven;
+    }
     if (lifecycle.stoppedAcknowledged) return true;
     // A disconnected watchdog cannot send `stopped`; its runner exits 0 only
     // after the disconnect-triggered owned-tree cleanup completes.
@@ -554,7 +588,13 @@ export class LocalAppRuntimeManager {
     const canRequestWatchdogStop = Boolean(record.helper?.connected && typeof record.helper.send === "function");
     if (canRequestWatchdogStop && record.helper) {
       try {
-        record.helper.send({ type: "stop" });
+        record.helper.send(this.useNativeProcessHost
+          ? {
+              type: "stop",
+              protocolVersion: { major: 1, minor: 0 },
+              requestId: record.generation,
+            }
+          : { type: "stop" });
       } catch (error) {
         errors.push(new Error("Local App watchdog stop request could not be sent", { cause: error }));
       }
@@ -576,6 +616,9 @@ export class LocalAppRuntimeManager {
         lifecycle.cleanupPromise,
         lifecycle.exitPromise,
       ]), deadline);
+    }
+    if (this.useNativeProcessHost && lifecycle && !lifecycle.disconnected) {
+      await this.waitUntilDeadline(lifecycle.disconnectedPromise, deadline);
     }
 
     let watchdogProven = lifecycle === null;
@@ -659,13 +702,23 @@ export class LocalAppRuntimeManager {
         watchdogEnvironment.TEMP = process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
         watchdogEnvironment.TMP = process.env.TMP ?? watchdogEnvironment.TEMP;
       }
-      const helper = this.spawnWatchdog(process.execPath, [this.watchdogRunnerPath], {
-        env: watchdogEnvironment,
-        shell: false,
-        detached: false,
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe", "ipc"],
-      });
+      const helper = this.useNativeProcessHost
+        ? (() => {
+            if (!nativeProcessHostRuntimeSupported) {
+              throw new Error("Rust Local App process host pilot is only enabled on macOS arm64");
+            }
+            if (!this.nativeProcessHostPath) {
+              throw new Error("Rust Local App process host is enabled but no binary path is configured");
+            }
+            return this.spawnNativeProcessHost(this.nativeProcessHostPath, { env: watchdogEnvironment });
+          })()
+        : this.spawnWatchdog(process.execPath, [this.watchdogRunnerPath], {
+            env: watchdogEnvironment,
+            shell: false,
+            detached: false,
+            windowsHide: true,
+            stdio: ["pipe", "pipe", "pipe", "ipc"],
+          });
       record.helper = helper;
       const lifecycle = this.createWatchdogLifecycle();
       record.watchdog = lifecycle;
@@ -683,10 +736,75 @@ export class LocalAppRuntimeManager {
         if (error) reject(error);
         else resolve(value!);
       };
-      helper.once("error", (error) => finish(error));
+      helper.once("error", (error) => {
+        if (this.useNativeProcessHost) lifecycle.nativeLifecycleInvalid = true;
+        finish(error);
+      });
+      let nativeHandshakeSeen = false;
       helper.on("message", (message: unknown) => {
         if (!message || typeof message !== "object") return;
-        const typed = message as { type?: unknown; pid?: unknown; pgid?: unknown; message?: unknown };
+        const typed = message as {
+          type?: unknown;
+          pid?: unknown;
+          pgid?: unknown;
+          message?: unknown;
+          ownerToken?: unknown;
+          cleanupProven?: unknown;
+          protocolVersion?: unknown;
+          requestId?: unknown;
+          capabilities?: unknown;
+        };
+        if (this.useNativeProcessHost) {
+          const invalidateNativeLifecycle = (message: string) => {
+            lifecycle.nativeLifecycleInvalid = true;
+            finish(new Error(message));
+          };
+          if (lifecycle.terminalSeen) {
+            invalidateNativeLifecycle("Rust Local App process host emitted a frame after terminal");
+            return;
+          }
+          const version = typed.protocolVersion;
+          if (!version || typeof version !== "object"
+            || (version as { major?: unknown }).major !== 1
+            || typeof (version as { minor?: unknown }).minor !== "number"
+            || (version as { minor: number }).minor > 0) {
+            invalidateNativeLifecycle("Rust Local App process host protocol version is incompatible");
+            return;
+          }
+          if (typed.type === "handshake") {
+            const capabilities = typed.capabilities;
+            const requiredCapabilities = [
+              "process_spawn",
+              "process_group_cleanup",
+              "parent_eof_cleanup",
+              "stdout_relay",
+              "stderr_relay",
+            ];
+            if (typed.requestId !== "bootstrap"
+              || !Array.isArray(capabilities)
+              || !requiredCapabilities.every((capability) => capabilities.includes(capability))) {
+              invalidateNativeLifecycle("Rust Local App process host handshake is invalid");
+              return;
+            }
+            nativeHandshakeSeen = true;
+            return;
+          }
+          if (!nativeHandshakeSeen
+            || typed.requestId !== record.generation
+            || typed.ownerToken !== record.generation) {
+            invalidateNativeLifecycle("Rust Local App process host lifecycle identity is invalid");
+            return;
+          }
+          if (typed.type === "terminal") {
+            if (typeof typed.cleanupProven !== "boolean") {
+              invalidateNativeLifecycle("Rust Local App process host terminal cleanup proof is invalid");
+              return;
+            }
+            lifecycle.cleanupProven = typed.cleanupProven;
+            lifecycle.terminalSeen = true;
+            this.noteWatchdogCleanupProgress(lifecycle);
+          }
+        }
         if (typed.type === "spawned") {
           if (!isSafeLocalAppProcessId(typed.pid)
             || !isSafeLocalAppProcessId(typed.pgid)
@@ -712,6 +830,7 @@ export class LocalAppRuntimeManager {
       });
       helper.once("disconnect", () => {
         lifecycle.disconnected = true;
+        lifecycle.resolveDisconnected();
         this.noteWatchdogCleanupProgress(lifecycle);
       });
       helper.once("exit", (code, signal) => {
@@ -733,13 +852,22 @@ export class LocalAppRuntimeManager {
         finish(new Error("Local App watchdog control channel is unavailable"));
         return;
       }
-      helper.send({
+      const startMessage = {
         type: "start",
         executable: record.definition.executable,
         argv,
         cwd: record.definition.cwd,
         env: environment,
-      }, (error) => { if (error) finish(error); });
+        ...(this.useNativeProcessHost
+          ? {
+              ownerToken: record.generation,
+              port,
+              protocolVersion: { major: 1, minor: 0 },
+              requestId: record.generation,
+            }
+          : {}),
+      };
+      helper.send(startMessage, (error) => { if (error) finish(error); });
     });
   }
 

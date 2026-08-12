@@ -37,6 +37,7 @@ pnpm desktop:dist
 pnpm --filter @rudderhq/desktop smoke
 node desktop/scripts/smoke.mjs --mode=packaged
 npx @rudderhq/cli@latest start
+pnpm native:build
 ```
 
 Recommended defaults:
@@ -74,6 +75,26 @@ creating a stable/canary tag, or creating a GitHub Release. Desktop asset
 generation after that point is artifact production and cannot be the first
 database-safety signal.
 - Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
+
+## Rust process-host pilot
+
+Desktop builds stage the current platform's precompiled `rudder-process-host`
+under `Resources/native/<target>/`. The Local App runtime keeps the Node
+watchdog as the default and enables the Rust host only for an explicit pilot
+run on macOS arm64. Windows/Linux and macOS x64 target mappings are build-only
+until their handle/process-group implementations earn a separate runtime
+acceptance:
+
+```sh
+pnpm native:build
+RUDDER_NATIVE_PROCESS_HOST=1 \
+RUDDER_NATIVE_PROCESS_HOST_PATH="$PWD/native/target/release/rudder-process-host" \
+pnpm --filter @rudderhq/desktop smoke
+```
+
+The Rust host is a contributor/build artifact in this pilot. It does not add a
+Cargo requirement to an installed end-user app, and it does not change signing,
+notarization, Windows signing, or Linux AppImage scope.
 
 ## Local profiles
 
