@@ -164,12 +164,45 @@ test.describe("New issue Agent creation", () => {
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close new issue dialog" })).toHaveCount(1);
     await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
     await dialog.getByRole("button", { name: "Select an Agent" }).click();
     await page.locator("[data-inline-entity-option]").filter({ hasText: "Issue Creation Builder" }).click();
     await expect(dialog.getByPlaceholder("Search Agents...")).toBeHidden();
-    await dialog.getByPlaceholder("Describe the Issue you want the Agent to create...").fill(instruction);
+    const instructionEditor = dialog.locator('[data-slot="agent-issue-instruction"]');
+    const instructionContent = instructionEditor.locator(".cm-content");
+    await instructionContent.click();
+    await page.keyboard.insertText(instruction);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
     await expect(dialog.getByPlaceholder("Search Agents...")).toBeHidden();
+
+    const uploadResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/assets/images`)
+      && response.status() === 201,
+    );
+    await instructionContent.evaluate(async (element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 160;
+      canvas.height = 90;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Failed to create Agent instruction paste image");
+      context.fillStyle = "#111827";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#34d399";
+      context.fillRect(20, 20, 120, 50);
+
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("Failed to create Agent instruction PNG blob");
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File([blob], "agent-instruction.png", { type: "image/png" }));
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", { value: dataTransfer });
+      element.dispatchEvent(pasteEvent);
+    });
+    const uploadedAsset = await (await uploadResponsePromise).json() as { contentPath: string };
+    await expect(instructionEditor.locator(`img[src="${uploadedAsset.contentPath}"]`)).toBeVisible();
     if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
       await page.screenshot({ path: screenshotPath("agent-issue-dialog.png"), fullPage: false });
     }
@@ -197,11 +230,12 @@ test.describe("New issue Agent creation", () => {
     const acceptedResponse = await requestPromise;
     expect(acceptedResponse.status()).toBe(202);
     const accepted = await acceptedResponse.json() as AgentIssueCreationRequest;
-    expect(accepted.instruction).toBe(instruction);
+    expect(accepted.instruction).toContain(instruction);
+    expect(accepted.instruction).toContain(`![agent-instruction.png](${uploadedAsset.contentPath})`);
 
     await expect(dialog).toBeHidden();
     expect(agentRequestCount).toBe(1);
-    await expect(page.getByText("已发送给 Agent，完成后会在 Inbox 通知你", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sent to Agent. You'll be notified in Inbox when it's done.", { exact: true })).toBeVisible();
     if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
       await page.screenshot({ path: screenshotPath("agent-issue-accepted-toast.png"), fullPage: false });
     }
@@ -485,8 +519,9 @@ test.describe("New issue Agent creation", () => {
     await expect(agentOption).toHaveCount(1);
     await agentOption.click();
 
-    const instruction = dialog.getByPlaceholder("Describe the Issue you want the Agent to create...");
-    await instruction.fill("Create an issue for the deferred onboarding regression.");
+    const instruction = dialog.getByLabel("Instruction");
+    await instruction.click();
+    await page.keyboard.insertText("Create an issue for the deferred onboarding regression.");
     const sendButton = dialog.getByRole("button", { name: "Send to Agent" });
     await expect(sendButton).toBeEnabled();
 
@@ -503,7 +538,7 @@ test.describe("New issue Agent creation", () => {
       instruction: "Create an issue for the deferred onboarding regression.",
     });
     await expect(dialog).toBeHidden();
-    await expect(page.getByText("已发送给 Agent，完成后会在 Inbox 通知你", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sent to Agent. You'll be notified in Inbox when it's done.", { exact: true })).toBeVisible();
 
     await openNewIssueDialog(page);
     const manualDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();

@@ -17,6 +17,15 @@ describe("translateMessage", () => {
     expect(translateMessage("zh-CN", "comments.unmentionedConfirm.confirm")).toBe("直接发送");
   });
 
+  it("localizes the accepted Agent Issue request notification", () => {
+    expect(translateMessage("en", "newIssue.agentRequest.accepted")).toBe(
+      "Sent to Agent. You'll be notified in Inbox when it's done.",
+    );
+    expect(translateMessage("zh-CN", "newIssue.agentRequest.accepted")).toBe(
+      "已发送给 Agent，完成后会在 Inbox 通知你",
+    );
+  });
+
   it("interpolates dynamic values", () => {
     expect(translateMessage("en", "app.addAnotherAgentToOrganization", { name: "Acme" })).toBe(
       "Add another agent to Acme",

@@ -128,6 +128,7 @@ type ProseMirrorView = {
   dispatch: (transaction: ProseMirrorTransaction) => void;
   focus?: () => void;
   posAtDOM?: (node: Node, offset: number) => number;
+  setProps?: (props: { editable?: () => boolean }) => void;
 };
 
 type MilkdownActionContext = {
@@ -1068,6 +1069,7 @@ function statusLabel(status: string): string {
 const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function MilkdownEditorInner({
   value,
   onChange,
+  readOnly = false,
   placeholder,
   className,
   contentClassName,
@@ -1152,8 +1154,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   useEffect(() => {
     onChangeRef.current = onChange;
     onBlurRef.current = onBlur;
-    imageUploadHandlerRef.current = imageUploadHandler;
-  }, [imageUploadHandler, onBlur, onChange]);
+    imageUploadHandlerRef.current = readOnly ? undefined : imageUploadHandler;
+  }, [imageUploadHandler, onBlur, onChange, readOnly]);
 
   const clearUserEditPending = useCallback(() => {
     if (userEditPendingTimerRef.current) {
@@ -1254,6 +1256,18 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   [tokenDecorationsPlugin]);
 
   const [loading, getInstance] = useInstance();
+
+  useEffect(() => {
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      getMilkdownProseMirrorView(ctx)?.setProps?.({ editable: () => !readOnly });
+    });
+    if (readOnly) {
+      mentionStateRef.current = null;
+      setMentionState(null);
+      setIsDragOver(false);
+    }
+  }, [get, getInstance, loading, readOnly]);
 
   useEffect(() => {
     const activeElement = typeof document !== "undefined" ? document.activeElement : null;
@@ -1573,6 +1587,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   }, [get, getInstance, loading]);
 
   const uploadImage = useCallback(async (file: File) => {
+    if (readOnly) return;
     const handler = imageUploadHandlerRef.current;
     if (!handler) return;
     try {
@@ -1585,19 +1600,20 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Image upload failed");
     }
-  }, [get, getInstance, loading, markUserEditPending]);
+  }, [get, getInstance, loading, markUserEditPending, readOnly]);
   const uploadImages = useCallback(async (files: File[]) => {
     for (const file of files) {
       await uploadImage(file);
     }
   }, [uploadImage]);
 
-  const canDropImage = Boolean(imageUploadHandler);
+  const canDropImage = Boolean(imageUploadHandler) && !readOnly;
 
   return (
     <div
       ref={containerRef}
       data-inline-token-click-mode={activateInlineTokensOnPlainClick ? "plain" : "modified"}
+      data-read-only={readOnly ? "true" : undefined}
       className={cn(
         "relative rudder-milkdown-scope",
         bordered ? "rounded-md border border-border bg-transparent" : "bg-transparent",
@@ -1605,6 +1621,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         className,
       )}
       onKeyDownCapture={(event) => {
+        if (readOnly) return;
         const shouldSubmitOnModEnter =
           submitShortcut === "mod-enter" && event.key === "Enter" && (event.metaKey || event.ctrlKey);
         const shouldSubmitOnEnter =
@@ -1811,6 +1828,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
       onPasteCapture={(event) => {
+        if (readOnly) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         markUserEditPending();
         if (canDropImage && hasFilePayload(event)) {
           const files = imageFilesFromFileList(event.clipboardData.files);

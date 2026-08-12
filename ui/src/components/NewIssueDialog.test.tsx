@@ -142,6 +142,10 @@ vi.mock("@/context/DialogContext", () => ({
   }),
 }));
 
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({ locale: "en", t: (key: string) => key }),
+}));
+
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({
     pathname: "/issues",
@@ -383,6 +387,21 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("sm:max-w-[920px]");
     expect(html).toContain("min-h-[88px]");
     expect(html).not.toContain("min-h-[120px]");
+  });
+
+  it("keeps a fixed dialog width and removes the expand action", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain("sm:max-w-[920px]");
+    expect(html).not.toContain("sm:max-w-[1040px]");
+    expect(html).toContain('aria-label="Close new issue dialog"');
+  });
+
+  it("clips the creation mode selection inside one rounded segmented control", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain("overflow-hidden rounded-lg");
+    expect(html).toContain("rounded-[6px]");
   });
 
   it("gives the dialog an accessible title", () => {
