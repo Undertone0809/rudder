@@ -312,7 +312,6 @@ export const en = {
   "organizationSettings.breadcrumb": "Settings",
   "organizationSettings.title": "Organization Settings",
   "organizationSettings.section.general": "General",
-  "organizationSettings.section.appearance": "Appearance",
   "organizationSettings.section.workspace": "Workspace",
   "organizationSettings.section.labels": "Labels",
   "organizationSettings.section.hiring": "Hiring",
@@ -326,18 +325,8 @@ export const en = {
   "organizationSettings.general.name.label": "Organization name",
   "organizationSettings.general.name.hint": "The display name for your organization.",
   "organizationSettings.appearance.logo.label": "Logo",
-  "organizationSettings.appearance.logo.hint": "Upload a PNG, JPEG, WEBP, GIF, or SVG logo image.",
-  "organizationSettings.appearance.logo.remove": "Remove logo",
-  "organizationSettings.appearance.logo.chooseFile": "Choose file",
-  "organizationSettings.appearance.logo.noFileChosen": "No file chosen",
-  "organizationSettings.appearance.logo.removing": "Removing...",
   "organizationSettings.appearance.logo.uploadFailed": "Logo upload failed",
   "organizationSettings.appearance.logo.uploading": "Uploading logo...",
-  "organizationSettings.appearance.brandColor.label": "Brand color",
-  "organizationSettings.appearance.brandColor.hint":
-    "Sets the hue for the organization icon. Leave empty for auto-generated color.",
-  "organizationSettings.appearance.brandColor.auto": "Auto",
-  "organizationSettings.appearance.brandColor.clear": "Clear",
   "organizationSettings.save.saving": "Saving...",
   "organizationSettings.save.button": "Save changes",
   "organizationSettings.save.saved": "Saved",
@@ -802,6 +791,7 @@ export const en = {
   "chat.annotations.couldNotAdd": "Could not add annotation",
   "chat.annotations.added": "Annotation added",
   "chat.annotations.removed": "Annotation removed",
+  "newIssue.agentRequest.accepted": "Sent to Agent. You'll be notified in Inbox when it's done.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
