@@ -16,7 +16,7 @@
     ".": "./src/index.ts",
     "./computer-use": {
       "types": "./src/computer-use.ts",
-      "default": "./dist/computer-use.js"
+      "default": "./src/computer-use.ts"
     },
     "./*": "./src/*.ts"
   },
