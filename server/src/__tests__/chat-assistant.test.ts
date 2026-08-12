@@ -783,6 +783,58 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(executeInput?.authToken).toEqual(expect.any(String));
   });
 
+  it("persists image-view transcript evidence with the durable attachment URL", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    const [message] = makeMessages();
+    const attachment = makeAttachment({ originalFilename: "design-review.png" });
+    const visibleEntries: Array<{ kind: string; input?: unknown }> = [];
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const localPath = ctx.media?.[0]?.localPath;
+      await ctx.onLog("stdout", `${JSON.stringify({
+        type: "item.started",
+        item: {
+          type: "tool_use",
+          id: "image-view-1",
+          name: "image_view",
+          input: { status: "completed", path: localPath },
+        },
+      })}\n`);
+      return {
+        summary: assistantSummary(ctx, "I inspected the image."),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [{ ...message!, attachments: [attachment] }],
+      contextLinks: [],
+      operatorProfile: null,
+      onTranscriptEntry: (entry) => visibleEntries.push(entry),
+    });
+
+    const expectedInput = {
+      status: "completed",
+      path: attachment.contentPath,
+      displayName: attachment.originalFilename,
+    };
+    expect(visibleEntries).toContainEqual(expect.objectContaining({
+      kind: "tool_call",
+      name: "image_view",
+      input: expectedInput,
+    }));
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "chat-run-1" }),
+      expect.objectContaining({ kind: "tool_call", input: expectedInput }),
+    );
+    expect(JSON.stringify(visibleEntries)).not.toContain("rudder-chat-attachments-");
+  });
+
   it("prepares multiple chat images in message order and does not pass non-images as runtime media", async () => {
     const storage = makeStorageService();
     const svc = chatAssistantService({} as any, storage as any);

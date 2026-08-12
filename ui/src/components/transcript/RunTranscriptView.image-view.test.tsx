@@ -160,4 +160,75 @@ describe("ImageView transcript artifacts", () => {
     expect(container.querySelector("[data-testid='inspectable-image']")?.getAttribute("data-src"))
       .toBe("data:image/png;base64,aW1hZ2U=");
   });
+
+  it("renders a durable Rudder asset without asking Desktop to reopen a temporary file", async () => {
+    readDesktopShell.mockReturnValue({ previewLocalFile });
+    const assetPath = "/api/assets/asset-image-1/content";
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(
+        <TranscriptChatToolActionRow
+          density="compact"
+          block={{
+            ts: "2026-07-25T00:00:00.000Z",
+            endTs: "2026-07-25T00:00:01.000Z",
+            name: "image_view",
+            input: { status: "completed", path: assetPath, displayName: "evidence.png" },
+            result: "{}",
+            status: "completed",
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-transcript-image-target]")?.click();
+      await Promise.resolve();
+    });
+
+    expect(previewLocalFile).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='inspectable-image']")?.getAttribute("data-src"))
+      .toBe(assetPath);
+    expect(container.querySelector("[data-testid='inspectable-image']")?.textContent).toBe("evidence.png");
+  });
+
+  it("explains when a legacy temporary image has already been cleaned up", async () => {
+    readDesktopShell.mockReturnValue({ previewLocalFile });
+    previewLocalFile.mockRejectedValue(
+      new Error("ENOENT: no such file or directory, realpath '/tmp/expired.png'"),
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(
+        <TranscriptChatToolActionRow
+          density="compact"
+          block={{
+            ts: "2026-07-25T00:00:00.000Z",
+            name: "image_view",
+            input: { status: "completed", path: "/tmp/expired.png" },
+            result: "{}",
+            status: "completed",
+          }}
+        />,
+      );
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-transcript-image-target]")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "temporary runtime folder and is no longer available",
+    );
+    expect(container.textContent).not.toContain("ENOENT");
+  });
 });

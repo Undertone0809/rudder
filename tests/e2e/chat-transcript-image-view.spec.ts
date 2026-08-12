@@ -5,7 +5,6 @@ import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
-const IMAGE_PATH = "/tmp/dashboard.png";
 const IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -13,9 +12,9 @@ test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
 
-test("expands ImageView transcript evidence into the recorded local image", async ({ page }) => {
+test("keeps ImageView transcript evidence available after temporary runtime files are cleaned up", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.addInitScript(({ expectedPath, base64 }) => {
+  await page.addInitScript(() => {
     const previewCalls: string[] = [];
     Object.defineProperty(window, "__rudderImageViewPreviewCalls", {
       configurable: true,
@@ -26,23 +25,11 @@ test("expands ImageView transcript evidence into the recorded local image", asyn
       value: {
         previewLocalFile: async (filePath: string) => {
           previewCalls.push(filePath);
-          if (filePath !== expectedPath) throw new Error(`Unexpected local image path: ${filePath}`);
-          return {
-            canonicalPath: expectedPath,
-            fileName: "dashboard.png",
-            parentPath: "/tmp",
-            contentType: "image/png",
-            previewKind: "image",
-            content: null,
-            base64,
-            sizeBytes: 68,
-            modifiedAt: "2026-07-25T00:00:00.000Z",
-            truncated: false,
-          };
+          throw new Error(`Durable transcript images must not use Desktop local preview: ${filePath}`);
         },
       },
     });
-  }, { expectedPath: IMAGE_PATH, base64: IMAGE_BASE64 });
+  });
 
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Chat-Transcript-ImageView-${Date.now()}` },
@@ -65,7 +52,26 @@ test("expands ImageView transcript evidence into the recorded local image", asyn
   expect(chatRes.ok()).toBe(true);
   const chat = await chatRes.json() as { id: string };
 
-  const imageEvidence = { id: "image-1", status: "completed", path: IMAGE_PATH };
+  const assetRes = await page.request.post(`/api/orgs/${organization.id}/assets/images`, {
+    multipart: {
+      namespace: "chat-transcript-image-view-e2e",
+      file: {
+        name: "dashboard.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(IMAGE_BASE64, "base64"),
+      },
+    },
+  });
+  expect(assetRes.ok(), await assetRes.text()).toBe(true);
+  const asset = await assetRes.json() as { assetId: string };
+  const imagePath = `/api/assets/${asset.assetId}/content`;
+
+  const imageEvidence = {
+    id: "image-1",
+    status: "completed",
+    path: imagePath,
+    displayName: "dashboard.png",
+  };
   await e2eDb.insert(chatMessages).values({
     id: randomUUID(),
     orgId: organization.id,
@@ -104,6 +110,7 @@ test("expands ImageView transcript evidence into the recorded local image", asyn
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+  await page.reload();
 
   const transcript = page.getByTestId("chat-transcript-item");
   await transcript.getByRole("button", { name: /Worked for/i }).click();
@@ -120,11 +127,11 @@ test("expands ImageView transcript evidence into the recorded local image", asyn
   await expect(transcript.getByAltText("Preview of dashboard.png")).toBeVisible();
   await expect(transcript.getByAltText("Preview of dashboard.png")).toHaveAttribute(
     "src",
-    `data:image/png;base64,${IMAGE_BASE64}`,
+    imagePath,
   );
   expect(await page.evaluate(() => (
     (window as typeof window & { __rudderImageViewPreviewCalls?: string[] })
       .__rudderImageViewPreviewCalls ?? []
-  ))).toEqual([IMAGE_PATH]);
+  ))).toEqual([]);
   await page.screenshot({ path: "/tmp/rudder-image-view-expanded.png", fullPage: true });
 });

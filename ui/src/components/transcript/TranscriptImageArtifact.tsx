@@ -14,6 +14,18 @@ function imagePreviewDataUrl(preview: DesktopLocalFilePreview): string | null {
   return `data:${preview.contentType};base64,${preview.base64}`;
 }
 
+function isRudderAssetPath(path: string) {
+  return /^\/api\/assets\/[^/]+\/content(?:[?#].*)?$/u.test(path);
+}
+
+function imagePreviewFailureMessage(cause: unknown, displayLabel: string) {
+  const message = cause instanceof Error ? cause.message : "";
+  if (/\bENOENT\b|no such file or directory/iu.test(message)) {
+    return "This historical image was stored in a temporary runtime folder and is no longer available.";
+  }
+  return message || `Could not preview ${displayLabel}.`;
+}
+
 export function TranscriptImageArtifact({
   path,
   displayLabel,
@@ -21,9 +33,10 @@ export function TranscriptImageArtifact({
   path: string;
   displayLabel: string;
 }) {
+  const durableAssetPath = isRudderAssetPath(path);
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!durableAssetPath);
   const previewRequestRef = useRef<{
     path: string;
     promise: Promise<DesktopLocalFilePreview>;
@@ -31,6 +44,12 @@ export function TranscriptImageArtifact({
 
   useEffect(() => {
     let cancelled = false;
+    if (durableAssetPath) {
+      setLoading(false);
+      setError(null);
+      setPreview(null);
+      return undefined;
+    }
     const desktopShell = readDesktopShell();
     if (!desktopShell) {
       setLoading(false);
@@ -59,7 +78,7 @@ export function TranscriptImageArtifact({
       .catch((cause) => {
         if (cancelled) return;
         setPreview(null);
-        setError(cause instanceof Error ? cause.message : `Could not preview ${displayLabel}.`);
+        setError(imagePreviewFailureMessage(cause, displayLabel));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -68,7 +87,7 @@ export function TranscriptImageArtifact({
     return () => {
       cancelled = true;
     };
-  }, [displayLabel, path]);
+  }, [displayLabel, durableAssetPath, path]);
 
   if (loading) {
     return (
@@ -79,8 +98,8 @@ export function TranscriptImageArtifact({
     );
   }
 
-  const src = preview ? imagePreviewDataUrl(preview) : null;
-  if (error || !preview || !src) {
+  const src = durableAssetPath ? path : preview ? imagePreviewDataUrl(preview) : null;
+  if (error || !src) {
     return (
       <div className="ml-5 mt-1.5 flex max-w-sm items-center gap-2 rounded-lg border border-border/45 bg-muted/10 px-3 py-2 text-xs text-muted-foreground" role="alert">
         <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
@@ -93,7 +112,7 @@ export function TranscriptImageArtifact({
     <div className="motion-disclosure-enter ml-5 mt-1.5 w-fit max-w-full rounded-lg border border-border/45 bg-muted/10 p-1.5">
       <InspectableImage
         src={src}
-        name={preview.fileName || displayLabel}
+        name={preview?.fileName || displayLabel}
         alt={`Preview of ${displayLabel}`}
         previewTitleFallback={displayLabel}
         previewTestId="transcript-image-preview-dialog"
