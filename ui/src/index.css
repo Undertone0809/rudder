@@ -3228,12 +3228,7 @@ button[draggable="false"] {
 }
 
 @container agent-runs-layout (max-width: 60rem) {
-  .agent-runs-layout {
-    flex-direction: column;
-  }
-
-  .agent-runs-layout > [data-testid="agent-runs-detail-pane"],
-  .agent-runs-layout > [data-testid="agent-runs-list-pane"] {
+  .agent-runs-layout > [data-testid="agent-runs-detail-pane"] {
     width: 100%;
     max-width: none;
   }
@@ -6214,6 +6209,14 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   max-height: calc(100vh - 2rem);
 }
 
+.agent-runs-floating-history {
+  display: none;
+}
+
+.workspace-main-card:has(.agent-runs-floating-history) {
+  position: relative;
+}
+
 @container agent-detail (max-width: 52rem) {
   .agent-detail-header {
     align-items: flex-start;
@@ -6247,39 +6250,51 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
 
 @container agent-runs (max-width: 62rem) {
   .agent-runs-desktop-split {
+    display: block;
+  }
+
+  .agent-runs-wide-toolbar,
+  .agent-runs-wide-list {
+    display: none;
+  }
+
+  .agent-runs-floating-history {
+    position: absolute;
+    z-index: 30;
+    right: calc(1rem + env(safe-area-inset-right));
+    bottom: calc(1rem + env(safe-area-inset-bottom));
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
+    width: fit-content;
   }
 
-  .agent-runs-list-pane {
-    order: -1;
-  }
+}
 
-  .agent-runs-list-scroll {
-    position: static;
-    max-height: min(18rem, 40vh);
+@media (max-width: 767px) {
+  .agent-runs-floating-history {
+    position: fixed;
+    right: calc(1rem + env(safe-area-inset-right));
+    bottom: calc(5.25rem + env(safe-area-inset-bottom));
   }
+}
 
-  .agent-run-filter-shell,
-  .agent-run-filter-toolbar {
-    width: 100%;
-  }
+[data-testid="agent-runs-history-popover"] .agent-run-filter-shell,
+[data-testid="agent-runs-history-popover"] .agent-run-filter-toolbar {
+  width: 100%;
+}
 
-  .agent-run-filter-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    justify-content: stretch;
-  }
+[data-testid="agent-runs-history-popover"] .agent-run-filter-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  justify-content: stretch;
+}
 
-  .agent-run-filter-views {
-    grid-column: 1 / -1;
-    overflow-x: auto;
-  }
+[data-testid="agent-runs-history-popover"] .agent-run-filter-views {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+}
 
-  .agent-run-filter-search {
-    width: 100%;
-  }
+[data-testid="agent-runs-history-popover"] .agent-run-filter-search {
+  width: 100%;
 }
 
 @container agent-runs (min-width: 38rem) {
