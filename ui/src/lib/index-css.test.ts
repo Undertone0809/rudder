@@ -540,6 +540,14 @@ describe("index.css motion rules", () => {
     expect(libraryWorkspaceShell).not.toContain("box-shadow");
   });
 
+  it("fills Library column resizers with the adjacent content surface", () => {
+    const libraryResizer = cssBlock(".workspace-shell--library-transparent .workspace-column-resizer");
+    const darkLibraryResizer = cssBlock(".dark .workspace-shell--library-transparent .workspace-column-resizer");
+
+    expect(libraryResizer).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkLibraryResizer).toContain("background: var(--desktop-content-surface-dark)");
+  });
+
   it("keeps the macOS desktop shell top chrome compact", () => {
     const rootTokens = cssBlock(":root");
 
