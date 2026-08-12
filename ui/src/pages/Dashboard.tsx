@@ -312,9 +312,10 @@ export function Dashboard() {
   const recentActivity = useMemo(
     () =>
       (activity ?? [])
+        .filter((event) => goalsEnabled || event.entityType !== "goal")
         .filter((event) => isWithinRange(event.createdAt, from, to))
         .slice(0, 10),
-    [activity, from, to],
+    [activity, from, goalsEnabled, to],
   );
 
   useEffect(() => {

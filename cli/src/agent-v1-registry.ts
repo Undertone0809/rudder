@@ -3,6 +3,7 @@ import { AGENT_CLI_CAPABILITIES } from "./agent-v1-capabilities.js";
 
 export type AgentCliCapabilityCategory =
   | "agent"
+  | "goal"
   | "issue"
   | "project"
   | "automation"
@@ -67,6 +68,7 @@ export type AgentV1McpSurface = "core" | "browser" | "all";
 
 const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   agent: "Agent",
+  goal: "Goal",
   issue: "Issue",
   project: "Project",
   automation: "Automation",

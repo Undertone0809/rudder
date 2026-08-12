@@ -166,6 +166,7 @@ describe("chatAgentRunService", () => {
       userMessageId: messageId,
       linkedIssueIds: [],
       linkedProjectId: null,
+      linkedGoalId: "11111111-1111-4111-8111-111111111111",
     });
 
     expect(firstRun.status).toBe("running");
@@ -178,6 +179,7 @@ describe("chatAgentRunService", () => {
       conversationId,
       messageId,
       userMessageId: messageId,
+      goalId: "11111111-1111-4111-8111-111111111111",
     });
     const firstRunSummary = await getRunSummary(db, firstRun.id, { orgIds: [orgId] });
     expect(firstRunSummary?.sessionReuseScope).toBe("none");

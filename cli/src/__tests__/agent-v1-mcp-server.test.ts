@@ -36,6 +36,30 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
   rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder-docs"] },
   rudder_agent_skills_sync: { desiredSkills: "rudder/rudder-docs" },
+  rudder_goal_list: {},
+  rudder_goal_context: { goal: "11111111-1111-4111-8111-111111111111" },
+  rudder_goal_progress: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    summary: "Verified the external result.",
+    evidenceRefs: ["artifact://goal/progress"],
+    idempotencyKey: "goal-progress-1",
+  },
+  rudder_goal_change_propose: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    contractRevision: 1,
+    afterContract: { actionDeadline: "2026-08-20T00:00:00.000Z" },
+    rationale: "External approval moved the feasible delivery date.",
+    evidenceRefs: ["artifact://goal/schedule-evidence"],
+    idempotencyKey: "goal-change-1",
+  },
+  rudder_goal_result_propose: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    contractRevision: 1,
+    criteria: [{ id: "criterion-1", status: "met" }],
+    evidenceRefs: ["artifact://goal/result"],
+    riskSummary: "No known gap.",
+    idempotencyKey: "goal-result-1",
+  },
   rudder_issue_get: { issue: "ZST-123" },
   rudder_issue_list: { status: "todo,in_progress" },
   rudder_issue_search: { query: "checkout" },
@@ -898,7 +922,7 @@ describe("agent-v1 MCP server", () => {
     }).tools;
     expect(secondTools.length).toBeGreaterThan(0);
     expect(new Set([...firstResult.tools, ...secondTools].map((tool) => tool.name)).size)
-      .toBe(70);
+      .toBe(buildAgentV1McpToolsManifest("agent-v1").tools.length);
     const allTools = [...firstResult.tools, ...secondTools];
     expect(allTools.every((tool) => tool.annotations)).toBe(true);
     expect(allTools.find((tool) => tool.name === "rudder_agent_skills_sync")?.annotations)
@@ -1266,7 +1290,7 @@ describe("agent-v1 MCP server", () => {
       if (url.endsWith("/api/issues/ISSUE-1/checkout")) {
         expect(init?.method).toBe("POST");
         expect(headers.get("authorization")).toBe("Bearer runtime-key");
-        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("authorization")).toBe("Bearer runtime-key");
         expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
         expect(JSON.parse(String(init?.body))).toEqual({
           agentId: "11111111-1111-4111-8111-111111111111",
@@ -1274,6 +1298,74 @@ describe("agent-v1 MCP server", () => {
         });
         return new Response(JSON.stringify({ id: "ISSUE-1", status: "in_progress" }), {
           status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/orgs/runtime-org/goals/assigned")) {
+        expect(init?.method).toBe("GET");
+        expect(headers.get("authorization")).toBe("Bearer runtime-key");
+        expect(Object.fromEntries(new URL(url).searchParams)).toEqual({
+          lifecycle: "active",
+          limit: "20",
+        });
+        return new Response(JSON.stringify({
+          goals: [{ id: "goal-1", title: "Ship the release", lifecycle: "active" }],
+          count: 1,
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/api/goals/goal-1/agent-context")) {
+        expect(init?.method).toBe("GET");
+        expect(headers.get("authorization")).toBe("Bearer runtime-key");
+        return new Response(JSON.stringify({
+          goal: { id: "goal-1", title: "Ship the release" },
+          contract: { revision: 3 },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/api/goals/goal-1/activities")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          summary: "Verified the Goal result.",
+          activityKind: "progress",
+          evidenceRefs: ["artifact://goal/progress"],
+          idempotencyKey: "goal-progress-1",
+        });
+        return new Response(JSON.stringify({ id: "activity-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/goals/goal-1/change-proposals")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedContractRevision: 3,
+          afterContract: { actionDeadline: "2026-08-20T00:00:00.000Z" },
+          rationale: "External approval moved the feasible delivery date.",
+          evidenceRefs: ["artifact://goal/schedule-evidence"],
+          idempotencyKey: "goal-change-1",
+        });
+        return new Response(JSON.stringify({ id: "change-1", status: "pending" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/goals/goal-1/result-proposals")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          contractRevision: 3,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://goal/result"],
+          resultPayload: {},
+          riskSummary: "No known gap.",
+          idempotencyKey: "goal-result-1",
+        });
+        return new Response(JSON.stringify({ id: "proposal-1", status: "ready" }), {
+          status: 201,
           headers: { "content-type": "application/json" },
         });
       }
@@ -1304,8 +1396,65 @@ describe("agent-v1 MCP server", () => {
         arguments: { issue: "ISSUE-1", expectedStatuses: "todo,blocked" },
       },
     }, env);
+    const goalListResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "rudder_goal_list", arguments: {} },
+    }, env);
+    const goalContextResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "rudder_goal_context", arguments: { goal: "goal-1" } },
+    }, env);
+    const progressResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_progress",
+        arguments: {
+          goal: "goal-1",
+          summary: "Verified the Goal result.",
+          evidenceRefs: ["artifact://goal/progress"],
+          idempotencyKey: "goal-progress-1",
+        },
+      },
+    }, env);
+    const changeResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_change_propose",
+        arguments: {
+          goal: "goal-1",
+          contractRevision: 3,
+          afterContract: { actionDeadline: "2026-08-20T00:00:00.000Z" },
+          rationale: "External approval moved the feasible delivery date.",
+          evidenceRefs: ["artifact://goal/schedule-evidence"],
+          idempotencyKey: "goal-change-1",
+        },
+      },
+    }, env);
+    const resultResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_result_propose",
+        arguments: {
+          goal: "goal-1",
+          contractRevision: 3,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://goal/result"],
+          riskSummary: "No known gap.",
+          idempotencyKey: "goal-result-1",
+        },
+      },
+    }, env);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(meResponse?.result).toMatchObject({
       isError: false,
       structuredContent: { id: "runtime-agent", ok: true },
@@ -1314,6 +1463,29 @@ describe("agent-v1 MCP server", () => {
       isError: false,
       structuredContent: { id: "ISSUE-1", status: "in_progress" },
     });
+    expect(goalListResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { count: 1, goals: [{ id: "goal-1" }] },
+    });
+    expect(goalContextResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { goal: { id: "goal-1" }, contract: { revision: 3 } },
+    });
+    expect(progressResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "activity-1" },
+    });
+    expect(changeResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "change-1", status: "pending" },
+    });
+    const resultEnvelope = resultResponse?.result as {
+      isError?: boolean;
+      structuredContent?: Record<string, unknown>;
+    } | undefined;
+    expect(resultEnvelope?.isError, JSON.stringify(resultEnvelope?.structuredContent)).toBe(false);
+    expect(resultEnvelope?.structuredContent).toMatchObject({ id: "proposal-1", status: "ready" });
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
   it("dispatches run inspection tools directly with CLI-equivalent bounded queries", async () => {

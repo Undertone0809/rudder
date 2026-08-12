@@ -34,6 +34,7 @@ test("serves exact agent tool schemas and rejects invalid calls over stdio", asy
       RUDDER_API_URL: "http://127.0.0.1:1",
       RUDDER_API_KEY: "e2e-runtime-key",
       RUDDER_ORG_ID: "e2e-org",
+      RUDDER_AGENT_ID: "e2e-agent",
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -75,6 +76,9 @@ test("serves exact agent tool schemas and rejects invalid calls over stdio", asy
   const issueList = tools.find((tool) => tool.name === "rudder_issue_list");
   const issueSearch = tools.find((tool) => tool.name === "rudder_issue_search");
   const issueCommit = tools.find((tool) => tool.name === "rudder_issue_commit");
+  const goalList = tools.find((tool) => tool.name === "rudder_goal_list");
+  const goalContext = tools.find((tool) => tool.name === "rudder_goal_context");
+  const goalChange = tools.find((tool) => tool.name === "rudder_goal_change_propose");
   const runsGet = tools.find((tool) => tool.name === "rudder_runs_get");
 
   expect(issueList?.inputSchema.properties).toEqual({
@@ -84,6 +88,23 @@ test("serves exact agent tool schemas and rejects invalid calls over stdio", asy
   });
   expect(issueSearch?.inputSchema.required).toEqual(["query"]);
   expect(issueCommit?.inputSchema.required).toEqual(["issue", "sha", "message"]);
+  expect(goalList?.inputSchema.properties).toEqual({
+    lifecycle: expect.any(Object),
+    focus: expect.any(Object),
+    facet: expect.any(Object),
+    limit: expect.any(Object),
+  });
+  expect(goalContext?.inputSchema.required).toEqual(["goal"]);
+  expect(goalContext?.inputSchema.properties).not.toHaveProperty("orgId");
+  expect(goalContext?.inputSchema.properties).not.toHaveProperty("agentId");
+  expect(goalChange?.inputSchema.required).toEqual([
+    "goal",
+    "contractRevision",
+    "afterContract",
+    "rationale",
+    "idempotencyKey",
+  ]);
+  expect(goalChange?.inputSchema.properties).not.toHaveProperty("agentId");
   expect(Object.keys(runsGet?.inputSchema.properties ?? {})).toEqual(["run"]);
 
   const invalidResult = responses.find((response) => response.id === 2)?.result;

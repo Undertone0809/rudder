@@ -281,6 +281,11 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_skills_create",
   "rudder_agent_skills_enable",
   "rudder_agent_skills_sync",
+  "rudder_goal_list",
+  "rudder_goal_context",
+  "rudder_goal_progress",
+  "rudder_goal_change_propose",
+  "rudder_goal_result_propose",
   "rudder_issue_get",
   "rudder_issue_list",
   "rudder_issue_search",
@@ -581,7 +586,7 @@ export type ChatMessageKind = (typeof CHAT_MESSAGE_KINDS)[number];
 export const CHAT_MESSAGE_STATUSES = ["streaming", "completed", "stopped", "failed", "interrupted"] as const;
 export type ChatMessageStatus = (typeof CHAT_MESSAGE_STATUSES)[number];
 
-export const CHAT_CONTEXT_ENTITY_TYPES = ["issue", "project", "agent"] as const;
+export const CHAT_CONTEXT_ENTITY_TYPES = ["issue", "project", "agent", "goal"] as const;
 export type ChatContextEntityType = (typeof CHAT_CONTEXT_ENTITY_TYPES)[number];
 
 export const MESSENGER_THREAD_KINDS = [
@@ -664,6 +669,7 @@ export type GoalResultProposalStatus = (typeof GOAL_RESULT_PROPOSAL_STATUSES)[nu
 export const GOAL_WORKSPACE_FACETS = [
   "agent_advancing",
   "needs_attention",
+  "waiting_focus",
   "waiting_external",
   "ready_for_acceptance",
   "closed",
@@ -942,6 +948,8 @@ export const WAKEUP_REQUEST_STATUSES = [
   "queued",
   "deferred_issue_execution",
   "deferred_agent_paused",
+  "deferred_goal_focus",
+  "deferred_goal_blocked",
   "claimed",
   "coalesced",
   "skipped",

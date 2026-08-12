@@ -269,5 +269,8 @@ export const goalResultProposals = pgTable(
       table.goalId,
       table.idempotencyKey,
     ),
+    goalReadyUq: uniqueIndex("goal_result_proposals_goal_ready_uq")
+      .on(table.goalId)
+      .where(sql`${table.status} = 'ready'`),
   }),
 );

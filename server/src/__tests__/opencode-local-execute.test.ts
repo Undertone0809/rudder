@@ -5,6 +5,7 @@ import {
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
+  RUDDER_MCP_TOOL_COUNT,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1168,7 +1169,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         provenance: "repo",
         serverName: "rudder-tools",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        toolCount: RUDDER_MCP_TOOL_COUNT,
         version: await readRepositoryCliVersion(),
         fallbackReason: null,
       });
@@ -1567,7 +1568,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(meta.rudderMcp).toMatchObject({
           available: true,
           serverName: "rudder-tools",
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.browserMcp).toMatchObject({
           available: true,
@@ -1795,7 +1796,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(meta.promptInjectedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");

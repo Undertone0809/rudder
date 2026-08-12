@@ -21,7 +21,6 @@ export interface IssueTimelineDisclosureItem {
   commentBody?: string;
   runStatus?: string;
 }
-
 export interface IssueTimelineSortBoundary {
   key: string;
   kind: IssueTimelineDisclosureKind;
@@ -250,4 +249,3 @@ export function revealIssueTimelineTarget(
     ? { fullyExpanded: true, prefixBoundary: null, suffixBoundary: null }
     : nextState;
 }
-

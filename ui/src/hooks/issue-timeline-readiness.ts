@@ -2,7 +2,6 @@ export interface IssueTimelineInitialSettlement {
   key: string;
   status: "failed" | "pending" | "ready";
 }
-
 export function resolveIssueTimelineInitialSettlement(
   current: IssueTimelineInitialSettlement,
   key: string,
@@ -19,4 +18,3 @@ export function resolveIssueTimelineInitialSettlement(
   if (input.allSuccessful) return { ...current, status: "ready" };
   return current;
 }
-

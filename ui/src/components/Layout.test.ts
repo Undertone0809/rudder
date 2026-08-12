@@ -142,6 +142,11 @@ describe("side panel route context", () => {
     expect(resolveSidePanelContextKey("/agents/agent-1/runs")).toBe("agent-runs:agent-1");
   });
 
+  it("scopes Goal Chat state to the viewed Goal", () => {
+    expect(resolveSidePanelContextKey("/goals/goal-1")).toBe("goal:goal-1");
+    expect(resolveSidePanelContextKey("/goals/goal-2")).toBe("goal:goal-2");
+  });
+
   it("does not create side panel context for Messenger aggregate routes", () => {
     expect(resolveSidePanelContextKey("/messenger")).toBeNull();
     expect(resolveSidePanelContextKey("/messenger/chat")).toBeNull();

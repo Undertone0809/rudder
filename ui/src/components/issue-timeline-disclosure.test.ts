@@ -114,4 +114,3 @@ describe("issue timeline disclosure", () => {
     expect(after.hidden.length).toBeGreaterThan(0);
   });
 });
-

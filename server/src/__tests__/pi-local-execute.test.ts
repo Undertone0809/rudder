@@ -7,6 +7,7 @@ import {
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
+  RUDDER_MCP_TOOL_COUNT,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -65,7 +66,7 @@ if (capturePath) {
   }), "utf8");
 }
 if (process.env.RUDDER_TEST_PI_REALISTIC_OUTPUT === "1") {
-  const bigSignature = "sig_".repeat(1200);
+  const bigSignature = "sig_".repeat(3000);
   emitJson({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() });
   emitJson({ type: "agent_start", signature: bigSignature });
   emitJson({ type: "turn_start" });
@@ -464,7 +465,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         serverName: "rudder-tools",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        toolCount: RUDDER_MCP_TOOL_COUNT,
         provenance: "repo",
         version: await readRepositoryCliVersion(),
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
@@ -473,7 +474,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         available: true,
         transport: "pi_extension",
         serverName: "rudder-tools",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        toolCount: RUDDER_MCP_TOOL_COUNT,
         toolNames: expect.arrayContaining(["rudder_agent_me", "rudder_issue_checkout", "rudder_library_file_list"]),
         authMode: "runtime_managed",
         modelVisibleCliFallback: false,
@@ -955,7 +956,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(meta.rudderNativeTools).toMatchObject({
           available: true,
           serverName: "rudder-tools",
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.browserNativeTools).toMatchObject({
           available: true,
@@ -1152,14 +1153,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");
         expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
-        expect(meta.rudderNativeTools).toMatchObject({
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
-        });
+        expect(meta.rudderNativeTools).toMatchObject({ toolCount: RUDDER_MCP_TOOL_COUNT });
         expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames).toEqual([
           ...RUDDER_CORE_MCP_TOOL_NAMES,
         ]);

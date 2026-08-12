@@ -18,4 +18,3 @@ export function resolveComputerUseCapability(input: {
     runEligible: instanceEligible && runtimeSupported,
   };
 }
-

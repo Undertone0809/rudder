@@ -37,6 +37,7 @@ export function hasBlockingEscapeLayer(extraSelectors: string[] = []) {
       "[data-slot='popover-content']",
       "[data-slot='dropdown-menu-content']",
       "[data-slot='command-dialog']",
+      "[data-detail-escape-layer='true']",
       ...extraSelectors,
     ].join(", "),
   ));

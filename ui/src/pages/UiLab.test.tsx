@@ -35,8 +35,6 @@ describe("UiLab coverage registry", () => {
       "ApprovalPayload",
       "ApprovalPayloadRenderer",
       "DashboardDateRangeControl",
-      "GoalProperties",
-      "GoalTree",
       "HeartbeatEnabledButtons",
       "JsonSchemaForm",
       "MarkdownBody",

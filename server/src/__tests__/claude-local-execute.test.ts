@@ -2,6 +2,7 @@ import { execute, runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/se
 import {
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_TOOL_NAMES,
+  RUDDER_MCP_TOOL_COUNT,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1254,7 +1255,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(meta.rudderMcp).toMatchObject({
           available: true,
           serverName: "rudder-tools",
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.browserMcp).toMatchObject({
           available: true,
@@ -1469,7 +1470,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+          toolCount: RUDDER_MCP_TOOL_COUNT,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");

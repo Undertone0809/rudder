@@ -200,6 +200,7 @@ export function ApprovalDetailDialog({
   const linkedAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
   const isActionable = approval?.status === "pending";
   const isBudgetApproval = approval?.type === "budget_override_required";
+  const isGoalChangeApproval = approval?.type === "goal_change";
   const isChatReviewApproval = approval?.type === "chat_issue_creation" || approval?.type === "chat_operation";
   const chatIssueLabelsRequired =
     approval?.type === "chat_issue_creation"
@@ -265,7 +266,9 @@ export function ApprovalDetailDialog({
                         <div>
                           <p className="text-sm font-medium text-green-800 dark:text-green-100">Approval confirmed</p>
                           <p className="text-xs text-green-700 dark:text-green-200/90">
-                            Requesting agent was notified to review this approval and linked issues.
+                            {isGoalChangeApproval
+                              ? "The approved Goal update was applied."
+                              : "Requesting agent was notified to review this approval and linked issues."}
                           </p>
                         </div>
                       </div>
@@ -287,13 +290,10 @@ export function ApprovalDetailDialog({
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
                       <TypeIcon className="h-5 w-5 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0">
                         <h3 className="text-[18px] font-semibold tracking-tight">
                           {approvalLabel(approval.type, approval.payload as Record<string, unknown> | null)}
                         </h3>
-                        <ApprovalInset className="inline-flex max-w-full items-center px-2 py-1 text-[11px] font-mono text-muted-foreground">
-                          <span className="truncate">{approval.id}</span>
-                        </ApprovalInset>
                       </div>
                     </div>
                     <StatusBadge status={approval.status} />
@@ -304,7 +304,7 @@ export function ApprovalDetailDialog({
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Requested by</span>
                         <AgentIdentity
-                          name={agentById.get(approval.requestedByAgentId)?.name ?? approval.requestedByAgentId.slice(0, 8)}
+                          name={agentById.get(approval.requestedByAgentId)?.name ?? "Agent unavailable"}
                           icon={agentById.get(approval.requestedByAgentId)?.icon}
                           role={agentById.get(approval.requestedByAgentId)?.role}
                           size="sm"
@@ -411,7 +411,7 @@ export function ApprovalDetailDialog({
                       </p>
                     ) : null}
 
-                    {approval.status === "pending" ? (
+                    {approval.status === "pending" && !isGoalChangeApproval ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -428,7 +428,7 @@ export function ApprovalDetailDialog({
                       </p>
                     ) : null}
 
-                    {approval.status === "revision_requested" && !isChatReviewApproval ? (
+                    {approval.status === "revision_requested" && !isChatReviewApproval && !isGoalChangeApproval ? (
                       <Button
                         size="sm"
                         variant="outline"

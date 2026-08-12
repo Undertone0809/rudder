@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, type ReactNode } from "react";
+import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentsApi } from "../api/agents";
@@ -9,12 +9,14 @@ import { goalsApi } from "../api/goals";
 import { Goals } from "./Goals";
 
 const openNewGoal = vi.fn();
+const setBreadcrumbs = vi.fn();
+const setHeaderActions = vi.fn();
 let dispose: (() => void) | null = null;
 
 vi.mock("@/lib/router", () => ({ Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a> }));
 vi.mock("../context/OrganizationContext", () => ({ useOrganization: () => ({ selectedOrganizationId: "org-1" }) }));
 vi.mock("../context/DialogContext", () => ({ useDialog: () => ({ openNewGoal }) }));
-vi.mock("../context/BreadcrumbContext", () => ({ useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }) }));
+vi.mock("../context/BreadcrumbContext", () => ({ useBreadcrumbs: () => ({ setBreadcrumbs, setHeaderActions }) }));
 vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn() } }));
 vi.mock("../api/goals", () => ({ goalsApi: { listWorkspace: vi.fn() } }));
 
@@ -60,10 +62,10 @@ afterEach(() => {
 });
 
 describe("Goals", () => {
-  it("renders four read-only derived columns and a mobile attention-sorted list", async () => {
+  it("renders five read-only derived columns and a mobile attention-sorted list", async () => {
     const container = renderPage();
     await waitUntil(() => expect(container.querySelector('[data-testid="goal-derived-board"]')).not.toBeNull());
-    for (const heading of ["Agent advancing", "Needs your attention", "Waiting for external result", "Ready for acceptance"]) {
+    for (const heading of ["Agent advancing", "Needs your attention", "Ready for Agent work", "Waiting for external result", "Ready for acceptance"]) {
       expect(Array.from(container.querySelectorAll("h2")).some((element) => element.textContent === heading)).toBe(true);
     }
     const board = container.querySelector<HTMLElement>('[data-testid="goal-derived-board"]')!;
@@ -88,13 +90,18 @@ describe("Goals", () => {
     expect(mobileList.textContent).toContain("Goal owner");
     expect(container.querySelector("#goal-history")?.textContent).toContain("History");
     expect(container.textContent).toContain("Keep the accepted outcome");
+    expect(container.querySelector("h1")).toBeNull();
+    expect(container.textContent).not.toContain("Work grouped by who or what acts next.");
   });
 
-  it("uses the compact New Goal command", async () => {
+  it("registers New Goal as a header action instead of a duplicate page row", async () => {
     const container = renderPage();
-    await waitUntil(() => expect(container.textContent).toContain("New Goal"));
-    const button = Array.from(container.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("New Goal"));
-    act(() => button?.click());
+    await waitUntil(() => expect(setHeaderActions.mock.calls.some(([actions]) => actions !== null)).toBe(true));
+    expect(container.textContent).not.toContain("New Goal");
+    const action = [...setHeaderActions.mock.calls]
+      .reverse()
+      .find(([actions]) => actions !== null)?.[0] as ReactElement<{ onClick: () => void }>;
+    act(() => action.props.onClick());
     expect(openNewGoal).toHaveBeenCalledTimes(1);
   });
 });

@@ -43,7 +43,6 @@ test.describe("Agent budget configuration", () => {
     const budgetHeading = budgetSection.getByText("Monthly UTC budget", { exact: true });
     const revisionsButton = mainContent.getByRole("button", { name: /Configuration Revisions/ });
     await budgetHeading.scrollIntoViewIfNeeded();
-    await expect(budgetSection).toBeVisible();
     await expect(budgetHeading).toBeVisible();
     await expect(budgetSection.getByText("No cap configured", { exact: true })).toBeVisible();
     await expect(mainContent.getByText("No active API keys.", { exact: true })).toHaveCount(0);

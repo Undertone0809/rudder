@@ -116,7 +116,7 @@ test("renders representative English and Chinese pages on desktop and mobile", a
   }
 });
 
-test("renders the localized changelog timeline and filter controls", async ({ page }) => {
+test("renders and filters the localized changelog timeline", async ({ page }) => {
   const locales = [
     {
       route: "/releases",
@@ -139,7 +139,7 @@ test("renders the localized changelog timeline and filter controls", async ({ pa
     await page.goto(item.route);
 
     await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
-    await expect(page.getByText(item.latestDate, { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(34);
     const latestUpdate = page.locator("h2#v0-7-3").locator(
@@ -151,6 +151,10 @@ test("renders the localized changelog timeline and filter controls", async ({ pa
     for (const tag of item.tags) {
       await expect(page.getByRole("button", { name: tag, exact: true })).toBeVisible();
     }
+    await page.getByRole("button", { name: item.filterTag, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
+    await expect(page.locator("h2#v0-7-3")).toHaveCount(0);
+    await expect(page.locator("h2#v0-7-2")).toBeVisible();
 
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${item.route.replaceAll("/", "\\/")}\\?tags=`));
@@ -158,7 +162,7 @@ test("renders the localized changelog timeline and filter controls", async ({ pa
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    await expect(page.getByText(item.latestDate, { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: item.latestDate, exact: true })).toBeVisible();
     const overflows = await page.evaluate(() =>
       document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
