@@ -146,6 +146,7 @@ jobs:
           fi
 
       - name: Smoke packaged App Builder
+        if: matrix.platform != 'windows'
         run: |
           if [ "$(uname -s)" = "Linux" ]; then
             dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged

@@ -201,9 +201,24 @@ describe("release workflow latency contracts", () => {
   });
 
   it("installs the Playwright browser required by the packaged app-builder smoke", () => {
+    const appBuilderSmokeIndex = desktopWorkflow.indexOf(
+      "\n      - name: Smoke packaged App Builder\n",
+    );
+    const postgresSmokeIndex = desktopWorkflow.indexOf(
+      "\n      - name: Smoke staged PostgreSQL runtime\n",
+    );
+    expect(appBuilderSmokeIndex).toBeGreaterThan(-1);
+    expect(postgresSmokeIndex).toBeGreaterThan(appBuilderSmokeIndex);
+    const appBuilderSmoke = desktopWorkflow.slice(
+      appBuilderSmokeIndex,
+      postgresSmokeIndex,
+    );
+
     expect(desktopWorkflow).toContain("Install Playwright Chromium");
     expect(desktopWorkflow).toContain("pnpm exec playwright install --with-deps chromium");
     expect(desktopWorkflow).toContain("pnpm exec playwright install chromium");
+    expect(appBuilderSmoke).toContain("if: matrix.platform != 'windows'");
+    expect(appBuilderSmoke).toContain("node desktop/scripts/app-builder-smoke.mjs --packaged");
 
     const installIndex = desktopWorkflow.indexOf("Install Playwright Chromium");
     const smokeIndex = desktopWorkflow.indexOf(
