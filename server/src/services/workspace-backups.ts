@@ -720,6 +720,43 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
   return { recovered, blocked };
 }
 
+async function assertNoUnresolvedRestoreReceipt(orgId: string) {
+  const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+  let names: string[];
+  try {
+    names = await fs.readdir(receiptRoot);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  const prefix = `${orgId}-`;
+  for (const name of names.filter((entry) => entry.startsWith(prefix) && entry.endsWith(".json"))) {
+    const receiptPath = path.join(receiptRoot, name);
+    let receipt: WorkspaceRestoreReceipt | null = null;
+    try {
+      receipt = await readRestoreReceipt(receiptPath);
+    } catch (error) {
+      throw conflict("Workspace restore requires recovery before another restore can run.", {
+        code: "restore_recovery_required",
+        orgId,
+        receiptPath,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (receipt && receipt.orgId === orgId && ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)) {
+      throw new WorkspaceRestoreRecoveryRequiredError(receipt, "unresolved_receipt", "An earlier workspace restore has not reached a recoverable terminal state.");
+    }
+    if (!receipt) {
+      throw conflict("Workspace restore requires recovery before another restore can run.", {
+        code: "restore_recovery_required",
+        orgId,
+        receiptPath,
+        detail: "invalid_or_unowned_receipt",
+      });
+    }
+  }
+}
+
 async function withWorkspaceRestoreLock<T>(orgId: string, operation: () => Promise<T>): Promise<T> {
   const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
   const lockPath = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-lock-${orgId}`);
@@ -1817,6 +1854,7 @@ export function workspaceBackupService(db: Db) {
 
     async restore(orgId: string, backupId: string, input?: { createdByUserId?: string | null }): Promise<WorkspaceBackupRestoreResult> {
       return withWorkspaceRestoreLock(orgId, async () => {
+      await assertNoUnresolvedRestoreReceipt(orgId);
       const row = await getBackupRow(orgId, backupId);
       const activeRunCount = await countActiveRuns(orgId);
       if (activeRunCount > 0) {
