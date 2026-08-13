@@ -10,6 +10,8 @@ import {
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
+import { verifyNativeReleaseVersion } from "../../scripts/native-release-version.mjs";
+import { resolveNativeTarget } from "./native-target.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -408,6 +410,21 @@ async function verifyVersionCompatibility(serverPackageDir) {
   }
 
   ok(`release version compatibility checked (${expectedVersion}; ${firstPartyDependencies.length} first-party dependencies)`);
+
+  const repoRoot = path.resolve(desktopRoot, "..");
+  const target = resolveNativeTarget(process.platform, process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch);
+  const binaryPaths = target
+    ? [
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
+      ]
+    : [];
+  try {
+    const nativeReceipt = verifyNativeReleaseVersion({ repoRoot, expectedVersion, binaryPaths });
+    ok(`Rust release version compatibility checked (${nativeReceipt.productVersion}; ${nativeReceipt.versionSources.nativePackages.length} native packages)`);
+  } catch (e) {
+    error(`Rust release version compatibility failed: ${e.message}`);
+  }
 }
 
 function packagedRuntimeSegment() {

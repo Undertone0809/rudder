@@ -168,6 +168,10 @@ done <<< "$PUBLIC_PACKAGE_INFO"
 [ -z "$PUBLIC_PACKAGE_VERSION_MISMATCH" ] || release_fail "public packages must share one committed stable semver before release. Found mismatches: $PUBLIC_PACKAGE_VERSION_MISMATCH"
 [[ "$COMMITTED_STABLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || release_fail "committed public package version must be a stable semver like 0.1.0, found: ${COMMITTED_STABLE_VERSION:-<empty>}"
 
+if ! node "$REPO_ROOT/scripts/native-release-version.mjs" --expected-version="$COMMITTED_STABLE_VERSION" >/dev/null; then
+  release_fail "Rust workspace, Cargo.lock, first-party manifests, and staged native version metadata must match the committed Rudder release version."
+fi
+
 TARGET_STABLE_VERSION="$COMMITTED_STABLE_VERSION"
 TARGET_PUBLISH_VERSION="$TARGET_STABLE_VERSION"
 DIST_TAG="latest"
