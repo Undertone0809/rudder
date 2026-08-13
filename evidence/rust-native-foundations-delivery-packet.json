@@ -123,15 +123,15 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
+    "base_sha": "00b7545b297836e0db36422c8004b3784b14ccda",
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "478465d978ac88fb1c6cb8b505ce9850e4b23b03",
     "branch_refs": [
-      "6094efed8839bc1da1626cf422e5bf8ff06f5e2f"
+      "a08bd880725f9adcfadac72f2097f31695b3e037"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-native-final-integrate.1jSeVs",
-    "patch_tree_sha": "replace-with-merge-tree-sha",
+    "patch_tree_sha": "4d5b33e4096a6b297df4461413fea23022b7be1",
     "expected_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
     "cas": {
       "attempted": false,
