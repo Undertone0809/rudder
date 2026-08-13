@@ -134,10 +134,10 @@
     "patch_tree_sha": "4d5b33e4096a6b297df4461413fea23022b7be1",
     "expected_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
+      "delivered_sha": "702b1099a22a980326157866de4cd093014f4622"
     },
     "index_update_mode": "none"
   },
@@ -158,13 +158,15 @@
     ]
   },
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "702b1099a22a980326157866de4cd093014f4622",
+    "delivered_tree_sha": "136465766d53c3d5b66945659aa3bdfd82945158",
+    "timestamp": "2026-08-14T00:44:01+08:00",
     "proof": [
-      "candidate merge cd6b7820d was created in an isolated worktree",
-      "prior packaged receipts were invalidated because their artifact source was cf26412d3"
+      "git update-ref refs/heads/main 702b1099a22a980326157866de4cd093014f4622 10a5576d95a307d5660742f6f96a436fd6711ebf",
+      "merge-tree --write-tree 4d5b33e4096a6b297df4461413fea23022b7be1",
+      "shared worktree dirty/index state preserved; concurrent index drift recorded outside packet",
+      "prior packaged receipts invalidated because their artifact source was cf26412d3"
     ]
   }
 }
