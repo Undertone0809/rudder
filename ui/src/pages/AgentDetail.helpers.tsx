@@ -443,6 +443,24 @@ export function readInvocationSkillList(payload: Record<string, unknown> | null 
   return skills;
 }
 
+export function readInvocationMcpServerList(payload: Record<string, unknown> | null | undefined) {
+  const raw = payload?.loadedMcpServers;
+  if (!Array.isArray(raw)) return null;
+  const seen = new Set<string>();
+  const servers: Array<{ serverName: string; source: "built_in" | "managed_external" }> = [];
+  for (const value of raw) {
+    const record = asRecord(value);
+    const serverName = asNonEmptyString(record?.serverName);
+    const source = record?.source === "managed_external" || record?.source === "built_in"
+      ? record.source
+      : null;
+    if (!serverName || !source || seen.has(serverName)) continue;
+    seen.add(serverName);
+    servers.push({ serverName, source });
+  }
+  return servers;
+}
+
 export function InvocationSkillEvidence({
   invocationPayload,
   usagePayload,
@@ -493,6 +511,51 @@ export function InvocationSkillEvidence({
                 </span>
               ))}
             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function InvocationMcpEvidence({
+  invocationPayloads,
+}: {
+  invocationPayloads: Array<Record<string, unknown>>;
+}) {
+  const attempts = invocationPayloads
+    .map((payload, index) => ({
+      attempt: index + 1,
+      servers: readInvocationMcpServerList(payload),
+    }))
+    .filter((entry): entry is { attempt: number; servers: Array<{ serverName: string; source: "built_in" | "managed_external" }> } => entry.servers !== null);
+
+  if (attempts.length === 0) return null;
+
+  return (
+    <div className="space-y-2" data-testid="invocation-mcp-evidence">
+      <div className="text-xs text-muted-foreground">MCP servers</div>
+      <div className="space-y-2">
+        {attempts.map(({ attempt, servers }) => (
+          <div key={attempt} className="min-w-0 rounded-md border border-border/70 bg-background/60 px-2 py-1.5">
+            <div className="mb-1 text-[11px] font-medium text-muted-foreground">
+              {invocationPayloads.length > 1 ? `Attempt ${attempt} · Loaded for run` : "Loaded for run"}
+            </div>
+            {servers.length > 0 ? (
+              <div className="flex min-w-0 flex-wrap gap-1.5">
+                {servers.map((server) => (
+                  <span
+                    key={server.serverName}
+                    className="max-w-full break-all rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+                    title={server.source === "built_in" ? "Built-in MCP server" : "Managed external MCP server"}
+                  >
+                    {server.serverName}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">None loaded</div>
+            )}
           </div>
         ))}
       </div>

@@ -17,6 +17,10 @@ describe("heartbeat execution event observability", () => {
         promptMetrics: {
           promptChars: 1024,
         },
+        loadedMcpServers: [
+          { serverName: "rudder-tools", source: "built_in" },
+          { serverName: "external.supabase", source: "managed_external" },
+        ],
       },
       runtimeSkills: [
         {
@@ -35,6 +39,10 @@ describe("heartbeat execution event observability", () => {
       promptMetrics: {
         promptChars: 1024,
       },
+      loadedMcpServers: [
+        { serverName: "rudder-tools", source: "built_in" },
+        { serverName: "external.supabase", source: "managed_external" },
+      ],
       loadedSkillCount: 1,
       loadedSkillKeys: ["rudder/build-advisor"],
       desiredSkillCount: 1,

@@ -1,6 +1,6 @@
 export type {
   AgentRuntimeAgent, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestContext, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext,
-  AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta, AgentRuntimeSessionCodec, AgentRuntimeState, ServerAgentRuntimeModule, UsageSummary
+  AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedMcpServerMeta, AgentRuntimeLoadedSkillMeta, AgentRuntimeSessionCodec, AgentRuntimeState, ServerAgentRuntimeModule, UsageSummary
 } from "@rudderhq/agent-runtime-utils";
 export {
   discoverAgentRuntimeModels,
