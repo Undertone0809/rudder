@@ -58,6 +58,7 @@ import type {
   GoalResultReducerPreflight,
   GoalStartPacket,
   GoalStartPreview,
+  IssueAssigneeAgentRuntimeOverrides,
   PreviewGoalStart,
   PublicGoal,
   PublicGoalActivity,
@@ -501,6 +502,7 @@ export function publicGoalView(goal: GoalRow): PublicGoal {
     outcomeStatement: goal.outcomeStatement ? publicGoalText(goal.outcomeStatement) : goal.outcomeStatement,
     criteria,
     ownerAgentId: goal.ownerAgentId,
+    ownerAgentRuntimeOverrides: goal.ownerAgentRuntimeOverrides,
     focus: goal.focus,
     evaluationResult: typeof evaluation.outcome === "string" ? { outcome: evaluation.outcome } : null,
     evaluationDeadline: goal.evaluationDeadline,
@@ -2192,6 +2194,7 @@ export function goalService(db: Db) {
       description?: string | null;
       alignmentQuestion?: string | null;
       ownerAgentId?: string | null;
+      ownerAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
       targetTime?: Date | null;
     }) => {
       if (data.ownerAgentId) await requireInvokableOwner(db, orgId, data.ownerAgentId);
@@ -2206,6 +2209,7 @@ export function goalService(db: Db) {
         lifecycle: "draft",
         parentId: null,
         ownerAgentId: data.ownerAgentId ?? null,
+        ownerAgentRuntimeOverrides: data.ownerAgentRuntimeOverrides ?? null,
       }).returning().then((rows) => rows[0]);
     },
 
@@ -2214,6 +2218,7 @@ export function goalService(db: Db) {
       description?: string | null;
       alignmentQuestion?: string | null;
       ownerAgentId?: string | null;
+      ownerAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
       targetTime?: Date | null;
     }, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
@@ -2230,12 +2235,18 @@ export function goalService(db: Db) {
           throw conflict("Owner and target time can only be edited while a Goal is a Draft");
         }
         if (data.ownerAgentId) await requireInvokableOwner(database, current.orgId, data.ownerAgentId);
-        const { title, description, alignmentQuestion, ownerAgentId, targetTime } = data;
+        const { title, description, alignmentQuestion, ownerAgentId, ownerAgentRuntimeOverrides, targetTime } = data;
+        const ownerChanged = ownerAgentId !== undefined && ownerAgentId !== current.ownerAgentId;
         const changedGoal = await database.update(goals).set({
           title,
           description,
           alignmentQuestion,
           ...(ownerAgentId !== undefined ? { ownerAgentId } : {}),
+          ...(ownerAgentRuntimeOverrides !== undefined
+            ? { ownerAgentRuntimeOverrides }
+            : ownerChanged
+              ? { ownerAgentRuntimeOverrides: null }
+              : {}),
           ...(targetTime !== undefined ? { evaluationDeadline: targetTime } : {}),
           updatedAt: new Date(),
         })
@@ -2957,7 +2968,7 @@ export function goalService(db: Db) {
           assignedByAuthorityRef: input.authorityRef ?? null,
           startsAt: now,
         }).returning();
-        const changedGoal = await database.update(goals).set({ ownerAgentId: input.agentId, updatedAt: now })
+        const changedGoal = await database.update(goals).set({ ownerAgentId: input.agentId, ownerAgentRuntimeOverrides: null, updatedAt: now })
           .where(and(eq(goals.id, id), eq(goals.lifecycle, "active")))
           .returning().then((rows) => rows[0] ?? null);
         if (!changedGoal) throw conflict("Goal changed before Owner assignment; reload and retry");

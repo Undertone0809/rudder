@@ -55,7 +55,7 @@ interface IssuePropertiesProps {
   showAuditSeparator?: boolean;
 }
 
-function PropertyRow({
+export function PropertyRow({
   label,
   children,
   align = "center",
@@ -77,7 +77,7 @@ function PropertyRow({
 }
 
 /** Renders a Popover on desktop, or an inline collapsible section on mobile (inline mode). */
-function PropertyPicker({
+export function PropertyPicker({
   inline,
   label,
   open,

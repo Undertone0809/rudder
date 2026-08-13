@@ -32,6 +32,7 @@ const SECOND_GOAL_ID = "44444444-4444-4444-8444-444444444444";
 const OWNER_ID = "55555555-5555-4555-8555-555555555555";
 const OTHER_ORG_OWNER_ID = "66666666-6666-4666-8666-666666666666";
 const RUN_ID = "77777777-7777-4777-8777-777777777777";
+const SECOND_OWNER_ID = "88888888-8888-4888-8888-888888888888";
 
 type PreviewOwner = NonNullable<Parameters<typeof compileGoalStartPreview>[1]>;
 
@@ -1029,6 +1030,19 @@ describe("Goal contract", () => {
       initialContinuation: { kind: "verification", summary: "Verify the next result" },
       initialPlan: { summary: "Build and verify the result" },
     }))).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("clears a Draft Owner's runtime override when ownership changes", async () => {
+    const { db, state } = createGoalDb(makeGoal({
+      ownerAgentId: OWNER_ID,
+      ownerAgentRuntimeOverrides: { agentRuntimeConfig: { model: "gpt-5.6-sol" } },
+    }));
+    state.agents.push(makePreviewOwner({ id: SECOND_OWNER_ID, name: "Second Goal owner" }));
+
+    const updated = await goalService(db).update(GOAL_ID, { ownerAgentId: SECOND_OWNER_ID });
+
+    expect(updated.ownerAgentId).toBe(SECOND_OWNER_ID);
+    expect(updated.ownerAgentRuntimeOverrides).toBeNull();
   });
 
   it("rejects non-owner Agent commands and incomplete legacy active Goals", async () => {

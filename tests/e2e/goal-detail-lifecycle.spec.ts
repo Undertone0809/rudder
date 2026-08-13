@@ -385,7 +385,7 @@ test.describe("Goal Workspace v2", () => {
       );
     }).toBeLessThanOrEqual(8);
     await expect(goalDialog.locator('input[type="datetime-local"]')).toHaveCount(0);
-    await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Goal start preview")).toHaveCount(0);
     const assigneeTrigger = page.getByRole("button", { name: "Assignee", exact: true });
     await assigneeTrigger.click();
     const assigneeMenu = page.locator('[data-slot="popover-content"]');
@@ -413,9 +413,7 @@ test.describe("Goal Workspace v2", () => {
     await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
     await setGoalTargetTime(page, "2026-08-20T10:00");
 
-    await expect(page.getByText("Success criteria", { exact: true })).toBeVisible();
-    await expect(page.getByText("First action", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("Goal start preview").getByText(owner.name, { exact: true })).toBeVisible();
+    await expect(page.getByText("Ready to start", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Start Goal" })).toBeEnabled();
 
     const createAndStart = page.getByRole("button", { name: "Start Goal" });
@@ -781,7 +779,7 @@ test.describe("Goal Workspace v2", () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test("turns a vague Draft into a started Goal without hiding the requirements", async ({ page }, testInfo) => {
+  test("turns a vague Draft into a started Goal without a redundant start preview", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -797,24 +795,15 @@ test.describe("Goal Workspace v2", () => {
     await page.getByRole("button", { name: "New Goal" }).first().click();
     await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Rudder stars");
     const startGoal = page.getByRole("button", { name: "Start Goal", exact: true });
-    await expect(page.getByText("Complete before starting", { exact: true })).toBeVisible();
-    await expect(page.getByText("Verifiable result", { exact: true })).toBeVisible();
-    await expect(page.getByText("Owner Agent", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Goal start preview")).toHaveCount(0);
+    await expect(page.getByText("Verifiable result", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Owner Agent", { exact: true })).toHaveCount(0);
     await expect(startGoal).toBeDisabled();
     await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
     await page.setViewportSize({ width: 390, height: 760 });
     const dialog = page.locator('[data-slot="dialog-content"]');
     const dialogFooter = dialog.locator(":scope > div").last();
-    const startPreview = page.getByLabel("Goal start preview");
-    await expect(startPreview.getByText("Select an Agent above to own and start this Goal.", { exact: true })).toBeVisible();
-    await expect.poll(async () => {
-      const [footerGeometry, previewGeometry] = await Promise.all([
-        dialogFooter.boundingBox(),
-        startPreview.boundingBox(),
-      ]);
-      if (!footerGeometry || !previewGeometry) return Number.POSITIVE_INFINITY;
-      return previewGeometry.y + previewGeometry.height - footerGeometry.y;
-    }).toBeLessThanOrEqual(0);
+    await expect(dialogFooter).toBeVisible();
     await page.getByRole("button", { name: "Choose Owner Agent", exact: true }).click();
     await expect(page.getByPlaceholder("Search Agents...")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -863,7 +852,7 @@ test.describe("Goal Workspace v2", () => {
     await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Reach 1,000 GitHub stars by August 31, 2026");
     await page.getByRole("button", { name: "Assignee" }).click();
     await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
-    await expect(page.getByText("Ready to start", { exact: true })).toBeVisible();
+    await expect(page.getByText("Ready to start", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Start Goal", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "Start Goal", exact: true }).click();
 
@@ -888,6 +877,88 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-draft-started-mobile.png"), fullPage: true });
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("persists the Goal owner's runtime profile and clears it on reassignment", async ({ page }) => {
+    test.setTimeout(180_000);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    const organization = await createOrganization(page.request, `Goal-runtime-profile-${Date.now()}`);
+    const owner = await createAgent(page.request, organization.id, "Runtime profile owner");
+    const replacementOwner = await createAgent(page.request, organization.id, "Replacement runtime owner");
+    const preview = await previewGoal(
+      page.request,
+      organization.id,
+      owner.id,
+      "Persist a Goal owner runtime profile",
+      "The selected runtime profile must survive reload and remain scoped to this Goal owner.",
+    );
+    const started = await startGoal(page.request, organization.id, preview);
+    expect(started.response.status()).toBe(201);
+    const goalId = started.goal!.id;
+
+    await page.addInitScript((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.route(`**/api/orgs/${organization.id}/adapters/codex_local/models`, async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        json: [{
+          id: "gpt-5.6-sol",
+          label: "gpt-5.6-sol",
+          variants: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        }],
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto(`/${organization.urlKey}/goals/${goalId}`);
+    await expect(page.getByRole("button", { name: `Run profile for ${owner.name}`, exact: true })).toBeVisible();
+
+    const ownerProperty = page
+      .getByRole("complementary", { name: "Goal properties" })
+      .locator('[data-slot="issue-property-row"]')
+      .filter({ hasText: "Owner" })
+      .first();
+    await ownerProperty.hover();
+    await page.getByRole("button", { name: `Run profile for ${owner.name}`, exact: true }).click();
+    const runtimeProfile = page.locator('[data-slot="popover-content"]').filter({ hasText: "Run profile" }).last();
+    await expect(runtimeProfile).toBeVisible();
+    await runtimeProfile.getByTestId("issue-runtime-option-model-gpt-5.6-sol").click();
+    await runtimeProfile.getByTestId("issue-runtime-option-effort-max").click();
+    await runtimeProfile.getByTestId("issue-runtime-apply").click();
+    await expect(runtimeProfile).toBeHidden();
+
+    await expect.poll(async () => {
+      const [row] = await e2eDb
+        .select({ ownerAgentId: goals.ownerAgentId, ownerAgentRuntimeOverrides: goals.ownerAgentRuntimeOverrides })
+        .from(goals)
+        .where(eq(goals.id, goalId));
+      return row;
+    }).toMatchObject({
+      ownerAgentId: owner.id,
+      ownerAgentRuntimeOverrides: { agentRuntimeConfig: { model: "gpt-5.6-sol", modelReasoningEffort: "max" } },
+    });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await ownerProperty.hover();
+    await page.getByRole("button", { name: `Run profile for ${owner.name}`, exact: true }).click();
+    const reloadedProfile = page.locator('[data-slot="popover-content"]').filter({ hasText: "Run profile" }).last();
+    await expect(reloadedProfile.getByTestId("issue-runtime-option-model-gpt-5.6-sol")).toHaveAttribute("aria-selected", "true");
+    await expect(reloadedProfile.getByTestId("issue-runtime-option-effort-max")).toHaveAttribute("aria-selected", "true");
+    await reloadedProfile.getByRole("button", { name: "Cancel", exact: true }).click();
+
+    await page.getByRole("button", { name: "Change Goal owner", exact: true }).click();
+    await page.getByRole("option", { name: new RegExp(replacementOwner.name, "i") }).click();
+    await expect(page.getByRole("button", { name: `Change Goal owner`, exact: true })).toContainText(replacementOwner.name);
+    await expect.poll(async () => {
+      const [row] = await e2eDb
+        .select({ ownerAgentId: goals.ownerAgentId, ownerAgentRuntimeOverrides: goals.ownerAgentRuntimeOverrides })
+        .from(goals)
+        .where(eq(goals.id, goalId));
+      return row;
+    }).toMatchObject({ ownerAgentId: replacementOwner.id, ownerAgentRuntimeOverrides: null });
     expect(pageErrors).toEqual([]);
   });
 

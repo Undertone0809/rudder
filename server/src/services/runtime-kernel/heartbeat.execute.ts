@@ -9,6 +9,7 @@
  */
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
+  goals,
   heartbeatRuns,
   issues,
   projects
@@ -281,12 +282,29 @@ export function createHeartbeatExecuteHandlers(context: any) {
           .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
           .then((rows) => rows[0] ?? null)
       : null;
+    const goalId = readNonEmptyString(context.goalId);
+    const goalContext = goalId
+      ? await db
+          .select({
+            id: goals.id,
+            ownerAgentId: goals.ownerAgentId,
+            ownerAgentRuntimeOverrides: goals.ownerAgentRuntimeOverrides,
+          })
+          .from(goals)
+          .where(and(eq(goals.id, goalId), eq(goals.orgId, agent.orgId)))
+          .then((rows) => rows[0] ?? null)
+      : null;
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAgentRuntimeOverrides(
             issueContext.assigneeAgentRuntimeOverrides,
           )
         : null;
+    const goalOwnerOverrides =
+      goalContext && goalContext.ownerAgentId === agent.id
+        ? parseIssueAssigneeAgentRuntimeOverrides(goalContext.ownerAgentRuntimeOverrides)
+        : null;
+    const runtimeOverrides = issueContext ? issueAssigneeOverrides : goalOwnerOverrides;
     const issueExecutionWorkspaceSettings = parseIssueExecutionWorkspaceSettings(issueContext?.executionWorkspaceSettings);
     const contextProjectId = readNonEmptyString(context.projectId);
     const executionProjectId = issueContext?.projectId ?? contextProjectId;
@@ -350,7 +368,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     const executionWorkspaceMode = resolveExecutionWorkspaceMode({
       projectPolicy: projectExecutionWorkspacePolicy,
       issueSettings: issueExecutionWorkspaceSettings,
-      legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
+      legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
     });
     const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
       agent,
@@ -363,10 +381,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
       projectPolicy: projectExecutionWorkspacePolicy,
       issueSettings: issueExecutionWorkspaceSettings,
       mode: executionWorkspaceMode,
-      legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
+      legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
     });
-    const mergedConfig = issueAssigneeOverrides?.agentRuntimeConfig
-      ? { ...workspaceManagedConfig, ...issueAssigneeOverrides.agentRuntimeConfig }
+    const mergedConfig = runtimeOverrides?.agentRuntimeConfig
+      ? { ...workspaceManagedConfig, ...runtimeOverrides.agentRuntimeConfig }
       : workspaceManagedConfig;
     const { resolvedConfig, runtimeConfig, runtimeSkillEntries, secretKeys } =
       await runContextSvc.prepareRuntimeConfig({

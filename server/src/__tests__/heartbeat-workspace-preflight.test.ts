@@ -12,6 +12,7 @@ import {
   costMonthlySpendRollups,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -274,6 +275,7 @@ describe("heartbeat managed workspace preflight", () => {
     await db.delete(agentWakeupRequests);
     await db.delete(organizationSkills);
     await db.delete(issues);
+    await db.delete(goals);
     await db.delete(agents);
     await db.delete(organizations);
     if (rudderHome) await fs.rm(rudderHome, { recursive: true, force: true });
@@ -748,6 +750,87 @@ describe("heartbeat managed workspace preflight", () => {
     expect(invokedConfigs[1]).not.toEqual(expect.objectContaining({
       model: "issue-override-model",
     }));
+  });
+
+  it("applies a Goal runtime profile only to Goal-only runs", async () => {
+    const agent = await seedAgentFixture({
+      model: "agent-default-model",
+      modelReasoningEffort: "high",
+    });
+    const goalId = randomUUID();
+    await db.insert(goals).values({
+      id: goalId,
+      orgId: agent.orgId,
+      title: "Use the Goal runtime profile",
+      ownerAgentId: agent.agentId,
+      ownerAgentRuntimeOverrides: {
+        agentRuntimeConfig: {
+          model: "goal-override-model",
+          modelReasoningEffort: "ultra",
+        },
+      },
+    });
+
+    const invokedConfigs: Array<Record<string, unknown>> = [];
+    mockRuntimeAdapter.execute.mockImplementation(async (ctx) => {
+      invokedConfigs.push({ ...ctx.config });
+      return {
+        summary: "goal runtime override observed",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const goalRun = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "test_goal_runtime_override_goal_only",
+      contextSnapshot: {
+        goalId,
+        taskKey: `goal:${goalId}:goal-only`,
+      },
+    });
+
+    expect(goalRun?.id).toBeTruthy();
+    await waitForCondition(async () => (await getRun(goalRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agent.agentId))?.status === "idle");
+    expect(invokedConfigs[0]).toEqual(expect.objectContaining({
+      model: "goal-override-model",
+      modelReasoningEffort: "ultra",
+    }));
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: agent.orgId,
+      title: "Do not inherit the Goal profile",
+      status: "backlog",
+      priority: "high",
+      goalId,
+      assigneeAgentId: agent.agentId,
+    });
+
+    const issueRun = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "test_goal_runtime_override_issue_backed",
+      contextSnapshot: {
+        goalId,
+        issueId,
+        taskKey: `issue:${issueId}:goal-linked`,
+      },
+    });
+
+    expect(issueRun?.id).toBeTruthy();
+    await waitForCondition(async () => (await getRun(issueRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agent.agentId))?.status === "idle");
+    expect(invokedConfigs[1]).toEqual(expect.objectContaining({
+      model: "agent-default-model",
+      modelReasoningEffort: "high",
+    }));
+    expect(invokedConfigs[1]).not.toEqual(expect.objectContaining({ model: "goal-override-model" }));
   });
 
   it("persists forbidden runtime skill marker evidence from adapter output", async () => {

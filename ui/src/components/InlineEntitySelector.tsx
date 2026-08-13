@@ -1,6 +1,6 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Check, ChevronDown } from "lucide-react";
-import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 export interface InlineEntityOption {
@@ -62,9 +62,14 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     const [highlightedIndex, setHighlightedIndex] = useState(0);
     const [shouldFocusSelectedOption, setShouldFocusSelectedOption] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const selectedOptionButtonRef = useRef<HTMLButtonElement | null>(null);
     const shouldPreventCloseAutoFocusRef = useRef(false);
     const isPointerDownRef = useRef(false);
+    const suppressNextFocusOpenRef = useRef(false);
+    const restoreTriggerFocusRef = useRef(false);
+
+    useImperativeHandle(ref, () => triggerRef.current as HTMLButtonElement);
 
     const allOptions = useMemo<InlineEntityOption[]>(
       () => [{ id: "", label: noneLabel, searchText: noneLabel }, ...options],
@@ -129,7 +134,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       >
         <PopoverTrigger asChild>
           <button
-            ref={ref}
+            ref={triggerRef}
             type="button"
             aria-label={ariaLabel}
             className={cn(
@@ -141,7 +146,11 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             )}
             onPointerDown={() => { isPointerDownRef.current = true; }}
             onFocus={() => {
-              if (!isPointerDownRef.current) setOpen(true);
+              if (suppressNextFocusOpenRef.current) {
+                suppressNextFocusOpenRef.current = false;
+              } else if (!isPointerDownRef.current) {
+                setOpen(true);
+              }
               isPointerDownRef.current = false;
             }}
           >
@@ -180,6 +189,12 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             }
           }}
           onCloseAutoFocus={(event) => {
+            if (restoreTriggerFocusRef.current) {
+              event.preventDefault();
+              restoreTriggerFocusRef.current = false;
+              requestAnimationFrame(() => triggerRef.current?.focus());
+              return;
+            }
             if (!shouldPreventCloseAutoFocusRef.current) return;
             event.preventDefault();
             shouldPreventCloseAutoFocusRef.current = false;
@@ -190,6 +205,13 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               // Keep the Agent menu open while its selected-row runtime panel is active.
               event.preventDefault();
             }
+          }}
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+            suppressNextFocusOpenRef.current = true;
+            restoreTriggerFocusRef.current = true;
           }}
         >
           <input
@@ -228,7 +250,10 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               }
               if (event.key === "Escape") {
                 event.preventDefault();
+                event.stopPropagation();
                 setOpen(false);
+                suppressNextFocusOpenRef.current = true;
+                restoreTriggerFocusRef.current = true;
               }
             }}
           />

@@ -531,7 +531,7 @@ export function IssueRuntimeSelector({
         }}
         data-testid={`issue-runtime-${activeSubmenu}-options`}
         role="listbox"
-        aria-label={activeSubmenu === "model" ? "Automation model" : "Automation thinking effort"}
+        aria-label={activeSubmenu === "model" ? "Model options" : "Thinking options"}
         className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
         style={submenuPosition}
         onKeyDown={(event) => {
@@ -610,7 +610,8 @@ export function IssueRuntimeSelector({
         align="end"
         side="bottom"
         sideOffset={6}
-        className="w-72 p-2"
+        collisionPadding={12}
+        className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-72 overflow-y-auto p-2"
       >
         <div className="mb-2 border-b border-border pb-2">
           <p className="text-xs font-medium text-foreground">Run profile</p>
@@ -653,7 +654,7 @@ export function IssueRuntimeSelector({
           )}
         </div>
         {hasThinkingOptions ? (
-          <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Issue thinking effort">
+          <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Thinking">
             <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Thinking</p>
             {thinkingOptions.map((option) => (
               <button

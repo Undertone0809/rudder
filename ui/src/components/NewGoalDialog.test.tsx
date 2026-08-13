@@ -257,9 +257,9 @@ describe("NewGoalDialog", () => {
       expect(button("Start Goal")).not.toBeNull();
       expect(button("Start Goal")?.disabled).toBe(false);
     });
-    expect(container.textContent).toContain("Success criteria");
-    expect(container.textContent).toContain("The operator workflow passes");
-    expect(container.textContent).toContain("First action");
+    expect(container.querySelector('[aria-label="Goal start preview"]')).toBeNull();
+    expect(container.textContent).not.toContain("Ready to start");
+    expect(container.textContent).not.toContain("Success criteria");
 
     act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(container.querySelector("[role=alert]")?.textContent).toContain("Unable to start this Goal right now"));
@@ -283,7 +283,7 @@ describe("NewGoalDialog", () => {
     expect(goalsApi.previewStart).not.toHaveBeenCalledWith("org-1", expect.objectContaining({ ownerAgentId: agent.id }));
   });
 
-  it("requires explicit confirmation before starting with a capability warning", async () => {
+  it("keeps capability warnings internal while starting", async () => {
     vi.mocked(goalsApi.previewStart).mockResolvedValue({
       ...validPreview,
       warning: "This Agent may not be the best match for this Goal.",
@@ -293,9 +293,9 @@ describe("NewGoalDialog", () => {
     change(field("Goal"), "Publish the release notes");
 
     await waitUntil(() => {
-      expect(container.textContent).toContain("This Agent may not be the best match for this Goal.");
       expect(button("Start Goal")?.disabled).toBe(false);
     });
+    expect(container.textContent).not.toContain("This Agent may not be the best match for this Goal.");
     expect(button("Save draft")).not.toBeNull();
     act(() => button("Start Goal")?.click());
     await waitUntil(() => expect(navigate).toHaveBeenCalledWith("/goals/goal-1"));
@@ -410,15 +410,12 @@ describe("NewGoalDialog", () => {
       expect(button("Save draft")).not.toBeNull();
       expect(button("Save draft")?.disabled).toBe(false);
       expect(button("Start Goal")?.disabled).toBe(true);
-      expect(container.textContent).toContain("Describe a verifiable result.");
     });
-    expect(container.textContent).toContain("Describe a verifiable result.");
-    expect(container.textContent).toContain("Select an Agent above to own and start this Goal.");
+    expect(container.textContent).not.toContain("Describe a verifiable result.");
+    expect(container.textContent).not.toContain("Select an Agent above to own and start this Goal.");
     expect(container.textContent).not.toContain("What external result should change?");
-    const addExpectedResult = container.querySelector<HTMLButtonElement>('[aria-label="Add expected result"]');
-    expect(addExpectedResult).not.toBeNull();
-    act(() => addExpectedResult?.click());
-    expect(document.activeElement).toBe(field("Expected result"));
+    expect(container.querySelector('[aria-label="Goal start preview"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Add expected result"]')).toBeNull();
     act(() => button("Save draft")?.click());
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Explore",

@@ -14,6 +14,7 @@ import type {
   GoalWorkspaceFacet,
 } from "../constants.js";
 import type { ActivateGoalInput, EvaluateGoal } from "../validators/goal.js";
+import type { IssueAssigneeAgentRuntimeOverrides } from "./issue.js";
 
 export interface GoalCriterion {
   id: string;
@@ -84,6 +85,7 @@ export interface Goal {
   status: GoalStatus;
   parentId: string | null;
   ownerAgentId: string | null;
+  ownerAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
   /** Optional on legacy API records until the Goal contract migration runs. */
   outcomeStatement?: string | null;
   objectiveMode?: GoalObjectiveMode;
@@ -123,6 +125,7 @@ export interface PublicGoal {
   outcomeStatement: string | null;
   criteria: PublicGoalCriterion[];
   ownerAgentId: string | null;
+  ownerAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
   focus: boolean;
   evaluationResult: { outcome: string } | null;
   evaluationDeadline: Date | string | null;

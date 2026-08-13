@@ -120,7 +120,7 @@ vi.mock("../components/StatusBadge", () => ({
 
 vi.mock("../components/PageSkeleton", () => ({ PageSkeleton: () => <div>Loading</div> }));
 
-vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn(), resume: vi.fn() } }));
+vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn(), resume: vi.fn(), adapterModels: vi.fn() } }));
 vi.mock("../api/auth", () => ({ authApi: { getSession: vi.fn() } }));
 vi.mock("../api/issues", () => ({ issuesApi: { list: vi.fn() } }));
 vi.mock("../api/projects", () => ({ projectsApi: { list: vi.fn() } }));
@@ -130,6 +130,7 @@ vi.mock("../api/goals", () => ({
     getHistory: vi.fn(),
     dependencies: vi.fn(),
     update: vi.fn(),
+    assignOwner: vi.fn(),
     setFocus: vi.fn(),
     remove: vi.fn(),
     feedback: vi.fn(),
@@ -150,6 +151,7 @@ const goal = {
   status: "active",
   parentId: null,
   ownerAgentId: "agent-1",
+  ownerAgentRuntimeOverrides: null,
   lifecycle: "active",
   objectiveMode: "target",
   contractRevision: 2,
@@ -299,6 +301,10 @@ function button(container: ParentNode, label: string) {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+  });
   vi.mocked(goalsApi.getWorkspace).mockResolvedValue(workspace as never);
   vi.mocked(goalsApi.getHistory).mockResolvedValue({ items: [], nextCursor: null } as never);
   vi.mocked(authApi.getSession).mockResolvedValue({
@@ -307,6 +313,7 @@ beforeEach(() => {
   });
   vi.mocked(goalsApi.dependencies).mockResolvedValue(dependencies as never);
   vi.mocked(goalsApi.update).mockResolvedValue(goal as never);
+  vi.mocked(goalsApi.assignOwner).mockResolvedValue({ agentId: "agent-2" } as never);
   vi.mocked(goalsApi.setFocus).mockResolvedValue(goal as never);
   vi.mocked(goalsApi.feedback).mockResolvedValue({ id: "feedback-1" } as never);
   vi.mocked(goalsApi.decideChangeProposal).mockResolvedValue({ id: "change-1", status: "approved" } as never);
@@ -314,6 +321,7 @@ beforeEach(() => {
   vi.mocked(goalsApi.rejectResultProposal).mockResolvedValue({ id: "result-1", status: "rejected" } as never);
   vi.mocked(agentsApi.list).mockResolvedValue([{ id: "agent-1", name: "Workspace owner" }] as never);
   vi.mocked(agentsApi.resume).mockResolvedValue({ id: "agent-1", name: "Workspace owner", status: "idle" } as never);
+  vi.mocked(agentsApi.adapterModels).mockResolvedValue([] as never);
   vi.mocked(projectsApi.list).mockResolvedValue([] as never);
   vi.mocked(issuesApi.list).mockResolvedValue([{
     id: "issue-1",
@@ -480,6 +488,93 @@ describe("GoalDetail", () => {
     ]) {
       expect(resultBlock.innerHTML).not.toContain(privateValue);
     }
+  });
+
+  it("reassigns an active Owner through the dedicated contract and keeps target read-only", async () => {
+    vi.mocked(agentsApi.list).mockResolvedValue([
+      { id: "agent-1", name: "Workspace owner", role: "engineer", status: "idle" },
+      { id: "agent-2", name: "Verification owner", role: "engineer", status: "idle" },
+    ] as never);
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector<HTMLButtonElement>('[aria-label="Change Goal owner"]')).not.toBeNull());
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Change Goal owner"]')?.click());
+    let ownerOption: HTMLButtonElement | null = null;
+    await waitUntil(() => {
+      ownerOption = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-inline-entity-option]"))
+        .find((candidate) => candidate.textContent?.includes("Verification owner")) ?? null;
+      expect(ownerOption).not.toBeNull();
+    });
+    act(() => ownerOption?.click());
+    await waitUntil(() => expect(goalsApi.assignOwner).toHaveBeenCalledWith("goal-1", { agentId: "agent-2" }));
+    expect(goalsApi.update).not.toHaveBeenCalledWith("goal-1", { ownerAgentId: "agent-2" });
+    expect(container.querySelector('[aria-label="Edit Goal target time"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal target time"]')).toBeNull();
+  });
+
+  it("uses the Issue runtime selector to persist the Goal Owner model profile", async () => {
+    vi.mocked(agentsApi.list).mockResolvedValue([{
+      id: "agent-1",
+      name: "Workspace owner",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.6-sol" },
+      runtimeConfig: {},
+    }] as never);
+    vi.mocked(agentsApi.adapterModels).mockResolvedValue([
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    ] as never);
+    vi.mocked(goalsApi.update).mockResolvedValue({
+      ...goal,
+      ownerAgentRuntimeOverrides: { agentRuntimeConfig: { model: "gpt-5.6-terra" } },
+    } as never);
+
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[data-testid="issue-runtime-selector"]')).not.toBeNull());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-selector"]')?.click());
+    await waitUntil(() => expect(document.body.querySelector('[data-testid="issue-runtime-option-model-gpt-5.6-terra"]')).not.toBeNull());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-option-model-gpt-5.6-terra"]')?.click());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-apply"]')?.click());
+
+    await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("goal-1", {
+      ownerAgentRuntimeOverrides: { agentRuntimeConfig: { model: "gpt-5.6-terra" } },
+    }));
+  });
+
+  it("keeps closed Goal ownership and target fully read-only", async () => {
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      goal: { ...goal, lifecycle: "closed", status: "achieved" },
+      facet: "closed",
+      attention: null,
+      changeProposals: [],
+      resultProposals: [],
+    } as never);
+    const container = renderPage();
+    await waitUntil(() => expect(container.textContent).toContain("Workspace owner"));
+    expect(container.querySelector('[aria-label="Change Goal owner"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit Goal target time"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal target time"]')).toBeNull();
+  });
+
+  it("keeps a long Related list compact until the user expands it", async () => {
+    vi.mocked(issuesApi.list).mockResolvedValue(Array.from({ length: 7 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      orgId: "org-1",
+      identifier: `GW-${index + 1}`,
+      title: `Related issue ${index + 1}`,
+      goalId: "goal-1",
+      status: "todo",
+    })) as never);
+    const container = renderPage();
+    await waitUntil(() => expect(button(container, "Show 4 more")).not.toBeNull());
+    expect(container.textContent).not.toContain("Related issue 7");
+
+    act(() => button(container, "Show 4 more")?.click());
+    expect(container.textContent).toContain("Related issue 7");
+    expect(button(container, "Show fewer")).not.toBeNull();
   });
 
   it("uses plain-language History labels instead of internal timeline kinds", async () => {

@@ -6,6 +6,7 @@ import {
   GOAL_FEEDBACK_KINDS,
   GOAL_OBJECTIVE_MODES,
 } from "../constants.js";
+import { issueAssigneeAdapterOverridesSchema } from "./issue.js";
 
 const jsonRecord = z.record(z.string(), z.unknown());
 const evidenceRefSchema = z.string().trim().min(1).regex(
@@ -45,6 +46,7 @@ export const createGoalSchema = z.object({
   status: z.string().optional(),
   parentId: z.string().uuid().optional().nullable(),
   ownerAgentId: z.string().uuid().optional().nullable(),
+  ownerAgentRuntimeOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
 });
 
 export type CreateGoal = z.infer<typeof createGoalSchema>;
@@ -54,6 +56,7 @@ export const updateGoalSchema = z.object({
   description: z.string().optional().nullable(),
   alignmentQuestion: z.string().trim().min(1).optional().nullable(),
   ownerAgentId: z.string().uuid().optional().nullable(),
+  ownerAgentRuntimeOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
   targetTime: z.coerce.date().optional().nullable(),
 }).strict();
 

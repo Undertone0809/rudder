@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BriefcaseBusiness,
+  CalendarDays,
   Check,
   CircleDot,
   Clock3,
@@ -37,7 +38,6 @@ import {
   Paperclip,
   Pencil,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Target,
   Trash2,
@@ -51,8 +51,12 @@ import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { AgentIdentity } from "../components/AgentAvatar";
+import { AgentMenuLabel } from "../components/AssigneeLabel";
 import { CommentComposer } from "../components/CommentComposer";
+import { GoalTargetTimePicker } from "../components/GoalTargetTimePicker";
 import { InlineEditor } from "../components/InlineEditor";
+import { PropertyPicker, PropertyRow } from "../components/IssueProperties";
+import { IssueRuntimeSelector, supportsIssueRuntimeOverrides } from "../components/IssueRuntimeSelector";
 import { MarkdownBody } from "../components/MarkdownBody";
 import type { MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -63,7 +67,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
-import { toDateTimeLocalValue } from "../lib/datetime-local";
+import { fromDateTimeLocalValue, toDateTimeLocalValue } from "../lib/datetime-local";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { findOrganizationByPrefix, getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
@@ -782,20 +786,24 @@ function ResultProposalSummary({ proposal, accepted = false }: { proposal: Resul
   );
 }
 
-function WorkLinks({ projects, issues }: { projects: Project[]; issues: Issue[] }) {
+function WorkLinks({ projects, issues, limit }: { projects: Project[]; issues: Issue[]; limit?: number }) {
   if (projects.length === 0 && issues.length === 0) return <p className="text-sm text-muted-foreground">No linked work.</p>;
+  const entries = [
+    ...projects.map((project) => ({ kind: "project" as const, project })),
+    ...issues.map((issue) => ({ kind: "issue" as const, issue })),
+  ];
+  const visibleEntries = typeof limit === "number" ? entries.slice(0, limit) : entries;
   return (
     <div className="divide-y divide-border border-y border-border">
-      {projects.map((project) => (
-        <Link key={`project-${project.id}`} to={projectUrl(project)} className="flex min-w-0 items-start justify-between gap-3 px-1 py-2 text-sm hover:bg-accent/35">
-          <span className="min-w-0 break-words">{project.name}</span>
+      {visibleEntries.map((entry) => entry.kind === "project" ? (
+        <Link key={`project-${entry.project.id}`} to={projectUrl(entry.project)} className="flex min-w-0 items-start justify-between gap-3 px-1 py-2 text-sm hover:bg-accent/35">
+          <span className="min-w-0 break-words">{entry.project.name}</span>
           <span className="shrink-0 text-xs text-muted-foreground">Project</span>
         </Link>
-      ))}
-      {issues.map((issue) => (
-        <Link key={`issue-${issue.id}`} to={issueUrl(issue)} className="flex min-w-0 items-start justify-between gap-3 px-1 py-2 text-sm hover:bg-accent/35">
-          <span className="shrink-0">{issue.identifier ?? "Issue"}</span>
-          <span className="min-w-0 break-words text-right text-xs text-muted-foreground">{issue.title}</span>
+      ) : (
+        <Link key={`issue-${entry.issue.id}`} to={issueUrl(entry.issue)} className="flex min-w-0 items-start justify-between gap-3 px-1 py-2 text-sm hover:bg-accent/35">
+          <span className="shrink-0">{entry.issue.identifier ?? "Issue"}</span>
+          <span className="min-w-0 break-words text-right text-xs text-muted-foreground">{entry.issue.title}</span>
         </Link>
       ))}
     </div>
@@ -877,18 +885,22 @@ export function GoalDetail() {
   const [titleDraft, setTitleDraft] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const [copiedGoalId, setCopiedGoalId] = useState(false);
+  const [relatedExpanded, setRelatedExpanded] = useState(false);
+  const [ownerOpen, setOwnerOpen] = useState(false);
+  const [ownerSearch, setOwnerSearch] = useState("");
 
   const focusFeedbackComposer = useCallback(() => {
     let attempts = 0;
     const focusWhenReady = () => {
+      attempts += 1;
       feedbackRef.current?.focus();
       const editable = feedbackSurfaceRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
       if (!editable) {
-        attempts += 1;
         if (attempts < 12) requestAnimationFrame(focusWhenReady);
         return;
       }
       if (document.activeElement !== editable) editable.focus({ preventScroll: true });
+      if (attempts < 4) requestAnimationFrame(focusWhenReady);
     };
     requestAnimationFrame(focusWhenReady);
   }, []);
@@ -954,6 +966,14 @@ export function GoalDetail() {
     onSuccess: async () => {
       await invalidate();
       pushToast({ id: "goal-detail-operation", title: "Goal updated", tone: "success" });
+    },
+    onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
+  });
+  const assignOwner = useMutation({
+    mutationFn: (agentId: string) => goalsApi.assignOwner(goalId!, { agentId }),
+    onSuccess: async () => {
+      await invalidate();
+      pushToast({ id: "goal-detail-operation", title: "Owner updated", tone: "success" });
     },
     onError: (error: Error) => pushToast({ title: error.message, tone: "error" }),
   });
@@ -1109,6 +1129,7 @@ export function GoalDetail() {
     setHistoryPages([]);
     setHistoryCursor(workspaceQuery.data?.timelineNextCursor ?? null);
     setHistoryFocusKey(null);
+    setRelatedExpanded(false);
   }, [goalId, workspaceQuery.data?.timelineNextCursor]);
 
   useEffect(() => {
@@ -1256,6 +1277,12 @@ export function GoalDetail() {
   const isActive = lifecycle === "active";
   const isClosed = lifecycle === "closed";
   const owner = agentsQuery.data?.find((agent) => agent.id === goal.ownerAgentId) ?? null;
+  const ownerOptions = (agentsQuery.data ?? [])
+    .filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval")
+    .filter((agent) => {
+      const query = ownerSearch.trim().toLowerCase();
+      return !query || `${agent.name} ${agent.title ?? ""} ${agent.role}`.toLowerCase().includes(query);
+    });
   const evidenceContext: EvidenceContext = {
     issues: issuesQuery.data ?? [],
     projects: projectsQuery.data ?? [],
@@ -2105,60 +2132,143 @@ export function GoalDetail() {
         <aside className="contents md:order-2 md:block md:min-w-0 md:sticky md:top-4" aria-label="Goal properties">
           <section className="order-2 min-w-0 rounded-lg border border-border bg-background/80 p-4">
             <h2 className="text-sm font-semibold">Properties</h2>
-            <div className="mt-3 divide-y divide-border">
-              <div className="min-w-0 pb-3">
-                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-                  <span>Owner</span>
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                </div>
-                {owner ? (
-                  <AgentIdentity
-                    name={owner.name}
-                    icon={owner.icon}
-                    role={owner.role}
-                    className="max-w-full min-w-0 items-start font-medium [&>span:last-child]:break-all [&>span:last-child]:whitespace-normal [&>span:last-child]:overflow-visible"
+            <div className="mt-3">
+              {isClosed ? (
+                <PropertyRow label="Owner" align="start">
+                  {owner ? (
+                    <AgentIdentity
+                      name={owner.name}
+                      icon={owner.icon}
+                      role={owner.role}
+                      className="max-w-full min-w-0 px-1 py-1 font-medium"
+                    />
+                  ) : (
+                    <span className="px-1 py-1 text-sm text-muted-foreground">{goal.ownerAgentId ? "Owner unavailable" : "Unassigned"}</span>
+                  )}
+                </PropertyRow>
+              ) : (
+                <PropertyPicker
+                  label="Owner"
+                  open={ownerOpen}
+                  onOpenChange={(open) => { setOwnerOpen(open); if (!open) setOwnerSearch(""); }}
+                  triggerContent={owner ? (
+                    <AgentIdentity
+                      name={owner.name}
+                      icon={owner.icon}
+                      role={owner.role}
+                      className="w-full"
+                    />
+                  ) : (
+                    <span className="text-sm text-muted-foreground">{goal.ownerAgentId ? "Owner unavailable" : "Unassigned"}</span>
+                  )}
+                  triggerAriaLabel="Change Goal owner"
+                  triggerClassName="min-w-0 w-full max-w-full justify-start overflow-hidden border-transparent bg-transparent px-1 py-1 hover:bg-accent/40"
+                  popoverClassName="w-[19rem]"
+                  popoverAlign="start"
+                  rowAlign="start"
+                  extra={owner && orgId && supportsIssueRuntimeOverrides(owner) ? (
+                    <IssueRuntimeSelector
+                      agent={owner}
+                      orgId={orgId}
+                      overrides={goal.ownerAgentRuntimeOverrides}
+                      variant="icon"
+                      disabled={updateGoal.isPending || assignOwner.isPending}
+                      onApply={(ownerAgentRuntimeOverrides) => updateGoal.mutate({ ownerAgentRuntimeOverrides })}
+                    />
+                  ) : null}
+                >
+                  <input
+                    className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+                    placeholder="Search Agents..."
+                    value={ownerSearch}
+                    onChange={(event) => setOwnerSearch(event.target.value)}
+                    autoFocus
                   />
-                ) : (
-                  <p className="text-sm text-muted-foreground">{goal.ownerAgentId ? "Owner unavailable" : "Unassigned"}</p>
-                )}
-              </div>
+                  <div className="scrollbar-auto-hide max-h-60 overflow-y-auto overscroll-contain">
+                    {isDraft ? (
+                      <button
+                        type="button"
+                        className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/50", !goal.ownerAgentId && "bg-accent")}
+                        onClick={() => { updateGoal.mutate({ ownerAgentId: null }); setOwnerOpen(false); }}
+                      >
+                        <span className="text-sm text-muted-foreground">Unassigned</span>
+                      </button>
+                    ) : (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">Keep current owner</div>
+                    )}
+                    {ownerOptions.length === 0 ? (
+                      <p className="px-2 py-2 text-xs text-muted-foreground">{agentsQuery.isError ? "Agents could not be loaded." : "No available Agents."}</p>
+                    ) : ownerOptions.map((agent) => (
+                      <button
+                        type="button"
+                        data-inline-entity-option
+                        key={agent.id}
+                        role="option"
+                        aria-selected={agent.id === goal.ownerAgentId}
+                        className={cn("flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-accent/50", agent.id === goal.ownerAgentId && "bg-accent")}
+                        onClick={() => {
+                          if (isDraft) updateGoal.mutate({ ownerAgentId: agent.id });
+                          else assignOwner.mutate(agent.id);
+                          setOwnerOpen(false);
+                        }}
+                      >
+                        <span className="flex min-w-0 flex-1"><AgentMenuLabel agent={agent} agentAvatarStyle="bare" /></span>
+                        {agent.id === goal.ownerAgentId ? <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                </PropertyPicker>
+              )}
 
-              <div className="min-w-0 py-3">
-                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-                  <span>Agent work</span>
+              <PropertyRow label="Agent work">
+                <span className="inline-flex items-center gap-1.5 px-1 py-1 text-sm text-muted-foreground">
                   <Focus className="h-3.5 w-3.5" />
-                </div>
-                <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-sm font-medium">
-                  <Focus className="h-3.5 w-3.5" />
-                  {goal.focus ? "Focused" : "On demand"}
+                  {isActive ? (goal.focus ? "Focused" : "On demand") : isDraft ? "Starts with Goal" : "Stopped"}
+                  {isActive ? (
+                    <span className="sr-only">
+                      {goal.focus
+                        ? "This Goal stays eligible for the Owner Agent's next run."
+                        : "The Owner Agent responds to new direction or linked work."}
+                    </span>
+                  ) : null}
                 </span>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {goal.focus ? "This Goal stays eligible for the Owner Agent's next run." : "The Owner Agent responds to new direction or linked work."}
-                </p>
-              </div>
+              </PropertyRow>
 
-              <div className="min-w-0 py-3">
-                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-                  <span>Active work</span>
-                  <BriefcaseBusiness className="h-3.5 w-3.5" />
-                </div>
+              <PropertyRow label="Active work" align="start">
                 {linkedWorkCount > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     <span className="rounded-md bg-muted px-2 py-1 text-xs font-medium tabular-nums">{activeWorkCount} active</span>
                     <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums">{linkedWorkCount} linked</span>
                   </div>
                 ) : <p className="text-sm text-muted-foreground">No linked work yet.</p>}
-              </div>
+              </PropertyRow>
 
-              <div className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] gap-2 py-3">
-                <span className="text-xs font-medium text-muted-foreground">Status</span>
-                <span className="min-w-0 break-words text-right text-sm capitalize">{lifecycle}</span>
-                <span className="text-xs font-medium text-muted-foreground">Target</span>
-                <span className="min-w-0 break-words text-right text-sm">{goal.evaluationDeadline || goal.actionDeadline ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!) : "Not set"}</span>
-              </div>
+              <PropertyRow label="Status">
+                <span className="min-w-0 break-words text-sm capitalize">{lifecycle}</span>
+              </PropertyRow>
+
+              <PropertyRow label="Target">
+                {isDraft ? (
+                  <GoalTargetTimePicker
+                    value={goal.evaluationDeadline || goal.actionDeadline
+                      ? toDateTimeLocalValue(goal.evaluationDeadline ?? goal.actionDeadline!)
+                      : ""}
+                    onChange={(targetTime) => updateGoal.mutate({ targetTime: fromDateTimeLocalValue(targetTime) })}
+                  />
+                ) : (
+                  <span className="inline-flex min-w-0 items-center gap-1.5 px-1 py-1 text-sm">
+                    <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">
+                      {goal.evaluationDeadline || goal.actionDeadline
+                        ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!)
+                        : "Not set"}
+                    </span>
+                  </span>
+                )}
+              </PropertyRow>
 
               {goal.criteria.length > 0 ? (
-                <div className="min-w-0 py-3">
+                <div className="min-w-0 border-t border-border py-3">
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                     <span>Success criteria</span>
                     <Target className="h-3.5 w-3.5" />
@@ -2173,12 +2283,22 @@ export function GoalDetail() {
               ) : null}
 
               {linkedWorkCount > 0 ? (
-                <div className="min-w-0 pt-3">
+                <div className="min-w-0 border-t border-border pt-3">
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                     <span>Related</span>
                     <ArrowRight className="h-3.5 w-3.5" />
                   </div>
-                  <WorkLinks projects={linkedProjects} issues={linkedIssues} />
+                  <WorkLinks projects={linkedProjects} issues={linkedIssues} limit={relatedExpanded ? undefined : 3} />
+                  {linkedWorkCount > 3 ? (
+                    <button
+                      type="button"
+                      className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-expanded={relatedExpanded}
+                      onClick={() => setRelatedExpanded((current) => !current)}
+                    >
+                      {relatedExpanded ? "Show fewer" : `Show ${linkedWorkCount - 3} more`}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
