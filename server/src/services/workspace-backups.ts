@@ -621,9 +621,10 @@ async function readRestoreReceipt(filePath: string): Promise<WorkspaceRestoreRec
   }
 }
 
-function isOwnedRestoreRoot(root: string, workspaceRoot: string, operationId: string) {
+function isOwnedRestoreRoot(root: string, workspaceRoot: string, operationId: string, kind: "staging" | "rollback") {
   const parent = path.dirname(workspaceRoot);
-  return path.dirname(root) === parent && root.includes(operationId);
+  return path.resolve(root) !== path.resolve(workspaceRoot)
+    && path.resolve(root) === path.resolve(parent, `.rudder-workspace-restore-${kind}-${operationId}`);
 }
 
 /** Reconcile only validated receipts and their exact operation-owned roots. */
@@ -644,7 +645,13 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
   for (const name of names.filter((entry) => entry.endsWith(".json"))) {
     const receiptPath = path.join(receiptRoot, name);
     const receipt = await readRestoreReceipt(receiptPath);
-    if (!receipt || !isOwnedRestoreRoot(receipt.stagingRoot, receipt.workspaceRoot, receipt.operationId) || !isOwnedRestoreRoot(receipt.rollbackRoot, receipt.workspaceRoot, receipt.operationId)) {
+    if (
+      !receipt
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(receipt.operationId)
+      || path.resolve(receipt.workspaceRoot) !== path.resolve(resolveOrganizationWorkspaceRoot(receipt.orgId))
+      || !isOwnedRestoreRoot(receipt.stagingRoot, receipt.workspaceRoot, receipt.operationId, "staging")
+      || !isOwnedRestoreRoot(receipt.rollbackRoot, receipt.workspaceRoot, receipt.operationId, "rollback")
+    ) {
       blocked.push({ receiptPath, operationId: receipt?.operationId ?? "unknown", error: "invalid_or_unowned_receipt" });
       continue;
     }
@@ -653,6 +660,11 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
       const rollback = await pathExists(receipt.rollbackRoot);
       if (receipt.phase === "prepared") {
         if (workspace && rollback) throw new Error("prepared receipt has conflicting live and rollback roots");
+        if (!workspace && rollback) {
+          // Crash window: workspace was renamed before the phase receipt advanced.
+          await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
+          await syncDirectory(path.dirname(receipt.workspaceRoot));
+        }
         await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
         await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
       } else if (receipt.phase === "committed" || receipt.phase === "rolled_back") {
@@ -696,6 +708,21 @@ async function withWorkspaceRestoreLock<T>(orgId: string, operation: () => Promi
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) {
         throw conflict("Workspace restore is busy for this organization.", { code: "restore_lock_unavailable", orgId });
+      }
+      try {
+        const owner = JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")) as { pid?: unknown };
+        if (typeof owner.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0) {
+          try {
+            process.kill(owner.pid, 0);
+          } catch (probeError) {
+            if ((probeError as NodeJS.ErrnoException).code === "ESRCH") {
+              await fs.rm(lockPath, { recursive: true, force: true });
+              continue;
+            }
+          }
+        }
+      } catch {
+        // An unreadable owner is treated as held until the bounded timeout.
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
