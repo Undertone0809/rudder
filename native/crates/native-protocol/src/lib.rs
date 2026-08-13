@@ -170,7 +170,14 @@ impl Command {
                 let Some(owner_token) = owner_token.as_ref() else {
                     return Err("owner_token_required");
                 };
-                if owner_token.is_empty() || owner_token.len() > 256 {
+                if owner_token.is_empty()
+                    || owner_token.len() > 256
+                    || owner_token == "."
+                    || owner_token == ".."
+                    || owner_token.contains('/')
+                    || owner_token.contains('\\')
+                    || owner_token.contains('\0')
+                {
                     return Err("invalid_owner_token");
                 }
                 if port.is_none() {

@@ -104,7 +104,7 @@ fn listener_owned_by_process_group(port: u16, expected_pgid: u32) -> io::Result<
         if pids.is_empty() {
             return Ok(ListenerOwnership::NotListening);
         }
-        return Ok(
+        Ok(
             if pids.iter().all(
                 |pid| unsafe { libc::getpgid(*pid as libc::pid_t) } == expected_pgid as libc::pid_t,
             ) {
@@ -112,7 +112,7 @@ fn listener_owned_by_process_group(port: u16, expected_pgid: u32) -> io::Result<
             } else {
                 ListenerOwnership::Foreign
             },
-        );
+        )
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -287,6 +287,8 @@ fn main() {
         bytes_written: AtomicU64::new(0),
     });
     let mut active: Option<ActiveChild> = None;
+    let mut stop_admitted = false;
+    let mut listener_mismatch = false;
     let mut terminal_sent = false;
     let mut process_exit_code = 0;
 
@@ -297,6 +299,7 @@ fn main() {
                     send(&lifecycle, json!({"type":"listener-verified","port":port}));
                 }
                 Ok(MonitorEvent::ListenerOwnerMismatch) => {
+                    listener_mismatch = true;
                     if let Some(child) = active.as_ref() {
                         let _ = child.control.send(MonitorCommand::Stop);
                     }
@@ -326,10 +329,13 @@ fn main() {
                     if was_stopped && cleanup_proven {
                         send(&lifecycle, json!({"type":"stopped"}));
                     }
-                    let terminal_succeeded = cleanup_proven
+                    let terminal_succeeded = !listener_mismatch
+                        && cleanup_proven
                         && output_relay_proven
                         && (was_stopped || (code == Some(0) && !had_surviving_group));
-                    let error_code = if !cleanup_proven {
+                    let error_code = if listener_mismatch {
+                        Some("listener_owner_mismatch")
+                    } else if !cleanup_proven {
                         Some("process_group_cleanup_unproven")
                     } else if !output_relay_proven {
                         Some("output_relay_failed")
@@ -636,6 +642,10 @@ fn main() {
                     continue;
                 }
                 if let Some(child) = active.as_ref() {
+                    if !stop_admitted {
+                        stop_admitted = true;
+                        send(&lifecycle, json!({"type":"stop-accepted"}));
+                    }
                     let _ = child.control.send(MonitorCommand::Stop);
                 } else {
                     send(
@@ -773,6 +783,7 @@ fn read_bounded_frame(reader: &mut impl Read) -> Result<Option<Vec<u8>>, FrameEr
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_child(
     executable: String,
     argv: Vec<String>,
