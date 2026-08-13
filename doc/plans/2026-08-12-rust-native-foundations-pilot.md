@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: completed
+status: in_progress
 area: agent_runtimes
 entities:
   - native_runtime
