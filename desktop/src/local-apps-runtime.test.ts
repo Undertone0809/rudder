@@ -799,6 +799,7 @@ describe("Desktop Local App runtime", () => {
       platform: "darwin",
       verifyListenerOwnership: () => new Promise(() => undefined),
       listenerOwnershipRetryTimeoutMs: 250,
+      cleanupTimeoutMs: 250,
     });
     const startedAt = Date.now();
     await expect(manager.start(owned.definition.id)).rejects.toThrow(
