@@ -58,7 +58,7 @@ updated_at: 2026-08-14
 ### Continuation status (2026-08-14)
 
 The current `0.7.5` continuation is frozen at source
-`2797e4588770b5b5caacb26b9233e27fe5d7adc3`. It carries three fail-closed
+`e0d1fd97224153a7a4d2f032757601708c7d9827`. It carries three fail-closed
 evidence producers: the Rust-versus-optimized-Node Workspace backup
 comparator, a packaged Local App dogfood cycle producer, and a strict Local
 App `native_ab` summary producer. Their focused tests and static checks pass,
@@ -73,10 +73,9 @@ The fixture's elapsed times were diagnostic only; resource RSS is
 child process and must not use parent Node `process.memoryUsage()` deltas as a
 Rust-vs-Node claim.
 
-The preceding exact candidate `49b01cb24661361e2cac82dc2e598e0b1fddb93a`
-produced a valid macOS arm64 portable package:
+The exact current candidate produced a valid macOS arm64 portable package:
 `unzip -t` passed, portable SHA-256 is
-`7e97e5c21bae2eb969c9bb94c1a831d75508db1e5d473bcb7e7c861b3010a35e`, and the
+`8eec9639d27ab0e2f07e330e50dae43b962bbb7bfcb0ff34aa50c8454dfdba95`, and the
 packaged server and App Builder checks passed. The staged binaries report
 `0.7.5` and have SHA-256 values `rudder-native=
 287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1`,
@@ -91,8 +90,7 @@ packaged Desktop correctly requires an authenticated account, while the
 dogfood command had no authenticated packaged fixture. The smoke and dogfood
 producer now fail fast with `DOGFOOD_ACCOUNT_REQUIRED` before launching
 Electron; they do not bypass the account gate or write a synthetic ledger row.
-The new source has not yet been rebuilt into a packaged artifact, so the old
-ZIP is supporting evidence only. The native A/B
+The packaged artifact is bound to the exact current source. The native A/B
 producer emits exactly three measured trials per arm (six observations), but
 the live campaign remains blocked without real release-host/process-tree
 sampler binaries. Therefore the decision ledger stays `accepted_default` for
@@ -128,7 +126,7 @@ claim that a missing implementation passed its acceptance gate.
 | Slice | Decision | Evidence bound to this candidate | Required next transition |
 | --- | --- | --- | --- |
 | Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.5` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
-| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; the preceding packaged macOS arm64 package, native staging, server-package, and App Builder checks pass, but the new source is not rebuilt and no authenticated packaged Local App fixture exists; seven-day/100-cycle dogfood plus native_ab live evidence are absent | Provide an authorized authenticated packaged fixture, rebuild the exact source, then run the dogfood gate and live three-trial native_ab campaign |
+| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; the exact current packaged macOS arm64 package, native staging, server-package, account-gate, and App Builder checks pass, but no authenticated packaged Local App fixture exists; seven-day/100-cycle dogfood plus native_ab live evidence are absent | Provide an authorized authenticated packaged fixture, then run the dogfood gate and live three-trial native_ab campaign |
 | Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
