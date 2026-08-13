@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
-    "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+    "source_ref": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
+    "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -39,8 +39,8 @@
     ],
     "build": {
       "id": "not_rebuilt_after_evidence_producers-0.7.5",
-      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
-      "artifact_bound_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
+      "artifact_bound_source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
       "portable_sha256": "not_rebuilt_for_continuation",
       "native_sha256": {
         "rudder-process-host": "not_rebuilt_for_continuation",
@@ -50,8 +50,8 @@
     },
     "runtime": {
       "id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
-      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
-      "artifact_bound_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
+      "artifact_bound_source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
       "account_gate_smoke": "historical_only_source_0e3c9b8",
       "email_code_smoke": "historical_only_source_0e3c9b8",
       "app_builder_smoke": "not_run_with_evidence_producer_candidate",
@@ -92,7 +92,7 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
       "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
       "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -101,7 +101,7 @@
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
       "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
       "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -110,7 +110,7 @@
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
       "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
       "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -129,7 +129,7 @@
       {
         "type": "candidate_drift_after_prior_delivery",
         "before_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-        "after_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+        "after_source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
         "reason": "Evidence producers and comparator tests were integrated after the prior receipt; packaged artifacts and all prior reviewer/verifier/final receipts are stale for this continuation."
       }
     ],
