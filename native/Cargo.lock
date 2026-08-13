@@ -240,7 +240,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rudder-archive-core"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "base64",
  "crc32fast",
@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "crc32fast",
  "rudder-archive-core",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-protocol"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-host"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "libc",
  "portable-pty",
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-tree-sampler"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "libc",
  "serde_json",
@@ -291,7 +291,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-run-evidence-core"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "rudder-update-helper-core",
  "serde_json",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper-core"
-version = "0.7.7"
+version = "0.7.5"
 dependencies = [
  "libc",
  "serde",

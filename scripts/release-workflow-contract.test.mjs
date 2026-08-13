@@ -74,10 +74,7 @@ describe("unified delivery workflows", () => {
     const desktopCandidate = workflowJob(releaseWorkflow, "desktop-candidate");
     const canary = workflowJob(releaseWorkflow, "publish-canary");
     const stable = workflowJob(releaseWorkflow, "publish-stable");
-    expect(npmCandidate).toContain('pack_dir="$(mktemp -d)"');
-    expect(npmCandidate).toContain("npm pack --pack-destination");
-    expect(npmCandidate).toContain("-name '*.tgz'");
-    expect(npmCandidate).not.toContain("JSON.parse");
+    expect(npmCandidate).toContain("npm pack --json");
     expect(npmCandidate).toContain("manifest.tsv");
     expect(desktopCandidate).toContain("pnpm desktop:dist");
     expect(desktopCandidate).toContain("actions/upload-artifact@v7");

@@ -20,7 +20,6 @@ import {
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
-import { assertSmokeScenarioSupported } from "./smoke-scenario-policy.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -106,12 +105,6 @@ const REQUIRED_BUNDLED_SKILLS = [
 const PREFERRED_INITIAL_WINDOW_SIZE = [1620, 1020];
 const MINIMUM_INITIAL_WINDOW_SIZE = [1080, 720];
 const INITIAL_WINDOW_WORK_AREA_RATIO = 0.9;
-const desktopPackage = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8"));
-const expectedReleaseVersion = String(desktopPackage.version);
-const escapedReleaseVersion = expectedReleaseVersion.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-const expectedProcessHostVersion = new RegExp(`^rudder-process-host ${escapedReleaseVersion}\\n$`, "u");
-const expectedUpdateHelperVersion = new RegExp(`^rudder-update-helper ${escapedReleaseVersion} protocol=1\\n$`, "u");
-const expectedUpdateHelperProtocol = `rudder-update-helper ${expectedReleaseVersion} protocol=1`;
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 
 async function pathExists(targetPath) {
@@ -163,7 +156,7 @@ async function runCapturedProcess(executable, args, options = {}) {
 async function verifyPackagedNativeProcessHost(executablePath) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged Rust process host should expose metadata");
-  assert.match(metadata.stdout, expectedProcessHostVersion);
+  assert.match(metadata.stdout, /^rudder-process-host 0\.1\.0\n$/u);
   await new Promise((resolve, reject) => {
     const host = spawn(executablePath, [], {
       cwd: tmpRoot,
@@ -406,7 +399,7 @@ async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
       ? resolve(stdout.trim())
       : reject(new Error(`packaged update helper version probe failed (${code}): ${stderr.trim()}`)));
   });
-  assert.equal(version, expectedUpdateHelperProtocol);
+  assert.equal(version, "rudder-update-helper 0.1.0 protocol=1");
 
   const matrixRoot = path.join(tmpRoot, "auto-update-helper");
   await mkdir(matrixRoot, { recursive: true });
@@ -474,7 +467,7 @@ async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
 async function verifyPackagedUpdateHelper(executablePath) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged update helper should expose metadata");
-  assert.match(metadata.stdout, expectedUpdateHelperVersion);
+  assert.match(metadata.stdout, /^rudder-update-helper 0\.1\.0 protocol=1\n$/u);
 }
 
 function parseLocalAppSmokeEnvNames() {
@@ -6601,7 +6594,6 @@ async function runAppBuilderScenario(mode) {
 }
 
 function resolveScenarioList(mode, scenario) {
-  assertSmokeScenarioSupported(mode, scenario);
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
     return mode === "packaged"

@@ -167,76 +167,48 @@ function applyPublishConfigFields(pkg) {
   return next;
 }
 
-function preparePackageManifestVersion(packagePath, version) {
-  if (!existsSync(packagePath)) return [];
+function setPackageManifestVersion(packagePath, version) {
+  if (!existsSync(packagePath)) return;
   const pkg = readJson(packagePath);
-  return [{
-    path: packagePath,
-    content: `${JSON.stringify({ ...pkg, version }, null, 2)}\n`,
-  }];
+  writeJson(packagePath, {
+    ...pkg,
+    version,
+  });
 }
 
-function prepareCargoWorkspaceVersion(version) {
-  const manifestPath = join(repoRoot, "native", "Cargo.toml");
-  if (!existsSync(manifestPath)) return [];
-
-  const manifest = readFileSync(manifestPath, "utf8");
-  const workspacePackageSection = /(^\[workspace\.package\]\s*$)([\s\S]*?)(?=^\[|(?![\s\S]))/m;
-  const match = manifest.match(workspacePackageSection);
-  if (!match) {
-    throw new Error(`native Cargo workspace is missing [workspace.package]`);
-  }
-  if (!/^version\s*=\s*"[^"]+"\s*$/m.test(match[2])) {
-    throw new Error(`native Cargo workspace package is missing a version`);
-  }
-
-  const nextSection = `${match[1]}${match[2].replace(
-    /^version\s*=\s*"[^"]+"\s*$/m,
-    `version = "${version}"`,
-  )}`;
-  const nextManifest = manifest.replace(workspacePackageSection, nextSection);
-
-  const packageNames = new Set();
-  const memberList = manifest.match(/^members\s*=\s*\[([\s\S]*?)\]/m)?.[1] ?? "";
-  for (const relativeMember of memberList.matchAll(/^[ \t]*"([^"]+)"\s*,?\s*$/gmu)) {
-    const packageManifestPath = join(repoRoot, "native", relativeMember[1], "Cargo.toml");
-    if (!existsSync(packageManifestPath)) throw new Error(`native workspace member is missing: ${packageManifestPath}`);
-    const packageManifest = readFileSync(packageManifestPath, "utf8");
-    const packageName = packageManifest.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1];
-    if (!packageName) throw new Error(`native package manifest is missing a name: ${packageManifestPath}`);
-    if (!/^version\.workspace\s*=\s*true\s*$/m.test(packageManifest)) {
-      throw new Error(`native package ${packageName} must inherit version.workspace`);
-    }
-    packageNames.add(packageName);
-  }
+function setNativeWorkspaceVersion(version) {
+  const cargoPath = join(repoRoot, "native", "Cargo.toml");
+  if (!existsSync(cargoPath)) return;
+  const source = readFileSync(cargoPath, "utf8");
+  const next = source.replace(
+    /(^\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"]+(")/mu,
+    `$1${version}$2`,
+  );
+  if (next === source) throw new Error(`native workspace version is missing from ${cargoPath}`);
+  writeFileSync(cargoPath, next);
 
   const lockPath = join(repoRoot, "native", "Cargo.lock");
-  if (!existsSync(lockPath)) {
-    throw new Error("native Cargo workspace is missing Cargo.lock");
+  if (!existsSync(lockPath)) throw new Error(`native Cargo.lock is missing: ${lockPath}`);
+  const memberPaths = [...(source.match(/^members\s*=\s*\[([\s\S]*?)\]/mu)?.[1] ?? "").matchAll(/^[ \t]*"([^"]+)"\s*,?\s*$/gmu)].map((match) => match[1]);
+  const memberNames = memberPaths.map((memberPath) => {
+    const memberSource = readFileSync(join(repoRoot, "native", memberPath, "Cargo.toml"), "utf8");
+    return memberSource.match(/^name\s*=\s*"([^"]+)"\s*$/mu)?.[1];
+  }).filter(Boolean);
+  const lockSource = readFileSync(lockPath, "utf8");
+  const nextLock = lockSource.replace(/(^\[\[package\]\][\s\S]*?^name\s*=\s*")([^"]+)("[\s\S]*?^version\s*=\s*")[^"]+(")/gmu, (block, prefix, name, middle, suffix) => {
+    if (!memberNames.includes(name)) return block;
+    return block.replace(/(^version\s*=\s*")[^"]+(")/mu, `$1${version}$2`);
+  });
+  if (nextLock === lockSource && memberNames.length > 0) {
+    throw new Error(`native Cargo.lock has no workspace package entries to update: ${lockPath}`);
   }
-  let lock = readFileSync(lockPath, "utf8");
-  for (const packageName of packageNames) {
-    const escapedName = packageName.replace(/[-/\\^$*+?.()|[\]]/g, "\\$&");
-    const packageBlock = new RegExp(
-      `(^\\[\\[package\\]\\]\\s*$[\\s\\S]*?^name\\s*=\\s*"${escapedName}"\\s*$[\\s\\S]*?^version\\s*=\\s*)"[^"]+"`,
-      "m",
-    );
-    if (!packageBlock.test(lock)) {
-      throw new Error(`native Cargo.lock is missing workspace package ${packageName}`);
-    }
-    lock = lock.replace(packageBlock, `$1"${version}"`);
-  }
-  return [
-    { path: manifestPath, content: nextManifest },
-    { path: lockPath, content: lock },
-  ];
+  writeFileSync(lockPath, nextLock);
 }
 
-function prepareVersionUpdates(version, { publish = false } = {}) {
+function setVersion(version, { publish = false } = {}) {
   const packages = sortTopologically(discoverPublicPackages());
   const internalPackageNames = new Set(packages.map((pkg) => pkg.name));
   const internalDependencyValue = publish ? version : "workspace:*";
-  const updates = [];
 
   for (const pkg of packages) {
     const nextPkg = {
@@ -248,14 +220,11 @@ function prepareVersionUpdates(version, { publish = false } = {}) {
       devDependencies: rewriteInternalDeps(pkg.pkg.devDependencies, internalPackageNames, internalDependencyValue),
     };
 
-    updates.push({
-      path: pkg.pkgPath,
-      content: `${JSON.stringify(publish ? applyPublishConfigFields(nextPkg) : nextPkg, null, 2)}\n`,
-    });
+    writeJson(pkg.pkgPath, publish ? applyPublishConfigFields(nextPkg) : nextPkg);
   }
 
-  updates.push(...preparePackageManifestVersion(join(repoRoot, "desktop", "package.json"), version));
-  updates.push(...prepareCargoWorkspaceVersion(version));
+  setPackageManifestVersion(join(repoRoot, "desktop", "package.json"), version);
+  setNativeWorkspaceVersion(version);
 
   const cliEntryPath = join(repoRoot, "cli/src/program.ts");
   if (existsSync(cliEntryPath)) {
@@ -266,22 +235,9 @@ function prepareVersionUpdates(version, { publish = false } = {}) {
     );
 
     if (cliEntry !== nextCliEntry) {
-      updates.push({ path: cliEntryPath, content: nextCliEntry });
+      writeFileSync(cliEntryPath, nextCliEntry);
     }
   }
-
-  return updates;
-}
-
-function applyFileUpdates(updates) {
-  for (const update of updates) {
-    writeFileSync(update.path, update.content);
-  }
-}
-
-function setVersion(version, options = {}) {
-  const updates = prepareVersionUpdates(version, options);
-  applyFileUpdates(updates);
 }
 
 function listPackages() {

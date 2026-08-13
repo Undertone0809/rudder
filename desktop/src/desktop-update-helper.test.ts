@@ -16,7 +16,7 @@ describe("external Desktop update helper attestation", () => {
     const resources = path.join(root, "Resources");
     const helper = path.join(resources, "native", "rudder-update-helper");
     fs.mkdirSync(path.dirname(helper), { recursive: true });
-    fs.writeFileSync(helper, "#!/bin/sh\necho rudder-update-helper 0.7.5 protocol=1\n");
+    fs.writeFileSync(helper, "#!/bin/sh\necho rudder-update-helper 0.1.0 protocol=1\n");
     fs.chmodSync(helper, 0o755);
     expect(resolveExternalDesktopUpdateHelperPath({ userDataPath: root, resourcesPath: resources, platform: "darwin" })).toBeNull();
     const external = path.join(root, "update-helper", "rudder-update-helper");
@@ -29,7 +29,7 @@ describe("external Desktop update helper attestation", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-update-helper-attest-"));
     const helper = path.join(root, "update-helper", "rudder-update-helper");
     fs.mkdirSync(path.dirname(helper), { recursive: true });
-    fs.writeFileSync(helper, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.7.5 protocol=1'\n");
+    fs.writeFileSync(helper, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.1.0 protocol=1'\n");
     fs.chmodSync(helper, 0o755);
     expect(attestExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: path.join(root, "Resources"), platform: "darwin" })).toMatchObject({ path: helper });
   });
@@ -39,7 +39,7 @@ describe("external Desktop update helper attestation", () => {
     const resources = path.join(root, "Resources");
     const bundled = path.join(resources, "native", "aarch64-apple-darwin", "rudder-update-helper");
     fs.mkdirSync(path.dirname(bundled), { recursive: true });
-    fs.writeFileSync(bundled, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.7.5 protocol=1'\n");
+    fs.writeFileSync(bundled, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.1.0 protocol=1'\n");
     fs.chmodSync(bundled, 0o755);
     const result = ensureExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: resources, platform: "darwin" });
     expect(result?.path).toBe(path.join(root, "update-helper", "rudder-update-helper"));

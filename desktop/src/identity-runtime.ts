@@ -120,7 +120,6 @@ export function createDesktopIdentityRuntime(options: {
   const origin = resolveDesktopIdentityOrigin({
     isPackaged: app.isPackaged,
     override: process.env.RUDDER_IDENTITY_ORIGIN,
-    packagedTestMarkerPath: path.join(process.resourcesPath, "native", "packaged-test-identity.marker"),
   });
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,

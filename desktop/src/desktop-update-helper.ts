@@ -1,13 +1,8 @@
 import { accessSync, chmodSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
-const requirePackage = createRequire(import.meta.url);
-const desktopPackage = requirePackage("../package.json") as { version?: unknown };
-const desktopVersion = typeof desktopPackage.version === "string" ? desktopPackage.version : null;
-if (!desktopVersion) throw new Error("Desktop package version is required for native helper attestation");
-export const DESKTOP_UPDATE_HELPER_PROTOCOL = `rudder-update-helper ${desktopVersion} protocol=1`;
+export const DESKTOP_UPDATE_HELPER_PROTOCOL = "rudder-update-helper 0.1.0 protocol=1";
 
 export type HelperAttestation = {
   path: string;

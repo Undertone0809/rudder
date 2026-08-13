@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "3c2623574d40a103e6feb88e529b1acba453f827",
-    "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+    "source_ref": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+    "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
     "dirty_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -38,33 +38,41 @@
       "evidence/rust-native-foundations-delivery-packet.json"
     ],
     "build": {
-      "id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
-      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "artifact_bound_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "portable_sha256": "ae463a4b972026259568d0819230c753d469f5508f6399810ecbd9eb8c64d922",
+      "id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "portable_sha256": "d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925",
       "native_sha256": {
-        "rudder-process-host": "0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a",
-        "rudder-native": "287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1",
-        "rudder-update-helper": "2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c"
+        "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
+        "rudder-native": "19ec4dcf9adc1b2221cda0fd8d036991145a20fb1555ae560d3b56ba4e965c5f",
+        "rudder-update-helper": "588f3973d2554f29c0e45feeb25a1b5acdf9611d01a6d53df16148a90351e1fa"
+      },
+      "version": "0.7.7",
+      "version_sources": {
+        "cargo_workspace": "native/Cargo.toml [workspace.package].version",
+        "cargo_lock": "native/Cargo.lock first-party workspace package entries",
+        "javascript": ["desktop/package.json", "server/package.json", "cli/package.json", "packages/shared/package.json"],
+        "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
+        "release_tag": "not_present_for_unreleased_0.7.7_candidate"
       }
     },
     "runtime": {
-      "id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
-      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "artifact_bound_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
-      "account_gate_smoke": "PASS_packaged_account_gate_3c2623574",
-      "email_code_smoke": "PASS_packaged_account_gate_3c2623574",
-      "server_package_verification": "PASS_packaged_server_3c2623574",
-      "app_builder_smoke": "PASS_packaged_app_builder_3c2623574",
-      "local_app_smoke": "fail_fast_DOGFOOD_ACCOUNT_REQUIRED_before_electron_launch",
+      "packaged_version": "0.7.7",
+      "account_gate_smoke": "PASS_packaged_account_gate_8037198f1",
+      "server_package_verification": "PASS_packaged_server_8037198f1",
+      "app_builder_smoke": "PASS_packaged_app_builder_8037198f1",
+      "zip_integrity": "PASS_unzip_test_8037198f1",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); Rust/optimized-Node backup comparator small fixture (manifest/content/destination-collision parity, archiveByteParity=not_compared); native_ab summary producer (six rows, live campaign blocked)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); Rust/optimized-Node backup comparator small fixture (manifest/content/recovery parity, archiveByteParity=not_compared); native_ab summary producer (six rows, live campaign blocked)",
     "budget_lease": {
       "id": "turn-2026-08-13",
       "fingerprint": "rust-native-foundations-pilot-continuation",
@@ -74,10 +82,10 @@
       "version": "2",
       "fingerprint": "rust-native-foundations-pilot-packet-v2-continuation",
       "criteria": [
-        "Rust foundation format/clippy/tests and synchronized 0.7.5 metadata pass",
+        "Rust foundation format/clippy/tests and synchronized 0.7.7 metadata pass",
         "Local App focused native suite passes and Node fallback remains available",
         "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
-        "Rust/optimized-Node backup comparison records contract parity and destination-collision preservation without claiming ZIP byte parity",
+        "Rust/optimized-Node backup comparison records contract parity and recovery without claiming ZIP byte parity",
         "Packaged Local App dogfood records real cycle/date counts and fails closed below 100 cycles across 7 UTC dates",
         "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries"
       ],
@@ -93,31 +101,29 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "needs more evidence",
+      "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2",
-      "reason": "Exact 3c2623574 artifact identity is consistent and packaged server/account-gate/App Builder checks pass; Local App lifecycle remains unobserved because the legitimate packaged account gate has no authorized authenticated fixture."
+      "packet_version": "2"
     },
     "verifier": {
-      "verdict": "QUESTION",
+      "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2",
-      "reason": "Immutable 3c2623574 artifact was checked with ZIP/native/version identity; packaged Local Apps require hosted Rudder Account authentication and no authorized authenticated fixture exists, so lifecycle and 100-cycle/7-date dogfood cannot be observed."
+      "packet_version": "2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     }
@@ -132,16 +138,16 @@
         "reason": "The 0.7.5 candidate adds release-version alignment and packaged native runtime configuration; prior 0.7.4 receipts are invalid."
       },
       {
-        "type": "candidate_drift_after_prior_delivery",
-        "before_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-        "after_source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-        "reason": "Evidence producers and comparator tests were integrated after the prior receipt; packaged artifacts and all prior reviewer/verifier/final receipts are stale for this continuation."
+        "type": "candidate_release_version_drift",
+        "before_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+        "after_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+        "reason": "origin/main advanced from the 0.7.5 packaged candidate to the unreleased 0.7.7 release-preparation commit; all prior artifact and receipts were invalidated and rebuilt for 0.7.7."
       },
       {
-        "type": "candidate_drift_after_packaged_smoke",
-        "before_source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-        "after_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
-        "reason": "The exact review-gate candidate was rebuilt into a fresh macOS arm64 0.7.5 package; account-gate and App Builder smoke passed, while no authenticated packaged Local App fixture exists. Prior e0 artifact and receipts are invalidated."
+        "type": "candidate_drift_after_prior_delivery",
+        "before_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
+        "after_source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
+        "reason": "Evidence producers and comparator tests were integrated after the prior receipt; packaged artifacts and all prior reviewer/verifier/final receipts are stale for this continuation."
       }
     ],
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
@@ -191,7 +197,7 @@
     "timestamp": null,
     "proof": [
       "prior main receipt db55044a299d57a92cf43df9c95f9ba03b744b6f is superseded by candidate drift",
-      "continuation remains blocked until the exact current candidate receives fresh reviewer/verifier receipts and an authorized authenticated packaged Local App fixture produces the seven-day/100-cycle gate",
+      "current 0.7.7 packaged artifact is rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
       "shared worktree dirty/index state remains preserved"
     ]
   }

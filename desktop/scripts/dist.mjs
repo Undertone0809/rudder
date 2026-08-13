@@ -207,13 +207,6 @@ async function stagePackagedRuntime() {
   });
 }
 
-async function stagePackagedTestIdentityMarker() {
-  if (process.env.RUDDER_DESKTOP_PACKAGED_TEST_IDENTITY !== "1") return;
-  const markerPath = path.join(desktopRoot, ".packaged", "native", "packaged-test-identity.marker");
-  await fs.writeFile(markerPath, "rudder-packaged-test-identity-v1\n", { mode: 0o600 });
-  console.log("[desktop:dist] staged isolated packaged-test Identity marker");
-}
-
 async function exists(targetPath) {
   try {
     await fs.access(targetPath);
@@ -450,7 +443,6 @@ async function restorePackagingNodeModules(hidden) {
 
 async function main() {
   await stagePackagedRuntime();
-  await stagePackagedTestIdentityMarker();
   await prepareWindowsCodeSignCache();
   const nodeModulesHidden = await hidePackagingNodeModules();
 

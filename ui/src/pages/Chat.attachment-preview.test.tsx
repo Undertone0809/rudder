@@ -7621,29 +7621,6 @@ describe("Chat ask_user panel", () => {
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
   });
 
-  it("clears the answer animation timer when Chat unmounts", async () => {
-    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
-    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
-    mockState.messagesByChatId = {
-      "chat-1": [message({ id: "user-before-ask", body: "Please help scope this." }), pendingAskUser()],
-    };
-
-    const { container } = renderChat();
-    await clickEnabledButton(container, "Narrow path");
-    await clickEnabledButton(container, "Submit answer");
-
-    const answerAnimationTimer = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1600);
-    expect(answerAnimationTimer).toBeGreaterThan(-1);
-    const timerId = setTimeoutSpy.mock.results[answerAnimationTimer]?.value;
-
-    cleanupFn?.();
-    cleanupFn = null;
-
-    expect(clearTimeoutSpy).toHaveBeenCalledWith(timerId);
-    setTimeoutSpy.mockRestore();
-    clearTimeoutSpy.mockRestore();
-  });
-
   it("opens Other answer pending image previews on double-click", async () => {
     const attachment = new File(["image bytes"], "answer-screenshot.png", { type: "image/png" });
     updateChatPendingAttachmentsForScope(
@@ -8516,7 +8493,6 @@ describe("Chat project context selector", () => {
             role: "working_set",
             note: null,
             sortOrder: 0,
-            isPrimary: false,
             resource: {
               id: "resource-1",
               orgId: "org-1",

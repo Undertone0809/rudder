@@ -36,23 +36,4 @@ describe("packaged Local App dogfood cycle producer", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-
-  it("classifies packaged account-gated smoke separately from runtime failure", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-local-app-dogfood-account-gate-"));
-    const packagedExecutable = await executable(root, "Rudder", "#!/bin/sh\nexit 0\n");
-    const smokeScript = await executable(
-      root,
-      "smoke.mjs",
-      "#!/usr/bin/env node\nprocess.stderr.write('DOGFOOD_ACCOUNT_REQUIRED\\n'); process.exit(1);\n",
-    );
-    const previous = { ...process.env };
-    Object.assign(process.env, { ...identityEnv, RUDDER_DOGFOOD_PACKAGED_EXECUTABLE: packagedExecutable });
-    try {
-      await expect(runPackagedLocalAppCycle({ smokeScript, packagedExecutable, timeoutMs: 5_000 }))
-        .rejects.toMatchObject({ code: "DOGFOOD_ACCOUNT_REQUIRED" });
-    } finally {
-      process.env = previous;
-      await rm(root, { recursive: true, force: true });
-    }
-  });
 });

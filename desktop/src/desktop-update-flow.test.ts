@@ -297,7 +297,7 @@ describe("desktop update flow", () => {
           runtime: { mode: "attached", localEnv: "prod_local", instanceId: "default", version: "0.3.3" },
         }),
         hasExternalUpdateHelperCapability: () => true,
-        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.7.5 protocol=1" }),
+        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1" }),
         hasSignedUpdatePolicyCapability: () => true,
       });
 
@@ -346,7 +346,7 @@ describe("desktop update flow", () => {
           runtime: { mode: "owned", localEnv: "prod_local", instanceId: "default", version: "0.3.3" },
         }),
         hasExternalUpdateHelperCapability: () => true,
-        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.7.5 protocol=1" }),
+        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1" }),
         hasSignedUpdatePolicyCapability: () => true,
         listRunningRunsForUpdate,
       });

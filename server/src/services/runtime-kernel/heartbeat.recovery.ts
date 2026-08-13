@@ -38,7 +38,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       wakeReason: string;
       requestedByActorType: WakeupOptions["requestedByActorType"];
       requestedByActorId: string | null;
-      contextPatch?: Record<string, unknown>;
       startImmediately?: boolean;
       now: Date;
     },
@@ -73,7 +72,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       wakeSource: recoveryWakeSource,
       triggerDetail: opts.triggerDetail,
     });
-    Object.assign(recoveryContextSnapshot, opts.contextPatch ?? {});
     const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
     const inheritedSessionSuppression = heartbeatSessions.readSessionReuseSuppression(recoveryContextSnapshot);

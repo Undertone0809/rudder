@@ -659,16 +659,9 @@ describe("desktop start command helpers", () => {
   });
 
   it("uses Windows-native archive and mirror commands for portable app installs", () => {
-    expect(buildWindowsZipExtractCommand("C:\\Temp\\Rudder's App.zip", "C:\\Temp\\rudder extract")).toEqual({
-      command: "powershell.exe",
-      args: [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Expand-Archive -LiteralPath 'C:\\Temp\\Rudder''s App.zip' -DestinationPath 'C:\\Temp\\rudder extract' -Force",
-      ],
+    expect(buildWindowsZipExtractCommand("C:\\Temp\\Rudder.zip", "C:\\Temp\\rudder-extract")).toEqual({
+      command: "tar.exe",
+      args: ["-xf", "C:\\Temp\\Rudder.zip", "-C", "C:\\Temp\\rudder-extract"],
     });
     expect(buildWindowsRobocopyMirrorCommand("C:\\Temp\\win-unpacked", "C:\\Users\\test\\AppData\\Local\\Programs\\Rudder")).toEqual({
       command: "robocopy.exe",
@@ -690,34 +683,6 @@ describe("desktop start command helpers", () => {
     expect(isSuccessfulRobocopyExitCode(7)).toBe(true);
     expect(isSuccessfulRobocopyExitCode(8)).toBe(false);
     expect(isSuccessfulRobocopyExitCode(null)).toBe(false);
-  });
-
-  it.runIf(process.platform === "win32")("extracts a Windows zip from absolute paths before release", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder zip extract test."));
-    try {
-      const sourceDir = path.join(root, "source files");
-      const zipPath = path.join(root, "Rudder's App.zip");
-      const outputDir = path.join(root, "extracted files");
-      await mkdir(sourceDir, { recursive: true });
-      await writeFile(path.join(sourceDir, "proof.txt"), "windows extraction passed\n", "utf8");
-
-      const createZip = spawnSync("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        `Compress-Archive -Path '${sourceDir.replaceAll("'", "''")}\\*' -DestinationPath '${zipPath.replaceAll("'", "''")}' -Force`,
-      ], { encoding: "utf8" });
-      expect(createZip.status, createZip.stderr).toBe(0);
-
-      const command = buildWindowsZipExtractCommand(zipPath, outputDir);
-      const extract = spawnSync(command.command, command.args, { encoding: "utf8" });
-      expect(extract.status, extract.stderr).toBe(0);
-      await expect(readFile(path.join(outputDir, "proof.txt"), "utf8")).resolves.toBe("windows extraction passed\n");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
   });
 
   it("resolves the current CLI version from npm execution metadata", () => {

@@ -1596,9 +1596,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             }
             if (body.startsWith(ASK_USER_ANSWER_PREFIX)) {
               setRecentAskUserAnswerMessageId(event.userMessage.id);
-              if (recentAskUserAnswerTimerRef.current !== null) window.clearTimeout(recentAskUserAnswerTimerRef.current);
-              recentAskUserAnswerTimerRef.current = window.setTimeout(() => {
-                recentAskUserAnswerTimerRef.current = null; setRecentAskUserAnswerMessageId((current) => current === event.userMessage.id ? null : current);
+              window.setTimeout(() => {
+                setRecentAskUserAnswerMessageId((current) => current === event.userMessage.id ? null : current);
               }, 1600);
             }
             options?.onUserMessageAcknowledged?.();
@@ -2685,7 +2684,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         editUserMessageIdOverride: sourceUserMessage.id,
       }); }, [pushToast, rawMessages, selectedConversation, selectedConversationHasActiveReply, sendMessage], );
   const [emptyStatePromptSuggestionsLocked, setEmptyStatePromptSuggestionsLocked] = useState(false);
-  const emptyStatePromptUnlockTimerRef = useRef<number | null>(null); const recentAskUserAnswerTimerRef = useRef<number | null>(null);
+  const emptyStatePromptUnlockTimerRef = useRef<number | null>(null);
   const editDraftOnly = useCallback((text: string) => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setDraft(text);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []);
   const lockEmptyStatePromptSuggestions = useCallback(() => {
@@ -2712,8 +2711,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS);
   }, []);
   useEffect(() => () => {
-    if (emptyStatePromptUnlockTimerRef.current !== null) window.clearTimeout(emptyStatePromptUnlockTimerRef.current);
-    if (recentAskUserAnswerTimerRef.current !== null) window.clearTimeout(recentAskUserAnswerTimerRef.current);
+    if (emptyStatePromptUnlockTimerRef.current !== null) {
+      window.clearTimeout(emptyStatePromptUnlockTimerRef.current);
+    }
   }, []);
   const openEmptyStatePromptGroup = useCallback((group: EmptyStatePromptGroup) => { lockEmptyStatePromptSuggestions(); const nextDraft = applyChatPromptToDraft(readComposerDraft(), group.trigger); setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); setDismissedEmptyStatePromptQuery(null);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [lockEmptyStatePromptSuggestions, readComposerDraft]); const applyEmptyStatePrompt = useCallback((prompt: string) => { const nextDraft = applyChatPromptToDraft(readComposerDraft(), prompt); setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); setDismissedEmptyStatePromptQuery(chatPromptQueryKey(nextDraft));

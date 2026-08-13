@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: in_progress
+status: planned
 area: agent_runtimes
 entities:
   - native_runtime
@@ -26,28 +26,7 @@ related_code:
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs:
-  - 690dc4df5
-  - a30c19b73
-  - d5e13f60f
-  - rudder-evals:231603f
-  - rudder-evals:ff6f9b1
-  - rudder-evals:4fa9604
-  - 1cf4c985f
-  - fff627179
-  - 23729835e
-  - 6094efed8
-  - 2f3dcdbd2
-  - 822ad3bc1
-  - 46eeeb010
-  - 19aef3ed5
-  - 63901e606
-  - b47578d15
-  - 9233861da
-  - 63aeb0101
-  - ca43d6124
-  - d456356cf
-  - 657890cd4
-  - 4df397e96
+  - 8037198f1
 updated_at: 2026-08-14
 ---
 
@@ -57,148 +36,33 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current `0.7.5` continuation is frozen at source
-`3c2623574d40a103e6feb88e529b1acba453f827`. It carries three fail-closed
-evidence producers: the Rust-versus-optimized-Node Workspace backup
-comparator, a packaged Local App dogfood cycle producer, and a strict Local
-App `native_ab` summary producer. Their focused tests and static checks pass,
-but they do not close the pilot gates. The backup comparator proves
-manifest/tree/entry/content parity, `unzip -t`, and destination-collision
-preservation on a small real fixture; the comparator does not inject
-link/sync-parent/temp-cleanup failures, so it makes no broader
-atomic-publication recovery claim. ZIP byte SHA is intentionally recorded as
-`not_compared` because the two implementations use different archive metadata.
-The fixture's elapsed times were diagnostic only; resource RSS is
-`not_comparable` because the harness does not yet sample the separate native
-child process and must not use parent Node `process.memoryUsage()` deltas as a
-Rust-vs-Node claim.
-
-The exact current candidate produced a valid macOS arm64 portable package:
-`unzip -t` passed, portable SHA-256 is
-`ae463a4b972026259568d0819230c753d469f5508f6399810ecbd9eb8c64d922`, and the
-packaged server and App Builder checks passed. The staged binaries report
-`0.7.5` and have SHA-256 values `rudder-native=
-287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1`,
-`rudder-process-host=
-0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a`, and
-`rudder-update-helper=
-2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c`.
-The packaged executable SHA-256 is
+The current release-preparation candidate is `0.7.7` at source
+`8037198f1f3e6a60e3f284844b6138cf62acb7d0`. The exact macOS arm64 packaged
+candidate was rebuilt from that SHA. `desktop:dist`, server-package
+verification, native staging/version checks, and `unzip -t` passed. The
+portable ZIP SHA-256 is
+`d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925`; the
+packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
-The packaged Local App smoke then exposed a missing acceptance fixture: a
-packaged Desktop correctly requires an authenticated account, while the
-dogfood command had no authenticated packaged fixture. The dogfood producer
-fails closed before launching Electron; it does not bypass the account gate or
-write a synthetic ledger row.
-The packaged artifact is bound to the exact current source. The native A/B
-producer emits exactly three measured trials per arm (six observations), but
-the live campaign remains blocked without real release-host/process-tree
-sampler binaries. Therefore the decision ledger stays `accepted_default` for
-the shared foundation, `opt-in` for Local App and streaming backup, and
-`not_admitted` for the remaining four slices.
+The staged binaries report `0.7.7`, with hashes recorded in the delivery
+packet.
 
-This continuation does not authorize edits to `doc/product/**`, does not treat
-the summary importer as live evaluation evidence, and does not claim the pilot
-complete. The next valid transition is a newly frozen packaged `0.7.5`
-candidate with 100 accepted Local App lifecycle cycles spanning seven
-consecutive UTC dates, followed by a real three-trial `rudder-evals native_ab`
-campaign on the same source/artifact/runtime/workload identity.
+The candidate remains blocked for Local App promotion: no authorized hosted
+authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
+cannot run. A live three-trial `rudder-evals native_ab` campaign is also not
+available. The shared foundation remains `accepted_default`, Local App and
+streaming backup remain `opt-in`, and the four dependent slices remain
+`not_admitted`. These are evidence-scoped decisions, not a claim that the
+pilot is complete.
 
-### Current implementation status (2026-08-13)
-
-The foundation candidate now carries Local App ownership attestation,
-listener verification, durable owner and terminal receipts, an output-order
-index, PTY transport, the streaming archive core, and synchronized `0.7.5`
-Rust binary metadata. Agent Run I/O, payload installation, run-evidence
-indexing, and workspace manifest watching are not yet admitted. The
-`rudder-evals` commits `231603f`, `ff6f9b1`, and `4fa9604` provide the strict
-Packet V2 `native_ab` contract, a bounded three-trial summary importer, and
-registry/schema preservation for the `native_ab` mode. The importer is
-diagnostic only until real Node/Rust workloads, failure recovery, resource
-measurements, packaged acceptance, and three isolated live trials are bound
-to the same candidate.
-
-### Decision ledger (candidate lineage parent `12bee9c102dc2a1cae373d93465684a52f70681e`)
-
-These decisions are terminal for this candidate's evidence scope. They do not
-claim that a missing implementation passed its acceptance gate.
-
-| Slice | Decision | Evidence bound to this candidate | Required next transition |
-| --- | --- | --- | --- |
-| Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.5` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
-| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; the exact current packaged macOS arm64 package, native staging, server-package, account-gate, and App Builder checks pass, but no authenticated packaged Local App fixture exists; seven-day/100-cycle dogfood plus native_ab live evidence are absent | Provide an authorized authenticated packaged fixture, then run the dogfood gate and live three-trial native_ab campaign |
-| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
-| Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
-| Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
-| Run evidence offset indexer/parser | `not_admitted` | A bounded `rudder-run-evidence-core` prototype now builds a rebuildable NDJSON offset sidecar and has CLI/unit coverage, but production full-response removal, provider-parity, and real-run acceptance are not satisfied | Remove full materialization from the default path, then run bounded index/read and Node parity acceptance |
-| Workspace manifest/index watcher | `not_admitted` | No production implementation exists and the traversal-versus-DB baseline/freshness contract is absent | Measure 1k/100k/1m fixtures before deciding whether a native watcher is justified |
-
-`accepted_default` is deliberately limited to the reusable foundation; no
-operation is promoted to a product default. The four `not_admitted` rows are
-fail-closed scope decisions, not claims of successful native implementations.
-
-The historical candidate lineage at `cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`
-passed the focused macOS arm64 Local App native suite
-11/11 using the release `rudder-process-host` binary, and the bounded evidence
-indexer tests pass. The packaged macOS arm64 candidate then built successfully,
-staged all three native binaries, passed the server-package and Computer Use
-package checks, passed a direct packaged Resident-shell launch, and passed the
-packaged account-gate smoke including the email-code interaction. This is
-historical supporting acceptance evidence only: it does not replace the Local App
-seven-day/100-cycle dogfood gate or a live `rudder-evals native_ab` campaign.
-The final delivery packet must record the post-proposal commit SHA and receipt
-identities.
-
-The Local App dogfood tooling now includes a persistent atomic ledger and a
-fail-closed verifier. It requires a real packaged cycle command, exact source,
-artifact, and runtime identity, at least 100 accepted lifecycle cycles, and
-seven contiguous UTC dates. It has no synthetic-cycle path and remains pending
-until those wall-clock observations exist.
-
-### Candidate evidence snapshot (2026-08-13)
-
-Historical evidence was collected in the isolated macOS arm64 worktree
-`/tmp/rudder-native-pilot-next.u89BHp` from candidate
-`cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`. The packaged artifact was built
-from that source and reported product version `0.7.4`; it is not evidence for
-the current `0.7.5` release candidate:
-
-| Evidence | Result | Identity |
-| --- | --- | --- |
-| `pnpm --filter @rudderhq/desktop build` | passed; native staging completed | `aarch64-apple-darwin`, release binaries |
-| `pnpm desktop:dist` | passed for the historical candidate | `Rudder-0.7.4-macos-arm64-portable.zip` |
-| `verify-computer-use-package.mjs` | passed | packaged `darwin/arm64` runtime |
-| direct packaged launch | passed; Resident shell stayed alive for 20 seconds | isolated `RUDDER_HOME` and user-data root |
-| packaged account-gate smoke | passed; account-gate and email-code screenshots written | packaged App, isolated ports/data |
-| 100-block Local App Node/Rust A/B after worker-exit fix | correctness passed, 206 observations; sampler marked `not_comparable` | source `690dc4df5cb3257ea3893dd68d1026df057235da`, 25 ms sampler |
-| optimized Node streaming backup comparator | byte-identical ZIPs and `unzip -t` passed; 554 files / 9.54 MB fixture, buffered RSS delta about 36.3 MB versus streaming about 8.3 MB | source `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`, `scripts/perf/workspace-backup-node-streaming.mjs` |
-
-Packaged artifact hashes from the snapshot:
-
-- portable ZIP: `f0c77b5e17d2b75fce46ed0b64d972d6b2c7a59ccb515566473c4796895721bc`
-- `rudder-process-host`: `7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f`
-- `rudder-native`: `777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df`
-- `rudder-update-helper`: `d66e9a548a1378690cd554ff3457425b5ed9f5f9ce7ba07a16637264e6c6b4fa`
-
-The A/B sampler result is intentionally fail-closed: nine observations had
-cadence/observer-overhead errors, so no p95 promotion claim is made from that
-run. Earlier 20-block comparable evidence showed approximately 37% idle-
-adjusted process-tree RSS improvement but latency confidence intervals crossed
-zero; Local App therefore remains `opt-in` pending dogfood and live eval proof.
-
-The backup comparator result is deliberately scoped: it compares the strongest
-safe Node streaming implementation with the existing materialized Node
-comparator and proves byte parity plus a fixture-level RSS reduction. It does
-not compare Rust against Node, prove a real backup/restore workflow, or
-establish packaged or native_ab acceptance; the backup slice therefore stays
-`opt-in`.
-
-Release version alignment is a hard gate: every first-party Rust package,
-Cargo lock entry, staged binary `--version`, Desktop/server package, and
-release tag must resolve to the normal Rudder release version. The current
-release context is `0.7.5`; an independent Rust `0.1.x` version is not allowed.
-Any new packaged or dogfood receipt must bind to `0.7.5` and the exact
-candidate SHA; historical `0.7.4` artifact hashes cannot be reused.
+Release-version alignment is a hard gate. The normal Rudder product version
+is the single version for every first-party Rust package, Cargo.lock entry,
+staged binary, Desktop/server manifest, and release tag; Rust packages must
+not use an independent `0.x` line. The current `0.7.7` candidate has no
+release tag yet. Release preflight validates source metadata and Cargo.lock;
+packaged verification additionally validates staged binary `--version`
+outputs. A candidate is not release-ready until both scopes pass and the
+release tag resolves to the same version.
 
 Introduce a Rust native foundation through six approved, dependency-ordered
 slices:
