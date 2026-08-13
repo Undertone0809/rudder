@@ -91,7 +91,14 @@ async function runCommandBytes(command: string, args: string[]): Promise<Buffer>
 async function candidateFingerprint(): Promise<{ sha256: string; untrackedFiles: string[] }> {
   const trackedDiff = await runCommandBytes("git", ["diff", "--binary", "HEAD"]);
   const untracked = (await runCommand("git", ["ls-files", "--others", "--exclude-standard"]))
-    .split("\n").filter(Boolean).sort();
+    .split("\n")
+    .filter(Boolean)
+    // Worktree-local dependency links are runtime setup, not candidate source.
+    // They are directories (and may be symlinks), so trying to read them as a
+    // file both breaks fingerprinting and would make evidence depend on a
+    // machine's installed dependency graph.
+    .filter((relativePath) => !relativePath.split("/").includes("node_modules"))
+    .sort();
   const hash = createHash("sha256").update(trackedDiff);
   for (const relativePath of untracked) {
     hash.update(`\0${relativePath}\0`).update(await readFile(path.join(repositoryRoot, relativePath)));
