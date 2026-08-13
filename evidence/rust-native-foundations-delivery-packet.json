@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-    "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+    "source_ref": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+    "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
     "dirty_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -38,10 +38,10 @@
       "evidence/rust-native-foundations-delivery-packet.json"
     ],
     "build": {
-      "id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "portable_sha256": "d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925",
+      "id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
+      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "artifact_bound_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "portable_sha256": "b93a0cc5ce14e21b580b3044d9f7d6779d15d5236d870319a4c011eb4818a64b",
       "native_sha256": {
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
         "rudder-native": "19ec4dcf9adc1b2221cda0fd8d036991145a20fb1555ae560d3b56ba4e965c5f",
@@ -57,9 +57,9 @@
       }
     },
     "runtime": {
-      "id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
+      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "artifact_bound_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
       "account_gate_smoke": "PASS_packaged_account_gate_8037198f1",
@@ -103,27 +103,27 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     }
@@ -131,6 +131,12 @@
   "drift": {
     "active": true,
     "events": [
+      {
+        "type": "candidate_exact_rebuild",
+        "before_source_sha": "b528f1ab339f2aa1d4bc4d1d484ac00855a3eab1",
+        "after_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+        "reason": "Restored 0.7.7 package/Cargo alignment and completed the required project resource fixture before rebuilding the exact packaged candidate."
+      },
       {
         "type": "candidate_rebased_and_integrated",
         "before_source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
