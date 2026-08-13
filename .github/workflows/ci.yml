@@ -82,6 +82,68 @@ jobs:
         if: steps.comparison.outputs.ref == ''
         run: echo "Architecture ratchet skipped because this is an initial push with no parent comparison commit."
 
+  docs:
+    name: Docs qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies without Electron binary
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "pnpm install failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "pnpm install attempt $attempt failed; retrying after backoff" >&2
+            sleep $((attempt * 10))
+          done
+
+      - name: Docs structure
+        run: pnpm docs:structure:test
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Docs search E2E
+        run: pnpm test:docs-search
+
   verify:
     name: Verify ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -112,6 +174,17 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
+
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
 
       - name: Install dependencies
         if: matrix.test == 'full'
