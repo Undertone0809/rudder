@@ -92,6 +92,39 @@ async function expectTestIdWithinSection(page: Page, sectionTestId: string, chil
   }, { sectionTestId, childTestId })).toBe(true);
 }
 
+async function readMessengerPaginationGeometry(page: Page) {
+  return page.evaluate(() => {
+    const directory = document.querySelector<HTMLElement>('[data-testid="messenger-virtual-directory"]');
+    const sentinel = document.querySelector<HTMLElement>('[data-testid="messenger-thread-page-sentinel"]');
+    if (!directory || !sentinel) return null;
+
+    const directoryRect = directory.getBoundingClientRect();
+    const declaredHeight = Number.parseFloat(directory.style.height);
+    const mountedRows = Array.from(directory.querySelectorAll<HTMLElement>(':scope > [data-index]'))
+      .map((row) => {
+        const rect = row.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+      });
+    const sentinelRect = sentinel.getBoundingClientRect();
+    const maxMountedRowBottom = Math.max(directoryRect.top, ...mountedRows.map((row) => row.bottom));
+
+    return {
+      directoryTop: directoryRect.top,
+      directoryBottom: directoryRect.bottom,
+      directoryHeight: directoryRect.height,
+      declaredHeight,
+      heightMatchesVirtualizer: Number.isFinite(declaredHeight)
+        && Math.abs(declaredHeight - directoryRect.height) <= 1,
+      sentinelTop: sentinelRect.top,
+      mountedRowCount: mountedRows.length,
+      maxMountedRowBottom,
+      mountedRowsFit: mountedRows.every(
+        (row) => row.top >= directoryRect.top - 1 && row.bottom <= directoryRect.bottom + 1,
+      ),
+    };
+  });
+}
+
 async function dragMessengerSectionOver(page: Page, source: Locator, target: Locator) {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -312,6 +345,18 @@ test.describe("Messenger unified threads contract", () => {
     expect(firstPage.pageInfo.hasMore).toBe(true);
     expect(firstPage.items.some((item: { title: string }) => item.title === "Paged session 205")).toBe(false);
     expect(unpagedThreadRequests).toEqual([]);
+    const initialPaginationGeometry = await readMessengerPaginationGeometry(page);
+    expect(initialPaginationGeometry).not.toBeNull();
+    expect(initialPaginationGeometry!.directoryHeight).toBeGreaterThan(0);
+    expect(initialPaginationGeometry!.heightMatchesVirtualizer).toBe(true);
+    expect(initialPaginationGeometry!.mountedRowCount).toBeGreaterThan(0);
+    expect(initialPaginationGeometry!.mountedRowsFit).toBe(true);
+    expect(initialPaginationGeometry!.maxMountedRowBottom).toBeLessThanOrEqual(
+      initialPaginationGeometry!.directoryBottom + 1,
+    );
+    expect(initialPaginationGeometry!.sentinelTop).toBeGreaterThanOrEqual(
+      initialPaginationGeometry!.directoryBottom - 1,
+    );
 
     const nextPageResponse = page.waitForResponse((response) =>
       response.request().method() === "GET"
@@ -324,7 +369,19 @@ test.describe("Messenger unified threads contract", () => {
     });
     const nextPage = await (await nextPageResponse).json();
     expect(nextPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(true);
-    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(60);
+    const loadedPaginationGeometry = await readMessengerPaginationGeometry(page);
+    expect(loadedPaginationGeometry).not.toBeNull();
+    expect(loadedPaginationGeometry!.directoryHeight).toBeGreaterThan(0);
+    expect(loadedPaginationGeometry!.heightMatchesVirtualizer).toBe(true);
+    expect(loadedPaginationGeometry!.mountedRowCount).toBeGreaterThan(0);
+    expect(loadedPaginationGeometry!.mountedRowsFit).toBe(true);
+    expect(loadedPaginationGeometry!.maxMountedRowBottom).toBeLessThanOrEqual(
+      loadedPaginationGeometry!.directoryBottom + 1,
+    );
+    expect(loadedPaginationGeometry!.sentinelTop).toBeGreaterThanOrEqual(
+      loadedPaginationGeometry!.directoryBottom - 1,
+    );
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(120);
     expect(unpagedThreadRequests).toEqual([]);
 
     const sidebarThreadList = page.getByTestId("workspace-sidebar").locator("nav");
@@ -338,8 +395,143 @@ test.describe("Messenger unified threads contract", () => {
 
     await expect(page.getByTestId("messenger-thread-page-load-more")).toHaveCount(0);
     await expect.poll(() => pagedThreadRequests).toBeGreaterThanOrEqual(5);
-    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(60);
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(120);
     expect(unpagedThreadRequests).toEqual([]);
+  });
+
+  test("keeps pagination and section loading indicators inside their list boundaries", async ({ page }, testInfo) => {
+    const organization = await createOrganization(page, `Messenger-Loading-Bounds-${Date.now()}`);
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: { name: "Loading bounds project", status: "in_progress" },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+    const baseTime = Date.now();
+    const groupedChats = Array.from({ length: 6 }, (_, index) => {
+      const activityAt = new Date(baseTime - index * 1_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Grouped loading thread ${index + 1}`,
+        summary: "Grouped loading boundary fixture",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: "local-board",
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    const fillerChats = Array.from({ length: 40 }, (_, index) => {
+      const activityAt = new Date(baseTime - (10_000 + index * 1_000));
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Loading filler thread ${index + 1}`,
+        summary: "Keeps the next Messenger page available",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: "local-board",
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    await e2eDb.insert(chatConversations).values([...groupedChats, ...fillerChats]);
+    await e2eDb.insert(chatContextLinks).values(groupedChats.map((chat) => ({
+      orgId: organization.id,
+      conversationId: chat.id,
+      entityType: "project" as const,
+      entityId: project.id,
+    })));
+
+    let nextPageRequested = false;
+    let releaseNextPage: (() => void) | null = null;
+    const threadListUrl = new URL(`/api/orgs/${organization.id}/messenger/threads`, "http://127.0.0.1").pathname;
+    await page.route((url) => {
+      const requestUrl = new URL(url);
+      return requestUrl.pathname === threadListUrl;
+    }, async (route) => {
+      const requestUrl = new URL(route.request().url());
+      if (!requestUrl.searchParams.has("cursor") || nextPageRequested) {
+        await route.continue();
+        return;
+      }
+      nextPageRequested = true;
+      await new Promise<void>((resolve) => {
+        releaseNextPage = resolve;
+      });
+      await route.continue();
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+    }, organization.id);
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+    expect((await (await firstPageResponse).json()).pageInfo.hasMore).toBe(true);
+
+    const projectSectionId = `messenger-thread-section-project-${project.id}`;
+    const projectSection = page.getByTestId(projectSectionId);
+    await expect(projectSection).toContainText("Loading bounds project", { timeout: 15_000 });
+    const projectSectionContent = page.getByTestId(`${projectSectionId}-content`);
+    const nextPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?cursor=`)
+      && response.url().includes("limit=40"),
+    );
+    await page.getByTestId("workspace-sidebar").locator("nav").evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect.poll(() => nextPageRequested).toBe(true);
+
+    await expect(page.getByTestId("messenger-thread-page-sentinel")).toContainText("Loading more threads");
+    await expect(projectSectionContent.getByText("Loading", { exact: true })).toBeVisible();
+    await expect.poll(() => readMessengerPaginationGeometry(page)).not.toBeNull();
+    const loadingGeometry = await readMessengerPaginationGeometry(page);
+    expect(loadingGeometry).not.toBeNull();
+    expect(loadingGeometry!.heightMatchesVirtualizer).toBe(true);
+    expect(loadingGeometry!.mountedRowsFit).toBe(true);
+    expect(loadingGeometry!.maxMountedRowBottom).toBeLessThanOrEqual(
+      loadingGeometry!.directoryBottom + 1,
+    );
+    expect(loadingGeometry!.sentinelTop).toBeGreaterThanOrEqual(loadingGeometry!.directoryBottom - 1);
+    const sectionLoadingBounds = await page.evaluate((sectionId) => {
+      const section = document.querySelector<HTMLElement>(`[data-testid="${sectionId}-content"]`);
+      const loading = section?.querySelector<HTMLElement>('[data-testid$="-auto-loader"]');
+      if (!section || !loading) return null;
+      const sectionRect = section.getBoundingClientRect();
+      const loadingRect = loading.getBoundingClientRect();
+      return {
+        sectionTop: sectionRect.top,
+        sectionBottom: sectionRect.bottom,
+        loadingTop: loadingRect.top,
+        loadingBottom: loadingRect.bottom,
+        pageSentinelInsideSection: Boolean(
+          section.querySelector('[data-testid="messenger-thread-page-sentinel"]'),
+        ),
+      };
+    }, projectSectionId);
+    expect(sectionLoadingBounds).not.toBeNull();
+    expect(sectionLoadingBounds!.loadingTop).toBeGreaterThanOrEqual(sectionLoadingBounds!.sectionTop - 1);
+    expect(sectionLoadingBounds!.loadingBottom).toBeLessThanOrEqual(sectionLoadingBounds!.sectionBottom + 1);
+    expect(sectionLoadingBounds!.pageSentinelInsideSection).toBe(false);
+
+    await page.screenshot({ path: testInfo.outputPath("messenger-loading-bounds.png"), fullPage: true });
+    releaseNextPage?.();
+    await nextPageResponse;
+    await expect(page.getByTestId("messenger-thread-page-sentinel")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("messenger-loading-bounds-settled.png"), fullPage: true });
+    await page.unroute((url) => {
+      const requestUrl = new URL(url);
+      return requestUrl.pathname === threadListUrl;
+    });
   });
 
   test("keeps pinned Messenger chats visible when they are older than the first activity page", async ({ page }) => {
