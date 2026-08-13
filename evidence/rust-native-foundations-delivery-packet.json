@@ -125,7 +125,7 @@
     "target_ref": "refs/heads/main",
     "base_sha": "00b7545b297836e0db36422c8004b3784b14ccda",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "478465d978ac88fb1c6cb8b505ce9850e4b23b03",
+    "observed_remote_sha": "00b7545b297836e0db36422c8004b3784b14ccda",
     "branch_refs": [
       "a08bd880725f9adcfadac72f2097f31695b3e037"
     ],
