@@ -135,12 +135,12 @@
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
     "patch_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
-    "expected_old_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
+    "expected_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
     "cas": {
       "attempted": true,
       "succeeded": true,
-      "observed_old_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
-      "delivered_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090"
+      "observed_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+      "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f"
     },
     "index_update_mode": "none"
   },
@@ -162,12 +162,12 @@
   },
   "terminal": {
     "delivered_ref": "refs/heads/main",
-    "delivered_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
-    "delivered_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
-    "timestamp": "2026-08-14T01:48:00+08:00",
+    "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f",
+    "delivered_tree_sha": "2f04a3a265fab25687a875e2c0eb5b32aaf91c08",
+    "timestamp": "2026-08-14T01:52:00+08:00",
     "proof": [
-      "git update-ref refs/heads/main 6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090 8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
-      "merge-tree --write-tree 21f2d3937755b8bc1947f22c986a2acfda7cbb70",
+      "git update-ref refs/heads/main db55044a299d57a92cf43df9c95f9ba03b744b6f 6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+      "merge-tree --write-tree 2f04a3a265fab25687a875e2c0eb5b32aaf91c08",
       "shared worktree dirty/index state preserved; concurrent index drift recorded outside packet",
       "prior packaged receipts invalidated because their artifact source was cf26412d3; current remote observed at 96cb4fe6a5f09cba266770b854627467bfc854a1"
     ]
