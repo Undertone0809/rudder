@@ -1,5 +1,6 @@
 import express from "express";
 import request from "supertest";
+import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
@@ -121,6 +122,54 @@ describe("workspace backup download route", () => {
     expect(res.header["content-disposition"]).toBe("attachment; filename=\"workspace-20260621.zip\"");
     expect(res.text).toBe(content.toString("utf8"));
     expect(mockWorkspaceBackupService.getDownload).toHaveBeenCalledWith("organization-1", "backup-1");
+  });
+
+  it("streams a file-backed v2 archive through the public response", async () => {
+    const content = Buffer.from("streamed-v2-archive");
+    mockWorkspaceBackupService.getDownload.mockResolvedValue({
+      artifactRef: "/tmp/workspace.zip",
+      filename: "workspace.zip",
+      contentType: "application/zip",
+      byteSize: content.byteLength,
+      archiveSha256: "def456",
+      contentStream: Readable.from([content.subarray(0, 8), content.subarray(8)]),
+    });
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/workspace/backups/backup-1/download")
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.header["content-length"]).toBe(String(content.byteLength));
+    expect(res.header["x-rudder-archive-sha256"]).toBe("def456");
+    expect(res.body).toEqual(content);
+  });
+
+  it("terminates the public response when the file-backed source fails after headers", async () => {
+    const source = new Readable({
+      read() {
+        this.push(Buffer.from("partial"));
+        this.destroy(new Error("injected archive read failure"));
+      },
+    });
+    mockWorkspaceBackupService.getDownload.mockResolvedValue({
+      artifactRef: "/tmp/workspace.zip",
+      filename: "workspace.zip",
+      contentType: "application/zip",
+      byteSize: 100,
+      archiveSha256: "def456",
+      contentStream: source,
+    });
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    await expect(request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download"))
+      .rejects.toThrow(/aborted|closed|socket hang up/i);
   });
 
   it("rejects agent callers before reading backup artifacts", async () => {

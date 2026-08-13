@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: planned
+status: completed
 area: agent_runtimes
 entities:
   - native_runtime
@@ -32,6 +32,48 @@ updated_at: 2026-08-13
 # Rust Native Foundations Pilot
 
 ## Executive Decision
+
+### Current implementation status (2026-08-13)
+
+The foundation candidate now carries Local App ownership attestation,
+listener verification, durable owner and terminal receipts, an output-order
+index, PTY transport, the streaming archive core, and synchronized `0.7.4`
+Rust binary metadata. Agent Run I/O, payload installation, run-evidence
+indexing, and workspace manifest watching are not yet admitted. The
+`rudder-evals` `native_ab` branch currently provides a sealed synthetic
+three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
+failure recovery, resource measurements, packaged acceptance, and three
+isolated live trials are bound to the same candidate.
+
+### Decision ledger (candidate lineage parent `12bee9c102dc2a1cae373d93465684a52f70681e`)
+
+These decisions are terminal for this candidate's evidence scope. They do not
+claim that a missing implementation passed its acceptance gate.
+
+| Slice | Decision | Evidence bound to this candidate | Required next transition |
+| --- | --- | --- | --- |
+| Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.4` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
+| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; packaged acceptance and seven-day/100-cycle dogfood evidence are absent | Run exact packaged macOS arm64 acceptance and dogfood gate |
+| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node A/B, packaged acceptance, and native_ab live trials are absent | Run real workspace E2E and comparable Node/Rust pressure campaign |
+| Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
+| Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
+| Run evidence offset indexer/parser | `not_admitted` | A bounded `rudder-run-evidence-core` prototype now builds a rebuildable NDJSON offset sidecar and has CLI/unit coverage, but production full-response removal, provider-parity, and real-run acceptance are not satisfied | Remove full materialization from the default path, then run bounded index/read and Node parity acceptance |
+| Workspace manifest/index watcher | `not_admitted` | No production implementation exists and the traversal-versus-DB baseline/freshness contract is absent | Measure 1k/100k/1m fixtures before deciding whether a native watcher is justified |
+
+`accepted_default` is deliberately limited to the reusable foundation; no
+operation is promoted to a product default. The four `not_admitted` rows are
+fail-closed scope decisions, not claims of successful native implementations.
+
+The candidate lineage also passed the focused macOS arm64 Local App native
+suite 11/11 using the release `rudder-process-host` binary, and the bounded
+evidence indexer tests pass. This is supporting evidence only and does not
+replace packaged Desktop acceptance. The final delivery packet records the
+post-proposal commit SHA and receipt identities.
+
+Release version alignment is a hard gate: every first-party Rust package,
+Cargo lock entry, staged binary `--version`, Desktop/server package, and
+release tag must resolve to the normal Rudder release version. The current
+candidate is `0.7.4`; an independent Rust `0.1.x` version is not allowed.
 
 Introduce a Rust native foundation through six approved, dependency-ordered
 slices:

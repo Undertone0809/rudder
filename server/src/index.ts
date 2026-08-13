@@ -80,6 +80,7 @@ import {
   logActivity,
   reconcilePersistedRuntimeServicesOnStartup,
   reconcileWorkspaceBackupArtifactStorage,
+  reconcileWorkspaceRestoreReceipts,
   WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_MS,
   workspaceBackupService,
@@ -959,6 +960,13 @@ async function startServerRuntime(
     db,
     workspaceAvailableOrganizationIds,
   );
+  const workspaceRestoreReconciliation = await reconcileWorkspaceRestoreReceipts();
+  if (workspaceRestoreReconciliation.recovered.length > 0) {
+    logger.warn({ operationIds: workspaceRestoreReconciliation.recovered }, "reconciled workspace restore receipts on startup");
+  }
+  if (workspaceRestoreReconciliation.blocked.length > 0) {
+    logger.error({ receipts: workspaceRestoreReconciliation.blocked }, "workspace restore recovery required on startup");
+  }
   if (workspaceBackupArtifactReconciliation.migrated.length > 0) {
     logger.info(
       {

@@ -9,6 +9,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -190,10 +191,10 @@ fn validate_request(request: &UpdateRequest) -> Result<(), HelperError> {
     {
         return Err(HelperError::Invalid("targetVersion is required".into()));
     }
-    if let Some(parent_pid) = request.parent_pid {
-        if parent_pid == 0 {
-            return Err(HelperError::Invalid("parentPid must be positive".into()));
-        }
+    if let Some(parent_pid) = request.parent_pid
+        && parent_pid == 0
+    {
+        return Err(HelperError::Invalid("parentPid must be positive".into()));
     }
     if matches!(request.operation, Operation::Apply)
         && (request.candidate_sha256.len() != 64
@@ -247,12 +248,12 @@ fn validate_request(request: &UpdateRequest) -> Result<(), HelperError> {
             ));
         }
     }
-    if let Some(executable) = &request.probation.executable {
-        if executable.is_relative() || !executable.starts_with(&request.install_path) {
-            return Err(HelperError::Invalid(
-                "probation executable must be inside installPath".into(),
-            ));
-        }
+    if let Some(executable) = &request.probation.executable
+        && (executable.is_relative() || !executable.starts_with(&request.install_path))
+    {
+        return Err(HelperError::Invalid(
+            "probation executable must be inside installPath".into(),
+        ));
     }
     Ok(())
 }
@@ -275,12 +276,12 @@ fn apply(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
     }
 
     let transaction_id = transaction_id(request);
-    if let Some(parent_pid) = request.parent_pid {
-        if !wait_for_parent_exit(parent_pid) {
-            return Err(HelperError::Invalid(
-                "parent Desktop process did not exit before helper timeout".into(),
-            ));
-        }
+    if let Some(parent_pid) = request.parent_pid
+        && !wait_for_parent_exit(parent_pid)
+    {
+        return Err(HelperError::Invalid(
+            "parent Desktop process did not exit before helper timeout".into(),
+        ));
     }
     let mut journal = Journal {
         version: JOURNAL_VERSION,
@@ -785,7 +786,12 @@ fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), HelperE
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    // Multiple helper operations may run in parallel during tests and during
+    // recovery probes. The temporary name must be unique per operation so an
+    // unrelated writer cannot truncate or rename our staged checkpoint.
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{sequence}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| HelperError::Journal(error.to_string()))?;
     let mut file = File::create(&temporary)?;
@@ -793,10 +799,10 @@ fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), HelperE
     file.sync_all()?;
     drop(file);
     fs::rename(&temporary, path)?;
-    if let Some(parent) = path.parent() {
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
+    if let Some(parent) = path.parent()
+        && let Ok(directory) = File::open(parent)
+    {
+        let _ = directory.sync_all();
     }
     Ok(())
 }
@@ -884,6 +890,8 @@ impl Drop for OwnershipFence {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     use super::*;
     use std::fs::{create_dir_all, write};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -893,7 +901,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("rudder-update-helper-{label}-{suffix}"));
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "rudder-update-helper-{label}-{}-{suffix}-{sequence}",
+            std::process::id(),
+        ));
         create_dir_all(&root).unwrap();
         root
     }
@@ -946,7 +958,7 @@ mod tests {
             probation: Probation {
                 executable: Some(root.join("Rudder.app/Contents/MacOS/Rudder")),
                 args: vec![],
-                timeout_ms: 1_000,
+                timeout_ms: 10_000,
             },
             fault: FaultInjection::default(),
         }

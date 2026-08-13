@@ -26,6 +26,7 @@ import {
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { createReadStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -938,6 +939,10 @@ export function organizationRoutes(
       res.setHeader("X-Rudder-Archive-Sha256", result.archiveSha256);
     }
     res.setHeader("Content-Disposition", `attachment; filename="${result.filename.replaceAll("\"", "")}"`);
+    if (result.contentStream) {
+      await pipeline(result.contentStream, res);
+      return;
+    }
     res.end(result.content);
   });
 

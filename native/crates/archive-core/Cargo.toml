@@ -1,11 +1,15 @@
 [package]
-name = "rudder-update-helper-core"
+name = "rudder-archive-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-libc = "0.2"
+base64 = "0.22"
+crc32fast = "1.4"
+sha2 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3.23"
