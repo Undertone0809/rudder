@@ -26,12 +26,29 @@ related_code:
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs: []
-updated_at: 2026-08-12
+updated_at: 2026-08-13
 ---
 
 # Rust Native Foundations Pilot
 
 ## Executive Decision
+
+### Current implementation status (2026-08-13)
+
+The foundation candidate now carries Local App ownership attestation,
+listener verification, durable owner and terminal receipts, an output-order
+index, PTY transport, the streaming archive core, and synchronized `0.7.4`
+Rust binary metadata. Agent Run I/O, payload installation, run-evidence
+indexing, and workspace manifest watching are not yet admitted. The
+`rudder-evals` `native_ab` branch currently provides a sealed synthetic
+three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
+failure recovery, resource measurements, packaged acceptance, and three
+isolated live trials are bound to the same candidate.
+
+Release version alignment is a hard gate: every first-party Rust package,
+Cargo lock entry, staged binary `--version`, Desktop/server package, and
+release tag must resolve to the normal Rudder release version. The current
+candidate is `0.7.4`; an independent Rust `0.1.x` version is not allowed.
 
 Introduce a Rust native foundation through six approved, dependency-ordered
 slices:
