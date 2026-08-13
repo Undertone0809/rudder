@@ -72,11 +72,18 @@ export interface PromptTextDialogOptions {
 type ConfirmDialogRequest = ConfirmDialogOptions & {
   id: number;
   resolve: (confirmed: boolean) => void;
+  returnFocus: HTMLElement | null;
 };
 
 type PromptTextDialogRequest = PromptTextDialogOptions & {
   id: number;
   resolve: (value: string | null) => void;
+  returnFocus: HTMLElement | null;
+};
+
+type SettledConfirmDialogRequest = {
+  request: ConfirmDialogRequest;
+  confirmed: boolean;
 };
 
 interface DialogContextValue {
@@ -120,14 +127,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [productTourOpen, setProductTourOpen] = useState(false);
   const [productTourOptions, setProductTourOptions] = useState<ProductTourOptions>({});
   const [confirmRequest, setConfirmRequest] = useState<ConfirmDialogRequest | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [promptTextRequest, setPromptTextRequest] = useState<PromptTextDialogRequest | null>(null);
+  const [promptTextOpen, setPromptTextOpen] = useState(false);
   const [promptTextValue, setPromptTextValue] = useState("");
   const confirmRequestRef = useRef<ConfirmDialogRequest | null>(null);
   const promptTextRequestRef = useRef<PromptTextDialogRequest | null>(null);
-  const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
-  const confirmRestoreFocusRef = useRef<((confirmed: boolean) => void) | null>(null);
-  const confirmResultRef = useRef(false);
-  const promptTextReturnFocusRef = useRef<HTMLElement | null>(null);
+  const settledConfirmRequestRef = useRef<SettledConfirmDialogRequest | null>(null);
+  const settledPromptTextRequestRef = useRef<PromptTextDialogRequest | null>(null);
   const dialogRequestIdRef = useRef(0);
 
   const openNewIssue = useCallback((defaults: NewIssueDefaults = {}) => {
@@ -188,31 +195,35 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const confirm = useCallback((options: ConfirmDialogOptions) => (
     new Promise<boolean>((resolve) => {
-      confirmRestoreFocusRef.current = options.restoreFocus ?? null;
-      confirmResultRef.current = false;
-      confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
       dialogRequestIdRef.current += 1;
-      setConfirmRequest({
+      const request: ConfirmDialogRequest = {
         id: dialogRequestIdRef.current,
         resolve,
+        returnFocus: document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
         ...options,
-      });
+      };
+      confirmRequestRef.current = request;
+      setConfirmRequest(request);
+      setConfirmOpen(true);
     })
   ), []);
 
   const promptText = useCallback((options: PromptTextDialogOptions) => (
     new Promise<string | null>((resolve) => {
-      promptTextReturnFocusRef.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
       dialogRequestIdRef.current += 1;
-      setPromptTextRequest({
+      const request: PromptTextDialogRequest = {
         id: dialogRequestIdRef.current,
         resolve,
+        returnFocus: document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
         ...options,
-      });
+      };
+      promptTextRequestRef.current = request;
+      setPromptTextRequest(request);
+      setPromptTextOpen(true);
     })
   ), []);
 
@@ -220,26 +231,19 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     const current = confirmRequestRef.current;
     if (!current) return;
     confirmRequestRef.current = null;
-    confirmResultRef.current = confirmed;
+    settledConfirmRequestRef.current = { request: current, confirmed };
     current.resolve(confirmed);
-    setConfirmRequest(null);
+    setConfirmOpen(false);
   }, []);
 
   const settlePromptText = useCallback((value: string | null) => {
     const current = promptTextRequestRef.current;
     if (!current) return;
     promptTextRequestRef.current = null;
+    settledPromptTextRequestRef.current = current;
     current.resolve(value);
-    setPromptTextRequest(null);
+    setPromptTextOpen(false);
   }, []);
-
-  useEffect(() => {
-    confirmRequestRef.current = confirmRequest;
-  }, [confirmRequest]);
-
-  useEffect(() => {
-    promptTextRequestRef.current = promptTextRequest;
-  }, [promptTextRequest]);
 
   useEffect(() => {
     setPromptTextValue(promptTextRequest?.defaultValue ?? "");
@@ -276,7 +280,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     >
       {children}
       <Dialog
-        open={confirmRequest !== null}
+        open={confirmOpen}
         onOpenChange={(open) => {
           if (!open) settleConfirm(false);
         }}
@@ -286,17 +290,19 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           showCloseButton={false}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            const restoreFocus = confirmRestoreFocusRef.current;
-            confirmRestoreFocusRef.current = null;
-            const confirmed = confirmResultRef.current;
-            confirmResultRef.current = false;
-            const returnTarget = confirmReturnFocusRef.current;
-            confirmReturnFocusRef.current = null;
+            const settled = settledConfirmRequestRef.current;
+            if (!settled) return;
+            settledConfirmRequestRef.current = null;
+            setConfirmRequest((current) => current?.id === settled.request.id ? null : current);
+            if (confirmRequestRef.current) return;
+            const { restoreFocus } = settled.request;
             if (restoreFocus) {
-              restoreFocus(confirmed);
+              restoreFocus(settled.confirmed);
               return;
             }
-            if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
+            if (settled.request.returnFocus?.isConnected) {
+              settled.request.returnFocus.focus({ preventScroll: true });
+            }
           }}
         >
           <DialogHeader>
@@ -324,7 +330,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         </DialogContent>
       </Dialog>
       <Dialog
-        open={promptTextRequest !== null}
+        open={promptTextOpen}
         onOpenChange={(open) => {
           if (!open) settlePromptText(null);
         }}
@@ -334,9 +340,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           showCloseButton={false}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            const returnTarget = promptTextReturnFocusRef.current;
-            promptTextReturnFocusRef.current = null;
-            if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
+            const settled = settledPromptTextRequestRef.current;
+            if (!settled) return;
+            settledPromptTextRequestRef.current = null;
+            setPromptTextRequest((current) => current?.id === settled.id ? null : current);
+            if (promptTextRequestRef.current) return;
+            if (settled.returnFocus?.isConnected) settled.returnFocus.focus({ preventScroll: true });
           }}
         >
           <form
