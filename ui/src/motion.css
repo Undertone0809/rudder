@@ -59,6 +59,19 @@
   animation: rudder-modal-out var(--motion-duration-fast) var(--motion-ease-exit) both;
 }
 
+/* Fixed-format dialogs must not scale while their first measured layout is settling. */
+.motion-modal-no-scale {
+  will-change: opacity, filter;
+}
+
+.motion-modal-no-scale.motion-modal[data-state="open"] {
+  animation: rudder-modal-fade-in var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-modal-no-scale.motion-modal[data-state="closed"] {
+  animation: rudder-modal-fade-out var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
 .motion-panel-reveal {
   animation: rudder-panel-reveal var(--motion-duration-emphasis) var(--motion-ease-enter) both;
   will-change: opacity, transform, filter;
@@ -171,6 +184,15 @@
 
 @keyframes rudder-modal-out {
   to { opacity: 0; filter: blur(1px); scale: 0.98; }
+}
+
+@keyframes rudder-modal-fade-in {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+@keyframes rudder-modal-fade-out {
+  to { opacity: 0; filter: blur(1px); }
 }
 
 @keyframes rudder-panel-reveal {

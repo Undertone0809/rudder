@@ -211,7 +211,7 @@ export function NewGoalDialog() {
     <Dialog open={newGoalOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent
         showCloseButton={false}
-        className="h-[calc(100dvh-1.5rem)] max-h-[calc(100dvh-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:h-[min(46rem,calc(100dvh-2rem))] sm:max-h-[min(46rem,calc(100dvh-2rem))] sm:max-w-3xl"
+        className="motion-modal-no-scale h-[calc(100dvh-1.5rem)] max-h-[calc(100dvh-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:h-[min(46rem,calc(100dvh-2rem))] sm:max-h-[min(46rem,calc(100dvh-2rem))] sm:max-w-3xl"
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
