@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-    "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
+    "source_ref": "3c2623574d40a103e6feb88e529b1acba453f827",
+    "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
     "dirty_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -38,10 +38,10 @@
       "evidence/rust-native-foundations-delivery-packet.json"
     ],
     "build": {
-      "id": "packaged-rebuild-e0d1fd972-macos-arm64-0.7.5",
-      "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "artifact_bound_source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "portable_sha256": "8eec9639d27ab0e2f07e330e50dae43b962bbb7bfcb0ff34aa50c8454dfdba95",
+      "id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
+      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "artifact_bound_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "portable_sha256": "ae463a4b972026259568d0819230c753d469f5508f6399810ecbd9eb8c64d922",
       "native_sha256": {
         "rudder-process-host": "0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a",
         "rudder-native": "287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1",
@@ -49,14 +49,14 @@
       }
     },
     "runtime": {
-      "id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
-      "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "artifact_bound_source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
+      "id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
+      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "artifact_bound_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
-      "account_gate_smoke": "PASS_packaged_account_gate_e0d1fd972",
-      "email_code_smoke": "PASS_packaged_account_gate_e0d1fd972",
-      "server_package_verification": "PASS_packaged_server_e0d1fd972",
-      "app_builder_smoke": "PASS_packaged_app_builder_e0d1fd972",
+      "account_gate_smoke": "PASS_packaged_account_gate_3c2623574",
+      "email_code_smoke": "PASS_packaged_account_gate_3c2623574",
+      "server_package_verification": "PASS_packaged_server_3c2623574",
+      "app_builder_smoke": "PASS_packaged_app_builder_3c2623574",
       "local_app_smoke": "fail_fast_DOGFOOD_ACCOUNT_REQUIRED_before_electron_launch",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
@@ -95,29 +95,29 @@
     "reviewer": {
       "verdict": "needs more evidence",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "build_id": "packaged-rebuild-e0d1fd972-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
+      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
+      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Exact e0d1fd972 artifact identity is consistent and packaged server/account-gate/App Builder checks pass; Local App lifecycle remains unobserved because the legitimate packaged account gate has no authorized authenticated fixture."
+      "reason": "Exact 3c2623574 artifact identity is consistent and packaged server/account-gate/App Builder checks pass; Local App lifecycle remains unobserved because the legitimate packaged account gate has no authorized authenticated fixture."
     },
     "verifier": {
       "verdict": "QUESTION",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "build_id": "packaged-rebuild-e0d1fd972-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
+      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
+      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Immutable e0d1fd972 artifact was checked with ZIP/native/version identity; packaged Local Apps fail closed with DOGFOOD_ACCOUNT_REQUIRED before Electron and no authorized authenticated fixture exists, so lifecycle and 100-cycle/7-date dogfood cannot be observed."
+      "reason": "Immutable 3c2623574 artifact was checked with ZIP/native/version identity; packaged Local Apps require hosted Rudder Account authentication and no authorized authenticated fixture exists, so lifecycle and 100-cycle/7-date dogfood cannot be observed."
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-      "build_id": "packaged-rebuild-e0d1fd972-macos-arm64-0.7.5",
-      "runtime_id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
+      "source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+      "build_id": "packaged-rebuild-3c2623574-macos-arm64-0.7.5",
+      "runtime_id": "packaged-runtime-3c2623574-macos-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     }
@@ -139,9 +139,9 @@
       },
       {
         "type": "candidate_drift_after_packaged_smoke",
-        "before_source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
-        "after_source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
-        "reason": "Exact current source was rebuilt into a macOS arm64 0.7.5 package; account-gate and App Builder smoke passed, while no authenticated packaged Local App fixture exists."
+        "before_source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
+        "after_source_sha": "3c2623574d40a103e6feb88e529b1acba453f827",
+        "reason": "The exact review-gate candidate was rebuilt into a fresh macOS arm64 0.7.5 package; account-gate and App Builder smoke passed, while no authenticated packaged Local App fixture exists. Prior e0 artifact and receipts are invalidated."
       }
     ],
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]

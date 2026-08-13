@@ -58,7 +58,7 @@ updated_at: 2026-08-14
 ### Continuation status (2026-08-14)
 
 The current `0.7.5` continuation is frozen at source
-`e0d1fd97224153a7a4d2f032757601708c7d9827`. It carries three fail-closed
+`3c2623574d40a103e6feb88e529b1acba453f827`. It carries three fail-closed
 evidence producers: the Rust-versus-optimized-Node Workspace backup
 comparator, a packaged Local App dogfood cycle producer, and a strict Local
 App `native_ab` summary producer. Their focused tests and static checks pass,
@@ -75,7 +75,7 @@ Rust-vs-Node claim.
 
 The exact current candidate produced a valid macOS arm64 portable package:
 `unzip -t` passed, portable SHA-256 is
-`8eec9639d27ab0e2f07e330e50dae43b962bbb7bfcb0ff34aa50c8454dfdba95`, and the
+`ae463a4b972026259568d0819230c753d469f5508f6399810ecbd9eb8c64d922`, and the
 packaged server and App Builder checks passed. The staged binaries report
 `0.7.5` and have SHA-256 values `rudder-native=
 287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1`,
@@ -87,9 +87,9 @@ The packaged executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 The packaged Local App smoke then exposed a missing acceptance fixture: a
 packaged Desktop correctly requires an authenticated account, while the
-dogfood command had no authenticated packaged fixture. The smoke and dogfood
-producer now fail fast with `DOGFOOD_ACCOUNT_REQUIRED` before launching
-Electron; they do not bypass the account gate or write a synthetic ledger row.
+dogfood command had no authenticated packaged fixture. The dogfood producer
+fails closed before launching Electron; it does not bypass the account gate or
+write a synthetic ledger row.
 The packaged artifact is bound to the exact current source. The native A/B
 producer emits exactly three measured trials per arm (six observations), but
 the live campaign remains blocked without real release-host/process-tree
