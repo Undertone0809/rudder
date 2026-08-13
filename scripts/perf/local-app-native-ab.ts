@@ -15,6 +15,7 @@ import {
   type LocalAppBenchmarkArm,
   type LocalAppBenchmarkObservation,
 } from "./local-app-native-ab.helpers.js";
+import { buildNativeAbSummary } from "./local-app-native-ab.summary.js";
 
 type ProcessRow = { pid: number; ppid: number; name: string; rssBytes: number; cpuNs: string };
 type SamplerRow = {
@@ -64,6 +65,11 @@ function argument(name: string, fallback?: string): string {
   if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]!;
   if (fallback !== undefined) return fallback;
   throw new Error(`Missing ${name}`);
+}
+
+function optionalArgument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : undefined;
 }
 
 async function sha256(filePath: string): Promise<string> {
@@ -241,6 +247,7 @@ async function main(): Promise<void> {
   const rustHostPath = path.resolve(argument("--rust-host", path.join(repositoryRoot, "native/target/release/rudder-process-host")));
   const samplerPath = path.resolve(argument("--sampler", path.join(repositoryRoot, "native/target/release/rudder-process-tree-sampler")));
   const outputPath = path.resolve(argument("--output"));
+  const summaryOutput = optionalArgument("--summary-output");
   const seed = Number.parseInt(argument("--seed", "20260812"), 10);
   const warmups = Number.parseInt(argument("--warmups", "3"), 10);
   const blocks = Number.parseInt(argument("--blocks", "100"), 10);
@@ -254,6 +261,9 @@ async function main(): Promise<void> {
   const pressureMs = workload === "flood" ? 250 : 0;
   if (![seed, warmups, blocks, intervalMs].every(Number.isInteger) || warmups < 3 || blocks < 1 || intervalMs < 5) {
     throw new Error("Invalid benchmark configuration");
+  }
+  if (summaryOutput && blocks !== 3) {
+    throw new Error("--summary-output requires exactly three measured blocks; use --output for larger benchmark campaigns");
   }
   const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-native-ab-"));
   try {
@@ -308,6 +318,17 @@ async function main(): Promise<void> {
     const hostStat = await stat(rustHostPath);
     const samplerStat = await stat(samplerPath);
     const watchdogPath = path.join(repositoryRoot, "desktop/src/local-app-watchdog-runner.mjs");
+    const watchdogSha256 = await sha256(watchdogPath);
+    const rustSha256 = await sha256(rustHostPath);
+    const candidateRef = `rust-process-host:${rustSha256}`;
+    const nativeIdentity = {
+      baselineRef: `node-watchdog:${watchdogSha256}`,
+      candidateRef,
+      workload: { trials: 3 },
+      source: "rudder-oss-local-app-native-ab",
+      nodeComparator: { path: "desktop/src/local-app-watchdog-runner.mjs", sha256: watchdogSha256 },
+      rustBinary: { path: rustHostPath, sha256: rustSha256, bytes: hostStat.size, target: "aarch64-apple-darwin", profile: "release", protocol: "1.0" },
+    };
     const result = {
       schemaVersion: 3,
       kind: "rudder_local_app_native_ab",
@@ -316,9 +337,9 @@ async function main(): Promise<void> {
         rudderOssCommit: await runCommand("git", ["rev-parse", "HEAD"]),
         dirtyDiffSha256: dirtyIdentity.sha256,
         untrackedFiles: dirtyIdentity.untrackedFiles,
-        nodeComparator: { path: "desktop/src/local-app-watchdog-runner.mjs", sha256: await sha256(watchdogPath), incrementalPackageBytes: (await stat(watchdogPath)).size, runtime: process.version, authority: "typed watchdog Stop with backend stop-accepted acknowledgement and bounded parent fallback after watchdog exit" },
+        nodeComparator: { path: "desktop/src/local-app-watchdog-runner.mjs", sha256: watchdogSha256, incrementalPackageBytes: (await stat(watchdogPath)).size, runtime: process.version, authority: "typed watchdog Stop with backend stop-accepted acknowledgement and bounded parent fallback after watchdog exit" },
         rustActivation: { useNativeProcessHost: true },
-        rustBinary: { path: rustHostPath, sha256: await sha256(rustHostPath), bytes: hostStat.size, target: "aarch64-apple-darwin", profile: "release", protocol: "1.0" },
+        rustBinary: { path: rustHostPath, sha256: rustSha256, bytes: hostStat.size, target: "aarch64-apple-darwin", profile: "release", protocol: "1.0" },
         samplerBinary: { path: samplerPath, sha256: await sha256(samplerPath), bytes: samplerStat.size },
         sampler: { intervalMs, source: "proc_listchildpids+PROC_PIDTBSDINFO+PROC_PIDTASKINFO", scope: "isolated operation worker and descendants", idleSampleBeforeGo: true },
         machine: { platform: process.platform, arch: process.arch, release: await runCommand("uname", ["-r"]), cpu: await runCommand("sysctl", ["-n", "machdep.cpu.brand_string"]) },
@@ -345,7 +366,19 @@ async function main(): Promise<void> {
     };
     await mkdir(path.dirname(outputPath), { recursive: true });
     await writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-    process.stdout.write(`${JSON.stringify({ outputPath, correctness: result.correctness, comparability: result.comparability, summaries, paired }, null, 2)}\n`);
+    if (summaryOutput) {
+      const summary = buildNativeAbSummary({
+        candidateRef,
+        nativeIdentity,
+        workload: result.identity.workload,
+        config: { seed, warmups, measuredBlocks: blocks, intervalMs, workload },
+        measured,
+      });
+      const summaryPath = path.resolve(summaryOutput);
+      await mkdir(path.dirname(summaryPath), { recursive: true });
+      await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    }
+    process.stdout.write(`${JSON.stringify({ outputPath, summaryOutput: summaryOutput ? path.resolve(summaryOutput) : null, correctness: result.correctness, comparability: result.comparability, summaries, paired }, null, 2)}\n`);
     if (!comparable) process.exitCode = 3;
   } finally {
     await rm(root, { recursive: true, force: true });

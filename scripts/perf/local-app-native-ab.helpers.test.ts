@@ -7,6 +7,7 @@ import {
   validateLocalAppBenchmarkObservations,
   type LocalAppBenchmarkObservation,
 } from "./local-app-native-ab.helpers.js";
+import { buildNativeAbSummary } from "./local-app-native-ab.summary.js";
 
 describe("Local App native A/B benchmark helpers", () => {
   it("generates deterministic counterbalanced arm orders", () => {
@@ -59,5 +60,35 @@ describe("Local App native A/B benchmark helpers", () => {
       comparable: false,
       errors: ["excessive_slow_gap_fraction", "maximum_gap_exceeded", "observer_overhead_exceeded"],
     });
+  });
+
+  it("emits exactly three importer-owned formal trials per arm", () => {
+    const row = (block: number, arm: LocalAppBenchmarkObservation["arm"]) => ({
+      block,
+      arm,
+      order: arm === "node_baseline" ? 0 : 1,
+      readyMs: 1,
+      stopAdmissionMs: 1,
+      terminalCleanupMs: 1,
+      peakTreeRssBytes: 1,
+      idleAdjustedPeakTreeRssBytes: 1,
+      treeCpuMs: 1,
+      eventLoopDelayP95Ms: 1,
+      responseBytes: 1,
+      logBytes: 1,
+      correctnessPassed: true,
+      samplerCadence: { comparable: true, errors: [] },
+    });
+    const summary = buildNativeAbSummary({
+      candidateRef: "rust:test",
+      nativeIdentity: { baselineRef: "node:test", candidateRef: "rust:test", workload: { trials: 3 } },
+      workload: { measuredBlocks: 100 },
+      measured: [0, 1, 2].flatMap((block) => [row(block, "node_baseline"), row(block, "rust_candidate")]),
+    });
+    expect(summary.kind).toBe("rudder_native_ab_summary");
+    expect(summary.trials).toEqual([1, 2, 3]);
+    expect(summary.observations).toHaveLength(6);
+    expect(new Set(summary.observations.map((observation) => `${observation.arm}:${observation.trial}`)).size).toBe(6);
+    expect(summary.workload.measuredBlocks).toBe(100);
   });
 });
