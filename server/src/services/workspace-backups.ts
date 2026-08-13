@@ -506,6 +506,24 @@ async function removeDirectoryIfEmpty(directoryPath: string): Promise<void> {
   }
 }
 
+async function writeRestoreReceipt(filePath: string, value: Record<string, unknown>) {
+  const temporary = `${filePath}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  const handle = await fs.open(temporary, "r+");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(temporary, filePath);
+}
+
+async function workspaceTreeSha256(rootPath: string) {
+  const warnings: string[] = [];
+  const entries = await walkWorkspace(rootPath, rootPath, warnings);
+  return buildTreeHash(entries);
+}
+
 export async function reconcileWorkspaceBackupArtifactStorage(
   db: Db,
   liveOrgIds: readonly string[],
@@ -1590,6 +1608,9 @@ export function workspaceBackupService(db: Db) {
 
       const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
       const stagingRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-staging", `${orgId}-${backupId}-${Date.now()}`);
+      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${backupId}-${Date.now()}`);
+      const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+      const receiptPath = path.join(receiptRoot, `${orgId}-${backupId}.json`);
       await fs.rm(stagingRoot, { recursive: true, force: true });
       await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
 
@@ -1609,10 +1630,52 @@ export function workspaceBackupService(db: Db) {
           await fs.writeFile(resolvedTarget, data, { mode: entry.mode ?? 0o600 });
         }
 
-        await fs.rm(workspaceRoot, { recursive: true, force: true });
         await fs.mkdir(path.dirname(workspaceRoot), { recursive: true });
-        await fs.rename(stagingRoot, workspaceRoot);
+        await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+        await writeRestoreReceipt(receiptPath, {
+          version: 1,
+          orgId,
+          backupId,
+          phase: "prepared",
+          workspaceRoot,
+          stagingRoot,
+          rollbackRoot,
+          expectedTreeSha256: row.treeSha256,
+          preRestoreBackupId: preRestoreBackup.id,
+        });
+        if (await countActiveRuns(orgId) > 0) {
+          throw conflict("Workspace restore is blocked while this organization has active runs.");
+        }
+        const liveExists = await pathExists(workspaceRoot);
+        if (liveExists && !liveExists.isDirectory()) {
+          throw conflict("Workspace restore is blocked because the organization workspace root is not a directory.");
+        }
+        if (liveExists) {
+          await fs.rename(workspaceRoot, rollbackRoot);
+          await writeRestoreReceipt(receiptPath, {
+            version: 1, orgId, backupId, phase: "live_moved", workspaceRoot, stagingRoot, rollbackRoot,
+            expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+          });
+        }
+        try {
+          await fs.rename(stagingRoot, workspaceRoot);
+        } catch (error) {
+          if (liveExists) await fs.rename(rollbackRoot, workspaceRoot);
+          throw error;
+        }
         await ensureOrganizationWorkspaceLayout(orgId);
+        const publishedTreeSha256 = await workspaceTreeSha256(workspaceRoot);
+        if (row.treeSha256 && publishedTreeSha256 !== row.treeSha256) {
+          await fs.rm(workspaceRoot, { recursive: true, force: true });
+          if (liveExists) await fs.rename(rollbackRoot, workspaceRoot);
+          throw conflict("Workspace restore failed published tree verification.");
+        }
+        await writeRestoreReceipt(receiptPath, {
+          version: 1, orgId, backupId, phase: "committed", workspaceRoot, stagingRoot, rollbackRoot,
+          expectedTreeSha256: row.treeSha256, publishedTreeSha256, preRestoreBackupId: preRestoreBackup.id,
+        });
+        if (liveExists) await fs.rm(rollbackRoot, { recursive: true, force: true });
+        await fs.rm(receiptPath, { force: true });
       } finally {
         await fs.rm(stagingRoot, { recursive: true, force: true });
       }
