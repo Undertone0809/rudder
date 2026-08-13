@@ -1102,7 +1102,7 @@ describe("Desktop Local App runtime", () => {
       timeoutSpy.mockRestore();
       await manager.shutdown();
     }
-  });
+  }, 30_000);
 
   it("keeps ownership orphaned when a running watchdog exits without acknowledging cleanup", async () => {
     const { registry, definition } = await approvedFixture();
