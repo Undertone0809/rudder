@@ -352,6 +352,22 @@
       "rationale": "Goal detail currently coordinates lifecycle actions, collaboration, evidence, and project context while the Goal workspace boundaries stabilize.",
       "target": "Extract goal lifecycle controllers and focused views and reduce the page below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.execute.ts",
+      "lines": 1501,
+      "owner": "runtime-server",
+      "rationale": "Heartbeat execution still coordinates assignment recovery, workspace preflight, adapter invocation, and terminal effects while those lifecycle boundaries stabilize.",
+      "target": "Extract recovery and terminal-effects coordination and reduce the execution module below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/workspace-backups.ts",
+      "lines": 1501,
+      "owner": "workspace-server",
+      "rationale": "Workspace backup compatibility, restore recovery, receipt reconciliation, and legacy behavior remain concentrated while the native archive path is adopted.",
+      "target": "Move compatibility and receipt recovery behind focused modules and reduce the service below 1500 lines.",
+      "expiry": "2026-12-31"
     }
   ]
 }
