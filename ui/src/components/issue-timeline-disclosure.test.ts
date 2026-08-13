@@ -82,8 +82,31 @@ describe("issue timeline disclosure", () => {
     ).hidden.length;
 
     expect(compactBefore - compactAfter).toBeGreaterThan(commentsBefore - commentsAfter);
-    expect(compactBefore - compactAfter).toBeLessThanOrEqual(24);
+    expect(compactBefore - compactAfter).toBeLessThanOrEqual(48);
     expect(commentsBefore - commentsAfter).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reveals older and newer hidden rows from one load-more action", () => {
+    const items = activityItems(120);
+    const initial = createInitialIssueTimelineDisclosure(items, 800, 600);
+    const before = selectIssueTimelineDisclosureItems(items, initial);
+    const next = revealNextIssueTimelineBatch(items, initial, 800, 600);
+    const after = selectIssueTimelineDisclosureItems(items, next);
+
+    expect(after.visibleHead.length).toBeGreaterThan(before.visibleHead.length);
+    expect(after.visibleTail.length).toBeGreaterThan(before.visibleTail.length);
+    expect(after.hidden.length).toBeLessThan(before.hidden.length);
+  });
+
+  it("fully expands when the final batch would make the two sides overlap", () => {
+    const items = activityItems(40);
+    let state = createInitialIssueTimelineDisclosure(items, 800, 600);
+    for (let attempt = 0; attempt < 10 && !state.fullyExpanded; attempt += 1) {
+      state = revealNextIssueTimelineBatch(items, state, 800, 600);
+    }
+
+    expect(state.fullyExpanded).toBe(true);
+    expect(selectIssueTimelineDisclosureItems(items, state).hidden).toHaveLength(0);
   });
 
   it("reveals a hidden target through the older-side prefix even beyond a normal batch", () => {

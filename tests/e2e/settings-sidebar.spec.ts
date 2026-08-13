@@ -21,6 +21,7 @@ test.describe("Settings sidebar", () => {
       data: {
         name: organizationName,
         issuePrefix: uniqueIssuePrefix(),
+        brandColor: "#16a34a",
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -36,6 +37,11 @@ test.describe("Settings sidebar", () => {
     await expect(settingsPage.getByText("Choose file", { exact: true })).toHaveCount(0);
     await expect(settingsPage.getByText("No file chosen", { exact: true })).toHaveCount(0);
     await expect(settingsPage.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
+    await expect(settingsPage.getByRole("heading", { name: "General", exact: true })).toHaveCount(1);
+    await expect(settingsPage.getByText("Appearance", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.getByText("Brand color", { exact: true })).toHaveCount(0);
+    await expect(settingsPage.locator('input[type="color"]')).toHaveCount(0);
+    await expect(settingsPage.getByRole("textbox", { name: "Brand color" })).toHaveCount(0);
 
     const logoUploadResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -61,6 +67,21 @@ test.describe("Settings sidebar", () => {
     await logoUpdateResponse;
     await expect(settingsPage.getByRole("img", { name: `${organizationName} logo` })).toBeVisible();
     await capture("general-avatar-direct-upload");
+
+    const initialOrganization = await page.request.get(`/api/orgs/${organization.id}`);
+    expect(initialOrganization.ok()).toBe(true);
+    const initialOrganizationData = await initialOrganization.json() as { brandColor: string | null };
+    await settingsPage.getByRole("textbox", { name: "Organization name" }).fill(`${organizationName} Renamed`);
+    const nameUpdateResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/orgs/${organization.id}`)
+      && response.ok(),
+    );
+    await settingsPage.getByRole("button", { name: "Save changes" }).click();
+    await nameUpdateResponse;
+    const renamedOrganization = await page.request.get(`/api/orgs/${organization.id}`);
+    expect(renamedOrganization.ok()).toBe(true);
+    expect((await renamedOrganization.json()).brandColor).toBe(initialOrganizationData.brandColor);
 
     await page.evaluate(() => {
       const settings = document.querySelector('[data-testid="organization-settings-page"]');

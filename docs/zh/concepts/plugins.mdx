@@ -1,6 +1,6 @@
 ---
 title: "插件"
-description: "安装由 Skill、MCP Server 和 App 组成的 Codex 兼容能力包。"
+description: "安装由技能、MCP 服务端和应用组成的 Codex 兼容能力包。"
 icon: "plug"
 keywords:
   - "Rudder 插件"
@@ -16,61 +16,59 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 
 ## 用一个软件包分发相关能力
 
-Rudder Plugin 是一个分发单元，里面可以包含一个或多个 Skill、MCP Server
-定义或 App。它兼容 Codex Plugin 目录格式，并以
-`.codex-plugin/plugin.json` 作为必需的 manifest。
+Rudder 插件是一个分发单元，里面可以包含一个或多个技能、MCP 服务端定义或应用。
+它兼容 Codex 插件目录格式，并以 `.codex-plugin/plugin.json` 作为必需的清单。
 
-Plugin 负责把相关能力组织在一起，不提供另一套 Rudder runtime。Skill 仍由
-Agent 使用；MCP Server 仍通过 Managed MCP 完成认证和访问控制；Local App 仍由
-原来的 App runtime 启动。
+插件负责把相关能力组织在一起，不提供另一套 Rudder 运行时。技能仍由 Agent 使用；
+MCP 服务端仍通过托管 MCP 完成认证和访问控制；本地应用仍由原来的应用运行时启动。
 
 <a id="case" />
 
 ## 安装会发生什么
 
-Rudder 会先检查软件包，不执行其中内容，并显示身份、来源、digest、支持的组件、
-警告和错误。安装后会为当前 Organization 创建不可变快照。随后可以把软件包中的
-Skill 分配给 Agent，并完成 MCP 的认证或访问设置。
+Rudder 会先检查软件包，不执行其中内容，并显示身份、来源、摘要、支持的组件、
+警告和错误。安装后会为当前组织创建不可变快照。随后可以把软件包中的技能分配给
+Agent，并完成 MCP 的认证或访问设置。
 
-输入可以是目录、受大小限制的 ZIP、本地 Codex Marketplace，或使用完整 commit SHA
-固定的 HTTPS GitHub Marketplace。Marketplace 策略会作为来源信息保留，但不会绕过
+输入可以是目录、受大小限制的 `.zip`、本地 Codex 市场，或使用完整 `commit SHA`
+固定的 `HTTPS` GitHub 市场。市场策略会作为来源信息保留，但不会绕过
 Rudder 的检查或触发静默安装。
 
-如果软件包中的 Skill 与 Organization Skill 冲突，安装会暂停，直到操作者明确选择
-保留现有 Skill、替换，或使用不同名称同时安装。
+如果软件包中的技能与组织技能冲突，安装会暂停，直到操作者明确选择保留现有技能、
+替换，或使用不同名称同时安装。
 
-Local App 也会作为只包含 App 的 Plugin 出现在 **Hub > Plugins**。直接启动方式
-和原有 `/apps/...` 路由保持不变。App Builder 生成的新 revision 会成为待检查的
-不可变更新；当前 revision 会保持生效，直到用户检查并应用。
+本地应用也会作为只包含应用的插件出现在 **Hub > Plugins**。直接启动方式
+和原有 `/apps/...` 路由保持不变。应用构建器生成的新版本会成为待检查的
+不可变更新；当前版本会保持生效，直到用户检查并应用。
 
-对软件包 Skill 选择 **Customize** 会创建一个带软件包来源信息、但可独立编辑的
-Organization Skill。这个副本不再受 Plugin 更新、禁用或卸载控制。
+对软件包技能选择 **Customize** 会创建一个带软件包来源信息、但可独立编辑的
+组织技能。这个副本不再受插件更新、禁用或卸载控制。
 
-在输入框的 `@` 搜索中，已安装的 Plugin 只显示为一个能力入口。Rudder 不会把 Plugin
-内部的每个 Skill 拆成独立结果；独立创建或通过 **Customize** 生成的 Skill 仍可单独搜索。
+在输入框的 `@` 搜索中，已安装的插件只显示为一个能力入口。Rudder 不会把插件
+内部的每个技能拆成独立结果；独立创建或通过 **Customize** 生成的技能仍可单独搜索。
 
 <a id="when-useful" />
 
-当多个能力共同服务于一个可复用工作流，或需要把 App 作为一个完整能力分发时，适合
-使用 Plugin。如果 Skill 需要被用户独立查找、分配和持续修改，则应保留为独立 Skill。
+当多个能力共同服务于一个可复用工作流，或需要把应用作为一个完整能力分发时，适合
+使用插件。如果技能需要被用户独立查找、分配和持续修改，则应保留为独立技能。
 
 <a id="operating-boundaries" />
 
 ## 生命周期和信任边界
 
-禁用 Plugin 会阻止其能力进入新的工作，但不会删除外部连接、App 源码或 App
-数据。重新启用会恢复之前的 Skill 分配。卸载只移除软件包拥有的投影，不删除用户
+禁用插件会阻止其能力进入新的工作，但不会删除外部连接、应用源码或应用
+数据。重新启用会恢复之前的技能分配。卸载只移除软件包拥有的投影，不删除用户
 工作和独立管理的资源。
 
-更新也必须先经过检查。Rudder 会对比新旧执行面；如果 Skill 执行或 MCP 访问扩大，
+更新也必须先经过检查。Rudder 会对比新旧执行面；如果技能执行或 MCP 访问扩大，
 必须显式确认。Rudder 会先准备新版本的组件投影，再切换当前软件包；如果准备失败，
 现有版本继续生效。成功更新后，上一份不可变软件包仍可用于显式回滚。
 
-已启用的 Managed MCP 连接可以提供 HTML UI resource。Rudder 会列出这些资源，并在
-禁止网络访问的 sandbox 中打开；`.app.json` 中的 App alias 不会启用这条路径。
+已启用的托管 MCP 连接可以提供 `HTML` 界面资源。Rudder 会列出这些资源，并在
+禁止网络访问的沙箱中打开；`.app.json` 中的应用别名不会启用这条路径。
 
 导入的软件包都应当按不可信输入处理。安装前检查发布者、版本、文件、凭据引用、
-不支持的字段和兼容性报告。Rudder V1 不运行 Plugin worker、job、Webhook、UI
-slot、hook、browser extension、scheduled task template 或任意软件包代码。
+不支持的字段和兼容性报告。Rudder `V1` 不运行插件工作进程、任务、Webhook、界面
+插槽、钩子、浏览器扩展、定时任务模板或任意软件包代码。
 
 完整步骤见[安装和管理插件](/zh/how-to/manage-plugins)。

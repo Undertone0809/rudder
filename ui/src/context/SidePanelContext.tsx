@@ -1,7 +1,9 @@
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import {
   sidePanelCanonicalTargetKey,
+  sidePanelFullPageHref,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
@@ -89,6 +91,41 @@ export const MAX_BROWSER_TABS_PER_CONTEXT = 8;
 
 function normalizeContextKey(contextKey: string | null | undefined): string {
   return contextKey?.trim() || DEFAULT_SIDE_PANEL_CONTEXT_KEY;
+}
+
+function mobileSidePanelTargetHref(target: SidePanelTarget): string {
+  const href = sidePanelFullPageHref(target);
+  if (href) return href;
+  if (target.kind === "issue_proposal") {
+    return `/messenger/chat/${target.conversationId}?messageId=${encodeURIComponent(target.messageId)}`;
+  }
+  if (target.kind === "subagents") return `/messenger/chat/${target.conversationId}`;
+  if (target.kind === "subagent") {
+    return target.conversationId
+      ? `/messenger/chat/${target.conversationId}${target.sourceMessageId ? `?messageId=${encodeURIComponent(target.sourceMessageId)}` : ""}`
+      : "/messenger/chat";
+  }
+  if (target.kind === "goal_chat") return target.conversationId
+    ? `/messenger/chat/${target.conversationId}`
+    : `/goals/${target.goalId}`;
+  if (target.kind === "local_file") return "/library";
+  if (target.kind === "local_apps" || target.kind === "local_app") return "/apps";
+  return "/messenger/chat";
+}
+
+function openSidePanelTargetOnMobile(target: SidePanelTarget): boolean {
+  if (typeof window === "undefined" || window.innerWidth >= 768) return false;
+  if (target.kind === "goal_chat") return false;
+  const href = mobileSidePanelTargetHref(target);
+  if (/^https?:\/\//i.test(href) && !href.startsWith(window.location.origin)) {
+    window.location.assign(href);
+    return true;
+  }
+  const organizationPrefix = extractOrganizationPrefixFromPath(window.location.pathname);
+  const nextPath = applyOrganizationPrefix(href, organizationPrefix);
+  window.history.pushState({}, "", nextPath);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  return true;
 }
 
 function emptyContextState(): SidePanelContextState {
@@ -313,6 +350,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
+    if (openSidePanelTargetOnMobile(target)) return { admitted: true };
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
@@ -346,6 +384,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
+    if (openSidePanelTargetOnMobile(target)) return { admitted: true };
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
@@ -379,6 +418,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
+    if (openSidePanelTargetOnMobile(target)) return { admitted: true };
     const normalizedKey = normalizeContextKey(nextContextKey);
     let openResult: SidePanelOpenResult = { admitted: true };
     const nextState = writeContextState(normalizedKey, (current) => {

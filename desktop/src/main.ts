@@ -102,6 +102,8 @@ import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
 import { registerLocalFileIpcHandlers } from "./local-file-ipc.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
+import { buildDesktopApiRequestUrl } from "./api-url.js";
+import { createTerminalController, registerTerminalIpcHandlers, resolveTerminalWorkspaceFromApi } from "./terminal-ipc.js";
 import {
   canOpenBlockedNavigationExternally,
   classifyBlockedDesktopNavigation,
@@ -524,6 +526,23 @@ let localAppsController: ReturnType<typeof createDesktopLocalAppsRuntime>["contr
 let localAppsRuntime: ReturnType<typeof createDesktopLocalAppsRuntime>["runtime"] | null = null;
 let localAppsFeatureGateTimer: NodeJS.Timeout | null = null;
 let appBuilderController: AppBuilderController | null = null;
+const terminalController = createTerminalController({
+  resolveWorkspace: async (orgId, agentId) => {
+    const apiUrl = serverHandle?.apiUrl;
+    if (!apiUrl) throw new Error("The local Rudder runtime is not ready.");
+    const [agentResponse, filesResponse] = await Promise.all([
+      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`), { credentials: "include" }),
+      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`), { credentials: "include" }),
+    ]);
+    if (!agentResponse.ok) throw new Error(agentResponse.status === 404 ? "The selected Agent no longer exists." : "Could not validate the selected Agent.");
+    const agent = await agentResponse.json() as { id?: unknown; orgId?: unknown; name?: unknown };
+    if (!filesResponse.ok) throw new Error("The Agent workspace is unavailable on this machine.");
+    const listing = await filesResponse.json() as { rootPath?: unknown; directoryPath?: unknown; rootExists?: unknown; entries?: unknown };
+    const workspace = resolveTerminalWorkspaceFromApi(orgId, agentId, agent, listing);
+    if (!fs.statSync(workspace.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error("The Agent workspace is unavailable on this machine.");
+    return workspace;
+  },
+});
 let desktopIdentityRuntime: ReturnType<typeof createDesktopIdentityRuntime> | null = null;
 let browserCookieImporter: {
   listBrowserImportSources(): Promise<BrowserImportSource[]>;
@@ -591,6 +610,7 @@ const desktopQuitFlow = createDesktopQuitFlow({
     await Promise.all([
       browserProfileController?.shutdown() ?? Promise.resolve(),
       localAppGuestRegistry.closeAll(),
+      terminalController.shutdown(),
     ]);
   },
   prepareLocalAppsForQuit: async () => {
@@ -2298,6 +2318,10 @@ function registerIpc(): void {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireLocalAppsController(),
     assertEnabled: assertPluginsFeatureEnabled,
+  });
+  registerTerminalIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: terminalController,
   });
   registerAppBuilderIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,

@@ -297,6 +297,43 @@ afterEach(() => {
 });
 
 describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
+  it("blocks text and image paste mutations while read-only", async () => {
+    const onChange = vi.fn();
+    const imageUploadHandler = vi.fn(async () => "/api/assets/read-only/content");
+    const ref = createRef<MarkdownEditorRef>();
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={ref}
+          value="Submitted instruction"
+          onChange={onChange}
+          imageUploadHandler={imageUploadHandler}
+          readOnly
+        />,
+      );
+    });
+    await flushReact();
+
+    expect(editorView().state.readOnly).toBe(true);
+    expect(editorView().contentDOM.getAttribute("contenteditable")).not.toBe("true");
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        data: " changed",
+        inputType: "insertText",
+      }));
+      editorView().contentDOM.dispatchEvent(
+        imageClipboardEvent(new File(["image"], "blocked.png", { type: "image/png" })),
+      );
+    });
+    await flushReact();
+
+    expect(ref.current?.getMarkdown?.()).toBe("Submitted instruction");
+    expect(imageUploadHandler).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("renders inactive blocks, reveals exact source on click, and previews again on blur", async () => {
     const onChange = vi.fn();
     act(() => {

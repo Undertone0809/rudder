@@ -1,7 +1,17 @@
 import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readDesktopShell, type DesktopLocalFilePreview } from "../../lib/desktop-shell";
+import {
+  readDesktopShell,
+  type DesktopLocalFilePreview,
+  type DesktopWorkspaceLaunchTarget,
+} from "../../lib/desktop-shell";
+import {
+  isWorkspaceFileOpenTarget,
+  type WorkspaceOpenTargetId,
+  type WorkspaceUnsupportedFileLaunchTarget,
+  workspaceUnsupportedFileLaunchTargets,
+} from "../../lib/workspace-preferences";
 import {
   clearChatSidePanelMarkdownDraft,
   joinChatSidePanelYamlFrontmatter,
@@ -9,13 +19,14 @@ import {
   splitChatSidePanelYamlFrontmatter,
   storeChatSidePanelMarkdownDraft,
 } from "../../pages/Chat.side-panel.helpers";
-import { MarkdownEditor } from "../MarkdownEditor";
-import { WorkspaceCodeEditor } from "../WorkspaceCodeEditor";
-import { WorkspaceFilePreview } from "../WorkspaceFilePreview";
 import {
   FileAnnotationSelectionToolbar,
   type FileTextSelection,
 } from "../chat/FileAnnotationSelectionToolbar";
+import { MarkdownEditor } from "../MarkdownEditor";
+import { WorkspaceCodeEditor } from "../WorkspaceCodeEditor";
+import { WorkspaceFilePreview } from "../WorkspaceFilePreview";
+import { WorkspaceFileOpenMenu } from "../workspaces/WorkspaceLaunchControls";
 
 const LOCAL_FILE_DRAFT_SCOPE = "desktop-local-file";
 
@@ -337,6 +348,9 @@ export function TranscriptLocalFilePreview({
 }) {
   const desktopShell = readDesktopShell();
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
+  const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [launchTargetsDiscovered, setLaunchTargetsDiscovered] = useState(false);
+  const [openingTargetId, setOpeningTargetId] = useState<WorkspaceOpenTargetId | null>(null);
   const [error, setError] = useState<string | null>(() => (
     desktopShell ? null : "Local file previews are available in the Rudder Desktop app."
   ));
@@ -382,13 +396,67 @@ export function TranscriptLocalFilePreview({
     };
   }, [desktopShell, label, targetPath]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLaunchTargets([]);
+    setLaunchTargetsDiscovered(false);
+    if (
+      !preview?.parentPath
+      || !preview.fileName
+      || typeof desktopShell?.listWorkspaceLaunchTargets !== "function"
+    ) {
+      setLaunchTargets([]);
+      return undefined;
+    }
+    void desktopShell.listWorkspaceLaunchTargets()
+      .then((targets) => {
+        if (!cancelled) {
+          setLaunchTargets(targets);
+          setLaunchTargetsDiscovered(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLaunchTargetsDiscovered(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopShell, preview?.canonicalPath, preview?.fileName, preview?.parentPath]);
+
   const file = useMemo(() => preview ? workspacePreviewFile(preview) : null, [preview]);
-  const openPreview = async () => {
+  const openTargets = useMemo(
+    () => launchTargetsDiscovered ? workspaceUnsupportedFileLaunchTargets(launchTargets, {
+      canOpenFile: Boolean(
+        preview?.parentPath
+        && preview.fileName
+        && typeof desktopShell?.openWorkspaceFileInIde === "function",
+      ),
+      canOpenLocation: Boolean(
+        preview?.parentPath
+        && preview.fileName
+        && typeof desktopShell?.openWorkspaceFileLocation === "function",
+      ),
+    }) : [],
+    [desktopShell, launchTargets, launchTargetsDiscovered, preview?.fileName, preview?.parentPath],
+  );
+  const openPreview = async (target?: WorkspaceUnsupportedFileLaunchTarget) => {
     if (!desktopShell || !preview) return;
+    setOpeningTargetId(target?.id ?? null);
     try {
-      await desktopShell.openPath(preview.canonicalPath);
+      if (target && isWorkspaceFileOpenTarget(target) && target.id !== "defaultApp") {
+        await desktopShell.openWorkspaceFileInIde(preview.parentPath, preview.fileName, target.id);
+      } else if (target?.id === "defaultApp") {
+        await desktopShell.openPath(preview.canonicalPath);
+      } else if (target) {
+        await desktopShell.openWorkspaceFileLocation?.(preview.parentPath, preview.fileName, target.id);
+      } else {
+        await desktopShell.openPath(preview.canonicalPath);
+      }
+      setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `Could not open ${label}.`);
+    } finally {
+      setOpeningTargetId(null);
     }
   };
 
@@ -422,14 +490,23 @@ export function TranscriptLocalFilePreview({
             {preview.fileName || label}
           </div>
         </div>
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          onClick={() => void openPreview()}
-        >
-          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-          Open
-        </button>
+        {openTargets.length > 0 ? (
+          <WorkspaceFileOpenMenu
+            targets={openTargets}
+            openingTargetId={openingTargetId}
+            onOpenTarget={(target) => void openPreview(target)}
+            testId="chat-side-panel-local-file-open-menu"
+          />
+        ) : (
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            onClick={() => void openPreview()}
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+            Open
+          </button>
+        )}
       </div>
       {preview.truncated ? (
         <div className="shrink-0 border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200" role="status">

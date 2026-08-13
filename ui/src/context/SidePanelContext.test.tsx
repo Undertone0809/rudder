@@ -72,6 +72,16 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <button type="button" onClick={() => sidePanel.setContextKey("chat:a")}>Chat A</button>
       <button type="button" onClick={() => sidePanel.setContextKey("chat:b")}>Chat B</button>
       <button type="button" onClick={() => sidePanel.openTarget(issueTarget)}>Open issue</button>
+      <button type="button" onClick={() => sidePanel.openTarget({
+        kind: "goal_chat",
+        organizationId: "org-a",
+        goalId: "goal-1",
+        agentId: "agent-1",
+        conversationId: null,
+        clientMutationId: "goal-chat-mutation-1",
+        body: "",
+        label: "Ship Goal v2",
+      })}>Open Goal Chat</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" })}>Open file</button>
       <button type="button" onClick={() => sidePanel.openTargetInNewTab({ kind: "library_file", filePath: "docs/spec.md", label: "Spec copy" })}>Open file in new tab</button>
       <button type="button" onClick={() => sidePanel.openTarget({
@@ -168,6 +178,28 @@ describe("SidePanelProvider context visibility", () => {
     container = null;
     vi.unstubAllGlobals();
     Reflect.deleteProperty(window, "desktopShell");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("keeps Goal Chat in the mobile overlay and routes full-page targets", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.history.replaceState({}, "", "/rudder-studio/goals/goal-1");
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open Goal Chat");
+
+    expect(window.location.pathname).toBe("/rudder-studio/goals/goal-1");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("goal-chat:org-a:goal-1");
+    expect(text(container, "tab-count")).toBe("1");
+
+    click(container, "Open issue");
+
+    expect(window.location.pathname).toBe("/rudder-studio/issues/issue-1");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("goal-chat:org-a:goal-1");
+    expect(text(container, "tab-count")).toBe("1");
   });
 
   it("restores an open chat side panel after switching away and back", () => {

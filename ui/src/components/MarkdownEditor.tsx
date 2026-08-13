@@ -166,6 +166,8 @@ export interface InlineTokenClickEvent {
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
+  /** Prevents edits and upload-driven mutations while preserving rendered Markdown. */
+  readOnly?: boolean;
   ariaLabel?: string;
   placeholder?: string;
   className?: string;
@@ -1197,6 +1199,7 @@ function mergeMentionOptions(globalMentions: MentionOption[], localMentions: Men
 const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function LegacyMarkdownEditor({
   value,
   onChange,
+  readOnly = false,
   placeholder,
   className,
   contentClassName,
@@ -1232,7 +1235,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 
   // Stable ref for imageUploadHandler so plugins don't recreate on every render
   const imageUploadHandlerRef = useRef(imageUploadHandler);
-  imageUploadHandlerRef.current = imageUploadHandler;
+  imageUploadHandlerRef.current = readOnly ? undefined : imageUploadHandler;
 
   // Mention state (ref kept in sync so callbacks always see the latest value)
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
@@ -1250,7 +1253,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     mentionMenuElementRef.current = element;
     mentionMenuScrollbarRef(element);
   }, [mentionMenuScrollbarRef]);
-  const mentionActive = mentionState !== null && mentions && mentions.length > 0;
+  const mentionActive = !readOnly && mentionState !== null && mentions && mentions.length > 0;
   const setActiveMentionIndex = useCallback((next: number | ((current: number) => number)) => {
     setMentionIndex((current) => {
       const resolved = typeof next === "function" ? next(current) : next;
@@ -1587,7 +1590,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 
   // Whether the image plugin should be included (boolean is stable across renders
   // as long as the handler presence doesn't toggle)
-  const hasImageUpload = Boolean(imageUploadHandler);
+  const hasImageUpload = Boolean(imageUploadHandler) && !readOnly;
   const translatedPlaceholder = useMemo(
     () => (placeholder ? translateLegacyString(locale, placeholder) : undefined),
     [locale, placeholder],
@@ -2094,7 +2097,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     return Array.from(evt.dataTransfer?.types ?? []).includes("Files");
   }
 
-  const canDropImage = Boolean(imageUploadHandler);
+  const canDropImage = Boolean(imageUploadHandler) && !readOnly;
   const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
@@ -2141,6 +2144,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         className,
       )}
       onInputCapture={(event) => {
+        if (readOnly) return;
         const editable = event.currentTarget.querySelector<HTMLElement>('[contenteditable="true"]');
         setHasDomContent(
           (editable?.textContent ?? "").replaceAll(INLINE_CARET_BOUNDARY, "").length > 0,
@@ -2319,6 +2323,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         event.preventDefault();
       }}
       onPasteCapture={(event) => {
+        if (readOnly) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (!plainText) return;
         const text = event.clipboardData.getData("text/plain");
         if (!text || !insertTextAtAtomicBoundary(text)) return;
@@ -2366,6 +2375,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       <MDXEditor
         ref={ref}
         markdown={value}
+        readOnly={readOnly}
         placeholder={translatedPlaceholder}
         onChange={(next) => {
           const normalizedNext = plainText

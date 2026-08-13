@@ -22,6 +22,7 @@ import type {
 import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
 import type { DesktopSystemPermissionId, DesktopSystemPermissions } from "./system-permissions.js";
+import { TERMINAL_IPC_CHANNELS } from "./terminal-ipc.js";
 
 type BootState = {
   stage: string;
@@ -517,6 +518,27 @@ contextBridge.exposeInMainWorld("desktopShell", {
     attestedTarget: (id: string) =>
       ipcRenderer.invoke("desktop:local-apps:attested-target", { id }) as Promise<DesktopLocalAppAttestedTarget | null>,
   },
+  terminal: {
+    supported: ["darwin", "linux", "win32"].includes(process.platform),
+    create: (input: { orgId: string; agentId: string; sessionId: string; cols: number; rows: number }) =>
+      ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.create, input),
+    input: (sessionId: string, data: string) =>
+      ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.input, { sessionId, data }) as Promise<void>,
+    resize: (sessionId: string, cols: number, rows: number) =>
+      ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.resize, { sessionId, cols, rows }) as Promise<void>,
+    close: (sessionId: string) =>
+      ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.close, { sessionId }) as Promise<void>,
+    onOutput: (listener: (event: { sessionId: string; data: string }) => void) => {
+      const wrapped = (_event: IpcRendererEvent, payload: { sessionId: string; data: string }) => listener(payload);
+      ipcRenderer.on(TERMINAL_IPC_CHANNELS.output, wrapped);
+      return () => ipcRenderer.removeListener(TERMINAL_IPC_CHANNELS.output, wrapped);
+    },
+    onExit: (listener: (event: { sessionId: string; code: number | null; signal: string | null; error: string | null }) => void) => {
+      const wrapped = (_event: IpcRendererEvent, payload: { sessionId: string; code: number | null; signal: string | null; error: string | null }) => listener(payload);
+      ipcRenderer.on(TERMINAL_IPC_CHANNELS.exit, wrapped);
+      return () => ipcRenderer.removeListener(TERMINAL_IPC_CHANNELS.exit, wrapped);
+    },
+  },
   appBuilder: {
     supported: ["darwin", "linux", "win32"].includes(process.platform),
     inspect: (input: AppBuilderLocation) =>
@@ -675,6 +697,15 @@ declare global {
         status(id: string): Promise<LocalAppRuntimeView>;
         logs(id: string): Promise<string[]>;
         attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
+      };
+      terminal: {
+        supported: boolean;
+        create(input: { orgId: string; agentId: string; sessionId: string; cols: number; rows: number }): Promise<{ sessionId: string; replay: string; status: "running" | "exited"; agentName?: string }>;
+        input(sessionId: string, data: string): Promise<void>;
+        resize(sessionId: string, cols: number, rows: number): Promise<void>;
+        close(sessionId: string): Promise<void>;
+        onOutput(listener: (event: { sessionId: string; data: string }) => void): () => void;
+        onExit(listener: (event: { sessionId: string; code: number | null; signal: string | null; error: string | null }) => void): () => void;
       };
       appBuilder: {
         supported: boolean;

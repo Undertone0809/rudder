@@ -177,6 +177,29 @@ describe("atomic chat draft API", () => {
     expect(form.getAll("files")).toEqual([attachment]);
   });
 
+  it("encodes Agent-default runtime intent for attached first turns", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendFirstMessageStream("org-1", "Start with defaults", {
+      preferredAgentId: "agent-1",
+      modelOverride: null,
+      effortOverride: null,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      contextLinks: [],
+      files: [new File(["evidence"], "evidence.txt", { type: "text/plain" })],
+      onEvent: vi.fn(),
+    });
+
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("modelOverride")).toBe("__rudder_agent_default__");
+    expect(form.get("effortOverride")).toBe("__rudder_agent_default__");
+  });
+
   it("sends an annotation-only turn as JSON", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
       status: 200,
@@ -194,6 +217,8 @@ describe("atomic chat draft API", () => {
     expect(JSON.parse(String(request?.body))).toEqual({
       body: "",
       inlineAnnotations: [inlineAnnotation],
+      modelOverride: null,
+      effortOverride: null,
     });
   });
 
@@ -213,6 +238,8 @@ describe("atomic chat draft API", () => {
     await chatsApi.sendMessageStream("chat-1", "Review this", {
       files: [regularFile, annotationFile],
       inlineAnnotations: [annotationWithFile],
+      modelOverride: "gpt-5.6-luna",
+      effortOverride: "high",
       onEvent: vi.fn(),
     });
 
@@ -222,7 +249,28 @@ describe("atomic chat draft API", () => {
     const form = request?.body as FormData;
     expect(form.get("body")).toBe("Review this");
     expect(form.get("inlineAnnotations")).toBe(JSON.stringify([annotationWithFile]));
+    expect(form.get("modelOverride")).toBe("gpt-5.6-luna");
+    expect(form.get("effortOverride")).toBe("high");
     expect(form.getAll("files")).toEqual([regularFile, annotationFile]);
+  });
+
+  it("encodes Agent-default runtime intent in multipart turns", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendMessageStream("chat-1", "Use Agent defaults", {
+      files: [new File(["prompt"], "prompt.txt", { type: "text/plain" })],
+      modelOverride: null,
+      effortOverride: null,
+      onEvent: vi.fn(),
+    });
+
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("modelOverride")).toBe("__rudder_agent_default__");
+    expect(form.get("effortOverride")).toBe("__rudder_agent_default__");
   });
 
   it("creates an annotation-only queued message with annotation-owned files", async () => {

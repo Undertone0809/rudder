@@ -100,9 +100,12 @@ async function installDesktopShellLocalFilePreviewStub(
   expectedFileName = "Chat.parts.tsx",
   sourceLocation?: string,
   content = "export const localFileSidePanelEvidence = true;",
+  launchTargets: Array<{ id: string; label: string; kind: "ide" | "terminal" | "folder" }> = [],
 ) {
-  await page.addInitScript(({ targetPath, fileName, requestedPath, previewContent }) => {
+  await page.addInitScript(({ targetPath, fileName, requestedPath, previewContent, launchTargets }) => {
     const previewCalls: string[] = [];
+    const fileIdeCalls: Array<{ rootPath: string; filePath: string; targetId: string }> = [];
+    const fileLocationCalls: Array<{ rootPath: string; filePath: string; targetId: string }> = [];
     const updateCalls: Array<{
       filePath: string;
       content: string;
@@ -113,6 +116,14 @@ async function installDesktopShellLocalFilePreviewStub(
     Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
       configurable: true,
       value: previewCalls,
+    });
+    Object.defineProperty(window, "__rudderLocalFileIdeCalls", {
+      configurable: true,
+      value: fileIdeCalls,
+    });
+    Object.defineProperty(window, "__rudderLocalFileLocationCalls", {
+      configurable: true,
+      value: fileLocationCalls,
     });
     Object.defineProperty(window, "__rudderLocalFileUpdateCalls", {
       configurable: true,
@@ -136,7 +147,14 @@ async function installDesktopShellLocalFilePreviewStub(
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: {
+        listWorkspaceLaunchTargets: async () => launchTargets,
         openPath: async () => {},
+        openWorkspaceFileInIde: async (rootPath: string, filePath: string, targetId = "defaultApp") => {
+          fileIdeCalls.push({ rootPath, filePath, targetId });
+        },
+        openWorkspaceFileLocation: async (rootPath: string, filePath: string, targetId: string) => {
+          fileLocationCalls.push({ rootPath, filePath, targetId });
+        },
         previewLocalFile: async (filePath: string) => {
           previewCalls.push(filePath);
           if (filePath !== requestedPath) throw new Error(`Unexpected local file path: ${filePath}`);
@@ -165,6 +183,7 @@ async function installDesktopShellLocalFilePreviewStub(
     fileName: expectedFileName,
     previewContent: content,
     requestedPath: sourceLocation ? `${canonicalPath}:${sourceLocation}` : canonicalPath,
+    launchTargets,
   });
 }
 
@@ -385,7 +404,19 @@ test.describe("Chat Side Panel", () => {
 
   test("opens titled source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
     const localFilePath = "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution/transcripts-and-results.md";
-    await installDesktopShellLocalFilePreviewStub(page, localFilePath, "transcripts-and-results.md", "40");
+    await installDesktopShellLocalFilePreviewStub(
+      page,
+      localFilePath,
+      "transcripts-and-results.md",
+      "40",
+      undefined,
+      [
+        { id: "cursor", label: "Cursor", kind: "ide" },
+        { id: "vscode", label: "VS Code", kind: "ide" },
+        { id: "terminal", label: "Terminal", kind: "terminal" },
+        { id: "finder", label: "Finder", kind: "folder" },
+      ],
+    );
 
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -436,6 +467,34 @@ test.describe("Chat Side Panel", () => {
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel).toContainText("transcripts-and-results.md");
+    const localFileOpenMenu = sidePanel.getByTestId("chat-side-panel-local-file-open-menu");
+    await expect(localFileOpenMenu).toBeVisible();
+    await localFileOpenMenu.click();
+    await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Cursor" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Terminal" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Cursor" }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & {
+        __rudderLocalFileIdeCalls?: Array<{ rootPath: string; filePath: string; targetId: string }>;
+      }).__rudderLocalFileIdeCalls ?? []
+    ))).toEqual([
+      { rootPath: "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution", filePath: "transcripts-and-results.md", targetId: "cursor" },
+    ]);
+    await expect(localFileOpenMenu).toBeEnabled();
+    await expect(page.getByRole("menuitem", { name: "Cursor" })).toBeHidden();
+    await localFileOpenMenu.click();
+    await expect(page.getByRole("menuitem", { name: "Terminal" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & {
+        __rudderLocalFileLocationCalls?: Array<{ rootPath: string; filePath: string; targetId: string }>;
+      }).__rudderLocalFileLocationCalls ?? []
+    ))).toEqual([
+      { rootPath: "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution", filePath: "transcripts-and-results.md", targetId: "terminal" },
+    ]);
     await expect(sidePanel.getByTestId("chat-side-panel-local-file-editor")).toContainText(
       "localFileSidePanelEvidence",
     );

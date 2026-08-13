@@ -1,6 +1,6 @@
 export const ISSUE_TIMELINE_ITEM_GAP_PX = 12;
 export const ISSUE_TIMELINE_MIN_HIDDEN_ITEMS = 4;
-export const ISSUE_TIMELINE_MAX_REVEAL_ITEMS = 24;
+export const ISSUE_TIMELINE_MAX_REVEAL_ITEMS_PER_SIDE = 24;
 
 const MIN_BATCH_BUDGET_PX = 640;
 const MAX_BATCH_BUDGET_PX = 900;
@@ -216,14 +216,24 @@ export function revealNextIssueTimelineBatch(
   }
 
   const batchBudget = issueTimelineBatchBudget(scrollRootHeight);
-  const count = Math.min(
-    ISSUE_TIMELINE_MAX_REVEAL_ITEMS,
-    takeWithinBudget(selection.hidden, batchBudget, timelineWidth),
+  const revealBudgetPerSide = batchBudget * 1.2;
+  const olderCount = Math.min(
+    ISSUE_TIMELINE_MAX_REVEAL_ITEMS_PER_SIDE,
+    takeWithinBudget(selection.hidden, revealBudgetPerSide, timelineWidth),
   );
-  const nextPrefix = selection.hidden[Math.max(0, count - 1)]!;
+  const newerCount = Math.min(
+    ISSUE_TIMELINE_MAX_REVEAL_ITEMS_PER_SIDE,
+    takeWithinBudget(selection.hidden, revealBudgetPerSide, timelineWidth, true),
+  );
+  if (olderCount + newerCount >= selection.hidden.length) {
+    return { fullyExpanded: true, prefixBoundary: null, suffixBoundary: null };
+  }
+  const nextPrefix = selection.hidden[Math.max(0, olderCount - 1)]!;
+  const nextSuffix = selection.hidden[Math.max(olderCount, selection.hidden.length - newerCount)]!;
   const nextState: IssueTimelineDisclosureState = {
     ...state,
     prefixBoundary: boundaryFor(nextPrefix),
+    suffixBoundary: boundaryFor(nextSuffix),
   };
   const remainder = selectIssueTimelineDisclosureItems(inputItems, nextState).hidden;
   if (!shouldKeepHiddenRange(remainder, batchBudget, timelineWidth)) {

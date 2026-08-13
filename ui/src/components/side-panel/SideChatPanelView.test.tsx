@@ -1452,6 +1452,60 @@ describe("SideChatPanelView response annotations", () => {
     expect(host.textContent).toContain("1 annotation");
   });
 
+  it("preserves first-send runtime selection when Side Chat fails before acknowledgement", async () => {
+    vi.mocked(agentsApi.adapterModels).mockResolvedValue([
+      { id: "gpt-5.6-sol", label: "GPT-5.6-sol", variants: ["high"] },
+      { id: "gpt-5.6-terra", label: "GPT-5.6-terra", variants: ["xhigh"] },
+    ]);
+    vi.mocked(chatsApi.sendMessageStream).mockRejectedValueOnce(new Error("Admission failed."));
+    await renderView({ viewTarget: { ...target, inlineAnnotations: [] } });
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="chat-agent-selector"]')?.click());
+    await vi.waitFor(() => expect(document.body.querySelector(
+      '[data-testid="chat-agent-runtime-selector"]',
+    )).not.toBeNull());
+    act(() => document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-agent-runtime-selector"]',
+    )?.click());
+    await vi.waitFor(() => expect(document.body.querySelector(
+      '[data-testid="chat-model-selector"]',
+    )).not.toBeNull());
+    act(() => document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-model-selector"]',
+    )?.click());
+    await vi.waitFor(() => expect(document.body.textContent).toContain("GPT-5.6-terra"));
+    act(() => Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("GPT-5.6-terra"))?.click());
+    await vi.waitFor(() => expect(document.body.querySelector(
+      '[data-testid="chat-model-selector"]',
+    )?.getAttribute("data-value")).toBe("gpt-5.6-terra"));
+    act(() => document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-effort-selector"]',
+    )?.click());
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Extra High"));
+    act(() => Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Extra High")?.click());
+    act(() => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+
+    const draft = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!;
+    changeTextarea(draft, "Retry with the same runtime.");
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Admission failed."));
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(chatsApi.sendMessageStream).toHaveBeenLastCalledWith(
+      sideConversation.id,
+      "Retry with the same runtime.",
+      expect.objectContaining({ modelOverride: "gpt-5.6-terra", effortOverride: "xhigh" }),
+    );
+  });
+
   it("does not restore a Side Chat draft when a pre-ack error identifies the committed user message", async () => {
     vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
       _conversationId,

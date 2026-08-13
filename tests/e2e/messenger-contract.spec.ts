@@ -3186,7 +3186,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(aggregateIssueRow.getByRole("button", { name: "Thread actions" })).toHaveCount(0);
   });
 
-  test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }) => {
+  test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }, testInfo) => {
     const organization = await createOrganization(page, `Messenger-Approval-Labels-${Date.now()}`);
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -3242,10 +3242,24 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalMessage.locator("img").first()).toBeVisible();
     const approvalCard = page.getByTestId(`messenger-approval-card-${approval.id}`);
     await expect(approvalCard).toContainText("Classify proposed work");
-    await expect(approvalCard).toContainText("requested by Labeling Agent");
+    await expect(approvalCard).not.toContainText("requested by Labeling Agent");
+    await expect(approvalCard).not.toContainText("Approval update");
     await expect(approvalCard).toContainText("Required before approval");
     await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
     await expect(approvalCard.getByTestId("chat-issue-approval-label-picker")).toHaveCount(0);
+    await expect(approvalCard.getByRole("link", { name: "Open full approval" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("messenger-approval-card-desktop.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 768, height: 900 });
+    await expect(approvalCard).toBeVisible();
+    await expect(approvalCard.getByRole("link", { name: "Open full approval" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("messenger-approval-card-narrow.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
 
     await approvalCard.getByTestId("chat-issue-label-popover-trigger").click();
     await expect(page.getByText("Issue labels")).toBeVisible();

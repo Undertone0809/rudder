@@ -103,7 +103,7 @@ async function listTestFiles(directory, relativeDirectory = "") {
   return files.sort();
 }
 
-async function runIsolatedProject(project, concurrency = 3) {
+async function runIsolatedProject(project, concurrency = 1) {
   const testFiles = await listTestFiles(resolve(repoRoot, project));
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(concurrency, testFiles.length) }, async () => {

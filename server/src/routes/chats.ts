@@ -144,8 +144,7 @@ export function chatRoutes(
     organizations: organizationsSvc,
     issues: issuesSvc,
     projects: projectsSvc,
-    agents: agentsSvc,
-    goals: goalsSvc,
+    agents: agentsSvc, goals: goalsSvc,
     assistant: assistantSvc,
   });
   const {
@@ -433,8 +432,23 @@ export function chatRoutes(
     );
   }
 
-  async function conversationRuntimeSnapshot(conversation: ChatConversation) {
-    const runtime = await assistantSvc.getChatAssistantAvailability(conversation);
+  async function conversationRuntimeSnapshot(
+    conversation: ChatConversation,
+    overrides?: { modelOverride: string | null; effortOverride: string | null },
+  ) {
+    const runtime = overrides
+      ? await assistantSvc.getDraftChatAssistantAvailability({
+          orgId: conversation.orgId,
+          preferredAgentId: conversation.preferredAgentId,
+          modelOverride: overrides.modelOverride,
+          effortOverride: overrides.effortOverride,
+          contextLinks: conversation.contextLinks,
+          planMode: conversation.planMode,
+        })
+      : await assistantSvc.getChatAssistantAvailability(conversation);
+    if (overrides && !runtime.available) {
+      throw unprocessable(runtime.error ?? "Chat runtime is unavailable");
+    }
     return chatRuntimeSnapshot(runtime);
   }
 
@@ -2122,7 +2136,17 @@ export function chatRoutes(
       annotations: parsed.data.payload.inlineAnnotations,
       uploadedFileCount: files.length,
     });
-    const runtimeSnapshot = await conversationRuntimeSnapshot(conversation as ChatConversation);
+    const messageRuntimeProvided = Object.hasOwn(parsed.data.payload, "model")
+      || Object.hasOwn(parsed.data.payload, "effort");
+    const runtimeSnapshot = await conversationRuntimeSnapshot(
+      conversation as ChatConversation,
+      messageRuntimeProvided
+        ? {
+            modelOverride: parsed.data.payload.model ?? null,
+            effortOverride: parsed.data.payload.effort ?? null,
+          }
+        : undefined,
+    );
     const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
     const requestActor = queueRequestActor(req);
     let result;

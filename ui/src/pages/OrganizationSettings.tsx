@@ -99,7 +99,6 @@ export function OrganizationSettings() {
     ?? DEFAULT_ORGANIZATION_HOME_PATH;
   // General settings local state
   const [organizationName, setOrganizationName] = useState("");
-  const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
@@ -126,7 +125,6 @@ export function OrganizationSettings() {
   useEffect(() => {
     if (!viewedOrganization) return;
     setOrganizationName(viewedOrganization.name);
-    setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
     setDefaultChatIssueCreationMode(viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
   }, [viewedOrganization]);
@@ -146,18 +144,15 @@ export function OrganizationSettings() {
 
   const generalDirty =
     !!viewedOrganization &&
-    (organizationName !== viewedOrganization.name ||
-      brandColor !== (viewedOrganization.brandColor ?? ""));
+    organizationName !== viewedOrganization.name;
 
   const chatSettingsDirty =
     !!viewedOrganization &&
     defaultChatIssueCreationMode !== (viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
 
   const generalMutation = useMutation({
-    mutationFn: (data: {
-      name: string;
-      brandColor: string | null;
-    }) => organizationsApi.update(viewedOrganizationId!, data),
+    mutationFn: (data: ReturnType<typeof buildOrganizationGeneralPatch>) =>
+      organizationsApi.update(viewedOrganizationId!, data),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
     },
@@ -416,7 +411,6 @@ export function OrganizationSettings() {
     if (!viewedOrganization) return;
     generalMutation.mutate(buildOrganizationGeneralPatch({
       name: organizationName.trim(),
-      brandColor,
     }));
   }
 
@@ -536,11 +530,6 @@ export function OrganizationSettings() {
                   onChange={(event) => setOrganizationName(event.target.value)}
                 />
               </SettingsField>
-            </SettingsGroup>
-          </SettingsSection>
-
-          <SettingsSection title={t("organizationSettings.section.appearance")}>
-            <SettingsGroup>
               <SettingsField
                 label={t("organizationSettings.appearance.logo.label")}
               >
@@ -564,7 +553,7 @@ export function OrganizationSettings() {
                     <OrganizationPatternIcon
                       organizationName={organizationName || viewedOrganization.name}
                       logoUrl={logoUrl || null}
-                      brandColor={brandColor || null}
+                      brandColor={viewedOrganization.brandColor}
                       className="size-14 rounded-lg"
                     />
                   </button>
@@ -575,38 +564,6 @@ export function OrganizationSettings() {
                           ? logoUploadMutation.error.message
                           : t("organizationSettings.appearance.logo.uploadFailed"))}
                     </span>
-                  ) : null}
-                </div>
-              </SettingsField>
-
-              <SettingsField
-                htmlFor="organization-settings-brand-color"
-                label={t("organizationSettings.appearance.brandColor.label")}
-              >
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <input
-                    type="color"
-                    value={brandColor || "#6366f1"}
-                    onChange={(event) => setBrandColor(event.target.value)}
-                    className="size-8 cursor-pointer rounded-[var(--control-radius)] border border-border bg-transparent p-0"
-                    aria-label={t("organizationSettings.appearance.brandColor.label")}
-                  />
-                  <Input
-                    id="organization-settings-brand-color"
-                    value={brandColor}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === "" || /^#[0-9a-fA-F]{0,6}$/.test(value)) {
-                        setBrandColor(value);
-                      }
-                    }}
-                    placeholder={t("organizationSettings.appearance.brandColor.auto")}
-                    className="w-32 font-mono"
-                  />
-                  {brandColor ? (
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setBrandColor("")}>
-                      {t("organizationSettings.appearance.brandColor.clear")}
-                    </Button>
                   ) : null}
                 </div>
               </SettingsField>

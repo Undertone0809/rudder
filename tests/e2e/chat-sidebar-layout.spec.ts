@@ -71,6 +71,7 @@ test.describe("Chat sidebar layout", () => {
       expect(hoverStyle.scale).not.toBe("none");
       expect(hoverStyle.transform).not.toBe("none");
     }
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(1);
 
     const headerBox = await header.boundingBox();
     const mainWorkspaceBox = await page.getByTestId("chat-main-workspace-card").boundingBox();
@@ -180,7 +181,6 @@ test.describe("Chat sidebar layout", () => {
 
     const mainCard = page.getByTestId("chat-main-workspace-card");
     const loadError = mainCard.getByTestId("chat-load-error");
-    const toolbarButton = mainCard.getByTestId("chat-side-panel-trigger");
     const toolbarGlass = mainCard.getByTestId("chat-desktop-toolbar-clearance");
     await expect(mainCard).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/\bdesktop-shell-macos\b/);
@@ -190,10 +190,8 @@ test.describe("Chat sidebar layout", () => {
     await expect(toolbarGlass).toHaveCSS("backdrop-filter", /blur\(18px\)/);
 
     const desktopErrorBox = await loadError.boundingBox();
-    const desktopToolbarBox = await toolbarButton.boundingBox();
     const desktopToolbarGlassBox = await toolbarGlass.boundingBox();
     expect(desktopErrorBox).not.toBeNull();
-    expect(desktopToolbarBox).not.toBeNull();
     expect(desktopToolbarGlassBox).not.toBeNull();
     expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(
       desktopToolbarGlassBox!.y + desktopToolbarGlassBox!.height + 23,
@@ -207,18 +205,71 @@ test.describe("Chat sidebar layout", () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
+    await expect(mainCard.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-stable-host")).toHaveCount(0);
     await expect(mainCard.getByTestId("chat-load-error-mobile-clearance")).toBeVisible();
     await expect(loadError).toHaveCSS("margin-top", "24px");
     const mobileErrorBox = await loadError.boundingBox();
-    const mobileToolbarBox = await toolbarButton.boundingBox();
     expect(mobileErrorBox).not.toBeNull();
-    expect(mobileToolbarBox).not.toBeNull();
-    expect(mobileErrorBox!.y).toBeGreaterThanOrEqual(mobileToolbarBox!.y + mobileToolbarBox!.height);
+    expect(mobileErrorBox!.y).toBeGreaterThan(0);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-load-error-position-mobile.png"),
       fullPage: true,
     });
+  });
+
+  test("moves recent chats into the mobile workspace drawer", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Mobile-Chat-Drawer-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Mobile Drawer Agent" });
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Mobile recent conversation",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Keep this conversation in the mobile drawer." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/${organization.urlKey}/messenger/chat`);
+
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
+    await expect(page.locator('[data-testid="chat-mobile-session-picker"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("chat-main-workspace-card")).toHaveClass(/workspace-main-card--frameless/);
+    const mobileCardStyles = await page.getByTestId("chat-main-workspace-card").evaluate((element) => {
+      const styles = getComputedStyle(element);
+      return {
+        backgroundColor: styles.backgroundColor,
+        borderTopWidth: styles.borderTopWidth,
+        boxShadow: styles.boxShadow,
+      };
+    });
+    expect(mobileCardStyles.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(mobileCardStyles.borderTopWidth).toBe("0px");
+    expect(mobileCardStyles.boxShadow).toBe("none");
+    const mobileWidth = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+    expect(mobileWidth.scrollWidth).toBeLessThanOrEqual(mobileWidth.clientWidth);
+    await page.getByRole("button", { name: "Open sidebar" }).click();
+    const drawerChat = page.getByTestId(`sidebar-chat-${chat.id}`);
+    await expect(drawerChat).toBeVisible();
+    await drawerChat.getByRole("button").first().click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
+    await expect(page.locator('[data-testid="chat-mobile-session-picker"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Skills", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Close sidebar" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
   });
 
   test("shows a compact title-first Messenger thread list and a denser chat intake empty state", async ({ page }, testInfo) => {

@@ -93,7 +93,14 @@ export function normalizeMultipartFirstTurnBody(
       // Leave invalid JSON in place so the shared schema returns a normal 400.
     }
   }
+  normalizeMultipartRuntimeOverrides(normalized);
   return normalized;
+}
+
+function normalizeMultipartRuntimeOverrides(body: Record<string, unknown>) {
+  for (const key of ["modelOverride", "effortOverride"] as const) {
+    if (body[key] === "__rudder_agent_default__") body[key] = null;
+  }
 }
 
 export function normalizeMultipartMessageBody(
@@ -108,6 +115,7 @@ export function normalizeMultipartMessageBody(
       // Leave invalid JSON in place so the shared schema returns a normal 400.
     }
   }
+  normalizeMultipartRuntimeOverrides(normalized);
   return normalized;
 }
 

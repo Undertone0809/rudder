@@ -1,6 +1,7 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Readable, Writable } from "node:stream";
 
 export type NativeProcessHost = EventEmitter & {
@@ -28,12 +29,16 @@ const nativeTarget = process.platform === "darwin" && process.arch === "arm64"
         : null;
 const nativeBinaryName = process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host";
 const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
-export const nativeProcessHostRuntimeSupported = process.platform === "darwin" && process.arch === "arm64";
+export const nativeProcessHostRuntimeSupported = nativeTarget !== null;
 
 export function resolveNativeProcessHostPath(): string | null {
   if (!nativeProcessHostRuntimeSupported) return null;
   const configured = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH?.trim();
   if (configured) return configured;
+  if (process.defaultApp) {
+    const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+    return path.resolve(moduleDirectory, "../../native/target/debug", nativeBinaryName);
+  }
   if (!process.resourcesPath || !nativeTarget) return null;
   return path.join(process.resourcesPath, "native", nativeTarget, nativeBinaryName);
 }

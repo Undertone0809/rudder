@@ -56,6 +56,25 @@ describe("release workflow latency contracts", () => {
     expect(installIndex).toBeGreaterThan(preflightIndex);
   });
 
+  it("retries transient dependency installation failures in every verification lane", () => {
+    const fullInstall = ciWorkflow.slice(
+      ciWorkflow.indexOf("      - name: Install dependencies\n"),
+      ciWorkflow.indexOf("      - name: Install dependencies without Electron binary\n"),
+    );
+    const lightweightInstall = ciWorkflow.slice(
+      ciWorkflow.indexOf("      - name: Install dependencies without Electron binary\n"),
+      ciWorkflow.indexOf("      - name: Product logic registry\n"),
+    );
+    expect(fullInstall).not.toHaveLength(0);
+    expect(lightweightInstall).not.toHaveLength(0);
+    expect(fullInstall).toContain("if: matrix.test == 'full'");
+    expect(fullInstall).toContain("for attempt in 1 2 3");
+    expect(lightweightInstall).toContain("if: matrix.test != 'full'");
+    expect(lightweightInstall).toContain("for attempt in 1 2 3");
+    expect(ciWorkflow.match(/pnpm install --frozen-lockfile/g)).toHaveLength(2);
+    expect(ciWorkflow.match(/sleep \$\(\(attempt \* 10\)\)/g)).toHaveLength(2);
+  });
+
   it("deduplicates automatic canary and stable work for the same locked source", () => {
     expect(releaseWorkflow).toContain(
       "group: release-source-${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}",

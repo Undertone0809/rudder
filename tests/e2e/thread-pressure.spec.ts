@@ -1422,6 +1422,21 @@ test("progressively reveals a production-shaped Issue activity timeline", async 
     const label = await disclosure.textContent();
     return Number(label?.match(/(\d+) hidden/u)?.[1]);
   }).toBeLessThan(initialHiddenCount);
+  const nextHiddenCount = Number((await disclosure.textContent())?.match(/(\d+) hidden/u)?.[1]);
+  expect(initialHiddenCount - nextHiddenCount).toBeGreaterThanOrEqual(8);
+  const issueScrollRoot = page.getByTestId("issue-detail-main-scroll");
+  await issueScrollRoot.evaluate((element) => {
+    const scrollRoot = element as HTMLElement;
+    scrollRoot.scrollTop = 0;
+    scrollRoot.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.getByText("Disclosure comment 2.", { exact: false })).toBeVisible();
+  await issueScrollRoot.evaluate((element) => {
+    const scrollRoot = element as HTMLElement;
+    scrollRoot.scrollTop = scrollRoot.scrollHeight;
+    scrollRoot.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.getByText("Disclosure comment 119.", { exact: false })).toBeVisible();
 
   const hiddenTargetId = commentIds[80]!;
   await expect(page.locator(`#comment-${hiddenTargetId}`)).toHaveCount(0);

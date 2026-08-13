@@ -683,6 +683,8 @@ describe("CommentThread", () => {
     const afterLabel = container.querySelector("[data-testid='issue-timeline-disclosure']")?.textContent ?? "";
     const afterCount = Number(afterLabel.match(/(\d+) hidden/u)?.[1]);
     expect(afterCount).toBeLessThan(beforeCount);
+    expect(container.textContent).toContain("Timeline comment 2");
+    expect(container.textContent).toContain("Timeline comment 76");
     expect(container.querySelectorAll("[data-testid='issue-timeline-disclosure']")).toHaveLength(1);
   });
 

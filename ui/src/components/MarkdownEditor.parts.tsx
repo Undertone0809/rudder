@@ -87,6 +87,8 @@ export interface MentionOption {
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
+  /** Prevents edits and upload-driven mutations while preserving rendered Markdown. */
+  readOnly?: boolean;
   ariaLabel?: string;
   placeholder?: string;
   className?: string;

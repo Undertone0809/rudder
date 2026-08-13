@@ -1807,12 +1807,6 @@ export function Layout() {
       <NewProjectDialog />
       <NewGoalDialog />
       <NewAgentDialog />
-      {isMobile ? (
-        <ChatSidePanel
-          contextReady={sidePanelContextReady}
-          selectedOrganizationId={sidePanelOrganizationId}
-        />
-      ) : null}
       </CalendarWorkspaceProvider>
       </MarkdownMentionsProvider>
     </div>

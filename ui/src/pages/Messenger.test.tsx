@@ -371,7 +371,8 @@ describe("Messenger page headers", () => {
     expect(html).toContain("budget_override_required");
     expect(html).toContain("Open full approval");
     expect(html).toContain("Noah");
-    expect(html).toContain("requested-by: Noah");
+    expect(html).not.toContain("requested-by: Noah");
+    expect(html).not.toContain("Approval update");
     expect(html).not.toContain("Approvals assistant");
     expect(html).not.toContain("2 pending");
     expect(html).not.toContain("1 total");

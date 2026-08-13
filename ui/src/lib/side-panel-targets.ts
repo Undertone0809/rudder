@@ -125,6 +125,13 @@ export type SidePanelTarget =
       viewInstanceId?: string;
     }
   | {
+      kind: "terminal";
+      organizationId: string;
+      agentId: string | null;
+      sessionId: string;
+      label: string;
+    }
+  | {
       kind: "library_directory";
       directoryPath: string;
       label: string;
@@ -211,6 +218,7 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
     return `organization-skill-file:${target.skillId}:${target.filePath}`;
   }
   if (target.kind === "local_apps") return "local-apps";
+  if (target.kind === "terminal") return `terminal:${target.organizationId}:${target.agentId ?? "no-agent"}:${target.sessionId}`;
   if (target.kind === "local_app") {
     return `local-app:${encodeURIComponent(target.desktopInstallationId)}:${encodeURIComponent(target.appPublicId)}:${encodeURIComponent(target.localBindingId)}`;
   }

@@ -596,6 +596,9 @@ contracts:
       - desktop/src/identity-runtime.ts
       - desktop/src/navigation-guard.ts
       - desktop/src/preload.ts
+      - desktop/src/terminal-ipc.ts
+      - native/crates/native-protocol/src/lib.rs
+      - native/bins/rudder-process-host/src/main.rs
       - desktop/src/system-permissions.ts
       - ui/src/lib/desktop-shell.ts
       - ui/src/pages/InstanceNotificationsSettings.tsx
@@ -1364,6 +1367,7 @@ contracts:
       - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
       - ui/src/components/side-panel/SideChatPanelView.tsx
       - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
+      - ui/src/components/side-panel/TerminalPanelView.tsx
       - ui/src/components/transcript/RunTranscriptView.tsx
       - ui/src/components/transcript/RunTranscriptView.blocks.tsx
       - ui/src/pages/AgentDetail.runs.tsx
@@ -1723,6 +1727,9 @@ contracts:
       - desktop/src/browser-shortcuts.test.ts
       - desktop/src/side-panel-close-shortcut.test.ts
       - desktop/src/local-file-preview.test.ts
+      - desktop/src/terminal-ipc.test.ts
+      - native/crates/native-protocol/src/lib.rs
+      - desktop/scripts/smoke.mjs
       - packages/shared/src/browser-shortcuts.test.ts
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
