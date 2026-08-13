@@ -281,7 +281,7 @@ test.describe("Settings layout", () => {
     });
   });
 
-  test("uses the shared layered glass hover treatment on settings actions", async ({ page }) => {
+  test("keeps light outline actions quiet until the full surface darkens on hover", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     const organization = await createOrganization(page, "SLH");
     const modal = await openSettings(page, organization);
@@ -305,11 +305,13 @@ test.describe("Settings layout", () => {
           boxShadow: getComputedStyle(element).boxShadow,
           scale: getComputedStyle(element).scale,
           transform: getComputedStyle(element).transform,
+          coreContent: getComputedStyle(element, "::before").content,
           coreOpacity: getComputedStyle(element, "::before").opacity,
         };
       });
       await button.hover();
-      await expect.poll(() => button.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
+      await expect.poll(() => button.evaluate((element) => getComputedStyle(element).backgroundColor))
+        .not.toBe(restState.background);
       const hoverStyle = await button.evaluate((element) => {
         const style = getComputedStyle(element);
         const coreStyle = getComputedStyle(element, "::before");
@@ -321,18 +323,16 @@ test.describe("Settings layout", () => {
           boxShadow: style.boxShadow,
           scale: style.scale,
           transform: style.transform,
-          coreBackground: coreStyle.backgroundColor,
-          coreBackdropFilter: coreStyle.backdropFilter,
+          coreContent: coreStyle.content,
           coreOpacity: coreStyle.opacity,
         };
       });
       expect(restState.coreOpacity).toBe("0");
-      expect(hoverStyle.coreOpacity).toBe("1");
-      expect(hoverStyle.coreBackground).not.toBe(hoverStyle.background);
-      expect(hoverStyle.background).toBe(restState.background);
+      expect(restState.coreContent).toBe("none");
+      expect(hoverStyle.coreContent).toBe("none");
+      expect(hoverStyle.background).not.toBe(restState.background);
       expect(hoverStyle.border).toBe(restState.border);
       expect(hoverStyle.boxShadow).toBe(restState.boxShadow);
-      expect(hoverStyle.coreBackdropFilter).toContain("blur(16px)");
       expect(hoverStyle.rect).toEqual(restState.rect);
       expect(hoverStyle.scale).toBe(restState.scale);
       expect(hoverStyle.transform).toBe(restState.transform);
@@ -365,5 +365,41 @@ test.describe("Settings layout", () => {
     expect(darkHoverStyle.background).toBe(darkRestBackground);
     expect(darkHoverStyle.coreBackground).not.toBe(darkHoverStyle.background);
     expect(darkHoverStyle.coreOpacity).toBe("1");
+  });
+
+  test("applies the light outline state direction across shared control forms", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const organization = await createOrganization(page, "SLO");
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rudder.theme", "light");
+      window.localStorage.setItem("rudder.productTour.completed.v1", "true");
+      window.localStorage.removeItem("rudder.productTour.pendingAfterSetup.v1");
+    });
+    await page.goto(`/${organization.urlKey ?? organization.issuePrefix}/design-guide`);
+
+    const outline = page.getByRole("button", { name: "Outline", exact: true });
+    const disabledOutline = page.getByRole("button", { name: "Disabled Outline", exact: true });
+    const outlineIcon = page.locator('button[data-variant="outline"][data-size="icon"]').first();
+    await expect(outline).toBeVisible();
+    await expect(disabledOutline).toBeDisabled();
+    await expect(outlineIcon).toBeVisible();
+
+    const restBackground = await outline.evaluate((element) => getComputedStyle(element).backgroundColor);
+    const disabledBackground = await disabledOutline.evaluate((element) => getComputedStyle(element).backgroundColor);
+    const iconRestBackground = await outlineIcon.evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(disabledBackground).toBe(restBackground);
+    expect(iconRestBackground).toBe(restBackground);
+
+    await outline.hover();
+    await expect.poll(() => outline.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe(restBackground);
+
+    await outlineIcon.hover();
+    await expect.poll(() => outlineIcon.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe(iconRestBackground);
+
+    await disabledOutline.hover({ force: true });
+    await expect.poll(() => disabledOutline.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .toBe(disabledBackground);
   });
 });

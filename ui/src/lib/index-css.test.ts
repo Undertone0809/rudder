@@ -61,6 +61,10 @@ describe("index.css motion rules", () => {
 
   it("keeps default button shells stable while illuminating their inset surfaces", () => {
     const sharedControl = cssBlock(".control-hover");
+    const lightOutline = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]');
+    const lightOutlineCore = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]::before');
+    const lightOutlineHover = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:hover, :focus-visible, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
+    const lightOutlineActive = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:active, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
     const darkOutline = cssBlock('.dark .control-hover[data-variant="outline"]');
     const darkGhost = cssBlock('.dark .control-hover[data-variant="ghost"]');
     const destructive = cssBlock('.control-hover[data-variant="destructive"]');
@@ -68,6 +72,10 @@ describe("index.css motion rules", () => {
 
     expect(sharedControl).not.toContain("transform:");
     expect(sharedControl).not.toContain("scale:");
+    expect(lightOutline).toContain("background: var(--surface-elevated)");
+    expect(lightOutlineCore).toContain("content: none");
+    expect(lightOutlineHover).toContain("var(--surface-elevated) 94%, black");
+    expect(lightOutlineActive).toContain("var(--surface-elevated) 89%, black");
     expect(darkOutline).toContain("--control-hover-core: color-mix(in oklab, var(--surface-elevated) 84%, white)");
     expect(darkGhost).toContain("--control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white)");
     expect(destructive).toContain("--control-hover-core: var(--destructive)");
