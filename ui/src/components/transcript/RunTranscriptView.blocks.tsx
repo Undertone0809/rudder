@@ -680,6 +680,7 @@ export function TranscriptThinkingBlock({
   collapsibleSummary = false,
   onMarkdownLinkClick,
   annotationSource,
+  localizeText = (text) => text,
 }: {
   block: Extract<TranscriptBlock, { type: "thinking" }>;
   density: TranscriptDensity;
@@ -687,6 +688,7 @@ export function TranscriptThinkingBlock({
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   annotationSource?: TranscriptAnnotationSourceContext;
+  localizeText?: (text: string) => string;
 }) {
   const [open, setOpen] = useState(() => Boolean(block.streaming));
 
@@ -737,7 +739,7 @@ export function TranscriptThinkingBlock({
           <DisclosureChevron open={open} className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-medium tracking-wide text-muted-foreground">Thinking</div>
+          <div className="text-[11px] font-medium tracking-wide text-muted-foreground">{localizeText("Thinking")}</div>
           {!open && !block.streaming ? (
             <div className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-foreground/55">{preview || "…"}</div>
           ) : null}
@@ -761,6 +763,7 @@ export function renderTranscriptBlock({
   annotationSource,
   sentAnnotationContext,
   runAnnotationContext,
+  localizeText = (text) => text,
   streaming = false,
 }: {
   block: TranscriptBlock;
@@ -773,6 +776,7 @@ export function renderTranscriptBlock({
   annotationSource?: TranscriptAnnotationSourceContext;
   sentAnnotationContext?: TranscriptSentAnnotationContext;
   runAnnotationContext?: TranscriptRunAnnotationContext;
+  localizeText?: (text: string) => string;
   streaming?: boolean;
 }) {
   return (
@@ -796,6 +800,7 @@ export function renderTranscriptBlock({
             className={thinkingClassName}
             onMarkdownLinkClick={onMarkdownLinkClick}
             annotationSource={annotationSource}
+            localizeText={localizeText}
           />
         )}
         {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}

@@ -30,6 +30,8 @@ const issuesApiMock = vi.hoisted(() => ({
   get: vi.fn(),
 }));
 
+const runTranscriptViewMock = vi.hoisted(() => vi.fn());
+
 vi.mock("@/context/MarkdownMentionsContext", () => ({
   useMarkdownMentions: () => ({
     mentions: markdownMentionsMock.mentions,
@@ -48,7 +50,10 @@ vi.mock("@/lib/router", () => ({
 }));
 
 vi.mock("@/components/transcript/RunTranscriptView", () => ({
-  RunTranscriptView: () => null,
+  RunTranscriptView: (props: unknown) => {
+    runTranscriptViewMock(props);
+    return null;
+  },
 }));
 
 vi.mock("@/components/MarkdownEditor", () => ({
@@ -90,6 +95,7 @@ const queryClient = new QueryClient({
 
 beforeEach(() => {
   issuesApiMock.get.mockRejectedValue(new Error("Issue detail is not configured for this test"));
+  runTranscriptViewMock.mockClear();
 });
 
 afterEach(() => {
@@ -278,6 +284,19 @@ describe("assistant attribution", () => {
     expect(container.textContent).not.toContain("Working");
   });
 
+  it("uses the localized live thinking label for an empty assistant response", () => {
+    const container = renderChatMessageItem(
+      message({ status: "streaming", body: "" }),
+      [],
+      {},
+      (text) => text === "Thinking" ? "思考中" : text,
+    );
+
+    expect(container.textContent).toContain("思考中");
+    expect(container.textContent).not.toContain("Thinking");
+    expect(container.querySelector('[aria-label="思考中..."]')).not.toBeNull();
+  });
+
   it("uses the conversation-bound agent while a queued response projection has no message identity yet", () => {
     const noah = agent({
       name: "Noah",
@@ -337,6 +356,32 @@ describe("LazyStreamTranscriptItem", () => {
 });
 
 describe("StreamTranscriptItem controlled disclosure", () => {
+  it("uses the shared standard transcript density instead of a compact Chat override", () => {
+    const entries: TranscriptEntry[] = [{
+      kind: "thinking",
+      ts: "2026-07-23T10:00:00.000Z",
+      text: "Visible process evidence",
+    }];
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StreamTranscriptItem
+          entries={entries}
+          state="completed"
+          streamStartedAt={new Date("2026-07-23T10:00:00.000Z")}
+          streamEndedAt={new Date("2026-07-23T10:00:01.000Z")}
+          defaultOpen
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(runTranscriptViewMock).toHaveBeenCalledWith(expect.objectContaining({
+      entries,
+      presentation: "chat",
+    }));
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).not.toHaveProperty("density");
+  });
+
   it("responds to an external open request after the transcript mounts", () => {
     const entries: TranscriptEntry[] = [{
       kind: "thinking",

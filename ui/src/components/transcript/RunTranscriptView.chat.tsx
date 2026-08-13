@@ -1104,6 +1104,7 @@ export function TranscriptChatTurn({
   streaming?: boolean;
 }) {
   const detailVariant = variant === "detail";
+  const localizeText = useTranscriptText();
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
@@ -1123,6 +1124,7 @@ export function TranscriptChatTurn({
                 annotationSource,
                 sentAnnotationContext,
                 runAnnotationContext,
+                localizeText,
                 streaming,
               })}
             </Fragment>
@@ -1170,6 +1172,7 @@ export function TranscriptChatTurn({
                 annotationSource,
                 sentAnnotationContext,
                 runAnnotationContext,
+                localizeText,
               })}
             </div>
           )
@@ -1446,6 +1449,7 @@ export function TranscriptChatTimeline({
               onMarkdownLinkClick,
               annotationSource,
               sentAnnotationContext,
+              localizeText,
             })}
           </div>
         );

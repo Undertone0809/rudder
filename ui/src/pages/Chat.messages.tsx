@@ -2581,7 +2581,7 @@ export function ChatMessageItem({
           ) : null}
           {isEmptyStreamingAssistant ? (
             <div className="max-w-[72ch] text-[15px] leading-7 text-foreground md:ml-6">
-              <TextDots text="Thinking" className="text-muted-foreground" />
+              <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
             </div>
           ) : (
             <div
@@ -3116,7 +3116,6 @@ export function StreamTranscriptItem({
             <RunTranscriptView
               entries={timelineEntries}
               mode="nice"
-              density="compact"
               streaming={streamingActive}
               collapseStdout
               presentation="chat"
@@ -3147,6 +3146,7 @@ export function AssistantDraftItem({
   onCopyMessageText,
   skillReferences,
   onMarkdownLinkClick,
+  localizeText = (text) => text,
 }: {
   body: string;
   createdAt: Date;
@@ -3157,6 +3157,7 @@ export function AssistantDraftItem({
   onCopyMessageText: (text: string) => void | Promise<void>;
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  localizeText?: (text: string) => string;
 }) {
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
@@ -3188,7 +3189,7 @@ export function AssistantDraftItem({
               onMarkdownLinkClick={onMarkdownLinkClick}
             />
           ) : (
-            <TextDots text="Thinking" className="text-muted-foreground" />
+            <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
           )}
         </div>
         {body.trim() ? (
