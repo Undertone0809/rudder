@@ -57,30 +57,43 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current `0.7.5` continuation adds three fail-closed evidence producers:
-the Rust-versus-optimized-Node Workspace backup comparator, a packaged Local
-App dogfood cycle producer, and a strict Local App `native_ab` summary
-producer. Their focused tests and static checks pass, but they do not close
-the pilot gates. The backup comparator proves manifest/tree/entry/content
-parity, `unzip -t`, and destination-collision preservation on a small real
-fixture; the comparator does not yet inject link/sync-parent/temp-cleanup
-failures, so it makes no broader atomic-publication recovery claim;
-ZIP byte SHA is intentionally recorded as `not_compared` because the two
-implementations use different archive metadata. The fixture's elapsed times
-were diagnostic only; resource RSS is `not_comparable` because the harness
-does not yet sample the separate native child process and must not use parent
-Node `process.memoryUsage()` deltas as a Rust-vs-Node claim.
+The current `0.7.5` continuation is frozen at source
+`49b01cb24661361e2cac82dc2e598e0b1fddb93a`. It carries three fail-closed
+evidence producers: the Rust-versus-optimized-Node Workspace backup
+comparator, a packaged Local App dogfood cycle producer, and a strict Local
+App `native_ab` summary producer. Their focused tests and static checks pass,
+but they do not close the pilot gates. The backup comparator proves
+manifest/tree/entry/content parity, `unzip -t`, and destination-collision
+preservation on a small real fixture; the comparator does not inject
+link/sync-parent/temp-cleanup failures, so it makes no broader
+atomic-publication recovery claim. ZIP byte SHA is intentionally recorded as
+`not_compared` because the two implementations use different archive metadata.
+The fixture's elapsed times were diagnostic only; resource RSS is
+`not_comparable` because the harness does not yet sample the separate native
+child process and must not use parent Node `process.memoryUsage()` deltas as a
+Rust-vs-Node claim.
 
-The packaged dogfood producer ran against the exact packaged Local App smoke
-surface and observed `0 accepted cycles / 0 UTC dates`. It failed closed
-because `desktop/dist/local-apps-registry.js` was absent; an isolated rebuild
-was separately blocked by existing `agent-runtime-utils` TypeScript
-`ChildProcess.on` errors. No synthetic ledger row was produced. The native A/B
-producer now emits exactly three measured trials per arm (six observations),
-but the live campaign remains blocked because the required release host and
-process-tree sampler binaries are absent. Therefore the decision ledger stays
-`accepted_default` for the shared foundation, `opt-in` for Local App and
-streaming backup, and `not_admitted` for the remaining four slices.
+The exact candidate produced a valid macOS arm64 portable package:
+`unzip -t` passed, portable SHA-256 is
+`7e97e5c21bae2eb969c9bb94c1a831d75508db1e5d473bcb7e7c861b3010a35e`, and the
+packaged server and App Builder checks passed. The staged binaries report
+`0.7.5` and have SHA-256 values `rudder-native=
+287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1`,
+`rudder-process-host=
+0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a`, and
+`rudder-update-helper=
+2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c`.
+The packaged executable SHA-256 is
+`b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
+The real packaged Local App smoke still fails before a ready board window and
+active IPC bridge (`expected exactly one ready Desktop board window with an
+active IPC bridge`); an earlier attempt terminated the renderer with signal
+15. No synthetic ledger row or dogfood cycle was written. The native A/B
+producer emits exactly three measured trials per arm (six observations), but
+the live campaign remains blocked without real release-host/process-tree
+sampler binaries. Therefore the decision ledger stays `accepted_default` for
+the shared foundation, `opt-in` for Local App and streaming backup, and
+`not_admitted` for the remaining four slices.
 
 This continuation does not authorize edits to `doc/product/**`, does not treat
 the summary importer as live evaluation evidence, and does not claim the pilot
@@ -111,7 +124,7 @@ claim that a missing implementation passed its acceptance gate.
 | Slice | Decision | Evidence bound to this candidate | Required next transition |
 | --- | --- | --- | --- |
 | Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.5` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
-| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 build, helper staging, direct launch, and account-gate/email-code smoke pass, while seven-day/100-cycle dogfood and native_ab live evidence are absent | Run dogfood gate and live three-trial native_ab campaign |
+| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 package, native staging, server-package, and App Builder checks pass, but the current real Local App smoke fails before board IPC readiness; account-gate/email-code evidence is historical-only, and seven-day/100-cycle dogfood plus native_ab live evidence are absent | Fix the packaged board/IPC startup failure, then run the dogfood gate and live three-trial native_ab campaign |
 | Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |

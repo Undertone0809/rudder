@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-    "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
+    "source_ref": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+    "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -38,23 +38,26 @@
       "evidence/rust-native-foundations-delivery-packet.json"
     ],
     "build": {
-      "id": "not_rebuilt_after_evidence_producers-0.7.5",
-      "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "artifact_bound_source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "portable_sha256": "not_rebuilt_for_continuation",
+      "id": "packaged-dist-0.7.5-macos-arm64-49b01cb2",
+      "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "artifact_bound_source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "portable_sha256": "7e97e5c21bae2eb969c9bb94c1a831d75508db1e5d473bcb7e7c861b3010a35e",
       "native_sha256": {
-        "rudder-process-host": "not_rebuilt_for_continuation",
-        "rudder-native": "not_rebuilt_for_continuation",
-        "rudder-update-helper": "not_rebuilt_for_continuation"
+        "rudder-process-host": "0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a",
+        "rudder-native": "287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1",
+        "rudder-update-helper": "2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c"
       }
     },
     "runtime": {
-      "id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
-      "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "artifact_bound_source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
+      "id": "macOS-arm64-packaged-Rudder-0.7.5-source-49b01cb2",
+      "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "artifact_bound_source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "account_gate_smoke": "historical_only_source_0e3c9b8",
       "email_code_smoke": "historical_only_source_0e3c9b8",
-      "app_builder_smoke": "not_run_with_evidence_producer_candidate",
+      "server_package_verification": "pass",
+      "app_builder_smoke": "pass",
+      "local_app_smoke": "fail_before_ready_board_ipc: expected exactly one ready Desktop board window with an active IPC bridge",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
@@ -92,27 +95,27 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
-      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
+      "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "build_id": "packaged-dist-0.7.5-macos-arm64-49b01cb2",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5-source-49b01cb2",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
-      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
+      "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "build_id": "packaged-dist-0.7.5-macos-arm64-49b01cb2",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5-source-49b01cb2",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "85287ce2a09cd4dc3c0751434d470f016f01dfba",
-      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
-      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
+      "source_sha": "49b01cb24661361e2cac82dc2e598e0b1fddb93a",
+      "build_id": "packaged-dist-0.7.5-macos-arm64-49b01cb2",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5-source-49b01cb2",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     }
