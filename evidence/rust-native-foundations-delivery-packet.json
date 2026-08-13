@@ -102,13 +102,14 @@
       "packet_version": "2"
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "QUESTION",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_sha": "2797e4588770b5b5caacb26b9233e27fe5d7adc3",
       "build_id": "not_rebuilt_after-packaged-dogfood-account-gate-fix-0.7.5",
       "runtime_id": "not_restarted_after-packaged-dogfood-account-gate-fix-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2"
+      "packet_version": "2",
+      "reason": "Exact source has no rebuilt packaged artifact; packaged Local App dogfood requires an authenticated packaged fixture and fails fast with DOGFOOD_ACCOUNT_REQUIRED before Electron launch."
     },
     "final_review": {
       "verdict": "pending",
